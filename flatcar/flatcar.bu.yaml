@@ -12,21 +12,21 @@ passwd:
 storage:
   disks:
     - device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_flatcar-state
-      wipe_table: true
+      wipe_table: false
       partitions:
         - number: 1
           label: state
           size_mib: 0
 
     - device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_flatcar-fast
-      wipe_table: true
+      wipe_table: false
       partitions:
         - number: 1
           label: fast
           size_mib: 0
 
     - device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_flatcar-slow
-      wipe_table: true
+      wipe_table: false
       partitions:
         - number: 1
           label: slow
@@ -53,8 +53,6 @@ storage:
       mode: 0755
 
     - path: /mnt/fast/docker
-      mode: 0711
-    - path: /var/lib/docker
       mode: 0711
 
     - path: /opt/bin
@@ -107,29 +105,21 @@ systemd:
       enabled: true
       contents: |
         [Unit]
-        Description=Install Docker Compose plugin
+        Description=Install Docker Compose
         Wants=network-online.target
         After=network-online.target
+        ConditionPathExists=!/opt/bin/docker-compose
 
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        Environment=DC_VERSION=2.32.4
-        ExecCondition=/bin/bash -c '! test -x /opt/docker/cli-plugins/docker-compose'
-        ExecStart=/bin/bash -euxo pipefail -c '\
-          install -d /opt/docker/cli-plugins /root/.docker/cli-plugins /home/idan/.docker/cli-plugins && \
-          curl -fsSL "https://github.com/docker/compose/releases/download/v$${DC_VERSION}/docker-compose-linux-x86_64" \
-            -o /opt/docker/cli-plugins/docker-compose && \
-          chmod +x /opt/docker/cli-plugins/docker-compose && \
-          ln -sf /opt/docker/cli-plugins/docker-compose /root/.docker/cli-plugins/docker-compose && \
-          ln -sf /opt/docker/cli-plugins/docker-compose /home/idan/.docker/cli-plugins/docker-compose && \
-          chown -R idan:idan /home/idan/.docker \
-        '
+        ExecStart=/usr/bin/curl -fsSL -o /opt/bin/docker-compose \
+          "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
+        ExecStartPost=/usr/bin/chmod +x /opt/bin/docker-compose
 
         [Install]
         WantedBy=multi-user.target
 
-    # Install Tailscale
     - name: install-tailscale.service
       enabled: true
       contents: |
@@ -137,25 +127,19 @@ systemd:
         Description=Install Tailscale
         Wants=network-online.target
         After=network-online.target
+        ConditionPathExists=!/opt/bin/tailscale
 
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        Environment=TS_VERSION=1.78.3
-        ExecCondition=/bin/bash -c '! test -x /opt/bin/tailscale'
-        ExecStart=/bin/bash -euxo pipefail -c '\
-          curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_$${TS_VERSION}_amd64.tgz" -o /tmp/tailscale.tgz && \
-          tar -xzf /tmp/tailscale.tgz -C /tmp && \
-          cp /tmp/tailscale_$${TS_VERSION}_amd64/tailscale /opt/bin/ && \
-          cp /tmp/tailscale_$${TS_VERSION}_amd64/tailscaled /opt/bin/ && \
-          chmod +x /opt/bin/tailscale /opt/bin/tailscaled && \
-          rm -rf /tmp/tailscale* \
+        ExecStart=/bin/bash -c '\
+          curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_latest_amd64.tgz" | tar -xzf - -C /tmp && \
+          cp /tmp/tailscale_*_amd64/tailscale /tmp/tailscale_*_amd64/tailscaled /opt/bin/ \
         '
 
         [Install]
         WantedBy=multi-user.target
 
-    # Tailscale daemon
     - name: tailscaled.service
       enabled: true
       contents: |
@@ -174,7 +158,6 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 
-    # Tailscale auto-login (runs once to authenticate)
     - name: tailscale-up.service
       enabled: true
       contents: |
