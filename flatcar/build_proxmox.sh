@@ -52,6 +52,7 @@ cp "$OUTPUT_FILE" "$SNIPPETS_DIR/user-data"
 # Make sure new ign is used and start VM
 echo "> Configuring VM $VM_ID..."
 qm set "$VM_ID" --cicustom "user=local:snippets/user-data"
+qm set "$VM_ID" --ipconfig0 "ip=$VM_IP/24,gw=10.0.0.1" --nameserver "10.0.0.1"
 
 echo "> Regenerating Cloud-Init image..."
 qm cloudinit update "$VM_ID"
