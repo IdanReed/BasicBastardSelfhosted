@@ -39,5 +39,8 @@ cp "$OUTPUT_FILE" "$SNIPPETS_DIR/user-data"
 echo "Configuring VM $VM_ID..."
 qm set "$VM_ID" --cicustom "user=local:snippets/user-data"
 
-echo ""
-echo "Done. Start VM with: qm start $VM_ID"
+echo "Regenerating Cloud-Init image..."
+qm cloudinit update "$VM_ID"
+
+echo "Done."
+echo "Apply changes: flatcar-reset -> qm stop $VM_ID && qm start $VM_ID"
