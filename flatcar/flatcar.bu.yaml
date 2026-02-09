@@ -58,6 +58,9 @@ storage:
     - path: /mnt/fast/docker
       mode: 0711
 
+    - path: /srv/sops
+      mode: 0700
+
     - path: /opt/bin
       mode: 0755
 
@@ -65,7 +68,7 @@ storage:
     - path: /opt/ignition-version
       mode: 0644
       contents:
-        inline: "20"
+        inline: "21"
 
     - path: /srv/stacks/arcane/compose.yaml
       overwrite: true
@@ -93,13 +96,11 @@ storage:
           volumes:
             arcane_data:
 
-    - path: /srv/stacks/arcane/.env
+    - path: /srv/stacks/arcane/.sops.env
       overwrite: true
       mode: 0600
       contents:
-        inline: |
-          ENCRYPTION_KEY=${ARCANE_ENCRYPTION_KEY}
-          JWT_SECRET=${ARCANE_JWT_SECRET}
+        local: .sops.env
 
 
 systemd:
@@ -234,13 +235,65 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 
+    - name: install-sops.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install SOPS
+        Wants=network-online.target
+        After=network-online.target
+        ConditionPathExists=!/opt/bin/sops
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/curl -fsSL -o /opt/bin/sops \
+          "https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64"
+        ExecStartPost=/usr/bin/chmod +x /opt/bin/sops
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: write-age-key.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Write age private key for SOPS decryption
+        Requires=srv.mount
+        After=srv.mount
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/bin/bash -c 'mkdir -p /srv/sops && printf "%s\n" "${SOPS_AGE_KEY}" > /srv/sops/age-key.txt'
+        ExecStartPost=/bin/chmod 600 /srv/sops/age-key.txt
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: decrypt-sops-envs.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Decrypt all .sops.env files to .env
+        Requires=srv.mount install-sops.service write-age-key.service
+        After=srv.mount install-sops.service write-age-key.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/bin/bash -c 'for f in /srv/stacks/*/.sops.env; do [ -f "$f" ] && SOPS_AGE_KEY_FILE=/srv/sops/age-key.txt /opt/bin/sops -d "$f" > "$(dirname "$f")/.env"; done'
+
+        [Install]
+        WantedBy=multi-user.target
+
     - name: bootstrap-arcane.service
       enabled: true
       contents: |
         [Unit]
         Description=Bootstrap Arcane Docker Management
-        Requires=docker.service srv.mount
-        After=docker.service srv.mount install-docker-compose.service
+        Requires=docker.service srv.mount decrypt-sops-envs.service
+        After=docker.service srv.mount install-docker-compose.service decrypt-sops-envs.service
         Wants=network-online.target
         After=network-online.target
 

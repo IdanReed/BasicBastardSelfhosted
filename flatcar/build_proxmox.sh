@@ -44,7 +44,7 @@ set +a
 
 # Sub into ign file
 echo "> Substituting variables..."
-envsubst '${SSH_AUTHORIZED_KEY} ${TAILSCALE_AUTH_KEY} ${ARCANE_ENCRYPTION_KEY} ${ARCANE_JWT_SECRET}' < "$TEMPLATE_FILE" > "$OUTPUT_FILE"
+envsubst '${SSH_AUTHORIZED_KEY} ${TAILSCALE_AUTH_KEY} ${SOPS_AGE_KEY}' < "$TEMPLATE_FILE" > "$OUTPUT_FILE"
 
 echo "> Copying to Proxmox snippets..."
 cp "$OUTPUT_FILE" "$SNIPPETS_DIR/user-data"
