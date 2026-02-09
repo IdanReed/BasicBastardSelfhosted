@@ -68,7 +68,7 @@ storage:
     - path: /opt/ignition-version
       mode: 0644
       contents:
-        inline: "21"
+        inline: "22"
 
     - path: /srv/stacks/arcane/compose.yaml
       overwrite: true
@@ -265,7 +265,7 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=/bin/bash -c 'mkdir -p /srv/sops && printf "%s\n" "${SOPS_AGE_KEY}" > /srv/sops/age-key.txt'
+        ExecStart=/bin/bash -c 'mkdir -p /srv/sops && printf "%%s\n" "${SOPS_AGE_KEY}" > /srv/sops/age-key.txt'
         ExecStartPost=/bin/chmod 600 /srv/sops/age-key.txt
 
         [Install]
