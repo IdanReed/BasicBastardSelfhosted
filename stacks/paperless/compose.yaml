@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   tika:
-    image: ghcr.io/paperless-ngx/tika:latest
+    image: apache/tika:latest
     container_name: paperless_tika
     restart: unless-stopped
 
