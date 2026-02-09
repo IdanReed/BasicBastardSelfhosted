@@ -1,6 +1,6 @@
 services:
   paperless:
-    image: ghcr.io/paperless-ngx/paperless-ngx:2
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
     container_name: paperless
     depends_on:
       - redis
