@@ -1,0 +1,219 @@
+# ============================================================
+# 1. USER SETUP
+# ============================================================
+users:
+  - name: idan
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - PLACEHOLDER_SSH_PUBLIC_KEY
+
+# ============================================================
+# 2. PACKAGE INSTALLATION
+# ============================================================
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+
+# ============================================================
+# 3. FILE CREATION
+# ============================================================
+write_files:
+  # --- SSH Hardening ---
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      UsePAM yes
+      X11Forwarding no
+      MaxAuthTries 3
+      AllowUsers idan
+
+  # --- fail2ban config ---
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      port = 22
+      maxretry = 5
+      bantime = 3600
+      findtime = 600
+
+  # --- Headscale docker-compose ---
+  - path: /opt/headscale/docker-compose.yml
+    content: |
+      services:
+        headscale:
+          image: headscale/headscale:latest
+          container_name: headscale
+          restart: unless-stopped
+          ports:
+            - "443:443"
+            - "3478:3478/udp"
+          volumes:
+            - ./config:/etc/headscale
+            - ./data:/var/lib/headscale
+          command: serve
+
+  # --- Headscale config ---
+  - path: /opt/headscale/config/config.yaml
+    content: |
+      server_url: https://headscale.idanreed.com
+      listen_addr: 0.0.0.0:443
+      metrics_listen_addr: 127.0.0.1:9090
+
+      tls_cert_path: ""
+      tls_key_path: ""
+
+      # Let's Encrypt automatic TLS
+      tls_letsencrypt_hostname: headscale.idanreed.com
+      tls_letsencrypt_listen: ":http"
+      tls_letsencrypt_cache_dir: /var/lib/headscale/cache
+      tls_letsencrypt_challenge_type: HTTP-01
+
+      noise:
+        private_key_path: /var/lib/headscale/noise_private.key
+
+      prefixes:
+        v4: 100.64.0.0/10
+        v6: fd7a:115c:a1e0::/48
+        allocation: sequential
+
+      derp:
+        server:
+          enabled: true
+          region_id: 999
+          region_code: "hetzner"
+          region_name: "Hetzner DERP"
+          stun_listen_addr: 0.0.0.0:3478
+        urls:
+          - https://controlplane.tailscale.com/derpmap/default
+        auto_update_enabled: true
+        update_frequency: 24h
+
+      database:
+        type: sqlite
+        sqlite:
+          path: /var/lib/headscale/db.sqlite
+
+      dns:
+        nameservers:
+          global:
+            - PLACEHOLDER_HEADSCALE_TAILNET_IP  # This server's 100.x.x.x IP (set after first boot)
+        magic_dns: true
+        base_domain: headscale.idanreed.com
+
+      log:
+        level: info
+
+  # --- CoreDNS docker-compose ---
+  - path: /opt/coredns/docker-compose.yml
+    content: |
+      services:
+        coredns:
+          image: coredns/coredns:latest
+          container_name: coredns
+          restart: unless-stopped
+          ports:
+            - "PLACEHOLDER_HEADSCALE_TAILNET_IP:53:53/udp"
+            - "PLACEHOLDER_HEADSCALE_TAILNET_IP:53:53/tcp"
+          volumes:
+            - ./Corefile:/Corefile:ro
+          command: -conf /Corefile
+
+  # --- CoreDNS Corefile ---
+  - path: /opt/coredns/Corefile
+    content: |
+      services.headscale.idanreed.com:53 {
+          template IN CNAME {
+              match "^(.+)\.services\.headscale\.idanreed\.com\.$"
+              answer "{{ .Name }} 0 IN CNAME services-server.headscale.idanreed.com."
+              fallthrough
+          }
+          log
+          errors
+      }
+
+      .:53 {
+          forward . 1.1.1.1 8.8.8.8
+          log
+          errors
+          cache 30
+      }
+
+  # --- Setup script (runs after Docker is installed) ---
+  - path: /opt/setup.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      echo "=== Setting up Headscale ==="
+
+      # Create data directories
+      mkdir -p /opt/headscale/data
+      mkdir -p /opt/headscale/config
+
+      # Start Headscale
+      cd /opt/headscale
+      docker compose up -d
+
+      echo ""
+      echo "============================================"
+      echo "  HEADSCALE SERVER READY"
+      echo "============================================"
+      echo ""
+      echo "Next steps:"
+      echo "  1. Create a user:"
+      echo "     docker exec headscale headscale users create default"
+      echo ""
+      echo "  2. Generate a pre-auth key:"
+      echo "     docker exec headscale headscale preauthkeys create --user default"
+      echo ""
+      echo "  3. Join this server to its own tailnet, note the 100.x.x.x IP"
+      echo ""
+      echo "  4. Update CoreDNS compose + Headscale dns config with the tailnet IP"
+      echo ""
+      echo "  5. Start CoreDNS:"
+      echo "     cd /opt/coredns && docker compose up -d"
+      echo ""
+      echo "============================================"
+
+# ============================================================
+# 4. COMMANDS
+# ============================================================
+runcmd:
+  # --- Install Docker (official method) ---
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+  # --- Firewall (UFW) ---
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp comment 'SSH'
+  - ufw allow 443/tcp comment 'Headscale'
+  - ufw allow 80/tcp comment 'ACME HTTP-01 challenge'
+  - ufw allow 3478/udp comment 'DERP STUN'
+  - ufw --force enable
+
+  # --- Enable services ---
+  - systemctl enable --now docker
+  - systemctl enable --now fail2ban
+  - systemctl restart sshd
+
+  # --- Run setup ---
+  - /opt/setup.sh

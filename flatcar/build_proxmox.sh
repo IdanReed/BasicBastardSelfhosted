@@ -15,9 +15,7 @@ SNIPPETS_DIR="/var/lib/vz/snippets"
 
 # Ignition file
 if [[ ! -f "$TEMPLATE_FILE" ]]; then
-    echo "> Error: Ignition file not found at $TEMPLATE_FILE"
-    exit 1
-fi
+    echo "> Error: Ignition file not found at $TEMPL
 
 # Reset and stop flatcar
 echo "> Resetting Flatcar VM..."
