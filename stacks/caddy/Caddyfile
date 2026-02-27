@@ -1,0 +1,16 @@
+(tailnet) {
+	bind {$HEADSCALE_IP}
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+}
+
+arcane.services.headscale.idanreed.com {
+	import tailnet
+	reverse_proxy localhost:10000
+}
+
+paperless.services.headscale.idanreed.com {
+	import tailnet
+	reverse_proxy localhost:10001
+}
