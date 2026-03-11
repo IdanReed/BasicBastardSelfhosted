@@ -1,3 +1,13 @@
+# SOPS encryption rules
+# All .sops.env files use the same age key
+# Private key location: age-key.txt (not committed)
+#
+# Matching files:
+#   - nixos/.sops.env     (host secrets: TAILSCALE_AUTH_KEY)
+#   - arcane/.sops.env    (ENCRYPTION_KEY, JWT_SECRET)
+#   - stacks/*/.sops.env  (per-stack secrets)
+
 creation_rules:
-  - path_regex: \.sops(\.|$)
-    age: age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf
+  - path_regex: \.sops\.env$
+    age:
+      - age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf

@@ -1,2 +1,12 @@
+# Flatcar ignition files (generated)
 *.ign
-stacks/*/.env
+
+# Decrypted secrets (generated from .sops.env)
+**/.env
+
+# Age private key (NEVER commit)
+age-key.txt
+
+# Nix build outputs
+result
+nixos/result
