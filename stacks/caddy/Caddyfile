@@ -12,5 +12,5 @@ arcane.services.headscale.idanreed.com {
 
 paperless.services.headscale.idanreed.com {
 	import tailnet
-	reverse_proxy localhost:10200
+	reverse_proxy localhost:10100
 }
