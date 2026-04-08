@@ -1,0 +1,88 @@
+services:
+  postgresql:
+    image: postgres:16-alpine
+    container_name: authentik_db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - /srv/authentik/pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASS:?database password required}
+      POSTGRES_USER: authentik
+      POSTGRES_DB: authentik
+
+  redis:
+    image: redis:7-alpine
+    container_name: authentik_redis
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 3s
+    volumes:
+      - /srv/authentik/redis:/data
+
+  server:
+    image: ghcr.io/goauthentik/server:2024.12
+    container_name: authentik_server
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      # Email (optional, for password reset)
+      # AUTHENTIK_EMAIL__HOST: smtp.example.com
+      # AUTHENTIK_EMAIL__PORT: 587
+      # AUTHENTIK_EMAIL__USERNAME: ${SMTP_USER}
+      # AUTHENTIK_EMAIL__PASSWORD: ${SMTP_PASS}
+      # AUTHENTIK_EMAIL__USE_TLS: true
+      # AUTHENTIK_EMAIL__FROM: authentik@idanreed.com
+    volumes:
+      - /srv/authentik/media:/media
+      - /srv/authentik/templates:/templates
+      - ./blueprints/custom:/blueprints/custom:ro
+    ports:
+      - "9000:9000"      # HTTP
+      - "9443:9443"      # HTTPS
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/goauthentik/server:2024.12
+    container_name: authentik_worker
+    restart: unless-stopped
+    command: worker
+    environment:
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      # Headscale OIDC client secret (used in blueprints)
+      HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET}
+    volumes:
+      - /srv/authentik/media:/media
+      - /srv/authentik/certs:/certs
+      - /srv/authentik/templates:/templates
+      - ./blueprints/custom:/blueprints/custom:ro
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

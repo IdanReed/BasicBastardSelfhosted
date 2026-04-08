@@ -1,0 +1,75 @@
+# Headscale Configuration
+# This file is deployed to /srv/headscale/config/config.yaml
+# Environment variables from .env override these settings
+
+server_url: https://headscale.idanreed.com
+listen_addr: 0.0.0.0:443
+metrics_listen_addr: 127.0.0.1:9090
+
+# TLS - Let's Encrypt via ACME
+tls_cert_path: ""
+tls_key_path: ""
+acme_url: https://acme-v02.api.letsencrypt.org/directory
+acme_email: admin@idanreed.com
+
+# Database
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+# OIDC (Authentik)
+oidc:
+  only_start_if_oidc_is_available: false
+  issuer: ""  # Set via HEADSCALE_OIDC_ISSUER env var
+  client_id: ""  # Set via HEADSCALE_OIDC_CLIENT_ID env var
+  client_secret: ""  # Set via HEADSCALE_OIDC_CLIENT_SECRET env var
+  scope:
+    - openid
+    - profile
+    - email
+  # Map OIDC claims to Headscale user
+  extra_params:
+    domain_hint: idanreed.com
+  # Strip email domain for username
+  strip_email_domain: true
+
+# IP allocation
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+
+# DNS configuration
+dns:
+  magic_dns: true
+  base_domain: headscale.idanreed.com
+  nameservers:
+    global:
+      - 100.64.0.1  # CoreDNS on this server's tailnet IP
+  search_domains:
+    - headscale.idanreed.com
+
+# DERP (relay for NAT traversal)
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: "headscale"
+    region_name: "Headscale Embedded DERP"
+    stun_listen_addr: 0.0.0.0:3478
+
+# Logging
+log:
+  level: info
+  format: text
+
+# Disable automatic updates check
+disable_check_updates: true
+
+# Ephemeral node cleanup
+ephemeral_node_inactivity_timeout: 30m
+
+# Policy (ACLs) - allow all by default
+policy:
+  mode: file
+  path: ""

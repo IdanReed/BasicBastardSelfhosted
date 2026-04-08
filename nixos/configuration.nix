@@ -2,7 +2,7 @@
 
 {
   # System identity
-  networking.hostName = "docker-host";
+  networking.hostName = "services-vm";
   system.stateVersion = "24.11";
 
   # Timezone

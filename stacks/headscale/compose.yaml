@@ -1,0 +1,21 @@
+services:
+  headscale:
+    image: headscale/headscale:0.23
+    container_name: headscale
+    restart: unless-stopped
+    command: serve
+    volumes:
+      - /srv/headscale/config:/etc/headscale
+      - /srv/headscale/data:/var/lib/headscale
+    ports:
+      - "443:443"       # HTTPS + DERP
+      - "80:80"         # HTTP (for ACME HTTP-01 challenge)
+      - "3478:3478/udp" # STUN
+    environment:
+      # These override config.yaml values
+      HEADSCALE_SERVER_URL: ${HEADSCALE_SERVER_URL}
+      HEADSCALE_OIDC_ISSUER: ${HEADSCALE_OIDC_ISSUER}
+      HEADSCALE_OIDC_CLIENT_ID: ${HEADSCALE_OIDC_CLIENT_ID}
+      HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET}
+    cap_add:
+      - NET_ADMIN

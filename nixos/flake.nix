@@ -30,7 +30,7 @@
     in
     {
       # NixOS configuration for nixos-rebuild switch
-      nixosConfigurations.docker-host = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.services-vm = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
           baseModule
