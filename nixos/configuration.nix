@@ -3,7 +3,7 @@
 {
   # System identity
   networking.hostName = "services-vm";
-  system.stateVersion = "24.11";
+  system.stateVersion = "25.11";
 
   # Timezone
   time.timeZone = "America/Chicago";
@@ -45,7 +45,6 @@
 
   # System packages
   environment.systemPackages = with pkgs; [
-    docker-compose
     git
     vim
     htop
@@ -148,7 +147,7 @@
       sleep 5
 
       # Start arcane
-      ${pkgs.docker-compose}/bin/docker-compose up -d
+      ${pkgs.docker}/bin/docker compose up -d
     '';
   };
 

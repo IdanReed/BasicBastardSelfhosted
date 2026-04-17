@@ -4,7 +4,17 @@
 # Polls git repo, syncs stacks, decrypts secrets, runs docker compose
 # This replaces Arcane's git sync since Arcane only pulls compose files
 
+let
+  cfg = config.services.stack-sync;
+in
 {
+  options.services.stack-sync = {
+    repoUrl = lib.mkOption {
+      type = lib.types.str;
+      default = "https://github.com/idanreed/BasicBastardSelfhosted.git";
+      description = "Git repository URL for stack configurations";
+    };
+  };
   # Stack sync script
   environment.etc."stack-sync/sync.sh" = {
     mode = "0755";
@@ -12,7 +22,7 @@
       #!/bin/bash
       set -euo pipefail
 
-      REPO_URL="https://github.com/yourusername/BasicBastardSelfhosted.git"
+      REPO_URL="${cfg.repoUrl}"
       REPO_DIR="/srv/repo/BasicBastardSelfhosted"
       STACKS_DIR="/srv/stacks"
       export SOPS_AGE_KEY_FILE="/var/lib/sops-nix/key.txt"
@@ -64,8 +74,8 @@
         # Deploy with docker compose
         echo "Deploying $stack"
         cd "$dest"
-        ${pkgs.docker-compose}/bin/docker-compose pull --quiet
-        ${pkgs.docker-compose}/bin/docker-compose up -d --remove-orphans
+        ${pkgs.docker}/bin/docker compose pull --quiet
+        ${pkgs.docker}/bin/docker compose up -d --remove-orphans
       done
 
       # Copy Headscale config if it exists
@@ -85,7 +95,7 @@
     wants = [ "network-online.target" ];
     requires = [ "docker.service" ];
 
-    path = with pkgs; [ git docker docker-compose sops rsync coreutils bash ];
+    path = with pkgs; [ git docker sops rsync coreutils bash ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -114,7 +124,7 @@
     requires = [ "docker.service" ];
     wantedBy = [ "multi-user.target" ];
 
-    path = with pkgs; [ git docker docker-compose sops rsync coreutils bash ];
+    path = with pkgs; [ git docker sops rsync coreutils bash ];
 
     serviceConfig = {
       Type = "oneshot";

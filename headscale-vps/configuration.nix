@@ -3,7 +3,7 @@
 {
   # System identity
   networking.hostName = "headscale-vps";
-  system.stateVersion = "24.11";
+  system.stateVersion = "25.11";
   time.timeZone = "UTC";
 
   # Boot configuration for Hetzner Cloud
@@ -52,7 +52,7 @@
   services.openssh = {
     enable = true;
     settings = {
-      PermitRootLogin = "prohibit-password";
+      PermitRootLogin = "no";
       PasswordAuthentication = false;
     };
   };
@@ -71,7 +71,6 @@
 
   # System packages
   environment.systemPackages = with pkgs; [
-    docker-compose
     git
     vim
     htop

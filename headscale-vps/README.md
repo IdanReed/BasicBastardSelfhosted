@@ -6,7 +6,7 @@ NixOS configuration for the Hetzner Cloud VPS running Headscale + Authentik.
 
 ```
 Hetzner VPS (headscale-vps)
-├── NixOS 24.11
+├── NixOS 25.11
 ├── Docker
 │   ├── Authentik (OIDC provider)
 │   │   ├── server
