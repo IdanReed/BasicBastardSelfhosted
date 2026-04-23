@@ -1,6 +1,6 @@
 services:
   paperless:
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.20
     container_name: paperless
     depends_on:
       - redis
@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:17
+    image: postgres:17.9-alpine
     container_name: paperless_db
     volumes:
       - /mnt/fast/paperless/pgdata:/var/lib/postgresql/data
@@ -43,19 +43,19 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7
+    image: redis:7.4-alpine
     container_name: paperless_redis
     volumes:
       - paperless_redisdata:/data
     restart: unless-stopped
 
   tika:
-    image: apache/tika:latest
+    image: apache/tika:3.3.0.0
     container_name: paperless_tika
     restart: unless-stopped
 
   gotenberg:
-    image: docker.io/gotenberg/gotenberg:8
+    image: gotenberg/gotenberg:8.31
     container_name: paperless_gotenberg
     command:
       - gotenberg

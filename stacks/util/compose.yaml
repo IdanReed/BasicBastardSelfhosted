@@ -1,13 +1,13 @@
 services:
   bentopdf:
-    image: ghcr.io/alam00000/bentopdf:latest
+    image: ghcr.io/alam00000/bentopdf:1.16.1
     container_name: bentopdf
     ports:
       - '10401:8080'
     restart: unless-stopped
 
   mazanoke:
-    image: ghcr.io/civilblur/mazanoke:latest
+    image: ghcr.io/civilblur/mazanoke:1.1.5
     container_name: mazanoke
     ports:
       - '10403:80'

@@ -1,6 +1,6 @@
 services:
   postgresql:
-    image: postgres:16-alpine
+    image: postgres:16.13-alpine
     container_name: authentik_db
     restart: unless-stopped
     healthcheck:
@@ -17,7 +17,7 @@ services:
       POSTGRES_DB: authentik
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: authentik_redis
     restart: unless-stopped
     command: --save 60 1 --loglevel warning

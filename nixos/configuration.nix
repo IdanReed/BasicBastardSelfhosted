@@ -52,7 +52,36 @@
     jq
     sops       # For decrypting stack secrets
     age        # For sops age encryption
+    cloud-utils # For growpart (online disk resize)
   ];
+
+  # grow-disk: Online resize after expanding disk in Proxmox
+  # Usage: sudo grow-disk srv|fast|slow
+  environment.shellAliases.grow-disk = ''
+    f() {
+      if [ "$(id -u)" -ne 0 ]; then echo "Run with sudo"; return 1; fi
+      case "$1" in
+        srv)  PART="/dev/disk/by-partlabel/state" ;;
+        fast) PART="/dev/disk/by-partlabel/fast" ;;
+        slow) PART="/dev/disk/by-partlabel/slow" ;;
+        *)    echo "Usage: grow-disk srv|fast|slow"; return 1 ;;
+      esac
+      DEV=$(readlink -f "$PART")
+      DISK=$(echo "$DEV" | sed 's/[0-9]*$//')
+      PARTNUM=$(echo "$DEV" | grep -o '[0-9]*$')
+      echo "==> Resizing $1: $DEV (disk: $DISK, partition: $PARTNUM)"
+      echo "Before: $(df -h "$DEV" | tail -1 | awk '{print $2}')"
+      echo "==> Rescanning disk..."
+      echo 1 > /sys/class/block/$(basename "$DISK")/device/rescan
+      sleep 1
+      echo "==> Growing partition..."
+      growpart "$DISK" "$PARTNUM"
+      echo "==> Growing filesystem..."
+      resize2fs "$DEV"
+      echo "After:  $(df -h "$DEV" | tail -1 | awk '{print $2}')"
+      echo "==> Done!"
+    }; f
+  '';
 
   # Tailscale
   services.tailscale.enable = true;
