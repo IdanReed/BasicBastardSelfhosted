@@ -52,27 +52,30 @@ nixos-de/
 
 ## Installation
 
-### 1. Create bootable USB
+### 1. Prepare the USB
 
-Download the NixOS minimal ISO from https://nixos.org/download/#nixos-iso.
+Use **Ventoy** so all three artifacts live on a single data partition (multi-ISO, no re-flashing per release): https://www.ventoy.net/en/doc_start.html (Windows GUI or `Ventoy2Disk.sh` on Linux). Install Ventoy onto the USB once, then drop the following onto its data partition:
 
-**Recommended: Ventoy** (multi-ISO, no re-flashing per release)
+| File | Source |
+|------|--------|
+| `nixos-minimal-*.iso` | https://nixos.org/download/#nixos-iso |
+| `BasicBastardSelfhosted.tar` | `git archive` snapshot of the flake repo (see below) |
+| `sops_age_key.txt` | The homelab age private key (your canonical copy) |
 
-1. Install Ventoy onto the USB once — https://www.ventoy.net/en/doc_start.html (Windows GUI or `Ventoy2Disk.sh` on Linux).
-2. Copy `nixos-minimal-*.iso` onto the USB's data partition as a regular file.
-3. Copy `sops_age_key.txt` (the homelab age private key) onto the same data partition — it will be injected during install in step 6. Remove the USB after install so the key only lives on the target disk.
-4. Boot the USB and pick the ISO from Ventoy's menu.
-
-If the live system fails to find the ISO mount, press `Ctrl-R` in the Ventoy menu to switch to GRUB2 boot mode.
-
-**Fallback: direct flash** (single ISO, wipes the USB)
+Build the repo archive from Git Bash on Windows, at the `BasicBastardSelfhosted/` repo root:
 
 ```bash
-# On Linux/macOS
-sudo dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress
-
-# Or use Rufus/Etcher on Windows
+USB=/e   # adjust to your Ventoy data partition's mount point
+git archive --format=tar -o "$USB/BasicBastardSelfhosted.tar" HEAD
 ```
+
+`git archive` produces a clean snapshot with LF line endings (avoiding CRLF breakage of `.sops.env`) and omits `.git/` and uncommitted changes.
+
+Boot the USB and pick the NixOS ISO from Ventoy's menu. If the live system fails to find the ISO mount, press `Ctrl-R` in the Ventoy menu to switch to GRUB2 boot mode.
+
+Remove the USB after install so the age key only lives on the target disk.
+
+**Fallback (no Ventoy, single ISO, wipes the USB)**: `dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress` on Linux/macOS, or Rufus/Etcher on Windows. You'll need a second USB or another transport for the repo archive and age key.
 
 ### 2. Tag the target drive from Windows (do this before booting the installer)
 
@@ -120,18 +123,20 @@ Edit `disko.nix` and set `targetDisk` to your drive's by-id path:
 targetDisk = "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456";
 ```
 
-### 5. Clone/copy config to installer
+### 5. Unpack the config from USB
 
 ```bash
-# Connect to network
-sudo systemctl start wpa_supplicant
-wpa_cli  # or use nmtui
+# Locate the Ventoy data partition
+lsblk -o NAME,LABEL,MOUNTPOINT
+USB=/run/media/<user>/<ventoy-label>   # adjust
 
-# Clone repo (or copy via USB)
-nix-shell -p git
-git clone https://github.com/YOUR_REPO/nixos-de /tmp/nixos-de
-cd /tmp/nixos-de
+# Extract the archive to a writable scratch dir (USB is exFAT, no unix perms)
+mkdir -p /tmp/repo
+tar -xf "$USB/BasicBastardSelfhosted.tar" -C /tmp/repo
+cd /tmp/repo/nixos-de
 ```
+
+No network or `git clone` needed — the archive is self-contained.
 
 ### 6. Run disko to partition (DESTRUCTIVE)
 
@@ -145,13 +150,9 @@ sudo nix --experimental-features "nix-command flakes" run github:nix-community/d
 
 ### 7. Inject the SOPS age key
 
-The desktop uses the same age key as the rest of the homelab (server VM, VPS, Windows workstation). Copy `sops_age_key.txt` from the Ventoy USB data partition into the target system before installing:
+The desktop uses the same age key as the rest of the homelab (server VM, VPS, Windows workstation). Copy `sops_age_key.txt` from the USB into the target system before installing (`$USB` from step 5):
 
 ```bash
-# Locate the USB data partition (Ventoy mounts it under /run/media/...)
-lsblk -o NAME,LABEL,MOUNTPOINT
-USB=/run/media/<user>/<ventoy-label>   # adjust
-
 sudo mkdir -p -m 700 /mnt/var/lib/sops-nix
 sudo cp "$USB/sops_age_key.txt" /mnt/var/lib/sops-nix/sops_age_key.txt
 sudo chmod 600 /mnt/var/lib/sops-nix/sops_age_key.txt
