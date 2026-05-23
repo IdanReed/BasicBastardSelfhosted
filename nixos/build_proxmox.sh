@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 VM_ID="${1:?Usage: $0 VM_ID}"
 VM_IP="10.0.0.3"
-AGE_KEY_FILE="../age-key.txt"
+AGE_KEY_FILE="../sops_age_key.txt"
 SNIPPETS_DIR="/var/lib/vz/snippets"
 
 # Check age key exists
@@ -32,7 +32,7 @@ echo "> Generating cloud-init userdata..."
 cat > "$SNIPPETS_DIR/nixos-userdata.yaml" << EOF
 #cloud-config
 write_files:
-  - path: /var/lib/sops-nix/key.txt
+  - path: /var/lib/sops-nix/sops_age_key.txt
     permissions: '0600'
     owner: root:root
     content: |

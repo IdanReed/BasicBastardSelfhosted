@@ -14,7 +14,7 @@ Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS performanc
 | Launcher | Fuzzel |
 | Bar | Waybar |
 | Notifications | Mako |
-| Editor | Nixvim |
+| Editor | Nixvim · VS Code · Zed |
 | File Manager | Yazi |
 | Browser | Zen |
 
@@ -29,10 +29,13 @@ nixos-de/
 ├── home.nix
 ├── test.sh / test-wsl.sh        # Config validation
 ├── FUTURE.md
+├── .sops.env.example            # SOPS secret template (encrypt copy as .sops.env)
 └── modules/
     ├── nixos/
     │   ├── nvidia.nix           # NVIDIA + CachyOS tuning
-    │   └── stylix.nix
+    │   ├── stylix.nix
+    │   ├── tailscale.nix        # Tailscale client (run `tailscale up` after install)
+    │   └── sops.nix             # sops-nix wiring (shared age key)
     └── home/
         ├── niri.nix
         ├── stylix.nix
@@ -42,14 +45,28 @@ nixos-de/
         ├── yazi.nix
         ├── waybar.nix
         ├── mako.nix
-        └── zen.nix
+        ├── zen.nix
+        ├── vscode.nix
+        └── zed.nix
 ```
 
 ## Installation
 
 ### 1. Create bootable USB
 
-Download NixOS minimal ISO and flash to USB:
+Download the NixOS minimal ISO from https://nixos.org/download/#nixos-iso.
+
+**Recommended: Ventoy** (multi-ISO, no re-flashing per release)
+
+1. Install Ventoy onto the USB once — https://www.ventoy.net/en/doc_start.html (Windows GUI or `Ventoy2Disk.sh` on Linux).
+2. Copy `nixos-minimal-*.iso` onto the USB's data partition as a regular file.
+3. Copy `sops_age_key.txt` (the homelab age private key) onto the same data partition — it will be injected during install in step 6. Remove the USB after install so the key only lives on the target disk.
+4. Boot the USB and pick the ISO from Ventoy's menu.
+
+If the live system fails to find the ISO mount, press `Ctrl-R` in the Ventoy menu to switch to GRUB2 boot mode.
+
+**Fallback: direct flash** (single ISO, wipes the USB)
+
 ```bash
 # On Linux/macOS
 sudo dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress
@@ -103,7 +120,30 @@ sudo nix --experimental-features "nix-command flakes" run github:nix-community/d
 sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko ./disko.nix
 ```
 
-### 6. Install NixOS
+### 6. Inject the SOPS age key
+
+The desktop uses the same age key as the rest of the homelab (server VM, VPS, Windows workstation). Copy `sops_age_key.txt` from the Ventoy USB data partition into the target system before installing:
+
+```bash
+# Locate the USB data partition (Ventoy mounts it under /run/media/...)
+lsblk -o NAME,LABEL,MOUNTPOINT
+USB=/run/media/<user>/<ventoy-label>   # adjust
+
+sudo mkdir -p -m 700 /mnt/var/lib/sops-nix
+sudo cp "$USB/sops_age_key.txt" /mnt/var/lib/sops-nix/sops_age_key.txt
+sudo chmod 600 /mnt/var/lib/sops-nix/sops_age_key.txt
+sudo chown 0:0 /mnt/var/lib/sops-nix/sops_age_key.txt
+```
+
+If you'd rather not put the key on the USB, paste it from your password manager:
+```bash
+sudo install -m 700 -d /mnt/var/lib/sops-nix
+sudo install -m 600 /dev/stdin /mnt/var/lib/sops-nix/sops_age_key.txt <<'EOF'
+AGE-SECRET-KEY-...
+EOF
+```
+
+### 7. Install NixOS
 
 ```bash
 # Mount is automatic after disko, verify:
@@ -112,14 +152,14 @@ mount | grep /mnt
 # Install
 sudo nixos-install --flake .#desktop --no-root-passwd
 
-# Set user password
+# Set user password (skip if USER_PASSWORD_HASH is wired up in .sops.env)
 sudo nixos-enter --root /mnt -c 'passwd idan'
 
-# Reboot
+# Reboot (remove the USB)
 sudo reboot
 ```
 
-### 7. Post-install: Apply Home Manager
+### 8. Post-install: Apply Home Manager
 
 After first boot, login and run:
 ```bash
@@ -127,7 +167,7 @@ cd /path/to/nixos-de  # or clone again
 home-manager switch --flake .#idan
 ```
 
-### 8. Configure monitors
+### 9. Configure monitors
 
 ```bash
 # Find monitor names
@@ -213,3 +253,5 @@ Performance tuning sections are marked with `# === CachyOS Performance ===` in c
 | `gd` | Go to definition |
 | `K` | Hover |
 | `<leader>gg` | LazyGit |
+
+https://public-fate-bird-aware.taile6bbb.ts.net/#/vault

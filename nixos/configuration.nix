@@ -91,7 +91,7 @@
     defaultSopsFile = ./.sops.env;
     defaultSopsFormat = "dotenv";
 
-    age.keyFile = "/var/lib/sops-nix/key.txt";
+    age.keyFile = "/var/lib/sops-nix/sops_age_key.txt";
 
     secrets = {
       TAILSCALE_AUTH_KEY = { };
@@ -142,7 +142,7 @@
     };
 
     script = ''
-      export SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt
+      export SOPS_AGE_KEY_FILE=/var/lib/sops-nix/sops_age_key.txt
 
       # Decrypt arcane secrets
       if [ -f /srv/arcane/.sops.env ]; then

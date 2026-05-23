@@ -33,9 +33,14 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, zen-browser, disko, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, zen-browser, disko, sops-nix, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -54,8 +59,11 @@
           disko.nixosModules.disko
           stylix.nixosModules.stylix
           niri.nixosModules.niri
+          sops-nix.nixosModules.sops
           ./modules/nixos/nvidia.nix
           ./modules/nixos/stylix.nix
+          ./modules/nixos/tailscale.nix
+          ./modules/nixos/sops.nix
         ];
       };
 
@@ -76,6 +84,8 @@
           ./modules/home/waybar.nix
           ./modules/home/mako.nix
           ./modules/home/zen.nix
+          ./modules/home/vscode.nix
+          ./modules/home/zed.nix
         ];
       };
     };

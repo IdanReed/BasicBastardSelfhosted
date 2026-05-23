@@ -86,7 +86,7 @@
   sops = {
     defaultSopsFile = ./.sops.env;
     defaultSopsFormat = "dotenv";
-    age.keyFile = "/var/lib/sops-nix/key.txt";
+    age.keyFile = "/var/lib/sops-nix/sops_age_key.txt";
 
     secrets = {
       TAILSCALE_AUTH_KEY = { };

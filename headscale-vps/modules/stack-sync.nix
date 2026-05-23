@@ -25,7 +25,7 @@ in
       REPO_URL="${cfg.repoUrl}"
       REPO_DIR="/srv/repo/BasicBastardSelfhosted"
       STACKS_DIR="/srv/stacks"
-      export SOPS_AGE_KEY_FILE="/var/lib/sops-nix/key.txt"
+      export SOPS_AGE_KEY_FILE="/var/lib/sops-nix/sops_age_key.txt"
 
       # Clone repo if not exists
       if [ ! -d "$REPO_DIR/.git" ]; then

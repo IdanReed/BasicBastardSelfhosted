@@ -6,7 +6,7 @@
 # Prerequisites:
 #   1. Create Hetzner Cloud VPS (Ubuntu 22.04, add your SSH key)
 #   2. Note the public IP address
-#   3. Ensure age-key.txt exists in parent directory
+#   3. Ensure sops_age_key.txt exists in parent directory
 #
 # Usage: ./deploy.sh <VPS_IP>
 #
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VPS_IP="${1:?Usage: $0 <VPS_IP>}"
-AGE_KEY_FILE="../age-key.txt"
+AGE_KEY_FILE="../sops_age_key.txt"
 EXTRA_FILES_DIR=$(mktemp -d)
 trap "rm -rf $EXTRA_FILES_DIR" EXIT
 
@@ -61,9 +61,9 @@ echo "> SSH connection OK"
 # Create extra-files directory structure
 echo "> Preparing AGE key for injection..."
 mkdir -p "$EXTRA_FILES_DIR/var/lib/sops-nix"
-cp "$AGE_KEY_FILE" "$EXTRA_FILES_DIR/var/lib/sops-nix/key.txt"
+cp "$AGE_KEY_FILE" "$EXTRA_FILES_DIR/var/lib/sops-nix/sops_age_key.txt"
 chmod 700 "$EXTRA_FILES_DIR/var/lib/sops-nix"
-chmod 600 "$EXTRA_FILES_DIR/var/lib/sops-nix/key.txt"
+chmod 600 "$EXTRA_FILES_DIR/var/lib/sops-nix/sops_age_key.txt"
 
 # Check if nix is available
 if ! command -v nix &>/dev/null; then
@@ -98,7 +98,7 @@ echo ""
 echo "  ssh idan@$VPS_IP"
 echo ""
 echo "Verify AGE key is in place:"
-echo "  sudo ls -la /var/lib/sops-nix/key.txt"
+echo "  sudo ls -la /var/lib/sops-nix/sops_age_key.txt"
 echo ""
 echo "Check stack-sync status:"
 echo "  sudo systemctl status stack-sync"

@@ -265,8 +265,8 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=/bin/bash -c 'mkdir -p /srv/sops && printf "%%s\n" "${SOPS_AGE_KEY}" > /srv/sops/age-key.txt'
-        ExecStartPost=/bin/chmod 600 /srv/sops/age-key.txt
+        ExecStart=/bin/bash -c 'mkdir -p /srv/sops && printf "%%s\n" "${SOPS_AGE_KEY}" > /srv/sops/sops_age_key.txt'
+        ExecStartPost=/bin/chmod 600 /srv/sops/sops_age_key.txt
 
         [Install]
         WantedBy=multi-user.target
@@ -282,7 +282,7 @@ systemd:
         [Service]
         Type=oneshot
         RemainAfterExit=yes
-        ExecStart=/bin/bash -c 'for f in /srv/stacks/*/.sops.env; do [ -f "$f" ] && SOPS_AGE_KEY_FILE=/srv/sops/age-key.txt /opt/bin/sops -d "$f" > "$(dirname "$f")/.env"; done'
+        ExecStart=/bin/bash -c 'for f in /srv/stacks/*/.sops.env; do [ -f "$f" ] && SOPS_AGE_KEY_FILE=/srv/sops/sops_age_key.txt /opt/bin/sops -d "$f" > "$(dirname "$f")/.env"; done'
 
         [Install]
         WantedBy=multi-user.target

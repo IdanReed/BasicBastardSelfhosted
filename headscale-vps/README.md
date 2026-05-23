@@ -23,7 +23,7 @@ Hetzner VPS (headscale-vps)
 
 1. **Hetzner Cloud account** with SSH key configured
 2. **Nix installed** locally with flakes enabled
-3. **AGE key** at `../age-key.txt` (shared with services-vm)
+3. **AGE key** at `../sops_age_key.txt` (shared with services-vm)
 
 ## Deployment
 
@@ -74,7 +74,7 @@ This will:
 ssh idan@<VPS_IP>
 
 # Check AGE key
-sudo ls -la /var/lib/sops-nix/key.txt
+sudo ls -la /var/lib/sops-nix/sops_age_key.txt
 
 # Check stack-sync
 sudo systemctl status stack-sync
@@ -108,7 +108,7 @@ Secrets are encrypted with SOPS + AGE:
 To edit secrets:
 
 ```bash
-export SOPS_AGE_KEY_FILE=../age-key.txt
+export SOPS_AGE_KEY_FILE=../sops_age_key.txt
 sops stacks/authentik/.sops.env
 ```
 
@@ -121,7 +121,7 @@ sops stacks/authentik/.sops.env
 | Deploy script | `nixos/build_proxmox.sh` | `headscale-vps/deploy.sh` |
 | Rebuild command | `.#services-vm` | `.#headscale-vps` |
 
-Both use the same AGE key (`../age-key.txt`) and SOPS configuration.
+Both use the same AGE key (`../sops_age_key.txt`) and SOPS configuration.
 
 ## Files
 

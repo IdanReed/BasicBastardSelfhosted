@@ -5,7 +5,7 @@
 **/.env
 
 # Age private key (NEVER commit)
-age-key.txt
+sops_age_key.txt
 
 # Nix build outputs
 result
