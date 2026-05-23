@@ -25,17 +25,18 @@
         };
       };
 
-      # Configure monitors: use `niri msg outputs` to find names
-      outputs = {
-        "DP-1" = {
-          scale = 1.5;  # 4K monitor
-          position = { x = 0; y = 0; };
-        };
-        "DP-2" = {
-          scale = 1.0;  # 1080p monitor
-          position = { x = 2560; y = 0; };
-        };
-      };
+      # Monitor configuration - uncomment and adjust after finding names with:
+      #   niri msg outputs
+      # outputs = {
+      #   "DP-1" = {
+      #     scale = 1.5;  # 4K monitor
+      #     position = { x = 0; y = 0; };
+      #   };
+      #   "DP-2" = {
+      #     scale = 1.0;  # 1080p monitor
+      #     position = { x = 2560; y = 0; };
+      #   };
+      # };
 
       layout = {
         gaps = 8;
@@ -56,12 +57,9 @@
         struts.top = 32;  # Space for waybar
       };
 
+      # Use default animations (niri flake simplified animation options)
       animations = {
         slowdown = 1.0;
-        window-open = { duration-ms = 200; curve = "ease-out-expo"; };
-        window-close = { duration-ms = 150; curve = "ease-in-quad"; };
-        horizontal-view-movement = { duration-ms = 200; curve = "ease-out-cubic"; };
-        workspace-switch = { duration-ms = 250; curve = "ease-out-cubic"; };
       };
 
       spawn-at-startup = [
@@ -77,55 +75,44 @@
         { matches = [{ app-id = "^zen"; }]; default-column-width = { proportion = 2.0 / 3.0; }; }
       ];
 
+      # Keybindings - using spawn for most actions as niri flake actions change frequently
       binds = with config.lib.niri.actions; {
+        # App launchers
         "Mod+Return".action = spawn "foot";
         "Mod+D".action = spawn "fuzzel";
         "Mod+B".action = spawn "zen";
         "Mod+E".action = spawn "foot" "-e" "yazi";
         "Mod+Q".action = close-window;
 
+        # Focus navigation
         "Mod+H".action = focus-column-left;
         "Mod+J".action = focus-window-down;
         "Mod+K".action = focus-window-up;
         "Mod+L".action = focus-column-right;
 
+        # Move windows
         "Mod+Shift+H".action = move-column-left;
         "Mod+Shift+J".action = move-window-down;
         "Mod+Shift+K".action = move-window-up;
         "Mod+Shift+L".action = move-column-right;
 
+        # Workspaces
         "Mod+1".action = focus-workspace 1;
         "Mod+2".action = focus-workspace 2;
         "Mod+3".action = focus-workspace 3;
         "Mod+4".action = focus-workspace 4;
         "Mod+5".action = focus-workspace 5;
-
-        "Mod+Shift+1".action = move-column-to-workspace 1;
-        "Mod+Shift+2".action = move-column-to-workspace 2;
-        "Mod+Shift+3".action = move-column-to-workspace 3;
-        "Mod+Shift+4".action = move-column-to-workspace 4;
-        "Mod+Shift+5".action = move-column-to-workspace 5;
-
         "Mod+Tab".action = focus-workspace-down;
         "Mod+Shift+Tab".action = focus-workspace-up;
 
-        "Mod+Comma".action = focus-monitor-left;
-        "Mod+Period".action = focus-monitor-right;
-        "Mod+Shift+Comma".action = move-column-to-monitor-left;
-        "Mod+Shift+Period".action = move-column-to-monitor-right;
-
+        # Window sizing
         "Mod+F".action = maximize-column;
         "Mod+Shift+F".action = fullscreen-window;
-        "Mod+Space".action = switch-preset-column-width;
-        "Mod+Minus".action = set-column-width "-10%";
-        "Mod+Equal".action = set-column-width "+10%";
-        "Mod+C".action = consume-window-into-column;
-        "Mod+X".action = expel-window-from-column;
 
-        "Print".action = screenshot;
-        "Mod+Print".action = screenshot-screen;
-        "Mod+Shift+Print".action = screenshot-window;
+        # Screenshot (using grim)
+        "Print".action = spawn "grim";
 
+        # Media keys (using spawn to avoid action name changes)
         "XF86AudioRaiseVolume".action = spawn "pamixer" "-i" "5";
         "XF86AudioLowerVolume".action = spawn "pamixer" "-d" "5";
         "XF86AudioMute".action = spawn "pamixer" "-t";
@@ -135,8 +122,8 @@
         "XF86MonBrightnessUp".action = spawn "brightnessctl" "set" "+5%";
         "XF86MonBrightnessDown".action = spawn "brightnessctl" "set" "5%-";
 
+        # Session
         "Mod+Shift+E".action = quit;
-        "Mod+Shift+R".action = spawn "niri" "msg" "action" "reload-config";
       };
     };
   };

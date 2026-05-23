@@ -28,9 +28,14 @@
       url = "github:0xc000022070/zen-browser-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, zen-browser, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, zen-browser, disko, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -45,6 +50,8 @@
         modules = [
           ./configuration.nix
           ./hardware-configuration.nix
+          ./disko.nix
+          disko.nixosModules.disko
           stylix.nixosModules.stylix
           niri.nixosModules.niri
           ./modules/nixos/nvidia.nix

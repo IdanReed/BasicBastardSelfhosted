@@ -31,6 +31,39 @@
       efi.canTouchEfiVariables = true;
     };
     kernelPackages = pkgs.linuxPackages_latest;
+
+    # === CachyOS Performance: Kernel Parameters ===
+    kernelParams = [
+      "amd_pstate=active"  # AMD P-State EPP driver for Zen 4
+      "zswap.enabled=0"    # Disable zswap (conflicts with ZRAM)
+    ];
+
+    # === CachyOS Performance: Sysctl Tuning ===
+    kernel.sysctl = {
+      # Virtual memory - optimized for ZRAM
+      "vm.swappiness" = 150;                  # Prefer ZRAM over cache eviction
+      "vm.vfs_cache_pressure" = 50;           # Retain dentries/inodes longer
+      "vm.dirty_bytes" = 268435456;           # 256MB - start writeback sooner
+      "vm.dirty_background_bytes" = 67108864; # 64MB - background writeback threshold
+      "vm.dirty_writeback_centisecs" = 1500;
+      "vm.page-cluster" = 0;                  # No swap readahead (ZRAM)
+
+      # Stability
+      "kernel.nmi_watchdog" = 0;              # Disable - saves perf counter
+      "kernel.printk" = "3 3 3 3";            # Suppress kernel console messages
+
+      # File descriptors
+      "fs.file-max" = 2097152;
+
+      # Network
+      "net.core.netdev_max_backlog" = 16384;
+    };
+  };
+
+  # === CachyOS Performance: ZRAM Swap ===
+  zramSwap = {
+    enable = true;
+    algorithm = "zstd";
   };
 
   networking = {
@@ -85,6 +118,7 @@
     wireplumber.enable = true;
   };
 
+  # Fonts managed by Stylix (modules/nixos/stylix.nix)
   fonts = {
     enableDefaultPackages = true;
     packages = with pkgs; [
@@ -92,14 +126,8 @@
       nerd-fonts.fira-code
       noto-fonts
       noto-fonts-cjk-sans
-      noto-fonts-emoji
+      noto-fonts-color-emoji
     ];
-    fontconfig.defaultFonts = {
-      monospace = [ "JetBrainsMono Nerd Font" ];
-      sansSerif = [ "Noto Sans" ];
-      serif = [ "Noto Serif" ];
-      emoji = [ "Noto Color Emoji" ];
-    };
   };
 
   environment.systemPackages = with pkgs; [
@@ -110,4 +138,49 @@
 
   security.polkit.enable = true;
   nixpkgs.config.allowUnfree = true;
+
+  # === CachyOS Performance: I/O Schedulers ===
+  services.udev.extraRules = ''
+    # HDD - use BFQ for fair queuing
+    ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
+    # SATA SSD - use mq-deadline for low latency
+    ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"
+    # NVMe - no scheduler (NVMe has its own efficient queuing)
+    ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"
+    # SATA link power management - max performance
+    ACTION=="add", SUBSYSTEM=="scsi_host", KERNEL=="host*", ATTR{link_power_management_policy}="max_performance"
+  '';
+
+  # === CachyOS Performance: Process Prioritization ===
+  services.ananicy = {
+    enable = true;
+    package = pkgs.ananicy-cpp;
+    rulesProvider = pkgs.ananicy-rules-cachyos;
+  };
+
+  # === CachyOS Performance: Systemd Tuning ===
+  systemd.settings.Manager = {
+    DefaultTimeoutStartSec = "15s";
+    DefaultTimeoutStopSec = "10s";
+    DefaultLimitNOFILE = "2048:2097152";
+  };
+
+  systemd.user.extraConfig = ''
+    DefaultTimeoutStartSec=15s
+    DefaultTimeoutStopSec=10s
+    DefaultLimitNOFILE=1024:1048576
+  '';
+
+  services.journald.extraConfig = ''
+    SystemMaxUse=50M
+  '';
+
+  # === CachyOS Performance: NTP Servers ===
+  services.timesyncd = {
+    enable = true;
+    servers = [
+      "time.cloudflare.com"
+      "time.google.com"
+    ];
+  };
 }

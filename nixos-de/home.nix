@@ -47,12 +47,7 @@
       nrs = "sudo nixos-rebuild switch --flake .#desktop";
       hms = "home-manager switch --flake .#idan";
     };
-
-    initExtra = ''
-      if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-        exec niri-session
-      fi
-    '';
+    # Note: greetd handles session startup, no TTY auto-login needed
   };
 
   programs.starship = {
