@@ -74,30 +74,53 @@ sudo dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress
 # Or use Rufus/Etcher on Windows
 ```
 
-### 2. Boot installer and identify target drive
+### 2. Tag the target drive from Windows (do this before booting the installer)
 
-```bash
-# List drives with sizes and models
-lsblk -d -o NAME,SIZE,MODEL
+If you have multiple identical drives, model/size won't distinguish them. Add a small labeled partition from Windows so the target is unmistakable in the live ISO.
 
-# Get stable by-id paths (includes model + serial number)
-ls -la /dev/disk/by-id/ | grep -v part
+In **Disk Management** (`Win+X` → Disk Management):
 
-# Example output:
-# nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456 -> ../../nvme0n1  <- NixOS target
-# nvme-WD_BLACK_SN850X_1TB_12345678           -> ../../nvme1n1  <- Windows (DO NOT USE)
+1. Find the target physical disk in the lower pane (confirm by size + disk number).
+2. Right-click any existing partition on that drive → **Shrink Volume…** → enter `1024` MB → **Shrink**. (Or if the drive's contents are disposable, **Delete Volume…** instead.)
+3. Right-click the resulting **Unallocated** block → **New Simple Volume…** → Next.
+4. Size: leave at max → Next.
+5. **Do not assign a drive letter or path** → Next.
+6. Format: **exFAT**, volume label `NIXOS-INSTALL`, quick format → Next → Finish.
+
+Verify in PowerShell:
+```powershell
+Get-Volume | Where-Object FileSystemLabel -eq 'NIXOS-INSTALL'
 ```
 
-**Identify your target drive by model/size. Do NOT use the Windows drive.**
+disko wipes the entire disk during install, so the label is throwaway.
 
-### 3. Update disko.nix with your drive
+### 3. Boot installer and identify target drive
+
+```bash
+# The labeled partition makes the target unambiguous
+lsblk -o NAME,SIZE,MODEL,LABEL,SERIAL
+
+# Example output (target = the disk containing the NIXOS-INSTALL partition):
+# nvme0n1     2T  Samsung SSD 990 PRO 2TB                  S6Z2NF0W123456
+# ├─nvme0n1p1 1G                          NIXOS-INSTALL    <- target marker
+# └─nvme0n1p2 1.9T                        Data
+# nvme1n1     2T  Samsung SSD 990 PRO 2TB                  S6Z2NF0WABCDEF
+# └─nvme1n1p1 2T                          Windows          <- DO NOT USE
+
+# Get the stable by-id path for the target disk
+ls -la /dev/disk/by-id/ | grep -v part | grep <SERIAL>
+```
+
+**Confirm the target by the `NIXOS-INSTALL` label. Do NOT use the Windows drive.**
+
+### 4. Update disko.nix with your drive
 
 Edit `disko.nix` and set `targetDisk` to your drive's by-id path:
 ```nix
 targetDisk = "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456";
 ```
 
-### 4. Clone/copy config to installer
+### 5. Clone/copy config to installer
 
 ```bash
 # Connect to network
@@ -110,7 +133,7 @@ git clone https://github.com/YOUR_REPO/nixos-de /tmp/nixos-de
 cd /tmp/nixos-de
 ```
 
-### 5. Run disko to partition (DESTRUCTIVE)
+### 6. Run disko to partition (DESTRUCTIVE)
 
 ```bash
 # Preview what disko will do (safe)
@@ -120,7 +143,7 @@ sudo nix --experimental-features "nix-command flakes" run github:nix-community/d
 sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko ./disko.nix
 ```
 
-### 6. Inject the SOPS age key
+### 7. Inject the SOPS age key
 
 The desktop uses the same age key as the rest of the homelab (server VM, VPS, Windows workstation). Copy `sops_age_key.txt` from the Ventoy USB data partition into the target system before installing:
 
@@ -143,7 +166,7 @@ AGE-SECRET-KEY-...
 EOF
 ```
 
-### 7. Install NixOS
+### 8. Install NixOS
 
 ```bash
 # Mount is automatic after disko, verify:
@@ -159,7 +182,7 @@ sudo nixos-enter --root /mnt -c 'passwd idan'
 sudo reboot
 ```
 
-### 8. Post-install: Apply Home Manager
+### 9. Post-install: Apply Home Manager
 
 After first boot, login and run:
 ```bash
@@ -167,7 +190,7 @@ cd /path/to/nixos-de  # or clone again
 home-manager switch --flake .#idan
 ```
 
-### 9. Configure monitors
+### 10. Configure monitors
 
 ```bash
 # Find monitor names
