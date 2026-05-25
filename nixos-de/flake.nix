@@ -57,11 +57,9 @@
           ./hardware-configuration.nix
           ./disko.nix
           disko.nixosModules.disko
-          stylix.nixosModules.stylix
           niri.nixosModules.niri
           sops-nix.nixosModules.sops
           ./modules/nixos/nvidia.nix
-          ./modules/nixos/stylix.nix
           ./modules/nixos/tailscale.nix
           ./modules/nixos/sops.nix
         ];

@@ -27,7 +27,6 @@
 
       url = {
         launch = "xdg-open \${url}";
-        protocols = "http, https, ftp, ftps, file, gemini, gopher";
       };
 
       key-bindings = {

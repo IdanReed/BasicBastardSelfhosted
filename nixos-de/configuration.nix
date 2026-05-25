@@ -118,7 +118,6 @@
     wireplumber.enable = true;
   };
 
-  # Fonts managed by Stylix (modules/nixos/stylix.nix)
   fonts = {
     enableDefaultPackages = true;
     packages = with pkgs; [
