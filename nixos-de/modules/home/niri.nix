@@ -54,29 +54,45 @@
           inactive.color = "#665c54";
         };
         border.enable = false;
-        struts.top = 32;  # Space for waybar
+        struts.top = 32; # Space for waybar
       };
 
       # Use default animations (niri flake simplified animation options)
-      animations = {
-        slowdown = 1.0;
-      };
+      animations = { slowdown = 1.0; };
 
       spawn-at-startup = [
         { command = [ "waybar" ]; }
         { command = [ "mako" ]; }
         { command = [ "${pkgs.xwayland-satellite}/bin/xwayland-satellite" ]; }
-        { command = [ "${pkgs.swaybg}/bin/swaybg" "-m" "fill" "-i" "${config.stylix.image}" ]; }
+        {
+          command = [
+            "${pkgs.swaybg}/bin/swaybg"
+            "-m"
+            "fill"
+            "-i"
+            "${config.stylix.image}"
+          ];
+        }
       ];
 
       window-rules = [
-        { matches = [{ app-id = "^pavucontrol$"; }]; open-floating = true; }
-        { matches = [{ app-id = "^nm-connection-editor$"; }]; open-floating = true; }
-        { matches = [{ app-id = "^zen"; }]; default-column-width = { proportion = 2.0 / 3.0; }; }
+        {
+          matches = [{ app-id = "^pavucontrol$"; }];
+          open-floating = true;
+        }
+        {
+          matches = [{ app-id = "^nm-connection-editor$"; }];
+          open-floating = true;
+        }
+        {
+          matches = [{ app-id = "^zen"; }];
+          default-column-width = { proportion = 2.0 / 3.0; };
+        }
       ];
 
       # Keybindings - using spawn for most actions as niri flake actions change frequently
       binds = with config.lib.niri.actions; {
+        "Mod+Shift+Slash".action = show-hotkey-overlay;
         # App launchers
         "Mod+Return".action = spawn "foot";
         "Mod+D".action = spawn "fuzzel";

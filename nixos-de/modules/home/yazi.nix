@@ -4,6 +4,7 @@
   programs.yazi = {
     enable = true;
     enableZshIntegration = true;
+    shellWrapperName = "yy";
 
     settings = {
       manager = {
@@ -74,5 +75,5 @@
     };
   };
 
-  home.packages = with pkgs; [ unar ffmpegthumbnailer poppler_utils fd ripgrep ];
+  home.packages = with pkgs; [ unar ffmpegthumbnailer poppler-utils fd ripgrep ];
 }

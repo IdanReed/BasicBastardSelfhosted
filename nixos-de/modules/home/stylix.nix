@@ -8,7 +8,7 @@
 
     image = pkgs.fetchurl {
       url = "https://raw.githubusercontent.com/AngelJumbo/gruvbox-wallpapers/main/wallpapers/minimalistic/gruvbox_grid.png";
-      sha256 = "sha256-kWLzgLVq+yISnpI/1mBb7HKOJCfSR9lHwlOB2AXyPIg=";
+      sha256 = "sha256-b7hN7xV/0a/7NVB3jLimPsaIO+ZLXGym7Hmvu5UsPoI=";
     };
 
     fonts = {
@@ -25,7 +25,7 @@
         name = "Noto Serif";
       };
       emoji = {
-        package = pkgs.noto-fonts-emoji;
+        package = pkgs.noto-fonts-color-emoji;
         name = "Noto Color Emoji";
       };
       sizes = {
@@ -64,7 +64,10 @@
   gtk = {
     enable = true;
     gtk3.extraConfig.gtk-application-prefer-dark-theme = true;
-    gtk4.extraConfig.gtk-application-prefer-dark-theme = true;
+    gtk4 = {
+      extraConfig.gtk-application-prefer-dark-theme = true;
+      theme = config.gtk.theme;
+    };
   };
 
   qt = {

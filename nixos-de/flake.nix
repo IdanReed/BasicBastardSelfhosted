@@ -72,8 +72,8 @@
         extraSpecialArgs = specialArgs;
         modules = [
           ./home.nix
-          stylix.homeManagerModules.stylix
-          nixvim.homeManagerModules.nixvim
+          stylix.homeModules.stylix
+          nixvim.homeModules.nixvim
           niri.homeModules.niri
           ./modules/home/niri.nix
           ./modules/home/stylix.nix

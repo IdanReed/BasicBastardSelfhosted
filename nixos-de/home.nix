@@ -9,11 +9,14 @@
 
   programs.home-manager.enable = true;
 
+  wayland.windowManager.hyprland.configType = "hyprlang";
+
   xdg = {
     enable = true;
     userDirs = {
       enable = true;
       createDirectories = true;
+      setSessionVariables = true;
       desktop = "${config.home.homeDirectory}/desktop";
       documents = "${config.home.homeDirectory}/documents";
       download = "${config.home.homeDirectory}/downloads";
@@ -25,6 +28,7 @@
 
   programs.zsh = {
     enable = true;
+    dotDir = config.home.homeDirectory;
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
     enableCompletion = true;
@@ -69,21 +73,23 @@
 
   programs.git = {
     enable = true;
-    userName = "Idan Reed";
-    userEmail = "idan@idanreed.com";
-    extraConfig = {
+    settings = {
+      user.name = "Idan Reed";
+      user.email = "idan@idanreed.com";
       init.defaultBranch = "main";
       pull.rebase = true;
       push.autoSetupRemote = true;
       core.editor = "nvim";
     };
-    delta = {
-      enable = true;
-      options = {
-        navigate = true;
-        line-numbers = true;
-        syntax-theme = "gruvbox-dark";
-      };
+  };
+
+  programs.delta = {
+    enable = true;
+    enableGitIntegration = true;
+    options = {
+      navigate = true;
+      line-numbers = true;
+      syntax-theme = "gruvbox-dark";
     };
   };
 
@@ -92,7 +98,7 @@
     eza bat fzf zoxide lazygit tree
     mpv imv
     brightnessctl playerctl pamixer
-    inputs.zen-browser.packages.${pkgs.system}.default
+    inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default
   ];
 
   programs.fzf = {
@@ -110,10 +116,5 @@
     enableZshIntegration = true;
     git = true;
     icons = "auto";
-  };
-
-  programs.bat = {
-    enable = true;
-    config.theme = "gruvbox-dark";
   };
 }

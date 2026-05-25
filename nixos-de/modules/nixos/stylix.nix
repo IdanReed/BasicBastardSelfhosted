@@ -8,7 +8,7 @@
 
     image = pkgs.fetchurl {
       url = "https://raw.githubusercontent.com/AngelJumbo/gruvbox-wallpapers/main/wallpapers/minimalistic/gruvbox_grid.png";
-      sha256 = "sha256-kWLzgLVq+yISnpI/1mBb7HKOJCfSR9lHwlOB2AXyPIg=";
+      sha256 = "sha256-b7Hn7xV/0a/7NVB3jLimPsaIO+ZLXGym7Hmvu5UsPoI=";
     };
 
     fonts = {

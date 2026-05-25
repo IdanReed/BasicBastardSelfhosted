@@ -93,8 +93,10 @@
 
       neo-tree = {
         enable = true;
-        closeIfLastWindow = true;
-        window.width = 30;
+        settings = {
+          close_if_last_window = true;
+          window.width = 30;
+        };
       };
 
       which-key = {
@@ -209,7 +211,7 @@
     };
 
     extraPackages = with pkgs; [
-      stylua black nodePackages.prettier nixfmt-classic rustfmt
+      stylua black pkgs.prettier nixfmt rustfmt
       ripgrep fd
     ];
   };
