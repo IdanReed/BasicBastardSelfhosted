@@ -4,6 +4,8 @@
   programs.niri = {
     package = inputs.niri.packages.${pkgs.stdenv.hostPlatform.system}.niri-unstable;
     settings = {
+      prefer-no-csd = true;
+
       input = {
         keyboard = {
           xkb.layout = "us";
@@ -55,25 +57,17 @@
           inactive.color = "#665c54";
         };
         border.enable = false;
-        struts.top = 32; # Space for waybar
       };
 
       # Use default animations (niri flake simplified animation options)
       animations = { slowdown = 1.0; };
 
       spawn-at-startup = [
-        { command = [ "waybar" ]; }
-        { command = [ "mako" ]; }
         { command = [ "${pkgs.xwayland-satellite}/bin/xwayland-satellite" ]; }
-        {
-          command = [
-            "${pkgs.swaybg}/bin/swaybg"
-            "-m"
-            "fill"
-            "-i"
-            "${config.stylix.image}"
-          ];
-        }
+        # DISPLAY=:0 is forced because quickshell (noctalia's runtime) exits on
+        # an empty DISPLAY, and there's a race with xwayland-satellite at niri
+        # startup. xwayland-satellite always claims :0 on this machine.
+        { command = [ "sh" "-c" "DISPLAY=:0 exec noctalia-shell" ]; }
       ];
 
       window-rules = [
@@ -96,7 +90,7 @@
 
         # App launchers
         "Mod+Return" = { action = spawn "foot"; hotkey-overlay.title = "Terminal (foot)"; };
-        "Mod+D"      = { action = spawn "fuzzel"; hotkey-overlay.title = "App launcher (fuzzel)"; };
+        "Mod+D"      = { action = spawn "noctalia-shell" "ipc" "call" "launcher" "toggle"; hotkey-overlay.title = "App launcher (noctalia)"; };
         "Mod+B"      = { action = spawn "zen"; hotkey-overlay.title = "Browser (zen)"; };
         "Mod+E"      = { action = spawn "foot" "-e" "yazi"; hotkey-overlay.title = "File manager (yazi)"; };
         "Mod+Q"      = { action = close-window; hotkey-overlay.title = "Close window"; };

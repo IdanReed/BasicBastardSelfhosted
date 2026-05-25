@@ -5,6 +5,10 @@
     username = "idan";
     homeDirectory = "/home/idan";
     stateVersion = "24.11";
+
+    sessionVariables = {
+      TERMINAL = "foot";
+    };
   };
 
   programs.home-manager.enable = true;
@@ -42,14 +46,20 @@
     };
 
     shellAliases = {
-      ll = "ls -la";
-      la = "ls -A";
       ".." = "cd ..";
       "..." = "cd ../..";
       g = "git";
+      gs = "git status";
+      gd = "git diff";
+      gl = "git log --oneline -20";
+      lg = "lazygit";
       v = "nvim";
       nrs = "sudo nixos-rebuild switch --flake .#desktop";
+      nrb = "sudo nixos-rebuild build --flake .#desktop";
       hms = "home-manager switch --flake .#idan";
+      hmb = "home-manager build --flake .#idan";
+      nfu = "nix flake update";
+      ngc = "sudo nix-collect-garbage -d";
     };
     # Note: greetd handles session startup, no TTY auto-login needed
   };

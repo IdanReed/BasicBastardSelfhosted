@@ -7,7 +7,6 @@ Track before adding. Answer: Do I need it? How often? Already solved?
 | Tool | Purpose | Priority |
 |------|---------|----------|
 | direnv | Per-project env | High |
-| swaylock/swayidle | Screen lock | Medium |
 | gammastep | Blue light | Medium |
 | cliphist | Clipboard history | Medium |
 | nvim-dap | Debugging | Medium |
@@ -28,12 +27,14 @@ Track before adding. Answer: Do I need it? How often? Already solved?
 | Hyprland | Niri fits scrollable workflow |
 | Rofi/Polybar | X11-native |
 | Eww | Overkill for status bar |
+| Waybar/Mako/Fuzzel/swaybg | Replaced by Noctalia |
 
 ## Recently Added
 
 | Date | Tool | Still Using? |
 |------|------|--------------|
 | Initial | Core stack | - |
+| 2026-05-25 | Noctalia shell | Eval (v4 maintenance; v5 alpha upstream) |
 
 ## Process
 

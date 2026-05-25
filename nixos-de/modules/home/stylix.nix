@@ -51,9 +51,6 @@
 
     targets = {
       foot.enable = true;
-      fuzzel.enable = true;
-      waybar.enable = true;
-      mako.enable = true;
       bat.enable = true;
       fzf.enable = true;
       gtk.enable = true;

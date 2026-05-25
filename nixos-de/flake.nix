@@ -24,6 +24,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    noctalia = {
+      url = "github:noctalia-dev/noctalia-shell";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     zen-browser = {
       url = "github:0xc000022070/zen-browser-flake";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -40,7 +45,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, zen-browser, disko, sops-nix, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, noctalia, zen-browser, disko, sops-nix, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -73,17 +78,17 @@
           stylix.homeModules.stylix
           nixvim.homeModules.nixvim
           niri.homeModules.niri
+          noctalia.homeModules.default
           ./modules/home/niri.nix
           ./modules/home/stylix.nix
           ./modules/home/nixvim.nix
           ./modules/home/foot.nix
-          ./modules/home/fuzzel.nix
+          ./modules/home/noctalia.nix
           ./modules/home/yazi.nix
-          ./modules/home/waybar.nix
-          ./modules/home/mako.nix
           ./modules/home/zen.nix
           ./modules/home/vscode.nix
           ./modules/home/zed.nix
+          ./modules/home/obsidian.nix
         ];
       };
     };

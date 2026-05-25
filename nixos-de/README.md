@@ -11,9 +11,7 @@ Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS performanc
 | WM | Niri |
 | Theme | Stylix + Gruvbox |
 | Terminal | Foot |
-| Launcher | Fuzzel |
-| Bar | Waybar |
-| Notifications | Mako |
+| Shell (bar · launcher · notifications · wallpaper · lock) | Noctalia |
 | Editor | Nixvim · VS Code · Zed |
 | File Manager | Yazi |
 | Browser | Zen |
@@ -41,10 +39,8 @@ nixos-de/
         ├── stylix.nix
         ├── nixvim.nix
         ├── foot.nix
-        ├── fuzzel.nix
+        ├── noctalia.nix
         ├── yazi.nix
-        ├── waybar.nix
-        ├── mako.nix
         ├── zen.nix
         ├── vscode.nix
         └── zed.nix
