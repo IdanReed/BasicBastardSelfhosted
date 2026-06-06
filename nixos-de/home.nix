@@ -1,4 +1,4 @@
-{ config, pkgs, inputs, ... }:
+{ config, pkgs, lib, inputs, ... }:
 
 {
   home = {
@@ -21,12 +21,15 @@
       enable = true;
       createDirectories = true;
       setSessionVariables = true;
-      desktop = "${config.home.homeDirectory}/desktop";
-      documents = "${config.home.homeDirectory}/documents";
-      download = "${config.home.homeDirectory}/downloads";
-      music = "${config.home.homeDirectory}/music";
-      pictures = "${config.home.homeDirectory}/pictures";
-      videos = "${config.home.homeDirectory}/videos";
+      download = "${config.home.homeDirectory}/local/downloads";
+      desktop = "${config.home.homeDirectory}/user_dirs/desktop";
+      documents = "${config.home.homeDirectory}/user_dirs/documents";
+      music = "${config.home.homeDirectory}/user_dirs/music";
+      pictures = "${config.home.homeDirectory}/user_dirs/pictures";
+      videos = "${config.home.homeDirectory}/user_dirs/videos";
+      projects = "${config.home.homeDirectory}/user_dirs/projects";
+      publicShare = "${config.home.homeDirectory}/user_dirs/public";
+      templates = "${config.home.homeDirectory}/user_dirs/templates";
     };
   };
 
@@ -45,21 +48,34 @@
       share = true;
     };
 
-    shellAliases = {
-      ".." = "cd ..";
-      "..." = "cd ../..";
-      g = "git";
-      gs = "git status";
-      gd = "git diff";
-      gl = "git log --oneline -20";
-      lg = "lazygit";
-      v = "nvim";
-      nrs = "sudo nixos-rebuild switch --flake .#desktop";
-      nrb = "sudo nixos-rebuild build --flake .#desktop";
-      hms = "home-manager switch --flake .#idan";
-      hmb = "home-manager build --flake .#idan";
-      nfu = "nix flake update";
-      ngc = "sudo nix-collect-garbage -d";
+    shellAliases = let
+      flakeDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/nixos-de";
+      myAliases = {
+        ".." = "cd ..";
+        "..." = "cd ../..";
+        g = "git";
+        gs = "git status";
+        gd = "git diff";
+        gl = "git log --oneline -20";
+        lg = "lazygit";
+        v = "nvim";
+        zed = "zeditor";
+        nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
+        nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
+        hms = "home-manager switch --flake ${flakeDir}#idan";
+        hmb = "home-manager build --flake ${flakeDir}#idan";
+        nfu = "nix flake update";
+        ngc = "sudo nix-collect-garbage -d";
+      };
+      # Right-pad names so the arrows line up.
+      maxName = lib.foldl' lib.max 0 (map lib.stringLength (lib.attrNames myAliases ++ [ "aliases" ]));
+      rpad = s: s + lib.concatStrings (lib.genList (_: " ") (maxName - lib.stringLength s));
+      aliasHelp = lib.concatStringsSep "\n" (
+        lib.mapAttrsToList (n: v: "  ${rpad n} → ${v}")
+          (myAliases // { aliases = "show this list"; })
+      );
+    in myAliases // {
+      aliases = "echo ${lib.escapeShellArg aliasHelp}";
     };
     # Note: greetd handles session startup, no TTY auto-login needed
   };
@@ -108,7 +124,6 @@
     eza bat fzf zoxide lazygit tree
     mpv imv
     brightnessctl playerctl pamixer
-    inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default
   ];
 
   programs.fzf = {

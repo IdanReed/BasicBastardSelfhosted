@@ -79,6 +79,7 @@
           nixvim.homeModules.nixvim
           niri.homeModules.niri
           noctalia.homeModules.default
+          zen-browser.homeModules.default
           ./modules/home/niri.nix
           ./modules/home/stylix.nix
           ./modules/home/nixvim.nix

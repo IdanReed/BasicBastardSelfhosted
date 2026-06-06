@@ -6,10 +6,9 @@
     base16Scheme = "${pkgs.base16-schemes}/share/themes/gruvbox-dark-medium.yaml";
     polarity = "dark";
 
-    image = pkgs.fetchurl {
-      url = "https://raw.githubusercontent.com/AngelJumbo/gruvbox-wallpapers/main/wallpapers/minimalistic/gruvbox_grid.png";
-      sha256 = "sha256-b7hN7xV/0a/7NVB3jLimPsaIO+ZLXGym7Hmvu5UsPoI=";
-    };
+    image = pkgs.runCommand "wallpaper.png" { nativeBuildInputs = [ pkgs.imagemagick ]; } ''
+      magick -size 3840x2160 canvas:'#3c3836' $out
+    '';
 
     fonts = {
       monospace = {
@@ -43,7 +42,7 @@
     };
 
     opacity = {
-      terminal = 0.95;
+      terminal = 1.0;
       popups = 0.95;
       desktop = 1.0;
       applications = 1.0;
@@ -55,6 +54,8 @@
       fzf.enable = true;
       gtk.enable = true;
       nixvim.enable = true;
+      noctalia-shell.enable = true;
+      zen-browser.profileNames = [ "default" ];
     };
   };
 

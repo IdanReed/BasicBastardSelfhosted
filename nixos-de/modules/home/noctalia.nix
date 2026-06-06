@@ -8,6 +8,11 @@
   # upstream deprecated systemd startup due to IPC reliability issues.
   programs.noctalia-shell = {
     enable = true;
-    settings = { };
+    settings = {
+      # Terminal wrapper for desktop entries with Terminal=true (yazi, htop, btop…).
+      # Without this, noctalia's launcher spawns the bare Exec line with no tty
+      # and the TUI dies on start.
+      appLauncher.terminalCommand = "foot -e";
+    };
   };
 }
