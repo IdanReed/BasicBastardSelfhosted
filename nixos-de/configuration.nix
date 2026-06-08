@@ -95,6 +95,8 @@
 
   services.xserver.enable = false;
 
+  services.gvfs.enable = true;
+
   xdg.portal = {
     enable = true;
     extraPortals = [ pkgs.xdg-desktop-portal-gtk ];

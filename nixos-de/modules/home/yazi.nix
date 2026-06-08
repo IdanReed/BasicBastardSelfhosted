@@ -75,5 +75,5 @@
     };
   };
 
-  home.packages = with pkgs; [ unar ffmpegthumbnailer poppler-utils fd ripgrep ];
+  home.packages = with pkgs; [ unar ffmpegthumbnailer poppler-utils fd ripgrep ripdrag ];
 }

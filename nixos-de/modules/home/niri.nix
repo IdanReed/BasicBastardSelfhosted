@@ -93,6 +93,7 @@
         "Mod+D"      = { action = spawn "noctalia-shell" "ipc" "call" "launcher" "toggle"; hotkey-overlay.title = "App launcher (noctalia)"; };
         "Mod+B"      = { action = spawn "zen"; hotkey-overlay.title = "Browser (zen)"; };
         "Mod+E"      = { action = spawn "foot" "-e" "yazi"; hotkey-overlay.title = "File manager (yazi)"; };
+        "Mod+N"      = { action = spawn "nautilus"; hotkey-overlay.title = "File manager (nautilus)"; };
         "Mod+Q"      = { action = close-window; hotkey-overlay.title = "Close window"; };
 
         # Focus: column/window
@@ -151,10 +152,10 @@
         "Mod+Minus"   = { action = switch-preset-column-width-back; hotkey-overlay.title = "Column width: prev preset (25/50/75)"; };
         "Mod+Equal"   = { action = switch-preset-column-width;      hotkey-overlay.title = "Column width: next preset (25/50/75)"; };
         "Mod+Ctrl+1"  = { action = set-column-width "25%";  hotkey-overlay.title = "Column width 25%"; };
-        "Mod+Ctrl+2"  = { action = set-column-width "33%";  hotkey-overlay.title = "Column width 33%"; };
-        "Mod+Ctrl+3"  = { action = set-column-width "50%";  hotkey-overlay.title = "Column width 50%"; };
-        "Mod+Ctrl+4"  = { action = set-column-width "75%";  hotkey-overlay.title = "Column width 75%"; };
-        "Mod+Ctrl+5"  = { action = set-column-width "100%"; hotkey-overlay.title = "Column width 100%"; };
+        "Mod+Ctrl+2"  = { action = set-column-width "33.33%";  hotkey-overlay.title = "Column width 33%"; };
+        "Mod+Ctrl+3"  = { action = set-column-width "50%";     hotkey-overlay.title = "Column width 50%"; };
+        "Mod+Ctrl+4"  = { action = set-column-width "66.67%";  hotkey-overlay.title = "Column width 66%"; };
+        "Mod+Ctrl+5"  = { action = set-column-width "75%";  hotkey-overlay.title = "Column width 75%"; };
         "Mod+C"       = { action = center-column; hotkey-overlay.title = "Center column"; };
         "Mod+Ctrl+C"  = { action = center-visible-columns; hotkey-overlay.title = "Center visible columns"; };
 

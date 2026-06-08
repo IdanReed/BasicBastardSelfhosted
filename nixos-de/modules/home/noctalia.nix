@@ -13,6 +13,16 @@
       # Without this, noctalia's launcher spawns the bare Exec line with no tty
       # and the TUI dies on start.
       appLauncher.terminalCommand = "foot -e";
+
+      bar.outerCorners = false;
+      general.enableShadows = false;
+
+      location = {
+        name = "Madison, WI";
+        weatherEnabled = true;
+        useFahrenheit = true;
+        autoLocate = false;
+      };
     };
   };
 }

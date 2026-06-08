@@ -62,7 +62,7 @@
         zed = "zeditor";
         nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
         nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
-        hms = "home-manager switch --flake ${flakeDir}#idan";
+        hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; }";
         hmb = "home-manager build --flake ${flakeDir}#idan";
         nfu = "nix flake update";
         ngc = "sudo nix-collect-garbage -d";
@@ -120,9 +120,9 @@
   };
 
   home.packages = with pkgs; [
-    nodejs python3 rustup
+    nodejs python3 uv rustup
     eza bat fzf zoxide lazygit tree
-    mpv imv
+    mpv imv nautilus
     brightnessctl playerctl pamixer
   ];
 
