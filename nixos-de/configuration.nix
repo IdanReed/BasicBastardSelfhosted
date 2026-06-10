@@ -99,14 +99,27 @@
 
   xdg.portal = {
     enable = true;
-    extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+    extraPortals = [
+      pkgs.xdg-desktop-portal-gtk
+      pkgs.xdg-desktop-portal-gnome   # provides screencast for OBS/Wayland capture
+    ];
   };
+
+  # OBS virtual camera (for Zoom/Meet "use OBS output as webcam")
+  boot.kernelModules = [ "v4l2loopback" ];
+  boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
 
   services.greetd = {
     enable = true;
-    settings.default_session = {
-      command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --cmd niri-session";
-      user = "greeter";
+    settings = {
+      default_session = {
+        command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --cmd niri-session";
+        user = "greeter";
+      };
+      initial_session = {
+        command = "niri-session";
+        user = "idan";
+      };
     };
   };
 
@@ -162,13 +175,13 @@
   # === CachyOS Performance: Systemd Tuning ===
   systemd.settings.Manager = {
     DefaultTimeoutStartSec = "15s";
-    DefaultTimeoutStopSec = "10s";
+    DefaultTimeoutStopSec = "1s";
     DefaultLimitNOFILE = "2048:2097152";
   };
 
   systemd.user.extraConfig = ''
     DefaultTimeoutStartSec=15s
-    DefaultTimeoutStopSec=10s
+    DefaultTimeoutStopSec=1s
     DefaultLimitNOFILE=1024:1048576
   '';
 

@@ -124,7 +124,15 @@
     eza bat fzf zoxide lazygit tree
     mpv imv nautilus
     brightnessctl playerctl pamixer
+    remmina freerdp openconnect
   ];
+
+  programs.obs-studio = {
+    enable = true;
+    plugins = with pkgs.obs-studio-plugins; [
+      obs-pipewire-audio-capture
+    ];
+  };
 
   programs.fzf = {
     enable = true;
