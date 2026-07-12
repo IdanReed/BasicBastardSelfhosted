@@ -1,11 +1,19 @@
-{ config, pkgs, inputs, ... }:
+{
+  config,
+  pkgs,
+  inputs,
+  ...
+}:
 
 {
   system.stateVersion = "24.11";
 
   nix = {
     settings = {
-      experimental-features = [ "nix-command" "flakes" ];
+      experimental-features = [
+        "nix-command"
+        "flakes"
+      ];
       auto-optimise-store = true;
       substituters = [
         "https://cache.nixos.org"
@@ -34,23 +42,23 @@
 
     # === CachyOS Performance: Kernel Parameters ===
     kernelParams = [
-      "amd_pstate=active"  # AMD P-State EPP driver for Zen 4
-      "zswap.enabled=0"    # Disable zswap (conflicts with ZRAM)
+      "amd_pstate=active" # AMD P-State EPP driver for Zen 4
+      "zswap.enabled=0" # Disable zswap (conflicts with ZRAM)
     ];
 
     # === CachyOS Performance: Sysctl Tuning ===
     kernel.sysctl = {
       # Virtual memory - optimized for ZRAM
-      "vm.swappiness" = 150;                  # Prefer ZRAM over cache eviction
-      "vm.vfs_cache_pressure" = 50;           # Retain dentries/inodes longer
-      "vm.dirty_bytes" = 268435456;           # 256MB - start writeback sooner
+      "vm.swappiness" = 150; # Prefer ZRAM over cache eviction
+      "vm.vfs_cache_pressure" = 50; # Retain dentries/inodes longer
+      "vm.dirty_bytes" = 268435456; # 256MB - start writeback sooner
       "vm.dirty_background_bytes" = 67108864; # 64MB - background writeback threshold
       "vm.dirty_writeback_centisecs" = 1500;
-      "vm.page-cluster" = 0;                  # No swap readahead (ZRAM)
+      "vm.page-cluster" = 0; # No swap readahead (ZRAM)
 
       # Stability
-      "kernel.nmi_watchdog" = 0;              # Disable - saves perf counter
-      "kernel.printk" = "3 3 3 3";            # Suppress kernel console messages
+      "kernel.nmi_watchdog" = 0; # Disable - saves perf counter
+      "kernel.printk" = "3 3 3 3"; # Suppress kernel console messages
 
       # File descriptors
       "fs.file-max" = 2097152;
@@ -68,7 +76,10 @@
 
   networking = {
     hostName = "nixos-desktop";
-    networkmanager.enable = true;
+    #networkmanager = {
+    #  enable = true;
+    #  plugins = [ pkgs.networkmanager-openconnect ];
+    #};
     firewall.enable = true;
   };
 
@@ -82,7 +93,11 @@
   users.users.idan = {
     isNormalUser = true;
     description = "Idan";
-    extraGroups = [ "wheel" "networkmanager" "video" "audio" ];
+    extraGroups = [
+      "wheel"
+      "video"
+      "audio"
+    ]; # networkmanager
     shell = pkgs.zsh;
   };
 
@@ -101,7 +116,7 @@
     enable = true;
     extraPortals = [
       pkgs.xdg-desktop-portal-gtk
-      pkgs.xdg-desktop-portal-gnome   # provides screencast for OBS/Wayland capture
+      pkgs.xdg-desktop-portal-gnome # provides screencast for OBS/Wayland capture
     ];
   };
 
@@ -145,9 +160,21 @@
   };
 
   environment.systemPackages = with pkgs; [
-    git curl wget ripgrep fd jq unzip htop btop
-    wl-clipboard xdg-utils grim slurp
-    gcc gnumake
+    git
+    curl
+    wget
+    ripgrep
+    fd
+    jq
+    unzip
+    htop
+    btop
+    wl-clipboard
+    xdg-utils
+    grim
+    slurp
+    gcc
+    gnumake
   ];
 
   security.polkit.enable = true;

@@ -62,12 +62,13 @@
       # Use default animations (niri flake simplified animation options)
       animations = { slowdown = 1.0; };
 
+      xwayland-satellite = {
+        enable = true;
+        path = lib.getExe pkgs.xwayland-satellite;
+      };
+
       spawn-at-startup = [
-        { command = [ "${pkgs.xwayland-satellite}/bin/xwayland-satellite" ]; }
-        # DISPLAY=:0 is forced because quickshell (noctalia's runtime) exits on
-        # an empty DISPLAY, and there's a race with xwayland-satellite at niri
-        # startup. xwayland-satellite always claims :0 on this machine.
-        { command = [ "sh" "-c" "DISPLAY=:0 exec noctalia-shell" ]; }
+        { command = [ "noctalia-shell" ]; }
       ];
 
       window-rules = [
