@@ -92,9 +92,11 @@
       };
     # Note: greetd handles session startup, no TTY auto-login needed
 
-    # `z` is taken by zoxide, so the detached-zathura helper is `pdf`.
+    # `z` is taken by zoxide, so the detached-viewer helper is `pdf`.
+    # QT_QPA_PLATFORM=xcb: sioyek's Qt-Wayland window never maps on niri;
+    # running it through xwayland-satellite works.
     initContent = ''
-      pdf() { setsid zathura "$@" >/dev/null 2>&1 }
+      pdf() { QT_QPA_PLATFORM=xcb setsid -f sioyek "$@" >/dev/null 2>&1 }
     '';
   };
 
@@ -158,7 +160,7 @@
     remmina
     freerdp
     spotify
-    zathura
+    sioyek
     #networkmanagerapplet  # provides nm-connection-editor for VPN setup
   ];
 
