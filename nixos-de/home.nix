@@ -77,6 +77,7 @@
           hmb = "home-manager build --flake ${flakeDir}#idan";
           nfu = "nix flake update";
           ngc = "sudo nix-collect-garbage -d";
+          ccupdate = "nix profile upgrade claude-code-nix";
         };
         # Right-pad names so the arrows line up.
         maxName = lib.foldl' lib.max 0 (map lib.stringLength (lib.attrNames myAliases ++ [ "aliases" ]));
@@ -90,6 +91,11 @@
         aliases = "echo ${lib.escapeShellArg aliasHelp}";
       };
     # Note: greetd handles session startup, no TTY auto-login needed
+
+    # `z` is taken by zoxide, so the detached-zathura helper is `pdf`.
+    initContent = ''
+      pdf() { setsid zathura "$@" >/dev/null 2>&1 }
+    '';
   };
 
   programs.starship = {

@@ -67,6 +67,7 @@
           ./modules/nixos/nvidia.nix
           ./modules/nixos/tailscale.nix
           ./modules/nixos/sops.nix
+          ./modules/nixos/containers.nix
         ];
       };
 

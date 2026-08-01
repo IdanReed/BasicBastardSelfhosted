@@ -17,6 +17,21 @@
       bar.outerCorners = false;
       general.enableShadows = false;
 
+      # Clock lives in bar.widgets.left as an atomic list, so restate the
+      # whole left section to override just the Clock's time format.
+      # Qt QLocale format: `h` is 12-hour when `ap`/`AP` is present.
+      bar.widgets.left = [
+        { id = "Launcher"; }
+        {
+          id = "Clock";
+          formatHorizontal = "h:mm ap ddd, MMM dd";
+          tooltipFormat = "h:mm ap ddd, MMM dd";
+        }
+        { id = "SystemMonitor"; }
+        { id = "ActiveWindow"; }
+        { id = "MediaMini"; }
+      ];
+
       location = {
         name = "Madison, WI";
         weatherEnabled = true;
