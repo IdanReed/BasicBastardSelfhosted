@@ -12,9 +12,10 @@ Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS performanc
 | Theme | Stylix + Gruvbox |
 | Terminal | Foot |
 | Shell (bar · launcher · notifications · wallpaper · lock) | Noctalia |
-| Editor | Nixvim · VS Code · Zed |
+| Editor | Nixvim · VS Code · Zed · Obsidian |
 | File Manager | Yazi |
 | Browser | Zen |
+| Containers | Docker + docker-compose |
 
 ## Structure
 
@@ -27,13 +28,12 @@ nixos-de/
 ├── home.nix
 ├── test.sh / test-wsl.sh        # Config validation
 ├── FUTURE.md
-├── .sops.env.example            # SOPS secret template (encrypt copy as .sops.env)
 └── modules/
     ├── nixos/
     │   ├── nvidia.nix           # NVIDIA + CachyOS tuning
-    │   ├── stylix.nix
     │   ├── tailscale.nix        # Tailscale client (run `tailscale up` after install)
-    │   └── sops.nix             # sops-nix wiring (shared age key)
+    │   ├── sops.nix             # sops-nix wiring (shared age key)
+    │   └── containers.nix       # Docker + docker-compose
     └── home/
         ├── niri.nix
         ├── stylix.nix
@@ -43,8 +43,11 @@ nixos-de/
         ├── yazi.nix
         ├── zen.nix
         ├── vscode.nix
-        └── zed.nix
+        ├── zed.nix
+        └── obsidian.nix
 ```
+
+The SOPS secret template (`.sops.env.example`) lives at the repo root (`BasicBastardSelfhosted/`), one level above this directory — encrypt a copy as `.sops.env`.
 
 ## Installation
 
@@ -213,19 +216,21 @@ Requires Nix (via WSL, NixOS, or container):
 ## Updates
 
 ```bash
-sudo nixos-rebuild switch --flake .#desktop  # System
-home-manager switch --flake .#idan           # User
-nix flake update                             # Update all inputs
+sudo nixos-rebuild switch --flake .#desktop  # System (alias: nrs)
+home-manager switch --flake .#idan           # User (alias: hms — also restarts noctalia-shell)
+nix flake update                             # Update all inputs (alias: nfu)
 ```
+
+Run `aliases` in a shell for the full alias list (defined in `home.nix`).
 
 ## Placeholders to Update
 
 | File | Setting | Description |
 |------|---------|-------------|
 | `disko.nix` | `targetDisk` | Your drive's `/dev/disk/by-id/...` path |
-| `configuration.nix:70` | `hostName` | Machine hostname |
-| `configuration.nix:75` | `timeZone` | Your timezone |
-| `home.nix:77-78` | `userName`/`userEmail` | Git identity |
+| `configuration.nix` | `networking.hostName` | Machine hostname |
+| `configuration.nix` | `time.timeZone` | Your timezone |
+| `home.nix` | `programs.git.settings.user.name`/`.email` | Git identity |
 | `modules/home/niri.nix` | `outputs` | Monitor configuration |
 
 ## CachyOS Performance Optimizations
