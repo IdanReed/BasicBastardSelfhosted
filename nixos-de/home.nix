@@ -161,8 +161,18 @@
     freerdp
     spotify
     sioyek
+    mpris-timer  # focus/countdown timer (Hourglass-like), integrates with MPRIS widgets
     #networkmanagerapplet  # provides nm-connection-editor for VPN setup
   ];
+
+  # nixpkgs' mpris-timer desktop entry Execs "play-timer", a binary the package doesn't ship
+  xdg.desktopEntries."io.github.efogdev.mpris-timer" = {
+    name = "Play Timer";
+    exec = "mpris-timer";
+    icon = "io.github.efogdev.mpris-timer";
+    terminal = false;
+    categories = [ "Utility" ];
+  };
 
   programs.obs-studio = {
     enable = true;

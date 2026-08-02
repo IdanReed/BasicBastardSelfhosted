@@ -147,6 +147,20 @@
     alsa.support32Bit = true;
     pulse.enable = true;
     wireplumber.enable = true;
+
+    # By default the ALSA Card Profile layer exposes only ONE output of the
+    # GPU's HDMI/DP audio codec at a time, so a second monitor with speakers
+    # never shows up as a sink. Turning ACP off puts the card in raw mode,
+    # where every HDMI/DP port becomes its own sink (connected ones are named
+    # after the monitor via ELD, e.g. "LG ULTRAGEAR+").
+    wireplumber.extraConfig."51-hdmi-all-outputs" = {
+      "monitor.alsa.rules" = [
+        {
+          matches = [ { "device.vendor.id" = "0x10de"; } ]; # NVIDIA GPU audio
+          actions.update-props."api.alsa.use-acp" = false;
+        }
+      ];
+    };
   };
 
   fonts = {
