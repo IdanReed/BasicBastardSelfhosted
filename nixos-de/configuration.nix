@@ -124,15 +124,28 @@
   boot.kernelModules = [ "v4l2loopback" ];
   boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
 
-  services.greetd = {
+  # Graphical boot login. The module enables greetd itself and points
+  # default_session at noctalia-greeter-session, so don't set services.greetd
+  # here — it would fight the module. (Was tuigreet, a text-mode greeter.)
+  # Palette/wallpaper are picked in the greeter UI and land in sync.toml;
+  # anything set below in `settings` writes greeter.toml, which wins.
+  programs.noctalia-greeter = {
     enable = true;
     settings = {
-      default_session = {
-        command = "${pkgs.greetd.tuigreet}/bin/tuigreet --time --cmd niri-session";
-        user = "greeter";
+      cursor = {
+        theme = "Bibata-Modern-Classic"; # matches stylix.cursor
+        size = 24;
+        path = "${pkgs.bibata-cursors}/share/icons";
       };
+      keyboard.layout = "us";
+      user.default = "idan"; # skip the user list, go straight to the password
     };
   };
+
+  # The greeter reads sessions from /run/current-system/sw/share/wayland-sessions,
+  # which nothing links without a display manager — tuigreet ran `niri-session`
+  # directly and never needed it. Without this the session list comes up empty.
+  environment.pathsToLink = [ "/share/wayland-sessions" ];
 
   # Unlock gnome-keyring with the password entered at the greeter,
   # so apps like Zed don't prompt again after login

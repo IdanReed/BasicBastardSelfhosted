@@ -23,7 +23,8 @@
         sops-nix.nixosModules.sops
         ./disk-config.nix
         ./configuration.nix
-        ./modules/stack-sync.nix
+        ./modules/headscale.nix
+        ./modules/authentik.nix
       ];
       specialArgs = { inherit inputs; };
     };

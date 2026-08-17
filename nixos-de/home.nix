@@ -97,6 +97,26 @@
     # running it through xwayland-satellite works.
     initContent = ''
       pdf() { QT_QPA_PLATFORM=xcb setsid -f sioyek "$@" >/dev/null 2>&1 }
+
+      # vidtrim <video> [speed] [threshold] [margin]
+      # auto-editor cuts the silence, ffmpeg speeds up what's left.
+      # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
+      # re-speed without re-running the (slow) silence pass.
+      vidtrim() {
+        local in=$1 speed=''${2:-1.5} threshold=''${3:-8%} margin=''${4:-0.06s}
+        if [[ -z $in ]]; then
+          echo "usage: vidtrim <video> [speed=1.5] [threshold=8%] [margin=0.06s]" >&2
+          return 1
+        fi
+        local trimmed=''${in:r}_trimmed.mp4 out=''${in:r}_x''${speed}.mp4
+        nix shell nixpkgs#auto-editor nixpkgs#ffmpeg -c bash -c '
+          set -e
+          auto-editor "$1" --edit audio:threshold="$3" --margin "$4" -o "$5"
+          ffmpeg -i "$5" \
+            -filter_complex "[0:v]setpts=PTS/$2[v];[0:a]atempo=$2[a]" \
+            -map "[v]" -map "[a]" "$6"
+        ' vidtrim "$in" "$speed" "$threshold" "$margin" "$trimmed" "$out"
+      }
     '';
   };
 
@@ -143,7 +163,11 @@
     nodejs
     python3
     uv
-    rustup
+    rustc
+    cargo
+    rustfmt
+    clippy
+    rust-analyzer
     eza
     bat
     fzf
@@ -152,6 +176,7 @@
     tree
     mpv
     losslesscut-bin
+    gifski  # video -> gif, e.g. gifski -o out.gif --fps 15 --width 800 in.mp4
     imv
     nautilus
     brightnessctl

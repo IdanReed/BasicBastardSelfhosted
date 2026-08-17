@@ -6,11 +6,12 @@
   system.stateVersion = "25.11";
   time.timeZone = "UTC";
 
-  # Boot configuration for Hetzner Cloud
-  boot.loader.grub = {
-    enable = true;
-    device = "/dev/sda";  # MBR boot
-  };
+  # Boot configuration for Hetzner Cloud (legacy MBR boot).
+  # The install device is NOT set here: disk-config.nix declares an EF02 BIOS
+  # boot partition, and disko derives boot.loader.grub.devices from it. Setting
+  # `device` as well produces a duplicate entry and trips the
+  # "cannot have duplicated devices in mirroredBoots" assertion.
+  boot.loader.grub.enable = true;
 
   # Networking - Hetzner provides DHCP for IPv4
   networking = {
@@ -21,8 +22,8 @@
       enable = true;
       allowedTCPPorts = [
         22    # SSH
-        80    # HTTP (ACME challenge)
-        443   # HTTPS (Headscale + Authentik)
+        80    # Headscale ACME HTTP-01 challenge
+        443   # Headscale API + embedded DERP
         9000  # Authentik HTTP
         9443  # Authentik HTTPS
       ];
@@ -57,9 +58,15 @@
     };
   };
 
-  # Docker for Authentik + Headscale
+  # Docker for Authentik only. Headscale runs as a native systemd service
+  # (modules/headscale.nix) so that the tailnet does not depend on the
+  # container runtime being healthy.
   virtualisation.docker = {
     enable = true;
+    # nixos-25.11's default `docker` attr is still 28.x, which nixpkgs marks
+    # insecure ("unmaintained since November 2025"). 29.x carries no known
+    # vulnerabilities.
+    package = pkgs.docker_29;
     autoPrune = {
       enable = true;
       dates = "weekly";
@@ -79,7 +86,6 @@
     dig
     sops
     age
-    rsync
   ];
 
   # SOPS configuration
@@ -123,14 +129,16 @@
     '';
   };
 
-  # Ensure directories exist
+  # Ensure directories exist.
+  # Only Authentik needs host paths now — Headscale's state lives in
+  # /var/lib/headscale, created by the service's own StateDirectory.
   systemd.tmpfiles.rules = [
-    "d /srv/stacks 0755 root root -"
     "d /srv/authentik 0755 root root -"
-    "d /srv/headscale 0755 root root -"
-    "d /srv/headscale/config 0755 root root -"
-    "d /srv/headscale/data 0755 root root -"
-    "d /srv/repo 0755 root root -"
+    "d /srv/authentik/pgdata 0700 root root -"
+    "d /srv/authentik/redis 0755 root root -"
+    "d /srv/authentik/media 0755 root root -"
+    "d /srv/authentik/certs 0755 root root -"
+    "d /srv/authentik/templates 0755 root root -"
     "d /var/lib/sops-nix 0700 root root -"
   ];
 

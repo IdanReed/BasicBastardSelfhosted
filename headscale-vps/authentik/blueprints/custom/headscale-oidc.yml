@@ -30,7 +30,11 @@ entries:
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
       client_id: headscale
-      client_secret: "${HEADSCALE_OIDC_CLIENT_SECRET}"
+      # !Env reads from the worker's environment, which systemd populates from
+      # the sops-nix-rendered EnvironmentFile. Plain "${VAR}" is NOT
+      # interpolated by authentik — it would be stored as a literal string.
+      # Must match services.headscale.settings.oidc.client_secret_path.
+      client_secret: !Env HEADSCALE_OIDC_CLIENT_SECRET
       redirect_uris:
         - url: "https://headscale.idanreed.com/oidc/callback"
           matching_mode: strict

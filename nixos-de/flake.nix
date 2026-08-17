@@ -29,6 +29,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Boot-time greeter matching noctalia's look. Separate repo from the shell:
+    # it ships its own wlroots compositor so greetd can draw a GUI before login.
+    noctalia-greeter = {
+      url = "github:noctalia-dev/noctalia-greeter";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     zen-browser = {
       url = "github:0xc000022070/zen-browser-flake";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -45,7 +52,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, noctalia, zen-browser, disko, sops-nix, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, noctalia, noctalia-greeter, zen-browser, disko, sops-nix, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -63,6 +70,7 @@
           ./disko.nix
           disko.nixosModules.disko
           niri.nixosModules.niri
+          noctalia-greeter.nixosModules.default
           sops-nix.nixosModules.sops
           ./modules/nixos/nvidia.nix
           ./modules/nixos/tailscale.nix

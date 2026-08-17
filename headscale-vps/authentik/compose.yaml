@@ -1,3 +1,13 @@
+# Authentik — applied by headscale-vps/modules/authentik.nix, not by any
+# git-sync mechanism. This file ships in the flake and is deployed by
+# `nixos-rebuild switch`.
+#
+# Secrets are interpolated from the systemd EnvironmentFile rendered by
+# sops-nix (see modules/authentik.nix); there is no .env on disk.
+#
+# Bind-mounted paths under /srv/authentik are created by systemd.tmpfiles in
+# configuration.nix. ./blueprints is served read-only from the Nix store.
+
 services:
   postgresql:
     image: postgres:16.13-alpine
@@ -31,7 +41,7 @@ services:
       - /srv/authentik/redis:/data
 
   server:
-    image: ghcr.io/goauthentik/server:2024.12
+    image: ghcr.io/goauthentik/server:2026.5.6
     container_name: authentik_server
     restart: unless-stopped
     command: server
@@ -40,15 +50,8 @@ services:
       AUTHENTIK_POSTGRESQL__HOST: postgresql
       AUTHENTIK_POSTGRESQL__USER: authentik
       AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-      # Email (optional, for password reset)
-      # AUTHENTIK_EMAIL__HOST: smtp.example.com
-      # AUTHENTIK_EMAIL__PORT: 587
-      # AUTHENTIK_EMAIL__USERNAME: ${SMTP_USER}
-      # AUTHENTIK_EMAIL__PASSWORD: ${SMTP_PASS}
-      # AUTHENTIK_EMAIL__USE_TLS: true
-      # AUTHENTIK_EMAIL__FROM: authentik@idanreed.com
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
     volumes:
       - /srv/authentik/media:/media
       - /srv/authentik/templates:/templates
@@ -63,7 +66,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/goauthentik/server:2024.12
+    image: ghcr.io/goauthentik/server:2026.5.6
     container_name: authentik_worker
     restart: unless-stopped
     command: worker
@@ -72,10 +75,10 @@ services:
       AUTHENTIK_POSTGRESQL__HOST: postgresql
       AUTHENTIK_POSTGRESQL__USER: authentik
       AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-      # Headscale OIDC client secret (used in blueprints)
-      HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+      # Consumed by the headscale-oidc blueprint via its !Env tag.
+      HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET:?oidc client secret required}
     volumes:
       - /srv/authentik/media:/media
       - /srv/authentik/certs:/certs
