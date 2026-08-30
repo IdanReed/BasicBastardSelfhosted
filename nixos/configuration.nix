@@ -91,10 +91,16 @@
   # Tailscale
   services.tailscale.enable = true;
 
-  # SOPS configuration
+  # SOPS configuration.
+  #
+  # YAML, not dotenv. sops-install-secrets applies the per-secret key only for
+  # yaml/json — for dotenv every /run/secrets/<name> receives the WHOLE
+  # decrypted file, so `tailscale up --authkey "$(cat …)"` was handed a
+  # multi-line document. Stack .sops.env files are unaffected: they are
+  # consumed whole by the sops CLI in decrypt-sops-envs.service below.
   sops = {
-    defaultSopsFile = ./.sops.env;
-    defaultSopsFormat = "dotenv";
+    defaultSopsFile = ./secrets.sops.yaml;
+    defaultSopsFormat = "yaml";
 
     age.keyFile = "/var/lib/sops-nix/sops_age_key.txt";
 
@@ -136,16 +142,37 @@
         exit 0
       fi
 
+      # The committed secrets.sops.yaml starts life as the encrypted template,
+      # changeme_* values included — a real switch installs those verbatim and
+      # this unit would register garbage against Headscale. Fail loudly with
+      # the file to fix instead. Only the changeme_* template values are
+      # guarded: the test fixtures' 'placeholder-replaced-at-runtime' sentinel
+      # is overwritten by the suites before they start this unit.
+      authkey="$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})"
+      case "$authkey" in changeme*)
+        echo "TAILSCALE_AUTH_KEY is still a changeme_* template value — edit it with: sops nixos/secrets.sops.yaml" >&2
+        exit 1 ;;
+      esac
+
       ${pkgs.tailscale}/bin/tailscale up \
         --login-server=https://headscale.idanreed.com \
-        --authkey "$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})" \
+        --authkey "$authkey" \
         --hostname=services-vm \
         --accept-routes
     '';
   };
 
-  # Decrypt all .sops.env files to .env (for arcane and stacks)
-  # Uses the same age key that sops-nix uses for host secrets
+  # Decrypt all .sops.env files to .env (for arcane and stacks).
+  # Uses the same age key that sops-nix uses for host secrets.
+  #
+  # Runs at boot AND on a minutely timer. The timer closes the gap that used
+  # to be a known issue: Arcane's git sync delivers a new stack's .sops.env at
+  # runtime, but a boot-only oneshot never decrypted it, so compose started
+  # with unset variables instead of failing loudly — until the next reboot.
+  #
+  # Decryption is make-style: a .env is rewritten only when its .sops.env is
+  # newer, via a tmpfile so consumers never observe a half-written .env, and
+  # unchanged stacks see no mtime churn from the timer.
   systemd.services.decrypt-sops-envs = {
     description = "Decrypt .sops.env files to .env";
     after = [ "srv.mount" ];
@@ -156,23 +183,103 @@
 
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = true;
+      # NOT RemainAfterExit: starting an active unit is a no-op, so a
+      # remain-after-exit oneshot would silently absorb every timer tick and
+      # the runtime-sync gap would be back. bootstrap-arcane's Requires= is
+      # satisfied by the successful start in the same boot transaction; it
+      # does not need the unit to linger.
     };
 
     script = ''
+      # Plaintext must never be world-readable, even transiently: /srv/stacks
+      # is world-traversable, and without this the "$out.tmp" below is born
+      # 0644 for the moment before its chmod.
+      umask 077
+
       export SOPS_AGE_KEY_FILE=/var/lib/sops-nix/sops_age_key.txt
 
-      # Decrypt arcane secrets
-      if [ -f /srv/arcane/.sops.env ]; then
-        sops -d /srv/arcane/.sops.env > /srv/arcane/.env
-        chmod 600 /srv/arcane/.env
-      fi
+      # Per-file failures accumulate instead of aborting the walk, so one bad
+      # .sops.env cannot stop every healthy stack from decrypting — and, at
+      # boot, cannot leave bootstrap-arcane's Requires= forever unsatisfied
+      # over a single broken stack.
+      fail=0
 
-      # Decrypt all stack secrets
+      decrypt() {
+        src="$1"
+        out="$(dirname "$src")/.env"
+        # Inequality in EITHER direction, not just -nt: VM restores and NTP
+        # steps can move the clock backwards, leaving a "future" .env that a
+        # strictly-newer check would treat as fresh forever. touch -r after a
+        # successful decrypt pins out's mtime to src's, so "mtimes differ"
+        # means exactly "src changed since the last successful decrypt".
+        if [ ! -e "$out" ] || [ "$src" -nt "$out" ] || [ "$src" -ot "$out" ]; then
+          if sops -d "$src" > "$out.tmp"; then
+            mv "$out.tmp" "$out"
+            touch -r "$src" "$out"
+          else
+            # Leave any previous .env intact; a bad new file must not take
+            # down a working stack. The failure is visible in this unit's
+            # journal and, via OnFailure, in ntfy.
+            rm -f "$out.tmp"
+            echo "FAILED to decrypt $src" >&2
+            fail=1
+          fi
+        fi
+        # OUTSIDE the freshness guard on purpose: enforced on every tick, not
+        # only on re-decrypt, so root-owned .env files that predate this unit
+        # on the live VM get fixed without waiting for their secret to change.
+        # Idempotent and cheap. Arcane (PUID 1000) is what deploys these
+        # stacks; a root-owned 0600 .env is unreadable to it and the deploy
+        # fails.
+        if [ -e "$out" ]; then
+          chmod 600 "$out"
+          chown 1000:1000 "$out"
+        fi
+      }
+
+      [ -f /srv/arcane/.sops.env ] && decrypt /srv/arcane/.sops.env
+
       for f in /srv/stacks/*/.sops.env; do
-        [ -f "$f" ] && sops -d "$f" > "$(dirname "$f")/.env" && chmod 600 "$(dirname "$f")/.env"
+        [ -f "$f" ] && decrypt "$f"
       done
+
+      # Alert on state CHANGE, not on every tick. This unit runs minutely with
+      # OnFailure wired to ntfy, so exiting nonzero for as long as a stack is
+      # broken would be a phone push every 60s forever. The stamp survives
+      # between ticks (cleared by reboot with the rest of /run): first failure
+      # exits 1 and notifies, repeats stay in the journal only, and recovery
+      # is logged when the stamp is removed.
+      stamp=/run/decrypt-sops-envs.failed
+      if [ "$fail" -ne 0 ]; then
+        if [ -e "$stamp" ]; then
+          echo "decryption still failing (already notified; see journal above)" >&2
+          exit 0
+        fi
+        touch "$stamp"
+        exit 1
+      fi
+      if [ -e "$stamp" ]; then
+        rm -f "$stamp"
+        echo "recovered: all .sops.env files decrypt cleanly again"
+      fi
+      exit 0
     '';
+
+    onFailure = [ "notify-failure@%n.service" ];
+  };
+
+  systemd.timers.decrypt-sops-envs = {
+    description = "Re-decrypt stack secrets delivered by runtime git sync";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "minutely";
+      # systemd's default AccuracySec is 1min, so a "minutely" tick can land
+      # up to ~120s after a .sops.env is delivered. The test suites' 150s
+      # delivery waits assume prompt ticks; keep the timer honest.
+      AccuracySec = "1s";
+      # No Persistent: a missed tick means nothing, the next one re-scans.
+      Unit = "decrypt-sops-envs.service";
+    };
   };
 
   # Arcane bootstrap service
