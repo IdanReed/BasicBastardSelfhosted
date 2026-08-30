@@ -52,13 +52,28 @@ services:
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+      # Required for forward auth: without it the session cookie is host-only
+      # and browsers will redirect-loop between auth.idanreed.com and each
+      # protected service on a different subdomain.
+      AUTHENTIK_COOKIE_DOMAIN: idanreed.com
     volumes:
       - /srv/authentik/media:/media
       - /srv/authentik/templates:/templates
       - ./blueprints/custom:/blueprints/custom:ro
+    # Loopback only — Caddy terminates TLS for auth.idanreed.com and is the
+    # sole public path in. 9443 (self-signed) is not published at all.
     ports:
-      - "9000:9000"      # HTTP
-      - "9443:9443"      # HTTPS
+      - "127.0.0.1:9000:9000"
+    # Without a healthcheck here, `docker compose up -d --wait` in
+    # modules/authentik.nix returns as soon as the container is *running* —
+    # not when Authentik is answering requests — so a deploy still mid-migration
+    # reports success.
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      start_period: 60s
+      interval: 30s
+      retries: 8
+      timeout: 30s
     depends_on:
       postgresql:
         condition: service_healthy
@@ -77,13 +92,26 @@ services:
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
+      AUTHENTIK_COOKIE_DOMAIN: idanreed.com
       # Consumed by the headscale-oidc blueprint via its !Env tag.
       HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET:?oidc client secret required}
+      # First-start bootstrap of the `akadmin` superuser. Without these there is
+      # no way to log in at all: the blueprint's `idan` user has no credential
+      # and no SMTP is configured for a reset link. Ignored on later starts.
+      AUTHENTIK_BOOTSTRAP_EMAIL: admin@idanreed.com
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?bootstrap password required}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:?bootstrap token required}
     volumes:
       - /srv/authentik/media:/media
       - /srv/authentik/certs:/certs
       - /srv/authentik/templates:/templates
       - ./blueprints/custom:/blueprints/custom:ro
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      start_period: 60s
+      interval: 30s
+      retries: 8
+      timeout: 30s
     depends_on:
       postgresql:
         condition: service_healthy

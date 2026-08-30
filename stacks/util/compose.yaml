@@ -1,14 +1,19 @@
+# Published ports are bound to 127.0.0.1 so Caddy (network_mode: host) is the
+# only way in. Publishing on 0.0.0.0 made every service reachable directly from
+# the tailnet — tailscale0 is a trusted interface, so the host firewall does
+# not filter it — which would let anyone on the tailnet skip forward auth
+# entirely by using the port number.
 services:
   bentopdf:
     image: ghcr.io/alam00000/bentopdf:1.16.1
     container_name: bentopdf
     ports:
-      - '10401:8080'
+      - '127.0.0.1:10401:8080'
     restart: unless-stopped
 
   mazanoke:
     image: ghcr.io/civilblur/mazanoke:1.1.5
     container_name: mazanoke
     ports:
-      - '10403:80'
+      - '127.0.0.1:10403:80'
     restart: unless-stopped

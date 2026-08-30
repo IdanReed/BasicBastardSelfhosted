@@ -21,7 +21,14 @@ if [[ ! -f "$AGE_KEY_FILE" ]]; then
     exit 1
 fi
 
-AGE_KEY=$(cat "$AGE_KEY_FILE")
+# Indent every line to match the YAML block scalar below.
+#
+# age-keygen output is three lines ("# created:", "# public key:", then the
+# key). Interpolating it raw put only the FIRST line at the block's indent and
+# left the rest at column 0, which terminates the block scalar and produces
+# invalid YAML — cloud-init then failed, the key was never written, and
+# sops-nix could not decrypt anything. Silently, on every re-image.
+AGE_KEY_INDENTED=$(sed 's/^/      /' "$AGE_KEY_FILE")
 
 echo "> Stopping VM $VM_ID if running..."
 qm stop "$VM_ID" 2>/dev/null || true
@@ -36,12 +43,27 @@ write_files:
     permissions: '0600'
     owner: root:root
     content: |
-      ${AGE_KEY}
+${AGE_KEY_INDENTED}
 
 runcmd:
   - mkdir -p /var/lib/sops-nix
   - chmod 700 /var/lib/sops-nix
 EOF
+
+# Fail here rather than after a boot into a host that cannot decrypt its own
+# secrets. Skipped if the Proxmox host has no python3/pyyaml.
+if python3 -c 'import yaml' 2>/dev/null; then
+    if python3 -c 'import sys,yaml; yaml.safe_load(open(sys.argv[1]))' \
+            "$SNIPPETS_DIR/nixos-userdata.yaml"; then
+        echo "> cloud-init userdata validated"
+    else
+        echo "> Error: generated cloud-init YAML is invalid"
+        echo "> Check $SNIPPETS_DIR/nixos-userdata.yaml"
+        exit 1
+    fi
+else
+    echo "> Note: python3/pyyaml unavailable, skipping YAML validation"
+fi
 
 echo "> Configuring VM $VM_ID..."
 qm set "$VM_ID" --cicustom "user=local:snippets/nixos-userdata.yaml"

@@ -7,15 +7,21 @@ NixOS configuration for the Hetzner Cloud VPS running Headscale + Authentik.
 ```
 Hetzner VPS (headscale-vps)
 ├── NixOS 25.11
-├── headscale.service        (native systemd — VPN coordination + DERP)
-├── authentik.service        (systemd → docker compose — OIDC provider)
+├── caddy.service            (native systemd — the ONLY public listener, :80/:443)
+│   ├── headscale.idanreed.com → 127.0.0.1:8080
+│   └── auth.idanreed.com      → 127.0.0.1:9000
+├── headscale.service        (native systemd — VPN coordination + DERP, loopback)
+├── authentik.service        (systemd → docker compose — OIDC provider, loopback)
 │   ├── server
 │   ├── worker
 │   ├── PostgreSQL
 │   └── Redis
 ├── Fail2ban (SSH protection)
-└── Tailscale (joins own network)
+└── Tailscale (joins own network via --login-server)
 ```
+
+Public ports: **22, 80, 443 TCP** and **3478 UDP** (STUN). Nothing else. Headscale
+and Authentik both bind loopback only.
 
 There is **no GitOps agent on this host** — no Arcane, no sync timer, no
 mutable checkout. Everything is deployed by `nixos-rebuild switch` over SSH.
@@ -27,11 +33,27 @@ containerised (upstream-supported images, monthly releases, DB migrations) but
 its compose file ships in the flake and is applied by a systemd unit, so there
 is no drift window and no polling.
 
+Caddy exists because only one process can own `:443`, and Headscale's OIDC
+issuer (`auth.idanreed.com`) needs to be reachable over HTTPS on the standard
+port. It uses HTTP-01, so no DNS-provider plugin or custom build is needed —
+unlike the services VM, which is tailnet-only and must use DNS-01.
+
 ## Prerequisites
 
 1. **Hetzner Cloud account** with SSH key configured
 2. **Nix installed** locally with flakes enabled
 3. **AGE key** at `../sops_age_key.txt` (shared with services-vm)
+4. **Public DNS records** — both must resolve to the VPS before first deploy,
+   or ACME issuance fails and nothing is reachable over HTTPS:
+
+   ```
+   headscale.idanreed.com  A  <vps-public-ip>
+   auth.idanreed.com       A  <vps-public-ip>
+   ```
+
+   Note `tailnet.idanreed.com` is the MagicDNS base domain and must NOT have
+   public records — Headscale refuses to start if `server_url`'s hostname
+   equals or is a subdomain of `dns.base_domain`.
 
 ## Deployment
 
@@ -95,7 +117,48 @@ sudo journalctl -u headscale -f
 # Check Authentik (compose driven by systemd)
 sudo systemctl status authentik
 docker ps
+
+# Check Caddy got certificates for BOTH names
+sudo systemctl status caddy
+curl -sI https://headscale.idanreed.com/health
+curl -sI https://auth.idanreed.com/-/health/live/
 ```
+
+### 6. First login and enrolling this host
+
+Order matters: the VPS joins its own tailnet, so Headscale must exist first.
+
+```bash
+# On the VPS — create the user the ACL policy references, then a preauth key
+sudo headscale users create idan
+sudo headscale preauthkeys create --user idan --reusable --expiration 24h
+```
+
+Put that key in `.sops.env` as `TAILSCALE_AUTH_KEY`, re-encrypt, and rebuild;
+`tailscale-autoconnect` will register against Headscale (it passes
+`--login-server`, so a Headscale key is the correct kind — a Tailscale SaaS key
+will not work).
+
+Log into Authentik at `https://auth.idanreed.com` as `akadmin` with
+`AUTHENTIK_BOOTSTRAP_PASSWORD`. 2FA enrolment is mandatory on first login —
+have an authenticator app ready, and store the TOTP secret **off this
+infrastructure** (see the circular-dependency note in
+`ServerNotes/designs/core-oidc.md`).
+
+### Break-glass: Authentik is down or OIDC is broken
+
+`oidc.only_start_if_oidc_is_available` is `false`, so Headscale boots and
+existing nodes keep working even with Authentik completely dead. The CLI is a
+full administrative path that does not touch OIDC at all:
+
+```bash
+sudo headscale users list
+sudo headscale preauthkeys create --user idan --expiration 1h
+sudo headscale nodes list
+```
+
+This is the recovery path if Authentik's database is unrecoverable — enrol
+nodes by preauth key while rebuilding identity.
 
 ## Updating Configuration
 

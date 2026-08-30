@@ -1,0 +1,95 @@
+# Backrest — restic orchestrator + browse/restore UI.
+#
+# Differences from the original design in ServerNotes/designs/core-backups.md,
+# all of which were things that could not have worked:
+#
+#   - No db-dump.sh command hook. The dumps run on the HOST
+#     (nixos/backup-prepare.sh) because this image ships neither the docker CLI
+#     nor sqlite3, /mnt/fast is mounted read-only here, and the hook was
+#     registered ON_ERROR_CANCEL — so its guaranteed failure cancelled every
+#     single snapshot.
+#   - /config is a DIRECTORY, mounted read-write. Backrest rewrites config.json
+#     whenever anything changes in the UI, so :ro breaks it; and bind-mounting
+#     a *file* that does not exist yet makes Docker silently create a directory
+#     at that path.
+#   - config-init runs once and exits, with depends_on:
+#     service_completed_successfully. The original sidecar ran `sleep infinity`
+#     and nothing ordered it before Backrest, so it was a race.
+#   - Webhooks go to http://ntfy/ on a shared docker network rather than
+#     host.docker.internal, which does not resolve on Linux and made every
+#     success and failure notification silently disappear.
+services:
+  config-init:
+    image: alpine:3.21
+    container_name: backrest_config_init
+    # Seeds config.json ONCE. Backrest owns the file afterwards, so this must
+    # never overwrite it — the template is a bootstrap seed, not a source of
+    # truth. To re-seed: delete /mnt/fast/backrest/config/config.json.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # Fail loudly BEFORE Backrest starts if the storage box key is absent.
+        # depends_on: service_completed_successfully means Backrest will not
+        # come up in a state where every backup fails on ssh auth.
+        if [ ! -s /keys/storagebox_ed25519 ]; then
+          echo "ERROR: /var/lib/backup/storagebox_ed25519 missing or empty on the host."
+          echo "  ssh-keygen -t ed25519 -N '' -f /var/lib/backup/storagebox_ed25519"
+          echo "  ssh-copy-id -p 23 -i /var/lib/backup/storagebox_ed25519.pub uXXXXXX@uXXXXXX.your-storagebox.de"
+          exit 1
+        fi
+        if [ -f /config/config.json ]; then
+          echo "config.json already exists - leaving it alone"
+          exit 0
+        fi
+        apk add --no-cache gettext >/dev/null 2>&1
+        envsubst < /template/config.template.json > /config/config.json
+        chmod 600 /config/config.json
+        echo "seeded config.json"
+    env_file:
+      - .env
+    volumes:
+      - ./config.template.json:/template/config.template.json:ro
+      - /mnt/fast/backrest/config:/config
+      - /var/lib/backup:/keys:ro
+    networks:
+      - homelab
+    restart: "no"
+
+  backrest:
+    image: garethgeorge/backrest:v1.9.1
+    container_name: backrest
+    hostname: services-vm
+    depends_on:
+      config-init:
+        condition: service_completed_successfully
+    environment:
+      - BACKREST_CONFIG=/config/config.json
+      - BACKREST_DATA=/data
+      - XDG_CACHE_HOME=/cache
+      - TZ=America/Chicago
+    volumes:
+      - /mnt/fast/backrest/config:/config
+      - /mnt/fast/backrest/data:/data
+      - /mnt/fast/backrest/cache:/cache
+      # SSH key + config for the Hetzner Storage Box. The private key lives on
+      # the host at /var/lib/backup/, never in the repo — it is generated once
+      # and its public half authorised on the storage box, so it never needs
+      # to travel through git or SOPS.
+      - /var/lib/backup/storagebox_ed25519:/root/.ssh/id_ed25519:ro
+      - ./ssh_config:/root/.ssh/config:ro
+      # Data to back up. Read-only: Backrest never needs to write here, and the
+      # host-side dump job is what puts dumps into /mnt/fast/_dumps.
+      - /mnt/fast:/mnt/fast:ro
+      - /mnt/slow:/mnt/slow:ro
+    ports:
+      - '127.0.0.1:10002:9898'
+    networks:
+      - homelab
+    env_file:
+      - .env
+    restart: unless-stopped
+
+networks:
+  homelab:
+    external: true

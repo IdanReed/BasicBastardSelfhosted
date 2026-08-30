@@ -1,0 +1,41 @@
+# Ntfy — the single place failures get reported.
+#
+# Everything that can fail silently points here: systemd OnFailure= on the
+# services VM, and Backrest's snapshot hooks. Deployed before the monitoring
+# stack deliberately, because the first thing worth building is a failure
+# signal, not a dashboard.
+#
+# Reachable two ways on purpose:
+#   - 127.0.0.1:10001 for host systemd units (notify-failure@.service)
+#   - http://ntfy/ on the shared `homelab` docker network, for containers.
+#     Containers cannot reach a loopback-bound host port, which is why the old
+#     design's host.docker.internal webhooks would have failed even with
+#     extra_hosts set correctly.
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    container_name: ntfy
+    command: serve
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - ./server.yml:/etc/ntfy/server.yml:ro
+      - /mnt/fast/ntfy/cache:/var/cache/ntfy
+      - /mnt/fast/ntfy/lib:/var/lib/ntfy
+    ports:
+      - '127.0.0.1:10001:80'
+    networks:
+      - homelab
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:80/v1/health | grep -q healthy"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+networks:
+  homelab:
+    external: true

@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+#
+# Pre-backup preparation. Invoked by backup-prepare.service shortly before
+# Backrest's snapshot window.
+#
+# This runs on the HOST, deliberately. The previous design ran the equivalent
+# as a Backrest command hook inside the container, which could not work:
+#
+#   - the backrest image ships neither the docker CLI nor sqlite3
+#   - it wrote dumps into /mnt/fast, which is mounted read-only in that container
+#   - the hook was registered ON_ERROR_CANCEL, so its failure cancelled every
+#     snapshot — a backup system that looked configured and produced nothing
+#
+# Every output is written to a .tmp and renamed only on success, so a failed
+# dump never silently replaces the last good one with a truncated file.
+#
+# Note: no `set -e`. One failing service must not skip the rest; failures are
+# accumulated and reported via the exit code, which trips OnFailure -> Ntfy.
+
+set -uo pipefail
+
+DUMPS=/mnt/fast/_dumps
+VPSDIR=/mnt/fast/_vps
+VPS_HOST="${VPS_HOST:-headscale-vps.tailnet.idanreed.com}"
+VPS_USER="${VPS_USER:-idan}"
+VPS_KEY="${VPS_KEY:-/var/lib/backup/vps_ed25519}"
+
+rc=0
+log() { echo "[backup-prepare] $*"; }
+
+install -d -m 0700 "$DUMPS" "$VPSDIR"
+
+running() { docker ps --format '{{.Names}}' | grep -qx "$1"; }
+
+# ---------------------------------------------------------------------------
+# PostgreSQL
+# ---------------------------------------------------------------------------
+# pg_dumpall against the container's superuser. A logical dump is restorable;
+# a file-level copy of a live pgdata directory generally is not, which is why
+# the Backrest plans exclude **/pgdata/**.
+for svc in paperless immich firefly dawarich tandoor wger; do
+    container="${svc}_db"
+    running "$container" || continue
+
+    log "pg_dumpall $svc"
+    if docker exec "$container" pg_dumpall -U "$svc" > "$DUMPS/$svc.sql.tmp"; then
+        mv -f "$DUMPS/$svc.sql.tmp" "$DUMPS/$svc.sql"
+    else
+        log "FAILED: pg_dumpall $svc"
+        rm -f "$DUMPS/$svc.sql.tmp"
+        rc=1
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# MySQL / MariaDB
+# ---------------------------------------------------------------------------
+if running bookstack_db; then
+    log "mysqldump bookstack"
+    if docker exec bookstack_db sh -c \
+        'exec mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases' \
+        > "$DUMPS/bookstack.sql.tmp"; then
+        mv -f "$DUMPS/bookstack.sql.tmp" "$DUMPS/bookstack.sql"
+    else
+        log "FAILED: mysqldump bookstack"
+        rm -f "$DUMPS/bookstack.sql.tmp"
+        rc=1
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# SQLite
+# ---------------------------------------------------------------------------
+# `.backup` is safe against a live writer. Copying a WAL-mode database file
+# directly is not — it can capture a torn page set with an out-of-date -wal.
+sqlite_backup() {
+    local name="$1" src="$2"
+    [ -f "$src" ] || return 0
+
+    log "sqlite backup $name"
+    if sqlite3 "$src" ".backup '$DUMPS/$name.sqlite.tmp'"; then
+        mv -f "$DUMPS/$name.sqlite.tmp" "$DUMPS/$name.sqlite"
+    else
+        log "FAILED: sqlite backup $name"
+        rm -f "$DUMPS/$name.sqlite.tmp"
+        rc=1
+    fi
+}
+
+sqlite_backup vaultwarden    /mnt/fast/vaultwarden/db.sqlite3
+sqlite_backup karakeep       /mnt/fast/karakeep/data.db
+sqlite_backup homebox        /mnt/fast/homebox/homebox.db
+sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
+sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
+sqlite_backup audiobookshelf /mnt/fast/audiobookshelf/config/absdatabase.sqlite
+
+# ---------------------------------------------------------------------------
+# VPS state
+# ---------------------------------------------------------------------------
+# Nothing else backs up the VPS. Losing that disk means:
+#   - every node must re-enrol      (headscale db.sqlite + noise/DERP keys)
+#   - every user must re-enrol TOTP (authentik identity database)
+# Both are small; this is the cheapest large risk reduction available.
+ssh_opts=(-i "$VPS_KEY" -o BatchMode=yes -o ConnectTimeout=10
+          -o StrictHostKeyChecking=accept-new)
+
+if [ ! -f "$VPS_KEY" ]; then
+    log "WARNING: $VPS_KEY missing - VPS state is NOT being backed up."
+    log "  Create it and authorise it on the VPS:"
+    log "    ssh-keygen -t ed25519 -N '' -f $VPS_KEY"
+    log "    ssh-copy-id -i $VPS_KEY.pub $VPS_USER@$VPS_HOST"
+    rc=1
+else
+    log "authentik pg_dumpall (via $VPS_HOST)"
+    if ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+        'sudo docker exec authentik_db pg_dumpall -U authentik' \
+        > "$VPSDIR/authentik.sql.tmp"; then
+        mv -f "$VPSDIR/authentik.sql.tmp" "$VPSDIR/authentik.sql"
+    else
+        log "FAILED: authentik dump"
+        rm -f "$VPSDIR/authentik.sql.tmp"
+        rc=1
+    fi
+
+    # Headscale keeps db.sqlite plus noise_private.key and
+    # derp_server_private.key here. The keys are the control-plane identity:
+    # lose them and every client must re-authenticate.
+    log "headscale state pull"
+    if ! rsync -a --delete \
+        --rsync-path='sudo rsync' \
+        -e "ssh ${ssh_opts[*]}" \
+        "$VPS_USER@$VPS_HOST:/var/lib/headscale/" "$VPSDIR/headscale/"; then
+        log "FAILED: headscale state pull"
+        rc=1
+    fi
+fi
+
+if [ "$rc" -eq 0 ]; then
+    log "complete"
+    # Local canary. backup-staleness-check.timer alerts if this stamp goes
+    # stale, which catches "the timer silently stopped firing" — a failure mode
+    # that by definition produces no failure notification. The external
+    # dead-man's switch (DEADMAN_URL in stacks/backrest) covers the case where
+    # this whole host is down.
+    date -u +%s > "$DUMPS/.last-success"
+else
+    log "completed WITH FAILURES"
+fi
+exit "$rc"

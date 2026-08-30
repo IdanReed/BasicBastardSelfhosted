@@ -18,7 +18,6 @@
   outputs = { self, nixpkgs, sops-nix, nixos-generators, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
 
       # Shared module used by both the live system and the image
       baseModule = { config, pkgs, lib, ... }: {
@@ -38,37 +37,48 @@
         ];
       };
 
-      # Proxmox VMA image for initial provisioning
-      packages.${system}.proxmox-image = nixos-generators.nixosGenerate {
-        inherit system;
-        modules = [
-          baseModule
-          # Minimal hardware config for image (real mounts come from hardware-configuration.nix at runtime)
-          ({ config, pkgs, lib, ... }: {
-            # Cloud-init for first boot (age key injection)
-            services.cloud-init = {
-              enable = true;
-              network.enable = true;
-            };
+      # Proxmox VMA image for initial provisioning.
+      #
+      # Both attributes must live in ONE `packages.${system}` set. Nix does not
+      # merge two separate dynamic-attribute paths that share a key, so
+      # declaring `packages.${system}.proxmox-image` and
+      # `packages.${system}.default` as siblings raised
+      #   error: dynamic attribute 'x86_64-linux' already defined
+      # which made the whole flake fail to evaluate — `nix build
+      # .#proxmox-image` could never have worked.
+      packages.${system} = rec {
+        proxmox-image = nixos-generators.nixosGenerate {
+          inherit system;
+          modules = [
+            baseModule
+            # Minimal hardware config for the image; the real mounts come from
+            # hardware-configuration.nix at runtime.
+            ({ config, pkgs, lib, ... }: {
+              # Cloud-init for first boot (age key injection)
+              services.cloud-init = {
+                enable = true;
+                network.enable = true;
+              };
 
-            # Proxmox guest agent
-            services.qemuGuest.enable = true;
+              # Proxmox guest agent
+              services.qemuGuest.enable = true;
 
-            # Growpart for disk expansion
-            boot.growPartition = true;
+              # Growpart for disk expansion
+              boot.growPartition = true;
 
-            # Filesystem for image (will be replaced/extended by real disks)
-            fileSystems."/" = {
-              device = "/dev/disk/by-label/nixos";
-              fsType = "ext4";
-              autoResize = true;
-            };
-          })
-        ];
-        format = "proxmox";
+              # Filesystem for image (replaced/extended by the real disks)
+              fileSystems."/" = {
+                device = "/dev/disk/by-label/nixos";
+                fsType = "ext4";
+                autoResize = true;
+              };
+            })
+          ];
+          format = "proxmox";
+        };
+
+        # Convenience alias
+        default = proxmox-image;
       };
-
-      # Convenience alias
-      packages.${system}.default = self.packages.${system}.proxmox-image;
     };
 }

@@ -7,8 +7,11 @@ services:
       - db
       - tika
       - gotenberg
+    # Bound to loopback so Caddy (network_mode: host) is the only path in.
+    # On 0.0.0.0 this was directly reachable from the tailnet, bypassing any
+    # reverse-proxy auth.
     ports:
-      - '10100:8000'
+      - '127.0.0.1:10100:8000'
     volumes:
       - /mnt/fast/paperless/data:/usr/src/paperless/data
       - /mnt/fast/paperless/media:/usr/src/paperless/media

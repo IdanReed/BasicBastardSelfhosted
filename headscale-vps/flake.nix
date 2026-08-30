@@ -23,6 +23,7 @@
         sops-nix.nixosModules.sops
         ./disk-config.nix
         ./configuration.nix
+        ./modules/caddy.nix
         ./modules/headscale.nix
         ./modules/authentik.nix
       ];

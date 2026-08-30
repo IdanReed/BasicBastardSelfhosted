@@ -20,12 +20,14 @@
 
     firewall = {
       enable = true;
+      # Caddy is the only public listener (modules/caddy.nix). Headscale sits on
+      # loopback:8080 and Authentik on loopback:9000 behind it; neither is
+      # published directly any more. 9000/9443 were previously open, which
+      # exposed Authentik's admin interface over plain HTTP to the internet.
       allowedTCPPorts = [
         22    # SSH
-        80    # Headscale ACME HTTP-01 challenge
-        443   # Headscale API + embedded DERP
-        9000  # Authentik HTTP
-        9443  # Authentik HTTPS
+        80    # Caddy - ACME HTTP-01 challenge + redirect to HTTPS
+        443   # Caddy - Headscale API, embedded DERP, Authentik
       ];
       allowedUDPPorts = [
         3478  # STUN (DERP/NAT traversal)
@@ -99,32 +101,60 @@
     };
   };
 
-  # Tailscale auto-login service
+  # Tailscale auto-login service.
+  #
+  # --login-server is REQUIRED. Without it `tailscale up --authkey` registers
+  # against Tailscale's SaaS control plane, where a Headscale-issued preauth
+  # key (see .sops.env.example) is not valid — the node would silently fail to
+  # join the tailnet this host is itself serving.
+  #
+  # This host joins its own Headscale, so it must wait for the full public
+  # path to be up: headscale on loopback, and Caddy holding a valid
+  # certificate for headscale.idanreed.com.
   systemd.services.tailscale-autoconnect = {
-    description = "Automatic connection to Tailscale/Headscale";
-    after = [ "network-pre.target" "tailscale.service" ];
-    wants = [ "network-pre.target" "tailscale.service" ];
+    description = "Automatic connection to Headscale";
+    after = [ "network-online.target" "tailscale.service" "headscale.service" "caddy.service" ];
+    wants = [ "network-online.target" "tailscale.service" ];
     wantedBy = [ "multi-user.target" ];
 
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # First boot races ACME issuance, which can take a minute or two.
+      # Retry rather than leaving the host off its own tailnet until someone
+      # notices and reruns this by hand.
+      Restart = "on-failure";
+      RestartSec = "30s";
     };
 
     script = ''
+      set -euo pipefail
+
       # Wait for tailscaled to be ready
       sleep 2
 
       # Check if already authenticated
       status="$(${pkgs.tailscale}/bin/tailscale status -json | ${pkgs.jq}/bin/jq -r .BackendState)"
       if [ "$status" = "Running" ]; then
-        echo "Already connected to Tailscale"
+        echo "Already connected to Headscale"
         exit 0
       fi
 
-      # Authenticate (once Headscale is running, change to --login-server)
+      # Wait for our own control plane to answer over HTTPS. Bounded, so a
+      # genuine misconfiguration still surfaces as a unit failure.
+      for i in $(seq 1 30); do
+        if ${pkgs.curl}/bin/curl -fsS --max-time 5 \
+             https://headscale.idanreed.com/health >/dev/null 2>&1; then
+          echo "Headscale reachable"
+          break
+        fi
+        echo "Waiting for headscale.idanreed.com ($i/30)..."
+        sleep 10
+      done
+
       ${pkgs.tailscale}/bin/tailscale up \
-        --authkey $(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path}) \
+        --login-server=https://headscale.idanreed.com \
+        --authkey "$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})" \
         --hostname=headscale-vps
     '';
   };

@@ -1,0 +1,51 @@
+// Headscale ACL policy.
+//
+// Referenced from modules/headscale.nix as settings.policy.path. Validated
+// with: headscale policy check --file policy.hujson
+//
+// With a policy file loaded, traffic is DEFAULT-DENY — only flows matching an
+// accept rule are permitted. Rule 1 keeps the owner's own devices fully
+// connected, so this file is behaviour-neutral today (nothing is tagged yet)
+// while giving guests somewhere to be constrained when they are added.
+//
+// Users are referenced with a trailing "@" (e.g. "idan@"). The user must exist
+// before it resolves to anything; it is created by `headscale users create
+// idan`, which the preauth-key step in .sops.env.example already requires.
+//
+// Tags are applied at registration and cannot be added retroactively without
+// re-registering the node:
+//   tailscale up --login-server=https://headscale.idanreed.com \
+//                --advertise-tags=tag:server
+{
+  "tagOwners": {
+    "tag:server": ["idan@"],
+    "tag:guest": ["idan@"],
+  },
+
+  "acls": [
+    // Owner's own devices: unrestricted. This also covers subnet routes
+    // advertised by the OPNsense router. Do not remove without another
+    // administrative path onto the tailnet.
+    {
+      "action": "accept",
+      "src": ["idan@"],
+      "dst": ["*:*"],
+    },
+
+    // Servers may reach each other — metrics scraping, and the nightly pull of
+    // VPS state into the services VM's backup set.
+    {
+      "action": "accept",
+      "src": ["tag:server"],
+      "dst": ["tag:server:*"],
+    },
+
+    // Guests reach published services over HTTPS only: no SSH, no direct
+    // container ports, and no access to the LAN behind the subnet router.
+    {
+      "action": "accept",
+      "src": ["tag:guest"],
+      "dst": ["tag:server:443"],
+    },
+  ],
+}

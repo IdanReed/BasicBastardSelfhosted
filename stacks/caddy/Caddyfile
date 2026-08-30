@@ -1,16 +1,85 @@
-(tailnet) {
-	bind {$HEADSCALE_IP}
+# Reverse proxy for the services VM.
+#
+# Bound to the tailnet IP only — nothing here is reachable from the LAN or the
+# internet. Certificates come from Let's Encrypt via DNS-01, because Let's
+# Encrypt cannot reach a tailnet-only host for HTTP-01. (The VPS is public and
+# uses HTTP-01 instead, so it needs no DNS plugin.)
+#
+# ONE wildcard certificate for *.svc.idanreed.com rather than a cert per
+# hostname. Per-hostname certs publish every internal service name to public
+# Certificate Transparency logs — a searchable index of what you run.
+#
+# DNS: *.svc.idanreed.com is a public Cloudflare A record pointing at this
+# host's tailnet IP. The address is CGNAT space and only routable from inside
+# the tailnet, so publishing it is not an exposure. This replaces the CoreDNS
+# instance the old design called for and never deployed.
+
+*.svc.idanreed.com {
+	bind {$TAILNET_IP}
+
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
+
+	@arcane host arcane.svc.idanreed.com
+	handle @arcane {
+		reverse_proxy localhost:10000
+	}
+
+	@paperless host paperless.svc.idanreed.com
+	handle @paperless {
+		reverse_proxy localhost:10100
+	}
+
+	@backrest host backrest.svc.idanreed.com
+	handle @backrest {
+		reverse_proxy localhost:10002
+	}
+
+	@ntfy host ntfy.svc.idanreed.com
+	handle @ntfy {
+		reverse_proxy localhost:10001
+	}
+
+	@bentopdf host bentopdf.svc.idanreed.com
+	handle @bentopdf {
+		reverse_proxy localhost:10401
+	}
+
+	@mazanoke host mazanoke.svc.idanreed.com
+	handle @mazanoke {
+		reverse_proxy localhost:10403
+	}
+
+	# Anything not matched above. Without this a stray subdomain would get a
+	# blank 200 from the wildcard site.
+	handle {
+		respond "No such service" 404
+	}
 }
 
-arcane.services.headscale.idanreed.com {
-	import tailnet
-	reverse_proxy localhost:10000
-}
-
-paperless.services.headscale.idanreed.com {
-	import tailnet
-	reverse_proxy localhost:10100
+# ---------------------------------------------------------------------------
+# Forward auth (not enabled yet)
+# ---------------------------------------------------------------------------
+# Import this into a handle block to put Authentik in front of a service that
+# has no usable auth of its own:
+#
+#	handle @dozzle {
+#		import protected
+#		reverse_proxy localhost:10451
+#	}
+#
+# Requires two things that do not exist yet:
+#   1. A Proxy Provider + embedded-outpost application in Authentik, defined as
+#      a blueprint alongside headscale-oidc.yml.
+#   2. AUTHENTIK_COOKIE_DOMAIN=idanreed.com on the Authentik containers, so the
+#      session cookie is valid across auth.idanreed.com and *.svc.idanreed.com
+#      (already set in headscale-vps/authentik/compose.yaml).
+#
+# Enabling the import before (1) exists will lock you out of the service.
+(protected) {
+	forward_auth https://auth.idanreed.com {
+		uri /outpost.goauthentik.io/auth/caddy
+		copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
+	}
 }

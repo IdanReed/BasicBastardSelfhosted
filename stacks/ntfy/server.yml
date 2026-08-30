@@ -1,0 +1,24 @@
+# Ntfy server config.
+#
+# Bound behind Caddy on the tailnet, so no public exposure and no auth of its
+# own — reaching it already requires being on the tailnet. If Ntfy is ever
+# published more widely, set auth-default-access: deny-all and create tokens.
+#
+# NO SECRETS HERE. This file is plain YAML with no variable interpolation —
+# a "${VAR}" would be stored literally. Ntfy maps every config key to an
+# NTFY_<KEY> environment variable, so SMTP credentials come from .env
+# (NTFY_SMTP_SENDER_ADDR / _USER / _PASS) and are picked up automatically.
+
+base-url: "https://ntfy.svc.idanreed.com"
+listen-http: ":80"
+
+cache-file: /var/cache/ntfy/cache.db
+cache-duration: "168h"
+attachment-cache-dir: /var/cache/ntfy/attachments
+
+auth-file: /var/lib/ntfy/auth.db
+auth-default-access: "read-write"
+
+smtp-sender-from: "alerts@idanreed.com"
+
+behind-proxy: true

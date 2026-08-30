@@ -1,0 +1,18 @@
+# Mounted at /root/.ssh/config inside the Backrest container.
+# Referenced by the repo URI "sftp:storagebox:/home/restic".
+#
+# Replace uXXXXXX with the Hetzner Storage Box sub-account username. Use a
+# SUB-ACCOUNT scoped to its own directory, not the main account — restic
+# authenticates with full write access to whatever it can see, so a compromised
+# or malfunctioning services VM can `forget --prune` the entire repository.
+# Storage Box snapshots (enabled in the Hetzner console) are what makes that
+# recoverable; see README.md.
+
+Host storagebox
+    HostName uXXXXXX.your-storagebox.de
+    Port 23
+    User uXXXXXX
+    IdentityFile /root/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    ServerAliveInterval 30

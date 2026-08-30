@@ -34,13 +34,28 @@ in
       PG_PASS=${config.sops.placeholder.PG_PASS}
       AUTHENTIK_SECRET_KEY=${config.sops.placeholder.AUTHENTIK_SECRET_KEY}
       HEADSCALE_OIDC_CLIENT_SECRET=${config.sops.placeholder.HEADSCALE_OIDC_CLIENT_SECRET}
+      AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
+      AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
     mode = "0400";
+
+    # sops-nix renders templates to a stable path, so rotating a value leaves
+    # the systemd unit byte-identical and nothing would restart. Rotating
+    # HEADSCALE_OIDC_CLIENT_SECRET is the case that bites: Authentik's
+    # blueprint picks up the new value while Headscale keeps the old one.
+    restartUnits = [ "authentik.service" ];
   };
 
   sops.secrets = {
     PG_PASS = { };
     AUTHENTIK_SECRET_KEY = { };
+
+    # Without these the blueprint creates user `idan` with no credential, and
+    # with no SMTP configured there is no password-reset path either — nobody
+    # could log in at all. The worker consumes them on first start to create
+    # the `akadmin` superuser and an API token.
+    AUTHENTIK_BOOTSTRAP_PASSWORD = { };
+    AUTHENTIK_BOOTSTRAP_TOKEN = { };
   };
 
   systemd.services.authentik = {

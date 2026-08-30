@@ -63,10 +63,20 @@ entries:
       meta_description: "Tailscale-compatible VPN coordination server"
 
   # ===========================================
-  # MFA Stages (TOTP enforcement)
+  # MFA (TOTP enforcement)
   # ===========================================
+  #
+  # A free-standing authenticatorvalidatestage does nothing — stages only run
+  # when bound into a flow via a flowstagebinding. Rather than create a new
+  # stage plus a binding (which would collide with the built-in MFA stage
+  # already bound at order 30 of default-authentication-flow, and prompt
+  # twice), this overrides the built-in stage in place.
+  #
+  # not_configured_action valid values are skip | deny | configure. There is no
+  # "force"; `configure` is the enforcing option — it pushes users who have no
+  # authenticator through configuration_stages before letting them in.
 
-  # Stage to set up TOTP if not enrolled
+  # Enrollment stage users are sent through when they have no TOTP device.
   - model: authentik_stages_authenticator_totp.authenticatortotpstage
     id: totp-setup-stage
     state: present
@@ -76,16 +86,19 @@ entries:
       friendly_name: "Authenticator App Setup"
       digits: 6
 
-  # Stage to validate TOTP at login
+  # Override authentik's built-in MFA validation stage, which ships with
+  # not_configured_action: skip (i.e. 2FA optional). This makes it mandatory.
   - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
     id: mfa-validation-stage
     state: present
     identifiers:
-      name: headscale-mfa-validation
+      name: default-authentication-mfa-validation
     attrs:
-      not_configured_action: "configure"  # Prompt to configure if not set up
+      not_configured_action: "configure"
       device_classes:
         - totp
+        - webauthn
+        - static
       configuration_stages:
         - !KeyOf totp-setup-stage
 

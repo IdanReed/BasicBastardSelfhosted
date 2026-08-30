@@ -1,0 +1,65 @@
+# Builds the Caddy image with the cloudflare-dns plugin and publishes it to
+# GHCR, so the services VM can pull a pinned image instead of building on the
+# host from a Dockerfile that Arcane's git sync would not deliver anyway.
+#
+# Run manually, or on a push that touches the Dockerfile.
+#
+# Injection safety: this workflow reads no attacker-controllable event fields
+# (no github.event.*). The only interpolations are github.repository_owner,
+# github.actor and secrets.GITHUB_TOKEN, none of which are user-supplied text,
+# and nothing is interpolated into a run: block.
+name: Build Caddy (cloudflare-dns)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'stacks/caddy/Dockerfile'
+      - '.github/workflows/build-caddy.yml'
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/caddy-cloudflare
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag must match the FROM in stacks/caddy/Dockerfile and the image
+      # tag in stacks/caddy/compose.yaml. Read it out of the Dockerfile rather
+      # than duplicating it here.
+      - name: Determine Caddy version
+        id: ver
+        run: |
+          version=$(grep -oP '^FROM caddy:\K[0-9]+\.[0-9]+\.[0-9]+$' \
+            stacks/caddy/Dockerfile | tail -1)
+          if [ -z "$version" ]; then
+            echo "Could not determine Caddy version from Dockerfile" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building Caddy $version"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: stacks/caddy
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

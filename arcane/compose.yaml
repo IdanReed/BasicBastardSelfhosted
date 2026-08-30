@@ -2,8 +2,12 @@ services:
   arcane:
     image: ghcr.io/getarcaneapp/arcane:1.17.4
     container_name: arcane
+    # Loopback only. Arcane mounts the Docker socket, so its web UI is a
+    # root-equivalent interface; it was previously reachable from the whole
+    # trusted VLAN with only its own login in front of it. Reach it through
+    # Caddy at arcane.svc.idanreed.com.
     ports:
-      - '10000:3552'
+      - '127.0.0.1:10000:3552'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - arcane_data:/app/data
