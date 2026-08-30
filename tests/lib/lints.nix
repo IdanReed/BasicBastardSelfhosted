@@ -936,6 +936,59 @@ in
     '';
 
   # ---------------------------------------------------------------------------
+  # fail2ban <-> docker journald tag contract
+  # ---------------------------------------------------------------------------
+  # Three strings must agree or the authentik jail reads zero journal lines
+  # FOREVER while fail2ban-client still lists it active: the compose logging
+  # tag on the server container, the jail's journalmatch, and the filter
+  # file's journalmatch. Nothing else couples them — rename any one and every
+  # suite stays green (the fail2ban-regex drift leg feeds the filter a FILE,
+  # not the journal), which is exactly the silent-death mode the jail exists
+  # to prevent.
+  fail2ban-journal-contract =
+    mkLint "fail2ban-journal-contract" ''
+      ${py} - <<'PY'
+      import sys, yaml
+
+      with open("${repo + "/headscale-vps/authentik/compose.yaml"}") as f:
+          doc = yaml.safe_load(f)
+      server = doc["services"]["server"]
+      logging = server.get("logging") or {}
+
+      errs = []
+      if logging.get("driver") != "journald":
+          errs.append("the server container's logging driver is "
+                      f"{logging.get('driver')!r}, not journald — fail2ban's "
+                      "systemd backend cannot see json-file logs")
+      tag = (logging.get("options") or {}).get("tag")
+      if not tag:
+          errs.append("the server container's journald logging has no tag — "
+                      "the jail's journalmatch has nothing to match")
+
+      with open("${repo + "/headscale-vps/configuration.nix"}") as f:
+          cfg = f.read()
+      # Both consumers, exact forms: the jail setting (nix string) and the
+      # filter file line (raw INI inside the etc text).
+      if tag:
+          want = f"CONTAINER_TAG={tag}"
+          jail = f'journalmatch = "{want}"'
+          filt = f"journalmatch = {want}"
+          if jail not in cfg:
+              errs.append(f"jail journalmatch does not pin {want!r} — the "
+                          "jail watches a tag nothing emits")
+          if filt not in cfg:
+              errs.append(f"filter-file journalmatch does not pin {want!r}")
+
+      if errs:
+          print("fail2ban journal contract violations:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"fail2ban journal contract OK (tag {tag!r}, jail + filter agree)")
+      PY
+    '';
+
+  # ---------------------------------------------------------------------------
   # /srv/stacks tmpfiles ownership
   # ---------------------------------------------------------------------------
   # nixos/hardware-configuration.nix owns the production tmpfiles rules, and

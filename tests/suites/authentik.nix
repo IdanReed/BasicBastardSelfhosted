@@ -446,6 +446,81 @@ pkgs.testers.runNixOSTest {
               raise
 
       # ---------------------------------------------------------------------
+      # (c3) The login-hardening blueprint applied and BOUND into the flow
+      # ---------------------------------------------------------------------
+      # Layer 2 of the login-hardening pair (layer 1 is the fail2ban jail,
+      # covered by the vps suite). A reputation policy is inert unless it is
+      # bound into the authentication flow through a conditional deny stage —
+      # and a mis-bound policy is finding-#9-silent: the object exists, the API
+      # shows it, and nothing gates. So this does not stop at "policy exists";
+      # it walks policy -> policybinding -> flowstagebinding -> flow and pins
+      # the whole chain to default-authentication-flow.
+      with subtest("the login-hardening reputation policy exists"):
+          # Exact-name selection, never results[0]: ?name= is fuzzy and other
+          # policies share the DB.
+          try:
+              headscale_vps.wait_until_succeeds(
+                  f"{CURL} '{API}/policies/reputation/?name=login-reputation' "
+                  "| jq -e '[.results[] | select(.name == \"login-reputation\")] "
+                  "| length == 1 and .[0].check_ip == true "
+                  "and .[0].check_username == true and .[0].threshold == -10'",
+                  timeout=300,
+              )
+          except Exception:
+              authentik_diag()
+              raise
+
+      with subtest("the reputation policy is bound to default-authentication-flow"):
+          try:
+              # 1. reputation policy pk, by exact name.
+              pols = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/policies/reputation/?name=login-reputation'"
+              ))
+              pol = [p for p in pols["results"] if p["name"] == "login-reputation"]
+              assert len(pol) == 1, f"policy count: {[p['name'] for p in pols['results']]}"
+              policy_pk = pol[0]["pk"]
+
+              # 2. the policybinding that attaches it — filtered by THIS
+              # policy's pk, so it cannot resolve to some other policy's
+              # binding. Its target is a flowstagebinding uuid.
+              binds = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/policies/bindings/?policy={policy_pk}'"
+              ))
+              assert len(binds["results"]) == 1, (
+                  f"expected exactly one binding of login-reputation, got "
+                  f"{len(binds['results'])}"
+              )
+              fsb_pk = binds["results"][0]["target"]
+
+              # 3. the flowstagebinding itself: it must target the default
+              # authentication flow, sit at the conditional order, run the
+              # deny stage, and carry the evaluate_on_plan/re_evaluate pair
+              # that makes reputation re-check post-identification. Get either
+              # flag wrong and the policy runs at plan time with an anonymous
+              # user — check_username goes silently inert.
+              fsb = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/flows/bindings/{fsb_pk}/'"
+              ))
+              flow = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/flows/instances/default-authentication-flow/'"
+              ))
+              assert fsb["target"] == flow["pk"], (
+                  f"reputation deny stage is bound to flow {fsb['target']!r}, "
+                  f"not default-authentication-flow ({flow['pk']!r})"
+              )
+              assert fsb["stage_obj"]["name"] == "login-reputation-deny", (
+                  f"conditional binding runs the wrong stage: "
+                  f"{fsb['stage_obj']['name']!r}"
+              )
+              assert fsb["evaluate_on_plan"] is False, \
+                  "evaluate_on_plan must be false or check_username is inert"
+              assert fsb["re_evaluate_policies"] is True, \
+                  "re_evaluate_policies must be true or the deny never re-checks"
+          except Exception:
+              authentik_diag()
+              raise
+
+      # ---------------------------------------------------------------------
       # (d) The three-way secret contract
       # ---------------------------------------------------------------------
       with subtest("fixture == headscale's secret file == Authentik's provider row"):

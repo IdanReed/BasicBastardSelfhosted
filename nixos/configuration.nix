@@ -41,6 +41,11 @@ in
     settings = {
       PermitRootLogin = "no";
       PasswordAuthentication = false;
+      # Explicit, not defaulted (security review 2026-08-30 item 4): OpenSSH
+      # defaults this to yes, and with UsePAM yes that opens a PAM password
+      # path that PasswordAuthentication=false does not close. See the VPS
+      # twin comment; the vps suite carries the mechanical assertion.
+      KbdInteractiveAuthentication = false;
     };
   };
 

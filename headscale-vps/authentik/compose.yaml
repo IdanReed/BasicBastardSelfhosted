@@ -45,6 +45,19 @@ services:
     container_name: authentik_server
     restart: unless-stopped
     command: server
+    # WHY journald: the fail2ban 'authentik' jail (../configuration.nix) reads
+    # login_failed events off the journal by CONTAINER_TAG. With the default
+    # json-file driver those lines live only in a per-container JSON file that
+    # fail2ban's systemd backend cannot see — the jail would silently never
+    # ban. The flow executor (and thus the login_failed event) runs in the
+    # SERVER container, not the worker — verified empirically by driving a
+    # failed API login against the pinned 2026.5.6 image and grepping both
+    # containers (worker emitted zero login_failed lines). Tag must stay
+    # 'authentik-server': the jail's journalmatch pins it.
+    logging:
+      driver: journald
+      options:
+        tag: authentik-server
     environment:
       AUTHENTIK_REDIS__HOST: redis
       AUTHENTIK_POSTGRESQL__HOST: postgresql

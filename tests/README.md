@@ -113,6 +113,13 @@ Beyond "it parses":
   `wantedBy`/ordering that a `nixos-rebuild switch` never exercises.
 - **Independence**: headscale keeps serving with `docker` stopped — the stated
   reason it is a native service.
+- **Brute-force protection, both layers**: the vps suite proves the authentik
+  fail2ban jail is loaded and runs the deployed failregex against the
+  empirically captured `login_failed` line plus three negative controls
+  (successful login, `invalid_login`, an asgi access line — none may match);
+  the authentik suite walks the reputation policy → DenyStage binding → flow.
+  The `fail2ban-journal-contract` lint pins the compose journald tag to both
+  `journalmatch` consumers.
 - **The gluetun kill-switch, offline by construction**: the media fixture
   points wireguard at TEST-NET-1, so the suite runs with the tunnel
   permanently down and proves qBittorrent's netns has zero egress beyond the
@@ -139,6 +146,7 @@ Honest list; do not read a green suite as covering these.
 | Hetzner Storage Box itself | The backrest suite runs a real in-VM SFTP endpoint instead — key, sftp, restic, snapshots all real; only the endpoint's address is substituted. |
 | Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. |
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
+| A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
 | Immich ML inference / live OIDC login | The immich suite runs offline: model download and every inference *result* (smart search hits, faces, duplicates) need egress — the suite pins the degraded-but-healthy state instead (ML answers `/ping`, smart search errors, server stays up). The OIDC browser + `app.immich:///oauth-callback` flow is doubly uncoverable (needs a browser AND v3's secure-OAuth default vs the suite's plain-HTTP loopback); the rendered config contract and the authentik-side provider are asserted instead. |
 
 Where an override costs coverage, `lib/profiles.nix` names the loss and, where
@@ -343,10 +351,12 @@ aborts on a missing env file, so those stacks will not start until the real
 
 ## Status
 
-Every suite is green as of 2026-08-30: lints (**14**, now including
-`forward-auth-coverage` — every `import protected` Caddyfile host must have a
-blueprint provider assigned to the embedded outpost, both lockout doors
-checked), vps, services, tailnet,
+Every suite is green as of 2026-08-30: lints (**16** — the newest:
+`forward-auth-coverage`, every `import protected` Caddyfile host must have a
+blueprint provider assigned to the embedded outpost; `ssh-pubkey-parity`,
+the three ssh-pubkeys.nix copies stay byte-identical; and
+`fail2ban-journal-contract`, the compose journald tag agrees with both
+journalmatch consumers), vps, services, tailnet,
 authentik, paperless, backrest, **rotation** (the restartUnits contract),
 **gitops** (the full Arcane push→sync→decrypt→deploy loop, against a REAL
 in-VM Forgejo remote over http — the git-daemon transport substitution is

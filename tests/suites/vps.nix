@@ -273,6 +273,38 @@ pkgs.testers.runNixOSTest {
               f"curl -sf {CA} --max-time 5 https://${authHost}/ -o /dev/null", timeout=60
           )
 
+      with subtest("HSTS on both vhosts; admin/API prefixes are tailnet-only"):
+          # Security review 2026-08-30 items 5+6. The peer's source address
+          # here is its LAN IP — NOT 100.64/10 — so it stands in for the
+          # public internet against the @restricted matcher.
+          for host in ["${headscaleHost}", "${authHost}"]:
+              hdrs = peer.succeed(
+                  f"curl -s {CA} -o /dev/null -D - https://{host}/"
+              ).lower()
+              assert "strict-transport-security" in hdrs \
+                  and "includesubdomains" in hdrs, (
+                  f"{host} serves no HSTS/includeSubDomains: {hdrs!r}"
+              )
+
+          # Blocked from off-tailnet: the admin UI and the API proper. The
+          # body pins WHICH layer refused — Caddy's matcher, not the backend.
+          for path in ["/if/admin/", "/api/v3/core/users/"]:
+              body = peer.succeed(f"curl -s {CA} https://${authHost}{path}")
+              assert "restricted to tailnet" in body, (
+                  f"{path} not blocked by the Caddy matcher: {body!r}"
+              )
+
+          # But the login SPA's API surface stays public — the flow executor
+          # and branding config are called from arbitrary browsers during
+          # LOGIN, so blocking them breaks every public login (the authentik
+          # frontend is an SPA; this is the classic hardening footgun).
+          for path in ["/api/v3/flows/executor/default/", "/api/v3/root/config/"]:
+              body = peer.succeed(f"curl -s {CA} https://${authHost}{path}")
+              assert "authentik-stand-in" in body, (
+                  f"login-required API path {path} did not reach the "
+                  f"backend: {body!r}"
+              )
+
       # ---------------------------------------------------------------------
       # Firewall
       # ---------------------------------------------------------------------
@@ -327,6 +359,20 @@ pkgs.testers.runNixOSTest {
               f"never saw the server's auth offer: {methods!r}"
           assert "password" not in methods, \
               f"sshd offers password authentication: {methods!r}"
+          # keyboard-interactive is the PAM side door: OpenSSH defaults it ON
+          # and UsePAM yes would honour it — PasswordAuthentication=false
+          # alone does not close it (security review item 4). Before the
+          # explicit KbdInteractiveAuthentication=false this passed only
+          # because the accounts happen to be password-locked.
+          assert "keyboard-interactive" not in methods, \
+              f"sshd offers keyboard-interactive (PAM) auth: {methods!r}"
+          # And a client that insists on it gets nowhere.
+          outsider.fail(
+              f"{SSH} -o PubkeyAuthentication=no "
+              "-o KbdInteractiveAuthentication=yes "
+              "-o PreferredAuthentications=keyboard-interactive "
+              "idan@headscale-vps true"
+          )
 
           # PermitRootLogin no — even with a valid key.
           outsider.fail(
@@ -339,6 +385,85 @@ pkgs.testers.runNixOSTest {
           # assert: provoking a real ban would need repeated failed logins
           # and then races the 1h bantime against every later SSH subtest.
           headscale_vps.succeed("systemctl is-active fail2ban.service")
+
+      with subtest("the authentik jail is loaded"):
+          # Layer 1 of the login-hardening pair (configuration.nix): a
+          # fail2ban jail on Authentik's login page. fail2ban-client lists
+          # every jail it actually loaded, so a filter that failed to parse or
+          # a jail that never started fails HERE rather than silently leaving
+          # the login page unprotected. The authentik container is not in this
+          # suite (nginx stubs :9000), so we assert the jail exists, not that
+          # it bans — same honesty line as the sshd jail above.
+          jails = headscale_vps.succeed("fail2ban-client status")
+          assert "authentik" in jails, \
+              f"authentik jail not loaded: {jails!r}"
+          # status of the jail itself must resolve (proves the filter loaded).
+          headscale_vps.succeed("fail2ban-client status authentik")
+
+      with subtest("the deployed filter still matches a real login_failed line"):
+          # The drift alarm. The failregex was captured empirically against
+          # ghcr.io/goauthentik/server:2026.5.6; run the DEPLOYED filter
+          # (/etc/fail2ban/filter.d/authentik.conf) against that captured
+          # sample and demand EXACTLY one hit. If an authentik upgrade changes
+          # the login_failed log shape, the pin count drops to 0 and this
+          # fails loudly — before the jail silently stops banning in
+          # production. The sample is the verbatim line from the capture, also
+          # recorded in the filter file's own comment.
+          sample = (
+              '{"action": "login_failed", "auth_via": "unauthenticated", '
+              '"client_ip": "203.0.113.77", "context": {"http_request": '
+              '{"args": {}, "method": "POST", "path": '
+              '"/api/v3/flows/executor/default-authentication-flow/", '
+              '"request_id": "dd8c847ae65f4bd8b8f9b4a22c087385", '
+              '"user_agent": "curl/8.19.0"}, "password": '
+              '"********************", "stage": {"app": '
+              '"authentik_stages_password", "model_name": "passwordstage", '
+              '"name": "default-authentication-password", "pk": '
+              '"c0ad2df11f11428a8ca68c73980bd067"}, "username": "akadmin"}, '
+              '"domain_url": "127.0.0.1", "event": "Created Event", "host": '
+              '"127.0.0.1:19000", "level": "info", "logger": '
+              '"authentik.events.models", "pid": 184, "request_id": '
+              '"dd8c847ae65f4bd8b8f9b4a22c087385", "schema_name": "public", '
+              '"timestamp": "2026-08-30T19:25:26.527644", "user": {"email": '
+              '"admin@idanreed.com", "pk": 4, "username": "akadmin"}}'
+          )
+          # Negative controls: events that also carry a client_ip but must
+          # NEVER match — a successful login, an identification-stage
+          # invalid_login, and an asgi access line. Without these, a filter
+          # that dropped its login_failed gate would still pass the
+          # single-line check (empirically confirmed: fail2ban-regex counts
+          # matched lines, so over-match on one line is invisible).
+          negatives = [
+              '{"action": "login", "auth_via": "password", "client_ip": '
+              '"203.0.113.77", "event": "Created Event", "logger": '
+              '"authentik.events.models", "username": "akadmin"}',
+              '{"action": "invalid_login", "auth_via": "unauthenticated", '
+              '"client_ip": "203.0.113.77", "event": "Created Event", '
+              '"logger": "authentik.events.models", "username": "nosuch"}',
+              '{"client_ip": "203.0.113.77", "event": "/-/health/live/", '
+              '"level": "info", "logger": "authentik.asgi", "method": "GET", '
+              '"status": 204}',
+          ]
+          lines = "\n".join([sample] + negatives)
+          headscale_vps.succeed(
+              "install -m 0644 /dev/null /tmp/ak-sample.log"
+          )
+          headscale_vps.succeed(
+              f"cat > /tmp/ak-sample.log <<'EOF'\n{lines}\nEOF"
+          )
+          out = headscale_vps.succeed(
+              "fail2ban-regex /tmp/ak-sample.log "
+              "/etc/fail2ban/filter.d/authentik.conf"
+          )
+          import re as _re
+          m = _re.search(r"(\d+) matched", out)
+          missed = _re.search(r"(\d+) missed", out)
+          assert m and m.group(1) == "1", \
+              f"filter did not match the captured sample exactly once:\n{out}"
+          assert missed and missed.group(1) == "3", (
+              "filter matched a negative control — it would ban successful "
+              f"logins or health checks:\n{out}"
+          )
 
       # ---------------------------------------------------------------------
       # Policy
@@ -408,6 +533,19 @@ pkgs.testers.runNixOSTest {
 
       with subtest("peers reach each other over the tailnet"):
           peer.wait_until_succeeds(f"ping -c 3 -W 5 {vps_ip}", timeout=60)
+
+      with subtest("a tailnet source reaches the admin UI"):
+          # The positive half of the @restricted matcher: dialled at the
+          # VPS's tailnet IP the request arrives over wireguard with a
+          # 100.64/10 source and passes through to the backend. This is the
+          # operator's admin path (split-DNS extra_records in production).
+          body = peer.succeed(
+              f"curl -s {CA} --resolve ${authHost}:443:{vps_ip} "
+              f"https://${authHost}/if/admin/"
+          )
+          assert "authentik-stand-in" in body, (
+              f"tailnet source blocked from the admin UI: {body!r}"
+          )
 
       with subtest("the embedded DERP relay is advertised"):
           # derp.urls is deliberately empty so no Tailscale-operated relay is
