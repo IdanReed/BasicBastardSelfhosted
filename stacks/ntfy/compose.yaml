@@ -26,8 +26,17 @@ services:
       - '127.0.0.1:10001:80'
     networks:
       - homelab
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
     env_file:
-      - .env
+      - path: .env
+        required: false
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:80/v1/health | grep -q healthy"]
       interval: 60s

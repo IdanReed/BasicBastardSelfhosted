@@ -12,7 +12,11 @@ services:
     restart: unless-stopped
 
   mazanoke:
-    image: ghcr.io/civilblur/mazanoke:1.1.5
+    # Tagged with a leading "v" upstream; "1.1.5" does not exist in the
+    # registry. Note bentopdf above does NOT use a "v" prefix — the convention
+    # differs per image, which is why tests/update-images.sh resolves every
+    # reference against the registry rather than trusting it.
+    image: ghcr.io/civilblur/mazanoke:v1.1.5
     container_name: mazanoke
     ports:
       - '127.0.0.1:10403:80'

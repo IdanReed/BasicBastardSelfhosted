@@ -30,8 +30,17 @@ services:
       - PAPERLESS_OCR_LANGUAGE=eng
       - USERMAP_UID=1000
       - USERMAP_GID=1000
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
     env_file:
-      - .env
+      - path: .env
+        required: false
     restart: unless-stopped
 
   db:
