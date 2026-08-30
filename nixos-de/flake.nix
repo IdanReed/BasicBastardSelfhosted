@@ -41,6 +41,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Offline speech-to-text. Deliberately does NOT follow our nixpkgs: the
+    # Tauri build is pinned against upstream's own nixpkgs + bun2nix pair, and
+    # `handy` is not in our nixpkgs lock yet anyway.
+    handy.url = "github:cjpais/Handy";
+
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -52,7 +57,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, noctalia, noctalia-greeter, zen-browser, disko, sops-nix, ... }@inputs:
+  outputs = { self, nixpkgs, home-manager, stylix, nixvim, niri, noctalia, noctalia-greeter, zen-browser, handy, disko, sops-nix, ... }@inputs:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -76,6 +81,7 @@
           ./modules/nixos/tailscale.nix
           ./modules/nixos/sops.nix
           ./modules/nixos/containers.nix
+          ./modules/nixos/handy.nix
         ];
       };
 
@@ -89,6 +95,7 @@
           niri.homeModules.niri
           noctalia.homeModules.default
           zen-browser.homeModules.default
+          handy.homeManagerModules.default
           ./modules/home/niri.nix
           ./modules/home/stylix.nix
           ./modules/home/nixvim.nix
@@ -99,6 +106,8 @@
           ./modules/home/vscode.nix
           ./modules/home/zed.nix
           ./modules/home/obsidian.nix
+          ./modules/home/handy.nix
+          ./modules/home/excalidraw.nix
         ];
       };
     };
