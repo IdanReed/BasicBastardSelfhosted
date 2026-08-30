@@ -226,7 +226,12 @@ pkgs.testers.runNixOSTest {
     def diag(label):
         print(f"=== diagnostics: {label} ===")
         for cmd in [
-            "docker logs arcane 2>&1 | tail -50",
+            # 300 lines, not 50: the minutely sync poller emits ~12 lines per
+            # tick, so a deploy error from even 5 minutes ago scrolls out of a
+            # 50-line tail — which is exactly what hid the sweep-16b recreate
+            # failure. Errors separately, unbounded by the spam.
+            "docker logs arcane 2>&1 | tail -300",
+            "docker logs arcane 2>&1 | grep -iE 'err|fail|fatal' | tail -40",
             "docker logs forgejo 2>&1 | tail -30",
             "docker ps -a",
             "ls -laR /srv/stacks | head -40",
