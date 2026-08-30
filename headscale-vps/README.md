@@ -80,15 +80,18 @@ users.users.idan.openssh.authorizedKeys.keys = [
 
 ### 3. Create Secrets
 
-Copy `.sops.env.example` to `.sops.env`, fill in real values, and encrypt:
+`secrets.sops.yaml` already exists, encrypted to the production recipient with
+*placeholder* values (encryption only needs the public key). Edit in the real
+values:
 
 ```bash
 export SOPS_AGE_KEY_FILE=../sops_age_key.txt
-cp .sops.env.example .sops.env
-sops -e -i .sops.env
+sops secrets.sops.yaml
 ```
 
-The flake will not evaluate until `.sops.env` exists.
+It is YAML, not dotenv, on purpose: sops-nix applies the per-secret key only
+for yaml/json — with dotenv every `/run/secrets/<name>` receives the *whole*
+decrypted file. See the repo-root `.sops.yaml` and `secrets.sops.yaml.example`.
 
 ### 4. Deploy
 
@@ -134,7 +137,8 @@ sudo headscale users create idan
 sudo headscale preauthkeys create --user idan --reusable --expiration 24h
 ```
 
-Put that key in `.sops.env` as `TAILSCALE_AUTH_KEY`, re-encrypt, and rebuild;
+Put that key in `secrets.sops.yaml` as `TAILSCALE_AUTH_KEY` (`sops
+secrets.sops.yaml`) and rebuild;
 `tailscale-autoconnect` will register against Headscale (it passes
 `--login-server`, so a Headscale key is the correct kind — a Tailscale SaaS key
 will not work).
@@ -184,12 +188,14 @@ No plaintext `.env` is ever written to disk.
 | `PG_PASS` | Authentik PostgreSQL |
 | `AUTHENTIK_SECRET_KEY` | Authentik server + worker |
 | `HEADSCALE_OIDC_CLIENT_SECRET` | Headscale `oidc.client_secret_path` **and** the Authentik blueprint (must match) |
+| `AUTHENTIK_BOOTSTRAP_PASSWORD` | First-start `akadmin` superuser password |
+| `AUTHENTIK_BOOTSTRAP_TOKEN` | First-start API token (used by the test harness too) |
 
 To edit secrets:
 
 ```bash
 export SOPS_AGE_KEY_FILE=../sops_age_key.txt
-sops .sops.env
+sops secrets.sops.yaml
 sudo nixos-rebuild switch --target-host idan@<VPS_IP> --use-remote-sudo --flake .#headscale-vps
 ```
 
@@ -216,9 +222,10 @@ headscale-vps/
 │   └── authentik.nix   # systemd unit driving docker compose
 ├── authentik/
 │   ├── compose.yaml    # shipped in the flake, applied on rebuild
-│   └── blueprints/custom/headscale-oidc.yml
+│   └── blueprints/custom/headscale-oidc.yaml
 ├── deploy.sh           # Deployment script
-├── .sops.env.example   # Secrets template
+├── secrets.sops.yaml           # Encrypted secrets (values placeholder until edited)
+├── secrets.sops.yaml.example   # Plaintext template
 └── README.md           # This file
 ```
 

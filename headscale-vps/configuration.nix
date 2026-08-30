@@ -90,10 +90,17 @@
     age
   ];
 
-  # SOPS configuration
+  # SOPS configuration.
+  #
+  # YAML, not dotenv. sops-install-secrets applies the per-secret key only for
+  # yaml/json — for dotenv it copies the WHOLE decrypted file into every
+  # /run/secrets/<name> (dotenv is handled exactly like binary, and nothing
+  # warns). With the old .sops.env, headscale got a multi-line document as its
+  # OIDC client secret and tailscale an unusable auth key. Caught by
+  # tests/lib/lints.nix (sops-dotenv-extraction), which now guards the format.
   sops = {
-    defaultSopsFile = ./.sops.env;
-    defaultSopsFormat = "dotenv";
+    defaultSopsFile = ./secrets.sops.yaml;
+    defaultSopsFormat = "yaml";
     age.keyFile = "/var/lib/sops-nix/sops_age_key.txt";
 
     secrets = {
@@ -152,9 +159,21 @@
         sleep 10
       done
 
+      # The committed secrets.sops.yaml starts life as the encrypted template,
+      # changeme_* values included — a real switch installs those verbatim and
+      # this unit would register garbage against the Headscale it fronts. Fail
+      # loudly with the file to fix instead. Only the changeme_* template
+      # values are guarded: the test fixtures' 'placeholder-replaced-at-runtime'
+      # sentinel is overwritten by the suites before they start this unit.
+      authkey="$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})"
+      case "$authkey" in changeme*)
+        echo "TAILSCALE_AUTH_KEY is still a changeme_* template value — edit it with: sops headscale-vps/secrets.sops.yaml" >&2
+        exit 1 ;;
+      esac
+
       ${pkgs.tailscale}/bin/tailscale up \
         --login-server=https://headscale.idanreed.com \
-        --authkey "$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})" \
+        --authkey "$authkey" \
         --hostname=headscale-vps
     '';
   };
