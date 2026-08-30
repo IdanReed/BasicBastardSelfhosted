@@ -1,5 +1,11 @@
 { config, pkgs, lib, ... }:
 
+let
+  # Byte-identical copy of nixos-de/ssh-pubkeys.nix (the canonical one) — a
+  # flake cannot reference paths outside its own root, so each flake carries
+  # its own copy and the ssh-pubkey-parity lint fails the harness on drift.
+  sshPubkeys = import ./ssh-pubkeys.nix;
+in
 {
   # System identity
   networking.hostName = "services-vm";
@@ -16,9 +22,13 @@
     isNormalUser = true;
     extraGroups = [ "wheel" "docker" ];
     shell = pkgs.bash;
-    openssh.authorizedKeys.keys = [
-      # TODO: Add your SSH public key here
-      # "ssh-ed25519 AAAA... idan@desktop"
+    # The desktop's arcane-vm identity is what logs in here. Filtering nulls
+    # means an ungenerated keypair grants no access rather than failing eval —
+    # the ssh-pubkey-parity lint WARNs while entries are null. The test
+    # suites' login key merges in via profiles.testSshAccess (list options
+    # concatenate), so an empty filtered list here cannot break them.
+    openssh.authorizedKeys.keys = lib.filter (k: k != null) [
+      sshPubkeys.arcane-vm
     ];
   };
 
@@ -106,6 +116,29 @@
 
     secrets = {
       TAILSCALE_AUTH_KEY = { };
+
+      # Host SSH identities (public halves: ssh-pubkeys.nix backup-vps /
+      # backup-storagebox). Sops-managed so that every secret except the age
+      # key itself lives encrypted in the repo — this replaces the old
+      # generate-once-on-the-host ssh-keygen flow.
+      #
+      # A custom `path` makes sops-nix install a SYMLINK into /run/secrets.d,
+      # never a regular file. That is fine here: backup-prepare.sh reads the
+      # key host-side, where path resolution follows the link.
+      BACKUP_VPS_SSH_KEY = {
+        path = "/var/lib/backup/vps_ed25519";
+        mode = "0600";
+      };
+
+      # NO custom path, on purpose: stacks/backrest mounts the whole
+      # /var/lib/backup DIRECTORY into config-init (/keys:ro), and a symlink
+      # to /run/secrets.d dangles inside that container's mount namespace —
+      # config-init's key gate would refuse to start the stack forever. The
+      # tmpfiles C+ rule below materialises a real file at the path the
+      # compose file mounts instead.
+      BACKUP_STORAGEBOX_SSH_KEY = {
+        mode = "0600";
+      };
     };
   };
 
@@ -426,11 +459,16 @@
     '';
   };
 
-  # Holds the dedicated SSH key used to pull VPS state. Not a SOPS secret:
-  # it is generated once on this host and its public half is authorised on the
-  # VPS, so it never needs to travel through git.
+  # Holds the dedicated SSH keys, both sops-managed (see sops.secrets above):
+  # vps_ed25519 arrives as a sops-nix symlink; storagebox_ed25519 must be a
+  # REAL file because backrest's config-init bind-mounts this directory into
+  # its container, where a /run/secrets.d symlink dangles. C+ (copy even when
+  # the destination exists) runs after activation at boot and on every
+  # switch, so a rotated key propagates without manual steps — and it
+  # replaces any hand-generated pre-sops key left on a live host.
   systemd.tmpfiles.rules = [
     "d /var/lib/backup 0700 root root -"
+    "C+ /var/lib/backup/storagebox_ed25519 0600 root root - ${config.sops.secrets.BACKUP_STORAGEBOX_SSH_KEY.path}"
   ];
 
   # Firewall.

@@ -162,11 +162,12 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/caddy 0755 root root -"
           "d /mnt/fast/ntfy 0755 root root -"
           "d /mnt/fast/_dumps 0755 root root -"
-          # Test stand-in for the storage-box SSH key. On the real host it is
-          # generated once with ssh-keygen and never enters git; backrest's
-          # config-init refuses to start the stack without it, which the
-          # backrest suite asserts both ways.
-          "C+ /var/lib/backup/storagebox_ed25519 0600 root root - ${../keys/test-storagebox-key}"
+          # No key planting here any more: both backup SSH keys are
+          # sops-managed now (BACKUP_VPS_SSH_KEY / BACKUP_STORAGEBOX_SSH_KEY
+          # in the fixture, carrying the committed test keys), so the suite
+          # exercises the production delivery path — sops-nix symlink for the
+          # VPS key, the tmpfiles C+ copy for the storagebox key. A test C+
+          # rule would overwrite that chain and mask its breakage.
         ];
 
         # Populate /srv before anything reads it.
@@ -233,6 +234,27 @@ pkgs.testers.runNixOSTest {
             assert mode == "600", f"{path} is mode {mode}, expected 600"
 
         services_vm.fail("test -e /srv/stacks/util/.env")
+
+    with subtest("the sops-managed backup SSH keys land where consumers look"):
+        # BACKUP_VPS_SSH_KEY: custom sops path -> a symlink into
+        # /run/secrets.d, fine for the host-side ssh in backup-prepare.
+        # BACKUP_STORAGEBOX_SSH_KEY: a REAL file via the tmpfiles C+ copy,
+        # because backrest's config-init bind-mounts /var/lib/backup into a
+        # container where a /run/secrets.d symlink dangles. Byte-identity
+        # matters: a key corrupted in the sops round-trip fails ssh late and
+        # silently, so cmp against the committed originals, not just -s.
+        services_vm.succeed("test -L /var/lib/backup/vps_ed25519")
+        services_vm.succeed(
+            "cmp /var/lib/backup/vps_ed25519 ${../keys/test-ssh-key}")
+        services_vm.succeed(
+            "test -f /var/lib/backup/storagebox_ed25519 "
+            "&& test ! -L /var/lib/backup/storagebox_ed25519")
+        services_vm.succeed(
+            "cmp /var/lib/backup/storagebox_ed25519 ${../keys/test-storagebox-key}")
+        for path in ["/var/lib/backup/vps_ed25519",
+                     "/var/lib/backup/storagebox_ed25519"]:
+            mode = services_vm.succeed(f"stat -L -c '%a %U' {path}").strip()
+            assert mode == "600 root", f"{path} is {mode}, expected 600 root"
 
     with subtest("values containing '$' survive decryption intact"):
         # CLAUDE.md warns that these must be single-quoted or the
@@ -416,13 +438,16 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # The script's local mechanisms, against live targets: a real postgres
     # gets pg_dumpall'd through docker exec, a real sqlite file gets a
-    # WAL-safe .backup. The VPS half is deliberately broken here (no
-    # /var/lib/backup/vps_ed25519 seeded in this suite) to pin the honest-
-    # failure contract: local dumps still land, the unit still FAILS, the
-    # warning names the missing key, no .last-success is stamped — and the
-    # failure reaches ntfy like every other. The green path incl. the VPS
-    # pull lives in the tailnet suite, which has a real VPS to pull from.
-    with subtest("backup-prepare dumps live databases and fails loudly on the missing VPS key"):
+    # WAL-safe .backup. The VPS half is deliberately broken to pin the
+    # honest-failure contract — in BOTH unusable key states, since the
+    # fixture now delivers a working key: (1) the key still holding the
+    # committed template's changeme_ placeholder (what a fresh deploy
+    # installs verbatim), (2) the key missing outright. Each: local dumps
+    # still land, the unit still FAILS, the warning names the state, no
+    # .last-success is stamped — and the failure reaches ntfy like every
+    # other. The green path incl. the VPS pull lives in the tailnet suite,
+    # which has a real VPS to pull from.
+    with subtest("backup-prepare dumps live databases and fails loudly on an unusable VPS key"):
         # Stand-in for a stack database, named per the script's convention.
         services_vm.succeed(
             "docker run -d --name paperless_db "
@@ -445,8 +470,24 @@ pkgs.testers.runNixOSTest {
             "\"create table t(x); insert into t values (42);\""
         )
 
+        # State (1): a changeme_ placeholder. Move the delivered key (a sops
+        # symlink) aside and plant what a deploy with the untouched committed
+        # template would install.
+        KEY = "/var/lib/backup/vps_ed25519"
+        services_vm.succeed(f"mv {KEY} {KEY}.delivered")
+        services_vm.succeed(
+            f"printf 'changeme_backup_vps_ssh_private_key\\n' > {KEY} "
+            f"&& chmod 600 {KEY}")
         services_vm.fail("systemctl start backup-prepare.service")
+        out = services_vm.succeed(
+            "journalctl -u backup-prepare --no-pager | tail -20")
+        assert "still a changeme_ placeholder" in out, \
+            f"no loud placeholder warning: {out!r}"
 
+        # State (2): the key missing outright.
+        services_vm.succeed(f"rm {KEY}")
+        services_vm.succeed("systemctl reset-failed backup-prepare.service")
+        services_vm.fail("systemctl start backup-prepare.service")
         out = services_vm.succeed(
             "journalctl -u backup-prepare --no-pager | tail -20")
         assert "vps_ed25519 missing" in out, f"no loud warning: {out!r}"
@@ -473,8 +514,12 @@ pkgs.testers.runNixOSTest {
         )
         services_vm.succeed("docker rm -f paperless_db")
 
-        # Deliberate failure (the missing VPS key IS the subject) — clear it
-        # so the suite-final no-failed-units sweep stays meaningful.
+        # Restore the sops-delivered key: later subtests (and the reboot)
+        # must see the production state, not this subtest's sabotage.
+        services_vm.succeed(f"mv {KEY}.delivered {KEY}")
+
+        # Deliberate failures (the unusable VPS key IS the subject) — clear
+        # them so the suite-final no-failed-units sweep stays meaningful.
         services_vm.succeed("systemctl reset-failed backup-prepare.service")
 
     # -----------------------------------------------------------------------

@@ -124,11 +124,25 @@ sqlite_backup seerr          /mnt/fast/seerr/config/db/db.sqlite3
 ssh_opts=(-i "$VPS_KEY" -o BatchMode=yes -o ConnectTimeout=10
           -o StrictHostKeyChecking=accept-new)
 
+# The key is sops-managed (nixos/secrets.sops.yaml: BACKUP_VPS_SSH_KEY,
+# installed by sops-nix at $VPS_KEY). Two unusable states, both loud through
+# the same rc=1 -> OnFailure -> ntfy path: the file missing entirely, and the
+# file present but still holding the committed template's changeme_
+# placeholder — a fresh deploy installs that verbatim, ssh would then fail
+# late and cryptically on an invalid key format, so refuse up front instead.
+vps_key_problem=""
 if [ ! -f "$VPS_KEY" ]; then
-    log "WARNING: $VPS_KEY missing - VPS state is NOT being backed up."
-    log "  Create it and authorise it on the VPS:"
-    log "    ssh-keygen -t ed25519 -N '' -f $VPS_KEY"
-    log "    ssh-copy-id -i $VPS_KEY.pub $VPS_USER@$VPS_HOST"
+    vps_key_problem="missing"
+elif grep -q '^changeme_' "$VPS_KEY"; then
+    vps_key_problem="still a changeme_ placeholder"
+fi
+
+if [ -n "$vps_key_problem" ]; then
+    log "WARNING: $VPS_KEY $vps_key_problem - VPS state is NOT being backed up."
+    log "  Put the real private key in nixos/secrets.sops.yaml:"
+    log "    sops nixos/secrets.sops.yaml      # BACKUP_VPS_SSH_KEY, block scalar"
+    log "  then deploy, and authorise its public half on the VPS via"
+    log "  ssh-pubkeys.nix (backup-vps) — see CLAUDE.md 'SSH identities'."
     rc=1
 else
     log "authentik pg_dumpall (via $VPS_HOST)"

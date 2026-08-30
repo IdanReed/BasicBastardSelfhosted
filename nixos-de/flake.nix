@@ -79,7 +79,7 @@
           sops-nix.nixosModules.sops
           ./modules/nixos/nvidia.nix
           ./modules/nixos/tailscale.nix
-          ./modules/nixos/sops.nix
+          ./modules/nixos/ssh-identities.nix
           ./modules/nixos/containers.nix
           ./modules/nixos/handy.nix
         ];
@@ -108,6 +108,7 @@
           ./modules/home/obsidian.nix
           ./modules/home/handy.nix
           ./modules/home/excalidraw.nix
+          ./modules/home/ssh-identities.nix
         ];
       };
     };

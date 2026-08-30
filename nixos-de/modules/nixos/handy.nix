@@ -18,10 +18,18 @@
   #
   # Mirrors upstream's nixosModules.default, minus its environment.systemPackages
   # entry — the package is installed through home-manager (modules/home/handy.nix).
-  users.users.idan.extraGroups = [ "input" ];
+  #
+  # A bare `KERNEL=="uinput", GROUP="input", MODE="0660"` rule looks right and
+  # does nothing. /dev/uinput is a *static node*: systemd pre-creates it (root
+  # root 0600) so that opening it autoloads the module. udev rules only run on
+  # device-add events, and no device is ever added until uinput is loaded, so
+  # the rule never fires and the node keeps its default 0600. hardware.uinput
+  # supplies both missing halves — boot.kernelModules to actually load the
+  # module, and OPTIONS+="static_node=uinput" to apply the mode to the
+  # pre-created node regardless. It grants the "uinput" group, not "input".
+  hardware.uinput.enable = true;
 
-  # Default is crw------- root root, which locks out the input group.
-  services.udev.extraRules = ''
-    KERNEL=="uinput", GROUP="input", MODE="0660"
-  '';
+  # input  -> read /dev/input/event*   (observe key press/release)
+  # uinput -> write /dev/uinput        (EVIOCGRAB clone, swallows the hotkey)
+  users.users.idan.extraGroups = [ "input" "uinput" ];
 }

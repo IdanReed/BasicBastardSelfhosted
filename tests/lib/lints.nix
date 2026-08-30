@@ -1113,6 +1113,77 @@ in
     '';
 
   # ---------------------------------------------------------------------------
+  # ssh-pubkeys.nix parity across the three flakes
+  # ---------------------------------------------------------------------------
+  # nixos-de/ssh-pubkeys.nix is the canonical identity list; nixos/ and
+  # headscale-vps/ carry byte-identical copies because a flake cannot
+  # reference paths outside its own root. Nothing else links the three, and a
+  # drifted copy fails at the worst spot: a pubkey updated in one place only
+  # means the next deploy of the other host silently authorises a stale key
+  # (or none), and the mismatch surfaces as an ssh refusal long after the
+  # edit. Byte comparison, not attrset equality, on purpose — the comments
+  # carry the where-do-private-halves-live contract and must not rot apart
+  # either.
+  #
+  # Warn-only leg: entries still null (keypair not generated yet). Consumers
+  # filter nulls so this is "no access granted", not breakage — roadmap
+  # visibility, mirroring overview-sync's stance.
+  ssh-pubkey-parity =
+    let
+      readOrNull = f: if builtins.pathExists (repo + "/${f}") then builtins.readFile (repo + "/${f}") else null;
+      # Canonical copy FIRST: the python below compares the rest against
+      # element 0 and reports drift relative to it.
+      copies = map (f: {
+        name = f;
+        text = readOrNull f;
+      }) [
+        "nixos-de/ssh-pubkeys.nix"
+        "nixos/ssh-pubkeys.nix"
+        "headscale-vps/ssh-pubkeys.nix"
+      ];
+    in
+    mkLint "ssh-pubkey-parity" ''
+      ${py} - <<'PY'
+      import json, re, sys
+
+      copies = json.loads(${builtins.toJSON (builtins.toJSON copies)})
+      canonical = copies[0]
+
+      errs = []
+      for c in copies:
+          if c["text"] is None:
+              errs.append(f"{c['name']} does not exist — every flake must "
+                          f"carry its byte-identical copy of the identity "
+                          f"list (canonical: {canonical['name']})")
+      if canonical["text"] is not None:
+          for c in copies[1:]:
+              if c["text"] is not None and c["text"] != canonical["text"]:
+                  errs.append(f"{c['name']} drifted from {canonical['name']} "
+                              f"(byte comparison) — re-copy the canonical "
+                              f"file; a stale copy deploys stale authorized "
+                              f"keys")
+
+      # WARN leg: null identities in the canonical copy (or the first
+      # existing one, so the warn still prints while the canonical is the
+      # missing file).
+      source = next((c for c in copies if c["text"] is not None), None)
+      if source is not None:
+          nulls = re.findall(r"^\s*([A-Za-z0-9_-]+)\s*=\s*null\s*;",
+                             source["text"], re.M)
+          for n in nulls:
+              print(f"WARN: identity '{n}' is still null in {source['name']} "
+                    f"— keypair not generated yet, no access granted")
+
+      if errs:
+          print("ssh-pubkeys.nix parity problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"ssh-pubkeys parity OK ({len(copies)} byte-identical copies)")
+      PY
+    '';
+
+  # ---------------------------------------------------------------------------
   # Headscale ACL policy
   # ---------------------------------------------------------------------------
   # policy.hujson switches the tailnet to default-deny. A syntax error or an
