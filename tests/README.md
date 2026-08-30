@@ -142,7 +142,7 @@ Honest list; do not read a green suite as covering these.
 | Hetzner / Proxmox provisioning | `nixos-anywhere`, `qmrestore`, cloud-init. |
 | The literal `/dev/sda` in `disk-config.nix` | The `disko` suite (disko's own `makeDiskoTest`) formats, mounts, and legacy-boots the config — but rewrites the device to the runner's virtio disk, and overrides disko's own `boot.loader.grub.devices` derivation with its test scaffolding's. |
 | The production secret *values* decrypting | Needs the production key. The `sops-declared` lint verifies the real files' key sets (sops-yaml keys are plaintext). |
-| Caddy's cloudflare-dns plugin | The suites force `tls internal`; only routing is covered. |
+| Caddy's cloudflare-dns plugin at work | Since 2026-08-30 the suites load the REAL published fork image (a broken xcaddy build fails caddy startup and the services suite with it), but they force `tls internal`, so the plugin's DNS-01 flow against Cloudflare is never exercised. |
 | Hetzner Storage Box itself | The backrest suite runs a real in-VM SFTP endpoint instead — key, sftp, restic, snapshots all real; only the endpoint's address is substituted. |
 | Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. |
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |

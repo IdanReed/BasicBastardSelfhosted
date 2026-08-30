@@ -29,9 +29,10 @@ HEAVY_RE='paperless-ngx|goauthentik|apache/tika|gotenberg|backrest'
 
 # Images referenced in compose but not resolvable from a public registry.
 # Format: <compose reference>|<substitute reference>|<reason>
-declare -a SUBSTITUTES=(
-  "ghcr.io/idanreed/caddy-cloudflare:2.11.2|caddy:2.11.2|fork image is built by .github/workflows/build-caddy.yml and is not published yet; the DNS-01 plugin it adds is unused in the suites, which force 'tls internal'"
-)
+# (Empty since 2026-08-30: the caddy-cloudflare fork is published on ghcr —
+# public, anonymous pulls — so the suites now load the REAL image, DNS-01
+# plugin included, closing README finding #3's substitution.)
+declare -a SUBSTITUTES=()
 
 echo "==> Collecting image references from compose files"
 # .claude/worktrees/ holds Claude Code checkouts of this same repo. Their
@@ -108,11 +109,24 @@ for pin in "${PINS[@]}"; do
   # they are written into the tarball's manifest, so the output hash depends on
   # them. Computing the hash without them and retagging in Nix yields a
   # fixed-output hash mismatch at build time.
-  if ! meta=$(nix run nixpkgs#nix-prefetch-docker -- \
-    --image-name "$name" --image-tag "$tag" \
-    --final-image-name "$finalName" --final-image-tag "$finalTag" \
-    --quiet 2>/dev/null); then
-    echo "      UNRESOLVED — no such tag in the registry"
+  #
+  # THREE attempts with backoff before declaring non-existence: registries
+  # hiccup. Two consecutive full runs each produced ONE phantom "missing"
+  # image (prowlarr, then immich-ml) that skopeo confirmed present moments
+  # later — a single failed fetch is evidence of nothing.
+  meta="" resolved=0
+  for attempt in 1 2 3; do
+    if meta=$(nix run nixpkgs#nix-prefetch-docker -- \
+      --image-name "$name" --image-tag "$tag" \
+      --final-image-name "$finalName" --final-image-tag "$finalTag" \
+      --quiet 2>/dev/null); then
+      resolved=1
+      break
+    fi
+    [[ $attempt -lt 3 ]] && { echo "      fetch failed (attempt $attempt/3), retrying..."; sleep $((attempt * 5)); }
+  done
+  if [[ $resolved -eq 0 ]]; then
+    echo "      UNRESOLVED — no such tag in the registry (3 attempts)"
     UNRESOLVED+=("$composeRef")
     continue
   fi
