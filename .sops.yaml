@@ -1,4 +1,29 @@
 creation_rules:
+  # Test fixtures. Encrypted to a THROWAWAY key that is committed at
+  # tests/keys/test-age-key.txt, so the harness runs without the real key.
+  # This rule must come first: sops applies the first matching rule, and the
+  # general rules below would otherwise claim these paths and encrypt fake
+  # secrets to the production recipient.
+  #
+  # Nothing here is a real credential. See tests/README.md.
+  - path_regex: tests/fixtures/.*\.sops\.(env|yaml)$
+    age:
+      - age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
+
+  # OS-level secrets, decrypted by sops-nix at activation. These are YAML, not
+  # dotenv, because sops-install-secrets only applies the per-secret key for
+  # yaml/json — for dotenv it writes the WHOLE decrypted file into every
+  # /run/secrets/<name> (it treats dotenv exactly like binary, and its docs
+  # only say "ignored if format is binary"). The tests/ lint
+  # `sops-dotenv-extraction` guards against regressing this.
+  - path_regex: secrets\.sops\.yaml$
+    age:
+      - age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf
+
+  # Application secrets for compose stacks: encrypted dotenv next to each
+  # compose.yaml, decrypted ON THE HOST into a sibling .env by
+  # decrypt-sops-envs.service (which shells out to the sops CLI and wants the
+  # whole file — dotenv is the right format here).
   - path_regex: \.sops\.env$
     age:
       - age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf

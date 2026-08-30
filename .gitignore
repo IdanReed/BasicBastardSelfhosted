@@ -10,3 +10,6 @@ sops_age_key.txt
 # Nix build outputs
 result
 nixos/result
+
+# Test-run logs kept out of history (harness archaeology only)
+/tmp/
