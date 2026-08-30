@@ -300,9 +300,10 @@ pkgs.testers.runNixOSTest {
       # ---------------------------------------------------------------------
       # Port 22 is deliberately public, so what sshd accepts IS the exposure.
       # The key is the committed test keypair authorised by
-      # profiles.testSshAccess — which also proves the production TODO
-      # placeholder ("Add your SSH public key here") is the only thing standing
-      # between the real host and no SSH access at all.
+      # profiles.testSshAccess, merged alongside the production list — which
+      # is ssh-pubkeys.nix entries filtered for null, so until Idan fills
+      # them the real host authorises nothing (the ssh-pubkey-parity lint
+      # WARNs while entries are null).
       with subtest("key login works, passwords and root are refused"):
           outsider.succeed(
               f"{SSH} -i /etc/test-ssh-key idan@headscale-vps true"

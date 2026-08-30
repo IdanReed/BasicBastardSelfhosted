@@ -447,9 +447,26 @@ pkgs.testers.runNixOSTest {
             f"backrest is up despite the missing key: {out!r}"
         )
         logs = services_vm.succeed("docker logs backrest_config_init 2>&1")
-        assert "storagebox_ed25519 missing" in logs, (
+        assert "missing or still the changeme_ placeholder" in logs, (
             f"config-init failed without the loud message: {logs!r}"
         )
+
+    with subtest("a changeme_ placeholder key keeps backrest down too"):
+        # The placeholder is the DEFAULT state of a fresh deploy — sops-nix
+        # plus the tmpfiles C+ rule always materialise a non-empty file from
+        # the committed template — so an empty-only gate would let Backrest
+        # start doomed and crash-loop on ssh auth with no alert. This leg
+        # keeps the grep in config-init.sh non-vacuous.
+        services_vm.succeed(
+            f"printf 'changeme_storagebox_ssh_private_key\\n' > {KEY} && "
+            f"chmod 600 {KEY}"
+        )
+        services_vm.fail(BACKREST + " up -d --wait --wait-timeout 120")
+        logs = services_vm.succeed("docker logs backrest_config_init 2>&1")
+        assert "sops nixos/secrets.sops.yaml" in logs, (
+            f"placeholder key did not produce the sops-flow guidance: {logs!r}"
+        )
+        services_vm.succeed(f"rm -f {KEY}")
 
     with subtest("restoring the key unblocks the stack"):
         # rm -rf first: if docker ever started backrest with the key absent it

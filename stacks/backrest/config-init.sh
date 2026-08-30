@@ -9,13 +9,18 @@
 # every `$` in the YAML unless doubled — a standing trap for future edits.
 set -eu
 
-# Fail loudly BEFORE Backrest starts if the storage box key is absent.
+# Fail loudly BEFORE Backrest starts if the storage box key is absent OR
+# still the sops changeme_ placeholder — the placeholder is the DEFAULT state
+# of a fresh deploy (sops-nix + the tmpfiles C+ rule always materialise a
+# non-empty file from the committed template), so an empty-only check would
+# let Backrest start doomed and crash-loop on ssh auth with no alert.
 # depends_on: service_completed_successfully means Backrest will not come up
 # in a state where every backup fails on ssh auth.
-if [ ! -s /keys/storagebox_ed25519 ]; then
-  echo "ERROR: /var/lib/backup/storagebox_ed25519 missing or empty on the host."
-  echo "  ssh-keygen -t ed25519 -N '' -f /var/lib/backup/storagebox_ed25519"
-  echo "  ssh-copy-id -p 23 -i /var/lib/backup/storagebox_ed25519.pub uXXXXXX@uXXXXXX.your-storagebox.de"
+if [ ! -s /keys/storagebox_ed25519 ] || grep -q '^changeme_' /keys/storagebox_ed25519; then
+  echo "ERROR: /var/lib/backup/storagebox_ed25519 is missing or still the changeme_ placeholder."
+  echo "  The key is sops-managed: put the real private key in"
+  echo "  BACKUP_STORAGEBOX_SSH_KEY via: sops nixos/secrets.sops.yaml"
+  echo "  (see stacks/backrest/README.md section 2 and CLAUDE.md 'SSH identities')"
   exit 1
 fi
 
