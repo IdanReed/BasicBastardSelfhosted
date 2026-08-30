@@ -1,3 +1,7 @@
+# NOTE the .yaml extension is load-bearing: authentik's blueprint discovery
+# globs **/*.yaml only. As headscale-oidc.yml this file was mounted, visible,
+# and silently never discovered — no provider, no application, no users, no
+# error anywhere. Caught by tests/suites/authentik.nix.
 version: 1
 metadata:
   name: headscale-oidc
@@ -8,14 +12,18 @@ entries:
   # ===========================================
   # Group for Headscale users
   # ===========================================
+  # Users in this group can authenticate to Headscale; membership is granted
+  # in the users section below.
+  #
+  # NO `attrs:` key here on purpose. A YAML key whose body is only comments
+  # parses as null, and authentik's importer calls .items() on it —
+  # AttributeError, and the ENTIRE blueprint apply dies, retried forever with
+  # the error visible only in worker logs. Caught by tests/suites/authentik.nix.
   - model: authentik_core.group
     id: headscale-users-group
     state: present
     identifiers:
       name: headscale-users
-    attrs:
-      # Users in this group can authenticate to Headscale
-      # Add users to this group via the users section below
 
   # ===========================================
   # OIDC Provider for Headscale
