@@ -1,0 +1,250 @@
+# Forward auth: proxy providers for services that have no usable auth of
+# their own, served by authentik's EMBEDDED outpost.
+#
+# The consumer is stacks/caddy/Caddyfile's (protected) snippet: it
+# forward_auths every request to
+# https://auth.idanreed.com/outpost.goauthentik.io/auth/caddy, where the
+# embedded outpost matches the X-Forwarded-Host against the external_host of
+# the providers assigned to it. One forward_single provider + application per
+# protected service; bentopdf is the pilot. Add the entry HERE and deploy the
+# VPS before flipping `import protected` on a route in the Caddyfile — a
+# protected host the outpost does not know is a lockout, not a login page.
+#
+# NOTE the .yaml extension is load-bearing (finding #7): authentik's blueprint
+# discovery globs **/*.yaml only — as .yml this file would mount, be visible,
+# and silently never apply.
+#
+# NO comment-only `attrs:` keys anywhere in this file (finding #9): a YAML key
+# whose body is only comments parses as null and the importer's .items() call
+# kills the ENTIRE blueprint apply, retried forever, error only in worker logs.
+version: 1
+metadata:
+  name: forward-auth
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # ===========================================
+  # Pilot: bentopdf
+  # ===========================================
+  # forward_single: the outpost only answers the forward-auth endpoint for
+  # this one external host; Caddy stays the reverse proxy. external_host must
+  # match the public name byte-for-byte — it is what the outpost compares the
+  # forwarded Host against, and what unauthenticated visitors are sent back to
+  # after login.
+  - model: authentik_providers_proxy.proxyprovider
+    id: bentopdf-provider
+    state: present
+    identifiers:
+      name: bentopdf
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://bentopdf.svc.idanreed.com
+      access_token_validity: hours=24
+
+  # ===========================================
+  # Application (ties provider to UI + policy engine)
+  # ===========================================
+  - model: authentik_core.application
+    id: bentopdf-app
+    state: present
+    identifiers:
+      slug: bentopdf
+    attrs:
+      name: BentoPDF
+      provider: !KeyOf bentopdf-provider
+      policy_engine_mode: any
+      meta_description: "Client-side PDF toolbox"
+
+  # ===========================================
+  # Media stack (stacks/media): the six vhosts whose Caddyfile routes
+  # import (protected)
+  # ===========================================
+  # These exist because the routes are ALREADY flipped in
+  # stacks/caddy/Caddyfile — without a provider per external_host the outpost
+  # has nothing to match the forwarded Host against and every request 404s or
+  # redirect-loops (the exact lockout the Caddyfile header warns about). The
+  # forward-auth-coverage lint in tests/lib/lints.nix now fails whenever a
+  # protected Caddy host has no entry here, so this file can no longer lag
+  # the Caddyfile silently.
+  #
+  # qBittorrent (10057) is deliberately ABSENT: its Caddy route does not
+  # exist yet, and per the Caddyfile's media-section comment the blueprint
+  # entry and the route land together in a follow-up.
+  - model: authentik_providers_proxy.proxyprovider
+    id: radarr-provider
+    state: present
+    identifiers:
+      name: radarr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://radarr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: radarr-app
+    state: present
+    identifiers:
+      slug: radarr
+    attrs:
+      name: Radarr
+      provider: !KeyOf radarr-provider
+      policy_engine_mode: any
+      meta_description: "Movie management"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: sonarr-provider
+    state: present
+    identifiers:
+      name: sonarr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://sonarr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: sonarr-app
+    state: present
+    identifiers:
+      slug: sonarr
+    attrs:
+      name: Sonarr
+      provider: !KeyOf sonarr-provider
+      policy_engine_mode: any
+      meta_description: "TV management"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: prowlarr-provider
+    state: present
+    identifiers:
+      name: prowlarr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://prowlarr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: prowlarr-app
+    state: present
+    identifiers:
+      slug: prowlarr
+    attrs:
+      name: Prowlarr
+      provider: !KeyOf prowlarr-provider
+      policy_engine_mode: any
+      meta_description: "Indexer management"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: bazarr-provider
+    state: present
+    identifiers:
+      name: bazarr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://bazarr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: bazarr-app
+    state: present
+    identifiers:
+      slug: bazarr
+    attrs:
+      name: Bazarr
+      provider: !KeyOf bazarr-provider
+      policy_engine_mode: any
+      meta_description: "Subtitle management"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: profilarr-provider
+    state: present
+    identifiers:
+      name: profilarr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://profilarr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: profilarr-app
+    state: present
+    identifiers:
+      slug: profilarr
+    attrs:
+      name: Profilarr
+      provider: !KeyOf profilarr-provider
+      policy_engine_mode: any
+      meta_description: "Quality profile sync (Dictionarry)"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: cleanuparr-provider
+    state: present
+    identifiers:
+      name: cleanuparr
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://cleanuparr.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: cleanuparr-app
+    state: present
+    identifiers:
+      slug: cleanuparr
+    attrs:
+      name: Cleanuparr
+      provider: !KeyOf cleanuparr-provider
+      policy_engine_mode: any
+      meta_description: "Download queue cleanup"
+
+  # ===========================================
+  # Embedded outpost assignment
+  # ===========================================
+  # The embedded outpost ships with authentik itself and answers on the server
+  # container (:9000, i.e. behind auth.idanreed.com) — no extra proxy
+  # container to run. Identified by its default name; the importer update-or-
+  # creates by identifiers, and tests/suites/forward-auth.nix asserts via the
+  # API that the outpost authentik actually created carries exactly this name,
+  # so a rename upstream fails the suite instead of silently creating a
+  # second, unconnected outpost here.
+  #
+  # `providers` REPLACES the assignment list on every apply — every protected
+  # provider must be listed, or flipping this file for service N+1 silently
+  # unassigns services 1..N.
+  #
+  # config.authentik_host is REQUIRED for the embedded outpost: its API
+  # connection is localhost, so without it the outpost logs "Outpost has
+  # localhost/blank API Connection but no authentik_host is configured" and
+  # builds browser-facing authorize/logout URLs from localhost — every login
+  # redirect dead-ends. (GetOIDCEndpoint in authentik's
+  # internal/outpost/proxyv2/application/endpoint.go is where this bites.)
+  - model: authentik_outposts.outpost
+    id: embedded-outpost
+    state: present
+    identifiers:
+      name: authentik Embedded Outpost
+    attrs:
+      config:
+        authentik_host: https://auth.idanreed.com
+      providers:
+        - !KeyOf bentopdf-provider
+        - !KeyOf radarr-provider
+        - !KeyOf sonarr-provider
+        - !KeyOf prowlarr-provider
+        - !KeyOf bazarr-provider
+        - !KeyOf profilarr-provider
+        - !KeyOf cleanuparr-provider
