@@ -187,6 +187,55 @@
 		reverse_proxy localhost:10058
 	}
 
+	# ------------------------------------------------------------------
+	# Books stack (stacks/books, ports 10150-10152). Auth per the overview
+	# Auth column: kavita and audiobookshelf drive their OWN OIDC against
+	# Authentik, so neither gets forward auth; shelfmark has no auth of its
+	# own and does (AUTH_METHOD=proxy in its compose reads the
+	# X-Authentik-* headers the (protected) snippet copies).
+	#
+	# Both OIDC apps ship OIDC-READY and OIDC-OFF today: the client secrets
+	# need the production age key to reach headscale-vps/secrets.sops.yaml,
+	# so until the operator lands them each app authenticates with its own
+	# local accounts (seeded by books-init). Neither is ever unauthenticated
+	# — that is why the OFF state is safe to ship (annex §8.4).
+	# ------------------------------------------------------------------
+
+	@kavita host kavita.svc.idanreed.com
+	handle @kavita {
+		# NO forward auth, and this one is not a preference: OPDS
+		# (/api/opds/{key}) and KOReader progress sync
+		# (/api/koreader/{key}/...) authenticate by an API key embedded in
+		# the URL, from non-browser clients that cannot follow an OIDC
+		# redirect or hold a session cookie. Forward auth would have to
+		# exclude both prefixes anyway, at which point the API key is the
+		# only protection and the moving parts have doubled.
+		reverse_proxy localhost:10150
+	}
+
+	@shelfmark host shelfmark.svc.idanreed.com
+	handle @shelfmark {
+		# Forward auth: shelfmark's own AUTH_METHOD defaults to `none`, so
+		# the loopback publish is otherwise the only thing in front of it.
+		# Rollout order is load-bearing — the blueprint entry in
+		# headscale-vps/authentik/blueprints/custom/forward-auth.yaml plus a
+		# VPS rebuild must land BEFORE this route syncs, or every request
+		# here 404s (see the (protected) header above).
+		import protected
+		reverse_proxy localhost:10151
+	}
+
+	@audiobookshelf host audiobookshelf.svc.idanreed.com
+	handle @audiobookshelf {
+		# NO forward auth: it would break the mobile app's
+		# audiobookshelf://oauth handoff and every API-key client, the same
+		# call as immich and jellyfin. Caddy already sends the two headers
+		# audiobookshelf needs (Host, X-Forwarded-Proto) by default — the
+		# latter matters because the OIDC redirect_uri is built from it, and
+		# without it audiobookshelf offers Authentik an http:// callback.
+		reverse_proxy localhost:10152
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {

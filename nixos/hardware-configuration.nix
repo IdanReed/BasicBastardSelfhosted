@@ -137,6 +137,44 @@
     # The photo originals tree (UPLOAD_LOCATION). Slow tier per the overview's
     # volume column: bulk, sequential.
     "d /mnt/slow/photos 0755 root root -"
+    # Books stack bind-mount roots (stacks/books/compose.yaml). Same reason as
+    # the two blocks above: docker creates a missing bind source root-owned at
+    # container start, and here that would matter — shelfmark drops privileges
+    # to PUID/PGID 1000 and writes both library trees.
+    #
+    # Ownership, VERIFIED per image (annex §2.2):
+    #   - kavita runs as ROOT: its entrypoint's PUID/PGID block is commented
+    #     out upstream ("causing issues for Synology users") and the image sets
+    #     no USER. It also hard-exits if it cannot write /kavita/config, and
+    #     that directory must stay WRITABLE — Kavita rewrites appsettings.json
+    #     and swallows the failure, so a read-only config dir silently leaves
+    #     the published placeholder JWT key in play (annex §0.5).
+    #   - audiobookshelf runs as ROOT too ("User": null in the image config;
+    #     it has no PUID/PGID mechanism at all) — the immich call, for the same
+    #     reasons: tailnet-only, loopback-bound, socketless.
+    #   - shelfmark starts as root, then drops to PUID/PGID (1000 here). Its
+    #     entrypoint recursively chowns /config and repairs /tmp/shelfmark, so
+    #     these would self-heal — declaring them 1000:1000 anyway just means it
+    #     has nothing to do.
+    #   - The two /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes
+    #     the ebook tree, and the audiobook tree keeps the same ownership for
+    #     whatever ends up filling it (shelfmark's Direct Download source is
+    #     ebook-only, so audiobooks arrive by other means for now). Kavita and
+    #     audiobookshelf mount their tree :ro as root and only read.
+    "d /mnt/fast/kavita 0755 root root -"
+    "d /mnt/fast/kavita/config 0755 root root -"
+    "d /mnt/fast/shelfmark 0755 root root -"
+    "d /mnt/fast/shelfmark/config 0755 1000 1000 -"
+    "d /mnt/fast/shelfmark/tmp 0755 1000 1000 -"
+    "d /mnt/fast/audiobookshelf 0755 root root -"
+    "d /mnt/fast/audiobookshelf/config 0755 root root -"
+    "d /mnt/fast/audiobookshelf/metadata 0755 root root -"
+    # Both library trees live under /mnt/slow/books deliberately: backrest's
+    # slow-volume-selective plan already includes that path, so they are backed
+    # up without touching its config.
+    "d /mnt/slow/books 0755 1000 1000 -"
+    "d /mnt/slow/books/library 0755 1000 1000 -"
+    "d /mnt/slow/books/audiobooks 0755 1000 1000 -"
   ];
 
   # Swap (optional - can be added if needed)

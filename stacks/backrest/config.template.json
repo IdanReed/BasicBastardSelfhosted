@@ -71,7 +71,9 @@
         "**/__pycache__/**",
         "**/node_modules/**",
         "/mnt/fast/backrest/cache/**",
-        "/mnt/fast/immich/model-cache/**"
+        "/mnt/fast/immich/model-cache/**",
+        "/mnt/fast/kavita/config/cache-long/**",
+        "/mnt/fast/kavita/config/temp/**"
       ],
       "schedule": {
         "cron": "0 3 * * *",

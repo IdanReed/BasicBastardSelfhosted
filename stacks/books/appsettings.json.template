@@ -1,0 +1,11 @@
+{
+  "TokenKey": "__KAVITA_TOKEN_KEY__",
+  "BaseUrl": "/",
+  "Cache": 75,
+  "OpenIdConnectSettings": {
+    "Authority": "https://auth.idanreed.com/application/o/kavita/",
+    "ClientId": "kavita",
+    "Secret": "__KAVITA_OIDC_CLIENT_SECRET__",
+    "CustomScopes": []
+  }
+}

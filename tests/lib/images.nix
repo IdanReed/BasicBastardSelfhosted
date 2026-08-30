@@ -58,6 +58,14 @@
     finalImageName = "garethgeorge/backrest";
     finalImageTag = "v1.9.1";
   };
+  "ghcr_io_advplyr_audiobookshelf_2_36_0" = {
+    composeRef = "ghcr.io/advplyr/audiobookshelf:2.36.0";
+    imageName = "ghcr.io/advplyr/audiobookshelf";
+    imageDigest = "sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e";
+    hash = "sha256-az9pta5k2CZ68VLGCI/svdzMhEjNMofOXe4QBFsWwFg=";
+    finalImageName = "ghcr.io/advplyr/audiobookshelf";
+    finalImageTag = "2.36.0";
+  };
   "ghcr_io_alam00000_bentopdf_1_16_1" = {
     composeRef = "ghcr.io/alam00000/bentopdf:1.16.1";
     imageName = "ghcr.io/alam00000/bentopdf";
@@ -65,6 +73,14 @@
     hash = "sha256-XC2oqDa8p50Ck1u92JqHX/Pm//94OOJmiTEdOWHEAU4=";
     finalImageName = "ghcr.io/alam00000/bentopdf";
     finalImageTag = "1.16.1";
+  };
+  "ghcr_io_calibrain_shelfmark_1_3_13" = {
+    composeRef = "ghcr.io/calibrain/shelfmark:1.3.13";
+    imageName = "ghcr.io/calibrain/shelfmark";
+    imageDigest = "sha256:ee0f3a15a8cc37a43a39fb9e768eac0c9a4ac328014b9b914bad7c1be232bd90";
+    hash = "sha256-JQYBXwf9vdUolIkebA1qjjADZ0vdUjzjE9kfV6TVmdg=";
+    finalImageName = "ghcr.io/calibrain/shelfmark";
+    finalImageTag = "1.3.13";
   };
   "ghcr_io_civilblur_mazanoke_v1_1_5" = {
     composeRef = "ghcr.io/civilblur/mazanoke:v1.1.5";
@@ -169,6 +185,14 @@
     hash = "sha256-F9lEzgiYpriAIktSR1TB4D7hkfSCSzqRuYXevc7X9H0=";
     finalImageName = "jellyfin/jellyfin";
     finalImageTag = "10.11.11";
+  };
+  "jvmilazz0_kavita_0_9_1" = {
+    composeRef = "jvmilazz0/kavita:0.9.1";
+    imageName = "jvmilazz0/kavita";
+    imageDigest = "sha256:454f2a77ac740b70c58cc7300a11122fc9ce7b7e2161ef5b0d1df8f81067cc85";
+    hash = "sha256-vp4RRSKrG6qCeAlFyT58rbOyWHPzMbtAxP1VigzgxwY=";
+    finalImageName = "jvmilazz0/kavita";
+    finalImageTag = "0.9.1";
   };
   "lscr_io_linuxserver_bazarr_1_6_0" = {
     composeRef = "lscr.io/linuxserver/bazarr:1.6.0";

@@ -158,6 +158,9 @@ let
     # Hand-written, NOT in stackChecks: its restart:"no" oneshot init
     # containers fail mk-stack-suite's generic all-containers-running check.
     immich = callSuite ./suites/immich.nix { };
+    # Hand-written for the same reason as immich: kavita-config-init and
+    # books-init are restart:"no" oneshots.
+    books = callSuite ./suites/books.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting

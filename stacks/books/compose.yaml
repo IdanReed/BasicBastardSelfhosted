@@ -1,0 +1,393 @@
+# Books — ebooks + audiobooks (Books range, ports 10150-10152). Design:
+# ServerNotes/designs/service-ebook-stack-research.md (the annex; it corrects
+# service-ebook-stack.md in 17 places where upstream moved since 2025 — read
+# its §0 before changing anything here). _overview.md owns the port/auth rows.
+#
+# Shape (annex §2):
+#   - Three published services, all loopback-only: kavita (library + OPDS +
+#     KOReader sync), shelfmark (search + download), audiobookshelf. Caddy on
+#     the host network is the only path in.
+#   - TWO library trees on purpose (annex §2.2): /mnt/slow/books/library for
+#     ebooks and /mnt/slow/books/audiobooks for audiobooks. Kavita and
+#     audiobookshelf each mount only their own tree, READ-ONLY. The layouts
+#     genuinely conflict (ABS wants {Author}/{Series}/{Book}/, Kavita wants
+#     series-per-folder) and sharing one tree would double inotify pressure
+#     over the same inodes on the slow tier for no gain.
+#   - SHELFMARK FEEDS THE EBOOK TREE ONLY, and that is a hard upstream limit,
+#     not a choice: the Direct Download source declares
+#     `supported_content_types = ["ebook"]`. Audiobooks come only from
+#     AudiobookBay, which is a TORRENT source available solely under
+#     SEARCH_MODE=universal — that needs a download client and a VPN, i.e. the
+#     media stack's gluetun, which is a separate design decision (annex §7.4,
+#     operator question §8.6). So shelfmark does NOT mount the audiobook tree,
+#     and DESTINATION_AUDIOBOOK / FILE_ORGANIZATION_AUDIOBOOK are deliberately
+#     absent: setting them under SEARCH_MODE=direct configures a pipeline
+#     nothing can ever feed. Audiobooks arrive by other means (Samba, manual
+#     copy) until that decision is made.
+#   - Both slow paths live under /mnt/slow/books, which backrest's
+#     slow-volume-selective plan ALREADY includes — the library trees are
+#     backed up with no backrest change. Keep them there.
+#   - Auth, per the overview Auth column: kavita and audiobookshelf drive
+#     their own OIDC against Authentik; shelfmark has none of its own and gets
+#     Caddy forward auth (AUTH_METHOD=proxy below). Forward auth is NOT an
+#     option for kavita: OPDS (/api/opds/{key}) and KOReader sync
+#     (/api/koreader/{key}/...) authenticate by API key in the URL from
+#     non-browser clients that cannot follow an OIDC redirect.
+#   - OIDC ships READY and OFF (annex §3.1/§3.3/§8.4). The client secrets live
+#     in the VPS secrets.sops.yaml, which needs the production age key, so
+#     they are the operator's step. Until then KAVITA_OIDC_CLIENT_SECRET and
+#     ABS_OIDC_CLIENT_SECRET are empty in .env, which means:
+#     kavita-config-init renders an EMPTY Authority as well as an empty secret
+#     (Kavita computes "OIDC enabled" two different ways — Authority+ClientId+
+#     Secret on the disk side, Authority ALONE on the DB side that the login
+#     path consults — so an authority with no secret is the half-configured
+#     state, not an off one), and books-init skips the audiobookshelf
+#     auth-settings PATCH entirely. Both apps run local-auth-only, with no
+#     login button that cannot complete.
+#
+# Backup contract (annex §5): no Postgres anywhere — all three services are
+# SQLite, so nixos/backup-prepare.sh's pg_dumpall loop is untouched. Its
+# sqlite_backup helper (sqlite3 .backup, WAL-safe) covers
+# /mnt/fast/audiobookshelf/config/absdatabase.sqlite (that line predates this
+# stack and is WHY the layout here is flat per-service, not /mnt/fast/books/*)
+# plus the kavita and shelfmark databases.
+
+services:
+  # ---------------------------------------------------------------------------
+  # kavita — ebook library, OPDS feed, KOReader progress sync.
+  #
+  # Two facts about this image drive everything below (annex §0.4/§0.5/§0.7):
+  #   1. It takes no CONFIGURATION from environment variables:
+  #      Program.CreateHostBuilder calls config.Sources.Clear() and then adds
+  #      only config/appsettings.json{,.<Environment>}. All configuration
+  #      therefore goes through the rendered appsettings.json. (Four env vars
+  #      are still read directly, and DOTNET_RUNNING_IN_CONTAINER is one of
+  #      them — it computes OsInfo.IsDocker, which is what makes the port and
+  #      bind settings inert. Do not "clean up" the image's defaults.)
+  #   2. appsettings.json MUST be writable and MUST arrive with a real
+  #      TokenKey. Kavita rewrites the file (JWT key generation, settings
+  #      changes) and all six writers are wrapped in a bare
+  #      `catch { /* Swallow exception */ }` — a read-only mount does not
+  #      crash, and its only tell is a "Generating JWT TokenKey…" line that
+  #      looks identical on a healthy first run. The server then signs every
+  #      JWT with the placeholder key that ships in the public repo. Hence :rw
+  #      here and a pre-seeded key.
+  # It also has no PUID/PGID (the block in entrypoint.sh is commented out,
+  # "causing issues for Synology users") and no USER directive, so it runs as
+  # root — same posture as immich, and the bind sources are declared root:root
+  # in nixos/hardware-configuration.nix.
+  # ---------------------------------------------------------------------------
+  kavita:
+    image: jvmilazz0/kavita:0.9.1
+    container_name: kavita
+    depends_on:
+      kavita-config-init:
+        condition: service_completed_successfully
+    # Bound to loopback so Caddy (network_mode: host) is the only path in.
+    # Kavita always ListenAnyIP(5000) inside the container — its `IpAddresses`
+    # setting is a dead key under Docker — so this prefix is the only thing
+    # constraining the bind.
+    ports:
+      - '127.0.0.1:10150:5000'
+    volumes:
+      # Writable ON PURPOSE — see the header. Holds kavita.db (WAL),
+      # appsettings.json, covers, cache, logs, backups, themes.
+      - /mnt/fast/kavita/config:/kavita/config
+      # Read-only, and load-bearing rather than tidy. Kavita's scan/read paths
+      # all write under config/{cache,temp,covers,bookmarks} — but
+      # BookmarkDirectory is an admin-settable ARBITRARY absolute path with no
+      # validation against the library folders, and the routine that validates
+      # it calls a recursive delete with no "did I create this" guard. :ro is
+      # what turns that into a 400. The books suite measures the scan half.
+      - /mnt/slow/books/library:/books:ro
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      # Keep the image's OWN test (`curl -fsS http://localhost:5000/api/health`
+      # — it probes the server this container actually runs, with -f, which is
+      # the inverse of the inherited-healthcheck trap, finding #16) and
+      # override only the timing: first boot runs EF Core migrations under a
+      # 5-minute internal budget, and the builtin allows 30s + 3x30s. Docker
+      # merges an unspecified `test` from the image's HEALTHCHECK.
+      #
+      # Note the builtin probes the bare path with no BaseUrl prefix. That is
+      # correct only while BaseUrl stays "/" — which it does, deliberately
+      # (annex §7.6: subpath deployments have shipped OIDC and OPDS bugs).
+      start_period: 120s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # shelfmark — search + download. EBOOKS ONLY here, by upstream constraint
+  # rather than by choice (see the header §0.11 note). The renamed
+  # calibre-web-automated-book-downloader; annex §0.9.
+  #
+  # Zero-UI config is env-only and upstream supports it as a first-class mode:
+  # ONBOARDING=false skips the wizard and "deployment-level ENV values always
+  # win" over both UI and per-user settings, with env-set fields rendered
+  # locked in the frontend.
+  #
+  # Do NOT add a compose `user:` (annex §7.2). It flips the entrypoint out of
+  # root-bootstrap mode — and the failure that causes is LATE, not loud: the
+  # non-root branch write-probes a fixed short list (/tmp/shelfmark, the
+  # seleniumbase scratch dirs, CONFIG_DIR, HOME) that does NOT include
+  # INGEST_DIR, because the `make_writable "$INGEST_DIR"` call lives in the
+  # root-only branch. So the container boots healthy and every download fails
+  # afterwards with "Destination not writable". Set PUID/PGID instead and let
+  # it drop privileges itself.
+  # ---------------------------------------------------------------------------
+  shelfmark:
+    image: ghcr.io/calibrain/shelfmark:1.3.13
+    container_name: shelfmark
+    # No depends_on ON PURPOSE: its post-download hook curls kavita and
+    # audiobookshelf, but a scan-trigger target being down must never gate
+    # shelfmark's own startup (and the hook exits 0 regardless — see
+    # post-download.sh).
+    ports:
+      - '127.0.0.1:10151:8084'
+    volumes:
+      # settings.json, the user database and the cover cache. (The database
+      # FILENAME is not documented upstream — nixos/backup-prepare.sh takes a
+      # best guess, which costs nothing if wrong, and the books suite prints
+      # this directory so it can be pinned down from a run.) The entrypoint
+      # RECURSIVELY chowns this at every boot, so it must stay small and
+      # dedicated — never point it at a shared parent.
+      - /mnt/fast/shelfmark/config:/config
+      # Download staging (TMP_DIR). Bound explicitly rather than left on the
+      # container's writable layer: a large download otherwise grows the
+      # overlay on the OS disk, and the entrypoint hard-exits if /tmp is
+      # unwritable (it dd's a 1MB probe file).
+      - /mnt/fast/shelfmark/tmp:/tmp/shelfmark
+      # The ebook tree, read-write — shelfmark is its only writer. The
+      # audiobook tree is deliberately NOT mounted (see the header): the
+      # Direct Download source cannot produce audiobooks, so a mount would
+      # only advertise a capability that does not exist.
+      - /mnt/slow/books/library:/books
+      # Rides Arcane's whole-directory sync (syncDirectory ON) with the
+      # compose file.
+      - ./post-download.sh:/scripts/post-download.sh:ro
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+      # Skip the setup wizard; everything below is the configuration.
+      - ONBOARDING=false
+      - FLASK_PORT=8084
+      # --- auth: Caddy forward auth (overview Auth column = FwdAuth) -------
+      # Default is AUTH_METHOD=none, i.e. wide open behind the loopback
+      # publish. proxy mode is upstream-supported (their reverse-proxy doc has
+      # an Authelia/Authentik section). The header name is set EXPLICITLY
+      # because upstream's own default (X-Auth-User) and their worked example
+      # (Remote-User) disagree — what actually arrives is whatever the
+      # (protected) snippet in stacks/caddy/Caddyfile copies, i.e. the
+      # X-Authentik-* set. The proxy-auth middleware exempts /api/health, so
+      # the container healthcheck is unaffected by auth mode.
+      - AUTH_METHOD=proxy
+      - PROXY_AUTH_USER_HEADER=X-authentik-username
+      # Set for completeness, but INERT on its own: group-based admin
+      # detection also needs PROXY_AUTH_ADMIN_GROUP_NAME, which is left empty
+      # ("leave blank to skip group-based admin detection"). What actually
+      # grants admin here is shelfmark's fallback — the first proxy-auth user
+      # it sees. Fine for a single-user deployment; set the group name before
+      # a second human exists.
+      - PROXY_AUTH_ADMIN_GROUP_HEADER=X-authentik-groups
+      # --- paths ------------------------------------------------------------
+      - CONFIG_DIR=/config
+      - TMP_DIR=/tmp/shelfmark
+      # INGEST_DIR is the (legacy-named) EBOOK destination — there is no
+      # DESTINATION_EBOOK. Its audiobook counterpart is omitted on purpose;
+      # see the header.
+      - INGEST_DIR=/books
+      - BOOKS_OUTPUT_MODE=folder
+      # organize => {Author}/{Title} ({Year}). Not cosmetic: Kavita ignores
+      # files at the library root entirely, so something has to create the
+      # subfolders. Upstream's docs warn against `organize` "with ingest
+      # folders" — that warning is about CWA-style watchers that move files
+      # out from under shelfmark, which is not what a read-only-scanned Kavita
+      # library is. Recording it as a judgement call, not an upstream
+      # blessing: the variable really is named INGEST_DIR.
+      - FILE_ORGANIZATION=organize
+      # --- sources ----------------------------------------------------------
+      - SEARCH_MODE=direct
+      # Anna's Archive direct download is OPT-IN as of 1.3.x (annex §0.10):
+      # this flag defaults to false and AA_MIRROR_URLS ships EMPTY, so a
+      # deployment with only a donator key set has a working UI and no
+      # reachable source. Both AA values are interpolated in below.
+      - DIRECT_DOWNLOAD_ENABLED=true
+      - USE_CF_BYPASS=true
+      - BOOK_LANGUAGE=en
+      # EPUB + PDF: PDFs are wanted for textbooks/papers that do not reflow,
+      # and Kavita indexes them natively (its library below takes
+      # fileGroupTypes [2,3] = EPub + Pdf). Open question §8.3 if you want
+      # EPUB-only — it is this line plus the library fileGroupTypes.
+      - SUPPORTED_FORMATS=epub,pdf
+      - MAX_CONCURRENT_DOWNLOADS=3
+      # --- post-download scan trigger (annex §3.4) --------------------------
+      # Closes the design doc's scan-latency question: instead of waiting for
+      # Kavita's scheduled scan, each completed download triggers one. The
+      # hook gets the task as JSON on stdin and ALWAYS exits 0 — a non-zero
+      # exit would mark a successful download as Error in the UI.
+      - CUSTOM_SCRIPT=/scripts/post-download.sh
+      - CUSTOM_SCRIPT_JSON_PAYLOAD=true
+      # Nav buttons in the UI, pointing at the two library apps.
+      - CALIBRE_WEB_URL=https://kavita.svc.idanreed.com
+      - AUDIOBOOK_LIBRARY_URL=https://audiobookshelf.svc.idanreed.com
+      # ---------------------------------------------------------------------
+      # Secrets, NAMED ONE BY ONE — this service deliberately has NO env_file.
+      #
+      # Every other service in the stack takes the whole decrypted .env, which
+      # is the fleet idiom. Not this one: shelfmark is the highest-exposure
+      # process here (it bundles Chromium and drives it against Anna's Archive
+      # mirrors with USE_CF_BYPASS), and the shared .env carries Kavita's and
+      # audiobookshelf's JWT SIGNING KEYS plus both OIDC client secrets. Code
+      # execution in this container should not hand over the ability to forge
+      # admin tokens for the other two. So it gets exactly the six values it
+      # uses and nothing else.
+      #
+      # `${VAR:-}` interpolates from the project directory's .env at parse
+      # time — the same file, read a different way. The `:-` default is what
+      # keeps this compatible with Arcane's staged validation, where the
+      # decrypted .env does not exist yet (finding #11's constraint, met
+      # without env_file): the values render empty there instead of aborting
+      # the sync. Residual window, same as everywhere else: a deploy racing
+      # the first decrypt comes up with empty values — here that degrades to
+      # "search finds nothing" and "the scan hook skips", not a crash.
+      #
+      # Still in reach of this container, unavoidably: the two admin
+      # passwords, which the post-download hook logs in with. Removing those
+      # too would mean minting and storing derived credentials that are
+      # equally admin-capable — more moving parts for a smaller reduction.
+      - AA_DONATOR_KEY=${AA_DONATOR_KEY:-}
+      - AA_MIRROR_URLS=${AA_MIRROR_URLS:-}
+      - KAVITA_ADMIN_USER=${KAVITA_ADMIN_USER:-}
+      - KAVITA_ADMIN_PASSWORD=${KAVITA_ADMIN_PASSWORD:-}
+      - ABS_ADMIN_USER=${ABS_ADMIN_USER:-}
+      - ABS_ADMIN_PASSWORD=${ABS_ADMIN_PASSWORD:-}
+    # NO healthcheck stanza ON PURPOSE: the image's builtin is already the
+    # right one (`curl -fsS http://localhost:${FLASK_PORT}/api/health`,
+    # loopback-only, and with -f — upstream's Dockerfile comment shows they
+    # already hit the "curl -s exits 0 on a 500" bug). Its --start-period=90s
+    # is deliberate upstream; a shorter compose-level start_period flaps the
+    # container while Chromium initialises.
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # audiobookshelf — audiobook library, player, progress sync.
+  #
+  # SOURCE=docker must stay exactly that (annex §2.3): any other value makes
+  # BinaryManager fetch ffmpeg/ffprobe from ffbinaries.com at boot and
+  # process.exit(1) on failure — a guaranteed crash loop on a host without
+  # egress. It is the image default; the hazard is someone "tidying" the env.
+  #
+  # Runs as root (the image config has "User": null and there is no PUID/PGID
+  # mechanism), same call as immich and kavita: tailnet-only, loopback-bound,
+  # socketless. Bind sources are declared root:root accordingly.
+  # ---------------------------------------------------------------------------
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:2.36.0
+    container_name: audiobookshelf
+    ports:
+      - '127.0.0.1:10152:80'
+    volumes:
+      # absdatabase.sqlite only. Upstream is explicit that this must be local
+      # storage, never a network filesystem.
+      - /mnt/fast/audiobookshelf/config:/config
+      # Covers, per-item metadata.json, transcode cache, logs, upload tmp —
+      # random-access on every page load, hence the fast tier.
+      - /mnt/fast/audiobookshelf/metadata:/metadata
+      # Read-only: safe ONLY while storeMetadataWithItem and storeCoverWithItem
+      # stay at their false defaults and nothing is uploaded through the UI
+      # (both hold here — shelfmark is the only writer). The suite asserts the
+      # tree is untouched after a scan rather than trusting it.
+      - /mnt/slow/books/audiobooks:/audiobooks:ro
+    environment:
+      - PORT=80
+      - CONFIG_PATH=/config
+      - METADATA_PATH=/metadata
+      - SOURCE=docker
+      - TZ=America/Chicago
+      # JWT_SECRET_KEY arrives from .env: without it the token secret is
+      # generated into the database, so a /config restore-from-nothing
+      # invalidates every session and the secret cannot be rotated.
+    # Long form with required:false ON PURPOSE (finding #11): see shelfmark.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # This image ships NO healthcheck at all ("Healthcheck": null in its
+      # config blob) and has NO curl — curl exists only in its build stage.
+      # /usr/bin/wget is busybox. A curl-based probe here fails 100% of the
+      # time and reads as an application failure (annex §0.15).
+      #
+      # /healthcheck only starts answering after Database.init() and every
+      # migration — listen() is the last statement of Server.start() — so
+      # before that the probe gets CONNECTION REFUSED rather than a non-200,
+      # which --spider handles correctly. Port open therefore implies DB
+      # migrated. NOT /ping: it logs an INFO line per request into
+      # /metadata/logs/daily, so a 10s probe interval is a log flood.
+      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:80/healthcheck']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # kavita-config-init — renders /kavita/config/appsettings.json from
+  # appsettings.json.template + the secrets in .env, before kavita starts.
+  #
+  # Kavita takes no configuration from the environment (header), so this file
+  # IS the configuration channel: JWT signing key, BaseUrl, cache, and the
+  # OpenIdConnectSettings triple that Seed.SetOidcSettingsFromDisk re-applies
+  # to the database at every boot (which is what makes sops-managed OIDC work
+  # at all — the file stays authoritative).
+  #
+  # MERGE semantics, not overwrite (unlike immich-config-init's whole-file
+  # render): Kavita rewrites appsettings.json itself, and the file legitimately
+  # accumulates keys this template does not own (Serilog, KnownProxies, and
+  # anything a future version adds through JsonExtensionData). So this reads
+  # the existing file, updates only the keys the template declares, and
+  # rewrites only if one of those actually differs — which also keeps a second
+  # run provably silent.
+  # ---------------------------------------------------------------------------
+  kavita-config-init:
+    # python:3.13-alpine rather than alpine+awk (the immich-config-init
+    # approach): this needs to PARSE the existing JSON to merge into it, and
+    # substituting the secrets into a parsed structure instead of into text
+    # removes the quote/backslash-corruption hazard entirely. `apk add` at
+    # container start stays banned (finding #4).
+    image: python:3.13-alpine
+    container_name: books_config_init
+    entrypoint: ['/bin/sh', '/init/kavita-config-init.sh']
+    volumes:
+      - ./kavita-config-init.sh:/init/kavita-config-init.sh:ro
+      - ./appsettings.json.template:/template/appsettings.json.template:ro
+      - /mnt/fast/kavita/config:/config
+    # Long form with required:false ON PURPOSE (finding #11): see shelfmark.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # books-init — headless seeding for BOTH library apps (media-init pattern):
+  # admin accounts, libraries, and the audiobookshelf OIDC settings when a
+  # secret is present. Every mutation logs "books-init: CHANGE: ..."; a second
+  # run — every Arcane redeploy reruns this container — must log ZERO change
+  # lines.
+  # ---------------------------------------------------------------------------
+  books-init:
+    image: python:3.13-alpine
+    container_name: books_init
+    entrypoint: ['/bin/sh', '/init/books-init.sh']
+    depends_on:
+      kavita:
+        condition: service_healthy
+      audiobookshelf:
+        condition: service_healthy
+    volumes:
+      - ./books-init.sh:/init/books-init.sh:ro
+    # Long form with required:false ON PURPOSE (finding #11): see shelfmark.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
