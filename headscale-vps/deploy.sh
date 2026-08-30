@@ -25,12 +25,27 @@ trap "rm -rf $EXTRA_FILES_DIR" EXIT
 echo "=== Headscale VPS Deployment ==="
 echo ""
 
+# The canonical copy of the key is root-only at /var/lib/sops-nix (the
+# sopsedit convention: it never moves into the workspace, each use costs a
+# sudo). A workspace-level ../sops_age_key.txt still wins if present, for
+# running this from a machine that is not the desktop. The temp copy lives
+# OUTSIDE $EXTRA_FILES_DIR on purpose — that whole directory ships to the
+# VPS filesystem root via --extra-files.
+if [[ ! -f "$AGE_KEY_FILE" && -e /var/lib/sops-nix/sops_age_key.txt ]]; then
+    echo "> No workspace key; reading /var/lib/sops-nix (sudo)"
+    AGE_KEY_TMP=$(mktemp)
+    trap "rm -rf $EXTRA_FILES_DIR; rm -f $AGE_KEY_TMP" EXIT
+    sudo cat /var/lib/sops-nix/sops_age_key.txt > "$AGE_KEY_TMP"
+    chmod 600 "$AGE_KEY_TMP"
+    AGE_KEY_FILE="$AGE_KEY_TMP"
+fi
+
 # Check age key exists
 if [[ ! -f "$AGE_KEY_FILE" ]]; then
-    echo "Error: AGE key not found at $AGE_KEY_FILE"
+    echo "Error: AGE key not found at ../sops_age_key.txt or /var/lib/sops-nix/"
     echo ""
     echo "To generate a new key:"
-    echo "  age-keygen -o $AGE_KEY_FILE"
+    echo "  age-keygen -o ../sops_age_key.txt"
     echo ""
     echo "Then add the PUBLIC key to .sops.yaml"
     exit 1
