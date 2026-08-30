@@ -1,0 +1,13 @@
+# actionlint config. Lives under .github/ because that is the only place
+# actionlint looks (it walks up to the .git root, then reads this file), but
+# it also applies when linting the Forgejo workflows explicitly:
+#
+#   nix run nixpkgs#actionlint -- .forgejo/workflows/*.yml
+#
+# The custom labels are the self-hosted Forgejo runner's
+# (nixos/modules/forgejo-runner.nix); without this list every runs-on line
+# fails [runner-label].
+self-hosted-runner:
+  labels:
+    - nix
+    - kvm

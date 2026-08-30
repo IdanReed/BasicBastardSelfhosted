@@ -1,0 +1,46 @@
+# PR gate: lints, then the three core VM suites — vps, services, tailnet —
+# the same trio the harness treats as its backbone (README "Status" section).
+# Heavies (authentik, backrest, paperless, …) stay out of the PR path and run
+# nightly (heavy-nightly.yml); a PR that touches one of them can still be
+# checked locally with `./tests/run.sh <suite>`.
+#
+# RUNNER ASSUMPTION: everything lints.yml documents, PLUS working KVM — hence
+# the extra `kvm` label. The NixOS test driver runs qemu inside the nix build
+# sandbox, so it is the nix-daemon's builders that need /dev/kvm, not the
+# runner service itself; without it the driver falls back to TCG emulation
+# and these suites (3GB-RAM container hosts, real ACME, a formed tailnet)
+# blow every timeout. On the services VM that means nested virtualisation
+# enabled on the Proxmox host; on the desktop it is native. NixOS advertises
+# `kvm` in nix.settings.system-features automatically when /dev/kvm exists.
+# See nixos/modules/forgejo-runner.nix for the label wiring.
+#
+# Suites run SEQUENTIALLY (steps of one job, not parallel jobs) on purpose:
+# each boots one or more 3GB guests, and two suites racing on one host melt
+# it. A failing step also skips the rest — same short-circuit run.sh gives
+# locally, cheapest signal first.
+name: suites
+
+on:
+  pull_request:
+
+jobs:
+  core-suites:
+    runs-on: [self-hosted, nix, kvm]
+    # vps ~80s, services/tailnet a few minutes each once the store is warm —
+    # but a cold runner store rebuilds the world first. Generous on purpose;
+    # a wedged qemu should still get killed eventually.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Contract lints
+        run: ./tests/run.sh
+
+      - name: vps suite (caddy + headscale + a real tailnet)
+        run: ./tests/run.sh vps
+
+      - name: services suite (sops -> docker network -> arcane -> stacks)
+        run: ./tests/run.sh services
+
+      - name: tailnet suite (both hosts on one tailnet, end to end)
+        run: ./tests/run.sh tailnet

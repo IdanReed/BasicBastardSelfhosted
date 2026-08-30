@@ -1,0 +1,58 @@
+# Forgejo — the git ROOT for everything in this homelab. GitHub is only a
+# push mirror for select public repos (LONGRUN decision); this instance is
+# the source of truth, including the remote Arcane's GitOps sync pulls from.
+#
+# Access is HTTPS-ONLY in v1: web UI and git-over-https both ride Caddy at
+# forgejo.svc.idanreed.com (token auth for git). SSH is deliberately
+# DEFERRED — it would need a second published port plus key management, and
+# https+token already covers every current consumer (Arcane's pull, human
+# pushes, future CI checkout). DISABLE_SSH below keeps the container's sshd
+# off and stops the UI from advertising ssh:// clone URLs it cannot honour.
+#
+# NO .sops.env for v1, on purpose: Forgejo self-generates all of its private
+# material — SECRET_KEY, INTERNAL_TOKEN, the JWT secrets — into
+# /data/gitea/conf/app.ini (i.e. /mnt/fast/forgejo/data) on first start and
+# reuses it thereafter. Nothing secret needs to travel through git, so there
+# is nothing to encrypt, no env_file to declare, and (unlike finding #11's
+# stacks) no staging-validation dance for the GitOps sync to trip over. The
+# consequence is that app.ini is STATE and lives in the volume — which the
+# fast-volume Backrest plan already covers (see designs/dev-forgejo.md).
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0
+    container_name: forgejo
+    environment:
+      # The classic (root-entrypoint) image runs its `git` user at this uid,
+      # so everything it writes matches the /srv/stacks + decrypt-chown
+      # 1000:1000 ownership world (finding #10) and the fast-volume backup
+      # reads it without surprises.
+      - USER_UID=1000
+      - USER_GID=1000
+      - TZ=America/Chicago
+      # Headless bring-up: no install wizard. With no DB configured the
+      # image defaults to sqlite3 at /data/gitea/gitea.db — right-sized for
+      # a single-user instance. (`forgejo dump` exists for consistent
+      # exports; deferred — the design note has the backup story.)
+      - FORGEJO__security__INSTALL_LOCK=true
+      # What clone URLs and redirects are built from; must match the Caddy
+      # route (the caddy-routes lint ties the published port to it).
+      - FORGEJO__server__ROOT_URL=https://forgejo.svc.idanreed.com/
+      - FORGEJO__server__DISABLE_SSH=true
+      # Single-user instance: the admin is created headless with the CLI
+      # (`forgejo admin user create`); nobody self-registers.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+    volumes:
+      - /mnt/fast/forgejo/data:/data
+    ports:
+      # Web UI and git-over-https on one port. Loopback-only: Caddy is the
+      # only path in (loopback-binding lint enforces the pattern).
+      - '127.0.0.1:10550:3000'
+    healthcheck:
+      # The dedicated health endpoint, not '/': it checks the DB and cache
+      # backends, and both the suites and `up --wait` key off it.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
