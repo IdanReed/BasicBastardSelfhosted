@@ -8,10 +8,20 @@
 # extraOptions are raw ssh_config directives by their upstream names
 # (e.g. { ProxyJump = "vps"; }) merged into the generated Host block.
 {
+  # ---
+  # Git
+  # ---
   github = {
     host = "github.com";
     user = "git";
   };
+  gatech = {
+    host = "github.gatech.edu";
+    user = "git";
+  };
+  # ---
+  # Server
+  # ---
   proxmox = {
     host = "10.0.0.2";
     user = "root";

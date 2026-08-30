@@ -12,13 +12,13 @@
 {
   # Desktop (nixos-de) client identities - private halves live in
   # nixos-de/secrets.sops.yaml under ssh/<name>.
-  github = null;
-  proxmox = null;
-  arcane-vm = null;
-  vps = null;
-  storagebox = null;
+  github = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMYQK8ygfSY1qmBj7jxBT6VNH7uVm8Lb1mF1ec9Pz/z5 idan@idanreed.com";
+  proxmox = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBb2tDbaA5I2xnvbJW13a0jLF+c/Sk7z/HfUFCilLHHw proxmox@idanreed";
+  arcane-vm = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKlZMaVxyWGjztwZErMeNN5bqOqfCYoGS1XdfqTQmH/T arcane-vm@idanreed";
+  vps = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMYlaE0EC4T/rrgW1hS78pzXuy0ZbniyxXL0WmoxWcA2 vps@idanreed";
+  storagebox = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH59fvm9TJ4iLYgSq5N0Jsb6z6/9Rlpn7o6L/8/F77IB storagebox@idanreed";
   # Host identities - private halves live in the owning host's
   # secrets.sops.yaml.
-  backup-vps = null; # services VM -> VPS state pull
-  backup-storagebox = null; # backrest -> Hetzner Storage Box
+  backup-vps = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAFLwk+iktnaV0kzfKk6zfiyFzh590t8haOBihzxhV91 backup-vps@idanreed"; # services VM -> VPS state pull
+  backup-storagebox = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPZ1md5BL1k7ZmiV1anmrZZQFjqXXemyVUiP66tsTM+7 backup-storagebox@idanreed"; # backrest -> Hetzner Storage Box
 }

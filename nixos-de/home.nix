@@ -14,6 +14,9 @@
 
     sessionVariables = {
       TERMINAL = "foot";
+      # Deliberately no SOPS_AGE_KEY_FILE: the only copy of the age key on this
+      # box is /var/lib/sops-nix/sops_age_key.txt, 0700 root, and it stays that
+      # way — reading it should cost a sudo. `sopsedit` (below) is the way in.
     };
 
     enableNixpkgsReleaseCheck = false;
@@ -98,6 +101,34 @@
     initContent = ''
       pdf() { QT_QPA_PLATFORM=xcb setsid -f sioyek "$@" >/dev/null 2>&1 }
 
+      # sopsedit <file> — edit a sops file in Zed.
+      #
+      # Zed has no SOPS extension: zed-industries/extensions#3004 is blocked on
+      # the extension API having no buffer open/save hook, so transparent
+      # decrypt-on-open is not buildable. Go the other way instead — sops
+      # decrypts to a tmpfile, spawns Zed on it, re-encrypts when Zed exits.
+      # Plaintext never lands in the repo.
+      #
+      # The age key is root-only (/var/lib/sops-nix, 0700), which is the point:
+      # each edit costs a sudo. `sudo cat` reads it, and it reaches sops through
+      # SOPS_AGE_KEY so that sops and Zed still run as idan — `sudo -E sops
+      # edit` would spawn the editor as root and leave root-owned droppings in
+      # ~/.config/zed. Cost of that choice: the key sits in sops' environment
+      # (readable via /proc by idan and root only) for the life of the edit.
+      #
+      # If `--wait` ever returns instantly against an already-running Zed
+      # (zed-industries/zed#54203), sops re-encrypts the *unedited* tmpfile and
+      # the edit is silently lost — `git diff` after saving is the check.
+      sopsedit() {
+        if [[ -z $1 ]]; then
+          echo "usage: sopsedit <file.sops.yaml|.sops.env>" >&2
+          return 1
+        fi
+        local key
+        key=$(sudo cat /var/lib/sops-nix/sops_age_key.txt) || return
+        SOPS_AGE_KEY=$key SOPS_EDITOR="zeditor --wait" sops edit "$@"
+      }
+
       # vidtrim <video> [speed] [threshold] [margin]
       # auto-editor cuts the silence, ffmpeg speeds up what's left.
       # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
@@ -173,6 +204,9 @@
     fzf
     zoxide
     lazygit
+    gh # GitHub CLI — PRs, Actions runs, releases
+    sops
+    age
     tree
     mpv
     losslesscut-bin
