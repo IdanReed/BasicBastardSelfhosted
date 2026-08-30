@@ -70,6 +70,13 @@ in
     settings = {
       PermitRootLogin = "no";
       PasswordAuthentication = false;
+      # Explicit, not defaulted (security review 2026-08-30 item 4): OpenSSH's
+      # own default is yes, and with UsePAM yes (the NixOS default) that opens
+      # a PAM password path that PasswordAuthentication=false does not close.
+      # Inert only while every account is password-locked — load-bearing by
+      # accident until this line. The vps suite forces the method on and
+      # asserts refusal.
+      KbdInteractiveAuthentication = false;
     };
   };
 
@@ -204,7 +211,14 @@ in
     "d /var/lib/sops-nix 0700 root root -"
   ];
 
-  # Fail2ban for SSH protection
+  # Fail2ban: SSH plus Authentik's login page — the two public brute-force
+  # surfaces. SSH is the deliberately-public port 22; Authentik's login lives
+  # behind Caddy on :443 (auth.idanreed.com). This is layer 1 of the
+  # login-hardening pair; layer 2 is the reputation-policy blueprint at
+  # authentik/blueprints/custom/login-hardening.yaml. The two are
+  # complementary: fail2ban bans the source IP at the firewall after a few
+  # failures in a window; the reputation policy scores per (username, ip) and
+  # so denies even an attacker rotating source IPs.
   services.fail2ban = {
     enable = true;
     maxretry = 3;
@@ -219,8 +233,65 @@ in
           bantime = "1h";
         };
       };
+
+      # Authentik login brute-force. backend=systemd reads the journal (the
+      # server container logs there via the journald driver + CONTAINER_TAG,
+      # set in authentik/compose.yaml); the filter extracts authentik's
+      # FORWARDED client_ip, never the TCP peer. The peer is always Caddy on
+      # loopback — banning it would brick the reverse proxy for everyone.
+      # maxretry/bantime mirror sshd; findtime is widened to 1h (default 10m)
+      # so failures spread across minutes still accumulate toward a ban.
+      authentik = {
+        settings = {
+          enabled = true;
+          backend = "systemd";
+          filter = "authentik";
+          journalmatch = "CONTAINER_TAG=authentik-server";
+          maxretry = 3;
+          findtime = "1h";
+          bantime = "1h";
+        };
+      };
     };
   };
+
+  # The module does offer per-jail `jails.<name>.filter`, but its INI
+  # generator would mangle the long verbatim sample-line comment below — and
+  # that comment IS the provenance for the regex — so the filter ships as a
+  # sibling environment.etc file instead (the module's filter.d entry is a
+  # `/*.conf` glob, so siblings coexist). The failregex was captured
+  # EMPIRICALLY (see the sample line and image version in the file) and
+  # validated with fail2ban-regex; the vps suite re-runs that check plus
+  # negative controls so the filter can drift neither under nor over.
+  environment.etc."fail2ban/filter.d/authentik.conf".text = ''
+    # authentik login_failed brute-force filter.
+    #
+    # Sample line captured VERBATIM by driving a failed flow login against the
+    # pinned image ghcr.io/goauthentik/server:2026.5.6 (server container,
+    # journald driver, X-Forwarded-For spoofed to stand in for Caddy):
+    #
+    # {"action": "login_failed", "auth_via": "unauthenticated", "client_ip": "203.0.113.77", "context": {"http_request": {"args": {}, "method": "POST", "path": "/api/v3/flows/executor/default-authentication-flow/", "request_id": "dd8c847ae65f4bd8b8f9b4a22c087385", "user_agent": "curl/8.19.0"}, "password": "********************", "stage": {"app": "authentik_stages_password", "model_name": "passwordstage", "name": "default-authentication-password", "pk": "c0ad2df11f11428a8ca68c73980bd067"}, "username": "akadmin"}, "domain_url": "127.0.0.1", "event": "Created Event", "host": "127.0.0.1:19000", "level": "info", "logger": "authentik.events.models", "pid": 184, "request_id": "dd8c847ae65f4bd8b8f9b4a22c087385", "schema_name": "public", "timestamp": "2026-08-30T19:25:26.527644", "user": {"email": "admin@idanreed.com", "pk": 4, "username": "akadmin"}}
+    #
+    # The lookahead gates on the login_failed action anywhere on the line and
+    # the consume captures client_ip anywhere on the line, so the two survive
+    # any JSON key reordering. client_ip is authentik's FORWARDED client
+    # address (the TCP source it sees is loopback from Caddy). Gating on
+    # exactly "login_failed" is deliberate: the successful-login "login" event
+    # and the identification "invalid_login" event also carry client_ip, and
+    # neither should ban.
+    [Definition]
+    failregex = ^(?=.*?"action"\s*:\s*"login_failed").*?"client_ip"\s*:\s*"<HOST>"
+    journalmatch = CONTAINER_TAG=authentik-server
+  '';
+
+  # The pinned NixOS fail2ban module restarts the daemon only when its OWN
+  # generated configs change (fail2banConf/jailConf/pathsConf) — an edit to
+  # the environment.etc filter above deploys the new file but leaves the
+  # running daemon on the old regex until something else restarts it. Tie the
+  # restart to the filter content explicitly.
+  systemd.services.fail2ban.restartTriggers = [
+    config.environment.etc."fail2ban/filter.d/authentik.conf".source
+  ];
 
   # Nix settings
   nix = {

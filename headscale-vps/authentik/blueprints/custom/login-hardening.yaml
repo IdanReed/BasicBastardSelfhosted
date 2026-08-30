@@ -1,0 +1,106 @@
+# Login brute-force hardening — the reputation layer (layer 2 of 2; layer 1 is
+# the fail2ban jail in ../../configuration.nix reading the server container's
+# journald stream). fail2ban bans an IP after a few failures in a window;
+# this layer is the backstop it cannot be: reputation scores persist per
+# (identifier, ip) pair, so an attacker rotating source IPs still accumulates
+# score against the username and gets denied.
+#
+# BINDING SHAPE — verified against the 2026.5.6 source in the pinned image
+# (authentik/policies/reputation/models.py): ReputationPolicy.passes() returns
+# True when score <= threshold, i.e. the policy MATCHES BAD REPUTATION. It is
+# a detector, not a gate. Binding it directly to the flow (or to the
+# identification-stage binding) would therefore DENY every normal user
+# (score 0 > threshold -> False) and wave attackers through — a total login
+# lockout, in the wrong direction. The correct idiom — the one upstream's own
+# flows-login-conditional-captcha.yaml example uses — is a conditional stage:
+# bind the policy to a deny-stage FlowStageBinding with evaluate_on_plan:
+# false + re_evaluate_policies: true, so bad reputation includes the deny
+# stage and good reputation skips it.
+#
+# Order 15 sits between identification (10) and password (20): the
+# re-evaluation runs after identification, when the plan's pending_user is
+# set (flows/markers.py passes it to the PolicyEngine), so check_username
+# actually bites; check_ip works regardless. A policy execution ERROR fails
+# the re-evaluation, which removes the deny stage — fail-open on purpose:
+# fail2ban is the other layer, and failing closed here would make a broken
+# policy a fleet-wide login outage.
+#
+# Scoring (events signal, not this policy): every failed password AND every
+# unknown-username identification decrements the (identifier, ip) score by 1,
+# expiring after AUTHENTIK_REPUTATION__EXPIRY (default 24h). threshold -10
+# means deny after 10 failures in the window. Suite headroom: no VM suite
+# performs a single failed flow login against authentik (verified by grep —
+# the forward-auth suite cannot complete logins at all, and the immich/media
+# wrong-password legs hit their own apps), so suites sit at 0 of the 10
+# failures needed.
+#
+# NOTE the .yaml extension is load-bearing (finding #7): authentik's blueprint
+# discovery globs **/*.yaml only — as .yml this file would mount, be visible,
+# and silently never apply.
+#
+# NO comment-only `attrs:` keys anywhere in this file (finding #9): a YAML key
+# whose body is only comments parses as null and the importer's .items() call
+# kills the ENTIRE blueprint apply, retried forever, error only in worker logs.
+version: 1
+metadata:
+  name: login-hardening
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # ===========================================
+  # Reputation policy — matches clients whose accumulated score is at or
+  # below the threshold (see header: True means "bad actor")
+  # ===========================================
+  - model: authentik_policies_reputation.reputationpolicy
+    id: login-reputation-policy
+    state: present
+    identifiers:
+      name: login-reputation
+    attrs:
+      check_ip: true
+      check_username: true
+      threshold: -10
+
+  # ===========================================
+  # Deny stage — cancels the flow when the policy above matches
+  # ===========================================
+  - model: authentik_stages_deny.denystage
+    id: login-reputation-deny-stage
+    state: present
+    identifiers:
+      name: login-reputation-deny
+    attrs:
+      deny_message: "Too many failed login attempts."
+
+  # ===========================================
+  # Conditional binding into the default authentication flow
+  # ===========================================
+  # evaluate_on_plan: false + re_evaluate_policies: true is the load-bearing
+  # pair: the stage is planned tentatively and its policies re-run when
+  # reached (post-identification, pending_user known). Flipping either flag
+  # evaluates the policy at plan time with an anonymous user — check_username
+  # goes silently inert.
+  - model: authentik_flows.flowstagebinding
+    id: login-reputation-deny-binding
+    state: present
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      stage: !KeyOf login-reputation-deny-stage
+      order: 15
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+
+  # ===========================================
+  # Policy -> stage-binding attachment
+  # ===========================================
+  - model: authentik_policies.policybinding
+    id: login-reputation-policy-binding
+    state: present
+    identifiers:
+      policy: !KeyOf login-reputation-policy
+      target: !KeyOf login-reputation-deny-binding
+      order: 0
+    attrs:
+      enabled: true
