@@ -41,32 +41,46 @@ Order a Hetzner Storage Box (BX11 1 TB is enough to start). In the console:
 
 ### 2. SSH key
 
-Lives on the host, never in git or SOPS:
+**Sops-managed** (see CLAUDE.md "SSH identities") — do NOT `ssh-keygen`
+directly into `/var/lib/backup/`: sops-nix and a tmpfiles `C+` rule own both
+paths there and will **overwrite a hand-made key on the next boot or
+switch**, orphaning whatever public half you already authorised.
+
+Generate locally, then put each half where it belongs:
 
 ```bash
-sudo ssh-keygen -t ed25519 -N "" -f /var/lib/backup/storagebox_ed25519
-sudo ssh-copy-id -p 23 -i /var/lib/backup/storagebox_ed25519.pub \
+ssh-keygen -t ed25519 -N "" -f /tmp/storagebox_ed25519
+# private half -> BACKUP_STORAGEBOX_SSH_KEY in nixos/secrets.sops.yaml:
+sops nixos/secrets.sops.yaml           # paste as a YAML block scalar
+# public half -> the backup-storagebox entry in all three ssh-pubkeys.nix
+# copies, and authorised on the box:
+ssh-copy-id -p 23 -i /tmp/storagebox_ed25519.pub \
     uXXXXXX@uXXXXXX.your-storagebox.de
+shred -u /tmp/storagebox_ed25519*
 ```
 
-Then fill in `uXXXXXX` in `ssh_config`. `config-init` refuses to seed and
-Backrest will not start if the key is missing, rather than coming up and
-failing every backup on ssh auth.
+Then fill in `uXXXXXX` in `ssh_config`. The key materialises on the host at
+`/var/lib/backup/storagebox_ed25519` (a real file re-copied from
+`/run/secrets` each boot, because backrest bind-mounts the directory and a
+symlink would dangle inside the container). `config-init` refuses to seed —
+and Backrest will not start — while the key is missing **or still the
+`changeme_` placeholder**, rather than coming up and failing every backup on
+ssh auth.
 
 ### 3. VPS backup key
 
 `backup-prepare.sh` pulls the Authentik identity database and the Headscale
 node database + private keys over the tailnet. Nothing else backs up the VPS.
 
-```bash
-sudo ssh-keygen -t ed25519 -N "" -f /var/lib/backup/vps_ed25519
-sudo ssh-copy-id -i /var/lib/backup/vps_ed25519.pub \
-    idan@headscale-vps.tailnet.idanreed.com
-```
+Same sops flow: private half → `BACKUP_VPS_SSH_KEY` in
+`nixos/secrets.sops.yaml` (sops-nix symlinks it to
+`/var/lib/backup/vps_ed25519`), public half → the `backup-vps` entry in the
+three `ssh-pubkeys.nix` copies — the VPS authorises it from there, no
+`ssh-copy-id` needed once deployed.
 
-Until this exists, `backup-prepare.service` warns and exits non-zero, which
-trips `OnFailure=` → Ntfy. That is deliberate: a missing VPS backup should be
-noisy, not silent.
+Until the real value is in, `backup-prepare.service` warns (missing **or**
+`changeme_` placeholder) and exits non-zero, which trips `OnFailure=` → Ntfy.
+That is deliberate: a missing VPS backup should be noisy, not silent.
 
 ### 4. Secrets
 

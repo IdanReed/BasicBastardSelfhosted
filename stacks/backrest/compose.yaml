@@ -73,10 +73,12 @@ services:
       - /mnt/fast/backrest/config:/config
       - /mnt/fast/backrest/data:/data
       - /mnt/fast/backrest/cache:/cache
-      # SSH key + config for the Hetzner Storage Box. The private key lives on
-      # the host at /var/lib/backup/, never in the repo — it is generated once
-      # and its public half authorised on the storage box, so it never needs
-      # to travel through git or SOPS.
+      # SSH key + config for the Hetzner Storage Box. The private key is
+      # sops-managed (BACKUP_STORAGEBOX_SSH_KEY in nixos/secrets.sops.yaml)
+      # and materialised at /var/lib/backup/storagebox_ed25519 by a tmpfiles
+      # C+ rule — a REAL file, not a symlink, because this bind-mount would
+      # dangle a /run/secrets symlink inside the container. Never ssh-keygen
+      # into /var/lib/backup directly: the next boot overwrites it.
       - /var/lib/backup/storagebox_ed25519:/root/.ssh/id_ed25519:ro
       # System-wide ssh config path on purpose: ssh enforces root ownership
       # on /root/.ssh/config, but Arcane's sync (PUID 1000) delivers this
