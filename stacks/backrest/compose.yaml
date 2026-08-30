@@ -15,40 +15,41 @@
 #   - config-init runs once and exits, with depends_on:
 #     service_completed_successfully. The original sidecar ran `sleep infinity`
 #     and nothing ordered it before Backrest, so it was a race.
-#   - Webhooks go to http://ntfy/ on a shared docker network rather than
+#   - Notifications go to http://ntfy/ on a shared docker network rather than
 #     host.docker.internal, which does not resolve on Linux and made every
 #     success and failure notification silently disappear.
+#   - Hooks use actionShoutrrr (ntfy) and actionHealthchecks (dead-man), NOT
+#     actionWebhook: backrest 1.9.1 defines actionWebhook in its proto and
+#     accepts it in config, but ships NO handler for it — every hook fired
+#     "no handler for hook type" at runtime, so no notification and no
+#     dead-man ping would ever have been delivered. Caught by
+#     tests/suites/backrest.nix triggering a real backup.
+#   - No `apk add gettext` for envsubst. That put dl-cdn.alpinelinux.org in the
+#     boot path — registry or uplink down at boot meant the whole backup stack
+#     stayed down — and made config-init impossible to run in the offline VM
+#     suite. config-init.sh substitutes with busybox awk instead, and treats a
+#     missing/empty variable as a hard error where envsubst wrote "".
 services:
   config-init:
     image: alpine:3.21
     container_name: backrest_config_init
-    # Seeds config.json ONCE. Backrest owns the file afterwards, so this must
-    # never overwrite it — the template is a bootstrap seed, not a source of
-    # truth. To re-seed: delete /mnt/fast/backrest/config/config.json.
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        # Fail loudly BEFORE Backrest starts if the storage box key is absent.
-        # depends_on: service_completed_successfully means Backrest will not
-        # come up in a state where every backup fails on ssh auth.
-        if [ ! -s /keys/storagebox_ed25519 ]; then
-          echo "ERROR: /var/lib/backup/storagebox_ed25519 missing or empty on the host."
-          echo "  ssh-keygen -t ed25519 -N '' -f /var/lib/backup/storagebox_ed25519"
-          echo "  ssh-copy-id -p 23 -i /var/lib/backup/storagebox_ed25519.pub uXXXXXX@uXXXXXX.your-storagebox.de"
-          exit 1
-        fi
-        if [ -f /config/config.json ]; then
-          echo "config.json already exists - leaving it alone"
-          exit 0
-        fi
-        apk add --no-cache gettext >/dev/null 2>&1
-        envsubst < /template/config.template.json > /config/config.json
-        chmod 600 /config/config.json
-        echo "seeded config.json"
+    # Seeds config.json ONCE — see config-init.sh for the full contract.
+    # Backrest owns the file afterwards; the template is a bootstrap seed, not
+    # a source of truth. To re-seed: delete /mnt/fast/backrest/config/config.json.
+    entrypoint: ["/bin/sh", "/template/config-init.sh"]
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
+      - ./config-init.sh:/template/config-init.sh:ro
       - ./config.template.json:/template/config.template.json:ro
       - /mnt/fast/backrest/config:/config
       - /var/lib/backup:/keys:ro
@@ -77,7 +78,11 @@ services:
       # and its public half authorised on the storage box, so it never needs
       # to travel through git or SOPS.
       - /var/lib/backup/storagebox_ed25519:/root/.ssh/id_ed25519:ro
-      - ./ssh_config:/root/.ssh/config:ro
+      # System-wide ssh config path on purpose: ssh enforces root ownership
+      # on /root/.ssh/config, but Arcane's sync (PUID 1000) delivers this
+      # file 1000-owned — mounting it there breaks every ssh with "Bad owner
+      # or permissions". /etc/ssh/ssh_config carries no ownership check.
+      - ./ssh_config:/etc/ssh/ssh_config:ro
       # Data to back up. Read-only: Backrest never needs to write here, and the
       # host-side dump job is what puts dumps into /mnt/fast/_dumps.
       - /mnt/fast:/mnt/fast:ro
@@ -86,8 +91,17 @@ services:
       - '127.0.0.1:10002:9898'
     networks:
       - homelab
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
     env_file:
-      - .env
+      - path: .env
+        required: false
     restart: unless-stopped
 
 networks:

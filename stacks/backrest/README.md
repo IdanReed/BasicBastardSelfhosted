@@ -9,7 +9,7 @@ media. Backrest provides scheduling and a browse/restore UI on top of restic.
 |---|---|---|
 | `backup-prepare.service` (02:45) | **host**, `nixos/backup-prepare.sh` | Postgres/MySQL/SQLite dumps into `/mnt/fast/_dumps`, and pulls VPS state into `/mnt/fast/_vps` |
 | `fast-volume` plan (03:00) | Backrest container | `/mnt/fast` → restic |
-| `slow-volume-selective` plan (04:00) | Backrest container | books, immich, samba → restic |
+| `slow-volume-selective` plan (04:00) | Backrest container | books, photos (immich originals; thumbs/encoded-video excluded — regenerable), samba → restic |
 
 Dumps run on the host, not as a Backrest hook. The Backrest image has neither
 the docker CLI nor `sqlite3`, `/mnt/fast` is mounted read-only inside it, and
@@ -70,13 +70,18 @@ noisy, not silent.
 
 ### 4. Secrets
 
-Copy `.sops.env.example` → `.sops.env`, fill in, encrypt. Note the bcrypt hash
-must be single-quoted before encrypting — it contains `$`, which the
-decrypt-and-source path would otherwise expand.
+Copy `.sops.env.example` → `.sops.env`, fill in, encrypt. The admin password
+goes in as **base64 of the bcrypt hash** (see the generate command in the
+example) — Backrest base64-decodes `passwordBcrypt` before comparing, so a raw
+bcrypt can never log in. Any value containing `$` (e.g. a generated
+`RESTIC_PASSWORD`) must be single-quoted before encrypting — the
+decrypt-and-source path would otherwise expand it.
 
 ### 5. Dead-man's switch
 
-Set `DEADMAN_URL` to a healthchecks.io check (or equivalent). This is the only
+Set `DEADMAN_URL` to a healthchecks.io check (or equivalent). The hook is
+`actionHealthchecks`, so delivery is healthchecks-style: success pings the
+URL, failure pings `<URL>/fail` — richer than the old bare POST. This is the only
 thing that catches *absence* — a backup that stopped running produces no
 failure notification, because nothing runs to fail. Success notifications train
 you to ignore them; absence detection does not.
