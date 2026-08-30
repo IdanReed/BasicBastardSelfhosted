@@ -51,7 +51,7 @@ Generate locally, then put each half where it belongs:
 ```bash
 ssh-keygen -t ed25519 -N "" -f /tmp/storagebox_ed25519
 # private half -> BACKUP_STORAGEBOX_SSH_KEY in nixos/secrets.sops.yaml:
-sops nixos/secrets.sops.yaml           # paste as a YAML block scalar
+sopsedit nixos/secrets.sops.yaml       # paste as a YAML block scalar
 # public half -> the backup-storagebox entry in all three ssh-pubkeys.nix
 # copies, and authorised on the box:
 ssh-copy-id -p 23 -i /tmp/storagebox_ed25519.pub \
@@ -72,7 +72,7 @@ ssh auth.
 `backup-prepare.sh` pulls the Authentik identity database and the Headscale
 node database + private keys over the tailnet. Nothing else backs up the VPS.
 
-Same sops flow: private half → `BACKUP_VPS_SSH_KEY` in
+Same sops flow (`sopsedit`): private half → `BACKUP_VPS_SSH_KEY` in
 `nixos/secrets.sops.yaml` (sops-nix symlinks it to
 `/var/lib/backup/vps_ed25519`), public half → the `backup-vps` entry in the
 three `ssh-pubkeys.nix` copies — the VPS authorises it from there, no
