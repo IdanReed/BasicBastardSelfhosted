@@ -1,0 +1,37 @@
+# The full sweep, nightly: `./tests/run.sh all` — every lint, every VM suite
+# including the heavies (authentik, backrest, paperless, rotation, gitops,
+# forwardauth, disko, proxmox-boot, every stackCheck) plus the Proxmox VMA
+# image build gate that `all` tacks on. This is the tier that catches
+# cross-suite regressions the PR trio misses (LONGRUN's sweeps repeatedly
+# earned their keep exactly this way).
+#
+# RUNNER ASSUMPTION: same as suites.yml — self-hosted NixOS runner, labels
+# nix + kvm (see lints.yml for the full contract, and
+# nixos/modules/forgejo-runner.nix for the sketch). Placement note: a full
+# sweep is hours cold / tens of minutes warm and peaks at several GB of guest
+# RAM per suite — if the runner lands on the services VM, 03:00 collides
+# with the 02:45 backup-prepare window; pick a later slot or the desktop.
+#
+# Forgejo runs scheduled workflows from the DEFAULT branch only — a schedule
+# edit on a feature branch takes effect after merge, not before.
+name: heavy-nightly
+
+on:
+  schedule:
+    # 04:17 America/Chicago-ish is not expressible: Forgejo evaluates cron in
+    # the SERVER's timezone (UTC on the planned deployment). 09:17 UTC =
+    # 03:17/04:17 Chicago depending on DST — clear of the 02:45 backup window
+    # either way. Odd minute on purpose: never compete with on-the-hour timers.
+    - cron: "17 9 * * *"
+
+jobs:
+  all:
+    runs-on: [self-hosted, nix, kvm]
+    # A cold store builds every guest closure from scratch; six hours is the
+    # "something is actually wedged" line, not the expected duration.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Full sweep
+        run: ./tests/run.sh all

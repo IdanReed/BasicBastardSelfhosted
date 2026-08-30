@@ -1,0 +1,45 @@
+# Pure contract lints on every push, every branch. Seconds of work; this is
+# the "run constantly" tier of the harness (tests/run.sh with no argument —
+# no VM is booted, so no KVM is needed).
+#
+# RUNNER ASSUMPTION (documented once here, shared by all three workflows):
+# a self-hosted runner in HOST-execution mode on a NixOS machine, registered
+# with the label `nix` (see nixos/modules/forgejo-runner.nix — a sketch, not
+# yet imported anywhere). Concretely that means:
+#   - `nix` is on the job's PATH (hostPackages in the runner module) and the
+#     nix-daemon socket is reachable — DynamicUser services can talk to the
+#     daemon like any user, no trusted-user status required.
+#   - `experimental-features = nix-command flakes` comes from the HOST's
+#     /etc/nix/nix.conf (both candidate hosts already set it); the workflow
+#     does not pass --extra-experimental-features anywhere.
+#   - substituters/network work normally: the suites run offline *inside* the
+#     build sandbox, but evaluating them fetches nixpkgs + pinned images as
+#     fixed-output derivations, which needs the network at build time.
+#   - actions/checkout resolves against code.forgejo.org (Forgejo's default
+#     DEFAULT_ACTIONS_URL) and needs nodejs on the host — in the default
+#     hostPackages set, kept in the runner module.
+# No job container: a nix-inside-docker runner would need a privileged mount
+# of the store or its own daemon, and both candidate hosts are NixOS anyway.
+name: lints
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  lints:
+    # Label-matched, not name-matched: any registered runner carrying `nix`
+    # picks this up, so the runner can move hosts (services VM vs desktop —
+    # the open placement decision) without touching workflows.
+    runs-on: [self-hosted, nix]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Lints only — evaluates the production configs and cross-file
+      # contracts (ports, image pins, overview sync, sops key sets). If this
+      # fails, no VM suite is worth starting; the PR workflow (suites.yml)
+      # repeats it as its first step for exactly that reason.
+      - name: Contract lints
+        run: ./tests/run.sh
