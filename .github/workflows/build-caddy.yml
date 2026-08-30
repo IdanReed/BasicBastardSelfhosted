@@ -19,7 +19,10 @@ on:
       - '.github/workflows/build-caddy.yml'
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/caddy-cloudflare
+  # Hardcoded lowercase, not ${{ github.repository_owner }}: the owner is
+  # 'IdanReed' and docker rejects mixed-case repository names — and this
+  # exact string is what stacks/caddy/compose.yaml pins, so they must agree.
+  IMAGE: ghcr.io/idanreed/caddy-cloudflare
 
 jobs:
   build:
