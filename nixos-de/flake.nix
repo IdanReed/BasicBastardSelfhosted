@@ -99,6 +99,7 @@
           ./modules/home/vscode.nix
           ./modules/home/zed.nix
           ./modules/home/obsidian.nix
+          ./modules/home/excalidraw.nix
         ];
       };
     };
