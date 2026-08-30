@@ -82,6 +82,14 @@
         # *.svc.idanreed.com is a public Cloudflare A record pointing at the
         # services VM's tailnet IP (CGNAT space, only routable from inside the
         # tailnet, so publishing it is not an exposure).
+        #
+        # This must be set explicitly. headscale 0.27 defaults it to true, and
+        # true with no nameservers.global is a FATAL config error:
+        #   "dns.nameservers.global must be set when dns.override_local_dns is
+        #    true"
+        # so leaving it at the default made headscale refuse to start at all —
+        # crash-looping, with no control plane. Caught by tests/suites/vps.nix.
+        override_local_dns = false;
       };
 
       # Embedded DERP relay for NAT traversal, so clients behind CGNAT can

@@ -26,6 +26,23 @@
     # ACME account contact. Let's Encrypt uses this for expiry warnings.
     email = "admin@idanreed.com";
 
+    # Trust X-Forwarded-* from tailnet sources. The forward-auth hop from the
+    # services VM's Caddy (stacks/caddy/Caddyfile, the (protected) snippet)
+    # arrives over the tailnet, and Authentik's embedded outpost routes
+    # forward-auth requests BY X-Forwarded-Host — Caddy replaces that header
+    # on requests from untrusted sources (anti-spoofing), so without this the
+    # outpost only ever sees auth.idanreed.com and 404s every forward-auth
+    # check. 100.64.0.0/10 is the CGNAT range headscale allocates from: not
+    # publicly routable, and a TCP connection cannot complete with a spoofed
+    # source address, so only genuine tailnet peers match. Covered by
+    # tests/suites/forward-auth.nix, including the negative (a spoofed
+    # X-Forwarded-Host from a non-tailnet source stays stripped).
+    globalConfig = ''
+      servers {
+        trusted_proxies static 100.64.0.0/10
+      }
+    '';
+
     virtualHosts."headscale.idanreed.com".extraConfig = ''
       # Headscale listens on loopback only (modules/headscale.nix).
       # reverse_proxy passes WebSocket upgrades through unchanged, which the

@@ -34,6 +34,7 @@ in
       PG_PASS=${config.sops.placeholder.PG_PASS}
       AUTHENTIK_SECRET_KEY=${config.sops.placeholder.AUTHENTIK_SECRET_KEY}
       HEADSCALE_OIDC_CLIENT_SECRET=${config.sops.placeholder.HEADSCALE_OIDC_CLIENT_SECRET}
+      IMMICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.IMMICH_OIDC_CLIENT_SECRET}
       AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
       AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
@@ -49,6 +50,15 @@ in
   sops.secrets = {
     PG_PASS = { };
     AUTHENTIK_SECRET_KEY = { };
+
+    # Consumed by !Env in blueprints/custom/immich-oidc.yaml. Unlike
+    # HEADSCALE_OIDC_CLIENT_SECRET (declared in headscale.nix because
+    # headscale reads its path directly), the worker is this secret's ONLY
+    # VPS-side consumer — the other copy lives in stacks/immich/.sops.env,
+    # where immich-config-init renders it into immich.json. Rotate both
+    # together (restartUnits above re-applies the blueprint; the immich stack
+    # needs a re-up so config-init re-renders).
+    IMMICH_OIDC_CLIENT_SECRET = { };
 
     # Without these the blueprint creates user `idan` with no credential, and
     # with no SMTP configured there is no password-reset path either — nobody
