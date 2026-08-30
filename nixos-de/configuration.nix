@@ -161,15 +161,36 @@
     pulse.enable = true;
     wireplumber.enable = true;
 
-    # By default the ALSA Card Profile layer exposes only ONE output of the
-    # GPU's HDMI/DP audio codec at a time, so a second monitor with speakers
-    # never shows up as a sink. Turning ACP off puts the card in raw mode,
-    # where every HDMI/DP port becomes its own sink (connected ones are named
-    # after the monitor via ELD, e.g. "LG ULTRAGEAR+").
+    # Expose EVERY HDMI/DP output as its own sink, each named after whatever
+    # display is actually plugged into it — nothing about specific monitors is
+    # written down here, so the sink list follows the hardware at boot.
+    #
+    # The ALSA Card Profile layer models a GPU audio codec as a set of mutually
+    # exclusive profiles ("Digital Stereo (HDMI)", "... (HDMI 2)", ...). There is
+    # no combined variant — verified by enumerating EnumProfile on this card —
+    # so under ACP at most one display is a sink at a time, and it is named
+    # after the port rather than the display. Turning ACP off puts the card in
+    # raw mode: every HDMI/DP PCM becomes its own sink, and each is named from
+    # the ELD the attached display reports ("LG ULTRAGEAR+", "BenQ GL2760");
+    # ports with nothing plugged in fall back to "HDMI 2", "HDMI 3".
+    #
+    # Matched by GPU-audio vendor, so moving a display to another card still
+    # gets the same treatment. matches[] is an OR:
+    #   0x10de  NVIDIA
+    #   0x1002  AMD/ATI — the Radeon HDMI audio function, not the analog codec
+    #
+    # Intel (0x8086) is deliberately NOT listed: Intel uses that same vendor id
+    # for analog HDA controllers, so matching it would strip ACP from a
+    # motherboard codec and break its jack/mixer handling. Same reason the
+    # analog AMD codec (0x1022) and USB audio are left alone — they need
+    # ACP/UCM. Add a vendor here only if it is a display-audio function.
     wireplumber.extraConfig."51-hdmi-all-outputs" = {
       "monitor.alsa.rules" = [
         {
-          matches = [ { "device.vendor.id" = "0x10de"; } ]; # NVIDIA GPU audio
+          matches = [
+            { "device.vendor.id" = "0x10de"; }
+            { "device.vendor.id" = "0x1002"; }
+          ];
           actions.update-props."api.alsa.use-acp" = false;
         }
       ];

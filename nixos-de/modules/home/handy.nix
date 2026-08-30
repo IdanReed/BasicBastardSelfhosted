@@ -36,6 +36,15 @@ in
   # So Handy owns Ctrl+Space itself, via its evdev backend. That path does
   # report release, and Handy already has push_to_talk enabled, so holding the
   # key records and letting go transcribes. See modules/nixos/handy.nix for the
-  # permissions it needs, and switch Settings > Advanced > Experimental >
-  # Keyboard Implementation to "Handy Keys" to select it.
+  # permissions it needs.
+  #
+  # The backend is NOT selected by this module — it lives in Handy's own
+  # settings_store.json, which the app owns and rewrites. It must be switched by
+  # hand, once: Settings > Advanced, turn ON "Experimental" (the Keyboard
+  # Implementation dropdown is hidden until you do), then set Keyboard
+  # Implementation to "Handy Keys". Confirm with:
+  #   jq '.settings.keyboard_implementation' \
+  #     ~/.local/share/com.pais.handy/settings_store.json     # -> "handy_keys"
+  # While it reads "tauri" the binding silently loses to whatever else holds
+  # Ctrl+Space ("register_tauri_shortcut duplicate error" in handy.log).
 }

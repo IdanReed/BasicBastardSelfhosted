@@ -163,11 +163,13 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/ntfy 0755 root root -"
           "d /mnt/fast/ntfy/cache 0755 root root -"
           "d /mnt/fast/ntfy/lib 0755 root root -"
-          # Test stand-in for the storage-box SSH key. On the real host it is
-          # generated once with ssh-keygen and never enters git; the gate
-          # subtests below move it away and back, which is safe because C+
-          # only copies at boot.
-          "C+ /var/lib/backup/storagebox_ed25519 0600 root root - ${../keys/test-storagebox-key}"
+          # The storage-box key is NOT planted here any more: the sops
+          # fixture's BACKUP_STORAGEBOX_SSH_KEY carries the committed test
+          # key, and the production tmpfiles C+ rule in configuration.nix
+          # copies it from /run/secrets to /var/lib/backup/storagebox_ed25519
+          # as a REAL file (a symlink would dangle inside config-init's
+          # /keys bind mount). The gate subtests below move it away and back,
+          # which sticks because tmpfiles only re-runs at boot/activation.
         ];
 
         # Populate /srv before anything reads it — the stand-in for Arcane's
@@ -280,6 +282,14 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("bootstrap-arcane.service")
     services_vm.succeed("test -s /srv/stacks/backrest/.env")
     services_vm.succeed("test -s /srv/stacks/ntfy/.env")
+
+    # The sops -> tmpfiles delivery chain produced the key the containers
+    # mount: a REAL file (not a symlink — that would dangle inside the /keys
+    # bind mount), byte-identical to the committed test key the in-VM SFTP
+    # endpoint authorises. If this breaks, every later subtest fails
+    # confusingly on ssh auth; fail here with the actual cause instead.
+    services_vm.succeed(f"test -f {KEY} && test ! -L {KEY}")
+    services_vm.succeed(f"cmp {KEY} ${../keys/test-storagebox-key}")
 
     # -----------------------------------------------------------------------
     # (a) ntfy first — it is the webhook target backrest's config points at

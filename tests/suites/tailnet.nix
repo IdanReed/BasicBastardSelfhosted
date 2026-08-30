@@ -190,11 +190,14 @@ pkgs.testers.runNixOSTest {
           "d /var/lib/sops-nix 0700 root root -"
           "d /mnt/fast/caddy 0755 root root -"
           "d /mnt/fast/ntfy 0755 root root -"
-          # backup-prepare's VPS pull identity. On the real host this key is
-          # generated once and authorised on the VPS by hand; here the
-          # committed test key stands in, authorised for idan on the vps node
-          # by profiles.testSshAccess.
-          "C+ /var/lib/backup/vps_ed25519 0600 root root - ${../keys/test-ssh-key}"
+          # backup-prepare's VPS pull identity is NOT planted here any more:
+          # the sops fixture's BACKUP_VPS_SSH_KEY carries the committed test
+          # key, so sops-nix installs it at /var/lib/backup/vps_ed25519 (the
+          # production path — a symlink into /run/secrets.d, which host-side
+          # ssh follows fine). profiles.testSshAccess authorises its public
+          # half for idan on the vps node, so the pull below rides the full
+          # sops -> ssh -> sudo production chain. A test C+ rule would
+          # overwrite the symlink and mask a broken delivery.
         ];
 
         systemd.services.seed-srv = {

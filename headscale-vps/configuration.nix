@@ -1,5 +1,11 @@
 { config, pkgs, lib, ... }:
 
+let
+  # Byte-identical copy of nixos-de/ssh-pubkeys.nix (the canonical one) — a
+  # flake cannot reference paths outside its own root, so each flake carries
+  # its own copy and the ssh-pubkey-parity lint fails the harness on drift.
+  sshPubkeys = import ./ssh-pubkeys.nix;
+in
 {
   # System identity
   networking.hostName = "headscale-vps";
@@ -42,9 +48,16 @@
     isNormalUser = true;
     extraGroups = [ "wheel" "docker" ];
     shell = pkgs.bash;
-    openssh.authorizedKeys.keys = [
-      # TODO: Add your SSH public key here
-      # "ssh-ed25519 AAAA... idan@desktop"
+    # Two identities log in here: the desktop (vps) and the services VM's
+    # backup-vps key, which backup-prepare.sh uses for the nightly state pull
+    # (ssh + sudo docker pg_dumpall + rsync of /var/lib/headscale). Filtering
+    # nulls means an ungenerated keypair grants no access rather than failing
+    # eval — the ssh-pubkey-parity lint WARNs while entries are null. The
+    # test suites' login key merges in via profiles.testSshAccess (list
+    # options concatenate), so an empty filtered list here cannot break them.
+    openssh.authorizedKeys.keys = lib.filter (k: k != null) [
+      sshPubkeys.vps
+      sshPubkeys.backup-vps
     ];
   };
 
