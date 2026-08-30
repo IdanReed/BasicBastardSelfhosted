@@ -19,6 +19,7 @@ today passes identically next month.
 ./tests/run.sh disko        # disk-config.nix formats, mounts, and boots
 ./tests/run.sh media        # heavy: full media stack — kill-switch, x265 guard, EICAR
 ./tests/run.sh immich       # heavy: photo stack — config render, v3 API, reboot durability
+./tests/run.sh books        # heavy: book stack — headless seeding, OPDS, :ro mounts, hook
 ./tests/run.sh all
 
 ./tests/run.sh debug vps    # live VM + Python REPL
@@ -148,6 +149,7 @@ Honest list; do not read a green suite as covering these.
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
 | A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
 | Immich ML inference / live OIDC login | The immich suite runs offline: model download and every inference *result* (smart search hits, faces, duplicates) need egress — the suite pins the degraded-but-healthy state instead (ML answers `/ping`, smart search errors, server stays up). The OIDC browser + `app.immich:///oauth-callback` flow is doubly uncoverable (needs a browser AND v3's secure-OAuth default vs the suite's plain-HTTP loopback); the rendered config contract and the authentik-side provider are asserted instead. |
+| Anna's Archive, and both apps' OIDC logins | The books suite runs offline: every AA search/download and the Cloudflare-bypass browser need egress, as does every metadata/cover provider — so shelfmark is only asserted to come up and stay healthy with zero egress, and the libraries index from the EPUB's own OPF and the audio file's tags alone. Both OIDC integrations ship *off* (their client secrets need the production age key), so what is asserted is the deliberate off-state — Kavita reporting `enabled: false`, audiobookshelf advertising `["local"]` — not a login, and not the ON-state render path. KOReader on the reMarkable is tablet-side entirely; the server half (OPDS feed, sync endpoint, auth key) is covered. |
 
 Where an override costs coverage, `lib/profiles.nix` names the loss and, where
 possible, a lint recovers it against the real value.
@@ -343,6 +345,102 @@ Running a second container from the `clamav/clamav` image (the scan watcher)
 inherits the image's baked-in healthcheck, which probes a clamd that
 container does not run — permanently `unhealthy`, failing any `up --wait`.
 Override the healthcheck with the dependency the container actually has.
+
+### 17. Kavita signs every JWT with a published placeholder key, silently
+
+Kavita rewrites its own `config/appsettings.json` (JWT key generation at
+startup, and every settings change), and **all six writers are wrapped in a
+bare `catch { /* Swallow exception */ }`**. The shipped template contains a
+literal placeholder `TokenKey` that is in the public repository.
+
+So a read-only config mount — which is exactly what the immich stack does with
+its rendered `immich.json`, and the obvious thing to copy — does not crash and
+does not log a failure: the server carries on signing every session token with
+a key anyone can read. The only tell is a `Generating JWT TokenKey…` line that
+looks identical on a healthy first run.
+
+Fixed before it shipped: `stacks/books/` mounts the config directory
+**writable** and `kavita-config-init` pre-seeds a real `KAVITA_TOKEN_KEY` from
+sops, and the books suite re-reads the file *after* Kavita has started to
+prove the seeded key is still the one in play. The same swallow hits settings
+writes, so on a read-only mount Kavita's admin UI would also appear to accept
+OIDC settings and then quietly revert them on the next boot.
+
+Adjacent, from the same service: Kavita computes "is OIDC enabled" **two
+different ways** — `Authority && ClientId && Secret` on the disk side (which
+decides whether OIDC is registered) and **`Authority` alone** on the DB side
+(which the login path consults). An authority with no secret is therefore a
+half-configured state, not an off one, and it is the state in which
+`disablePasswordAuthentication` would disable password login fleet-wide
+against an OIDC that does not exist. `kavita-config-init` blanks the authority
+whenever the secret is empty so both computations agree.
+
+### 18. Audiobookshelf's headless paths carry three loaded guns
+
+All three found by reading the source before writing the init container, and
+all three are silent or destructive rather than loud:
+
+1. **`POST /init` with a malformed body kills the server.** The route calls
+   `initializeServer` without `await` and without a `.catch()`, so a missing
+   `newRoot` becomes an unhandled rejection and the process handler does
+   `Logger.fatal` + `process.exit(1)`. A connection reset on `/init` means
+   "the server just exited", not "retry". (The scan endpoint has the same
+   shape: `res.sendStatus(200)` then an unguarded `await` — a scan that throws
+   takes the server down *after* the client saw its 200.)
+2. **`password: ""` silently creates a passwordless root user** — 200 response,
+   a `Logger.warn`, and a local auth strategy that then approves any login
+   submitting an empty password. A `.env` value that failed to interpolate
+   produces an open admin account that looks like a successful seed.
+3. **`authOpenIDSubfolderForRedirectURLs` defaults to the literal string
+   `undefined`**, never normalised to `""`, and the redirect URI is built by
+   template interpolation — so a headless `PATCH` that omits the key makes
+   audiobookshelf offer the IdP
+   `https://host/undefined/auth/openid/callback` and every login dies on a
+   redirect_uri mismatch. The settings UI hides this by defaulting the field
+   itself, so it only bites automation.
+
+Plus a quieter one: if any required OIDC field is missing,
+`ServerSettings.construct()` strips `openid` from the active auth methods on
+the **next load**, with no log line at all — so OIDC must be asserted after a
+restart, not after the PATCH.
+
+### 19. A hook that is handed its payload on stdin cannot use the fleet's `python3 - <<EOF` idiom
+
+Every init script here is a `/bin/sh` wrapper around `exec python3 - <<'PY'`,
+which feeds the interpreter its script on **stdin**. Shelfmark's
+`CUSTOM_SCRIPT` hook is invoked with its task document on stdin — so written
+that way the hook silently reads the heredoc instead of the payload. Caught in
+self-review before the suite ran; the wrapper now slurps stdin *before*
+exec'ing python, with a `timeout` around the read (an inherited-but-never-closed
+stdin would otherwise block until shelfmark's 300s hook timeout kills it, and
+a killed hook is a non-zero exit).
+
+Two more properties of that hook worth keeping in mind, both because a
+non-zero exit **marks a completed download as Error in the UI**: it must be
+mode **755** (shelfmark execs it directly, unlike every other script here,
+which compose runs as `/bin/sh <script>`) — note the fleet's
+`cp -r --no-preserve=mode` seed idiom sets files to 0644 and had to be worked
+around in the suite — and its `except` clause must be `Exception`, not a
+tuple of network errors: the JSON helper returns raw text on a non-JSON
+response, so a 502 page from a restarting service surfaces as an
+`AttributeError` two lines later.
+
+### 20. A configured output for a source that cannot produce input
+
+Shelfmark exposes a full audiobook pipeline (`DESTINATION_AUDIOBOOK`,
+`FILE_ORGANIZATION_AUDIOBOOK`, `TEMPLATE_AUDIOBOOK_ORGANIZE`), and the obvious
+reading — one container feeding both a Kavita ebook tree and an Audiobookshelf
+audiobook tree — is wrong: Anna's Archive direct download declares
+`supported_content_types = ["ebook"]`, and the only audiobook source is
+AudiobookBay, a **torrent** source available solely under
+`SEARCH_MODE=universal`. Under `SEARCH_MODE=direct` those three variables
+configure a pipeline nothing can ever feed, and the audiobook bind mount grants
+write access for downloads that cannot happen.
+
+Caught by adversarially verifying the research annex against upstream source
+rather than against its own variable list. The stack ships without them, and
+the gap ("how do audiobooks actually arrive?") is an operator question rather
+than a silently empty library.
 
 The `env-file-coverage` lint also warns that `backrest`, `caddy` and `ntfy`
 declare `env_file: .env` but have only `.sops.env.example` — `docker compose up`

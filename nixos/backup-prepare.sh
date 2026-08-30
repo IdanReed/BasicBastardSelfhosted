@@ -93,6 +93,19 @@ sqlite_backup homebox        /mnt/fast/homebox/homebox.db
 sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
 sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
 sqlite_backup audiobookshelf /mnt/fast/audiobookshelf/config/absdatabase.sqlite
+# The other two books-stack databases (stacks/books/compose.yaml). Kavita's is
+# WAL-mode by default since 0.8.2, so the raw file inside the /mnt/fast include
+# set can snapshot torn — same reason as the arr databases below. Both paths
+# are asserted to exist by the books suite, so a layout change in a future
+# image fails a test instead of silently skipping (sqlite_backup returns 0 for
+# a missing source).
+sqlite_backup kavita         /mnt/fast/kavita/config/kavita.db
+# Shelfmark's database filename is UNVERIFIED (not documented upstream; the
+# whole /config tree is inside the /mnt/fast include set either way), so this
+# gets the same treatment as cleanuparr: a best guess that costs nothing if
+# wrong, since sqlite_backup returns 0 for a missing source. The books suite
+# prints the directory listing so the real name can be pinned from a run.
+sqlite_backup shelfmark      /mnt/fast/shelfmark/config/users.db
 
 # The arr databases are WAL-mode and written continuously (queue/history/RSS
 # churn), so the raw files inside the /mnt/fast include set can snapshot as a

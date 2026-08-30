@@ -13,6 +13,7 @@
 #   ./tests/run.sh gitops         # arcane: push -> sync -> deploy -> update
 #   ./tests/run.sh media          # heavy: gluetun kill-switch, x265 guard, EICAR chain
 #   ./tests/run.sh immich         # heavy: config render, v3 API, thumbs sans ML, reboot
+#   ./tests/run.sh books          # heavy: kavita/abs seeding, OPDS, :ro mounts, hook
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
@@ -63,7 +64,7 @@ case "$TARGET" in
     exec nix-build tests -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books)
     exec nix-build tests -A "checks.$TARGET" --no-out-link
     ;;
 

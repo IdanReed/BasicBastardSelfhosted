@@ -212,6 +212,40 @@ entries:
       meta_description: "Download queue cleanup"
 
   # ===========================================
+  # Books stack (stacks/books): shelfmark only
+  # ===========================================
+  # Kavita and audiobookshelf are deliberately ABSENT: both drive their own
+  # native OIDC against Authentik (their own -oidc blueprints, once the client
+  # secrets exist), and forward auth in front of either would break their
+  # non-browser clients — Kavita's OPDS/KOReader API-key URLs and
+  # audiobookshelf's mobile OAuth handoff. Shelfmark is the one with no auth
+  # of its own: its AUTH_METHOD defaults to `none`, and its compose sets
+  # AUTH_METHOD=proxy to consume the X-Authentik-* headers the (protected)
+  # snippet copies.
+  - model: authentik_providers_proxy.proxyprovider
+    id: shelfmark-provider
+    state: present
+    identifiers:
+      name: shelfmark
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://shelfmark.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: shelfmark-app
+    state: present
+    identifiers:
+      slug: shelfmark
+    attrs:
+      name: Shelfmark
+      provider: !KeyOf shelfmark-provider
+      policy_engine_mode: any
+      meta_description: "Book and audiobook search + download"
+
+  # ===========================================
   # Embedded outpost assignment
   # ===========================================
   # The embedded outpost ships with authentik itself and answers on the server
@@ -248,3 +282,4 @@ entries:
         - !KeyOf bazarr-provider
         - !KeyOf profilarr-provider
         - !KeyOf cleanuparr-provider
+        - !KeyOf shelfmark-provider
