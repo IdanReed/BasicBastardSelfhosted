@@ -1,14 +1,11 @@
 # Caddy with the cloudflare-dns plugin, for DNS-01 ACME on a tailnet-only host.
 #
-# Uses a prebuilt image rather than `build: .`. Building on the host required
-# the Dockerfile to be present there, which stock Arcane's git sync does not
-# deliver (it pulls only compose.yaml — upstream arcane#1619), and put a build
-# toolchain in the deploy path. The image is built by
-# .github/workflows/build-caddy.yml; run that workflow once before first
-# deploy, or this will fail to pull.
+# Uses a prebuilt image rather than `build: .`, to keep a build toolchain out of
+# the deploy path. The image is built by .github/workflows/build-caddy.yml; run
+# that workflow once before first deploy, or this will fail to pull.
 #
-# The Caddyfile itself still has to reach the host — that is the sibling-file
-# problem arcane-sops exists to solve. See ServerNotes/issues/.
+# The sibling Caddyfile is delivered by Arcane's git sync, which pulls the whole
+# compose directory (upstream v1.17.0+; v1.17.4 is pinned).
 services:
   caddy:
     image: ghcr.io/idanreed/caddy-cloudflare:2.11.2
@@ -21,6 +18,15 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/fast/caddy/data:/data
       - /mnt/fast/caddy/config:/config
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
     env_file:
-      - .env
+      - path: .env
+        required: false
     restart: unless-stopped

@@ -14,6 +14,58 @@
 # the tailnet, so publishing it is not an exposure. This replaces the CoreDNS
 # instance the old design called for and never deployed.
 
+# ---------------------------------------------------------------------------
+# Forward auth
+# ---------------------------------------------------------------------------
+# Import this into a handle block to put Authentik in front of a service that
+# has no usable auth of its own:
+#
+#	handle @dozzle {
+#		import protected
+#		reverse_proxy localhost:10451
+#	}
+#
+# Defined BEFORE the site block on purpose: Caddy resolves `import` while
+# parsing, so a snippet defined below its first use fails with "File to
+# import not found".
+#
+# What it relies on (all exist now):
+#   1. A Proxy Provider (forward_single) + application per protected service,
+#      assigned to Authentik's embedded outpost — defined in
+#      headscale-vps/authentik/blueprints/custom/forward-auth.yaml. bentopdf
+#      is the pilot entry.
+#   2. AUTHENTIK_COOKIE_DOMAIN=idanreed.com on the Authentik containers, so the
+#      session cookie is valid across auth.idanreed.com and *.svc.idanreed.com
+#      (already set in headscale-vps/authentik/compose.yaml).
+#   3. The VPS Caddy trusting X-Forwarded-* from tailnet sources
+#      (trusted_proxies in headscale-vps/modules/caddy.nix) — see below.
+#
+# The hop rides the TAILNET (the VPS's MagicDNS node name), not the public
+# route, and that is load-bearing: the embedded outpost routes forward-auth
+# requests BY X-Forwarded-Host, and any Caddy replaces that header unless the
+# source is a trusted proxy. Dialled publicly, the VPS's Caddy sees our home
+# IP (untrusted, not pinnable), rewrites X-Forwarded-Host to auth.idanreed.com,
+# and the outpost 404s every check. Over the tailnet the source is our own
+# 100.64.0.0/10 address, which modules/caddy.nix trusts. tls_server_name +
+# Host pin the request to the auth vhost, whose certificate is for
+# auth.idanreed.com.
+#
+# STILL a lockout hazard per service: importing this into a handle whose
+# external host has no matching provider entry in that blueprint leaves the
+# outpost with nothing to match the Host against — every request 404s or
+# redirect-loops instead of reaching the service. Add the blueprint entry and
+# deploy the VPS first, then flip the import here.
+(protected) {
+	forward_auth https://headscale-vps.tailnet.idanreed.com {
+		uri /outpost.goauthentik.io/auth/caddy
+		copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
+		header_up Host auth.idanreed.com
+		transport http {
+			tls_server_name auth.idanreed.com
+		}
+	}
+}
+
 *.svc.idanreed.com {
 	bind {$TAILNET_IP}
 
@@ -31,6 +83,16 @@
 		reverse_proxy localhost:10100
 	}
 
+	@immich host immich.svc.idanreed.com
+	handle @immich {
+		# Auth = OIDC (native, per the overview row): Immich drives its own
+		# login against Authentik (oauth block in
+		# stacks/immich/immich.json.template). NO forward auth — it would
+		# break the mobile app's app.immich:// OAuth handoff and every
+		# x-api-key client (jellyfin/seerr precedent).
+		reverse_proxy localhost:10102
+	}
+
 	@backrest host backrest.svc.idanreed.com
 	handle @backrest {
 		reverse_proxy localhost:10002
@@ -43,6 +105,9 @@
 
 	@bentopdf host bentopdf.svc.idanreed.com
 	handle @bentopdf {
+		# Forward-auth PILOT: bentopdf has no auth of its own. Covered by
+		# tests/suites/forward-auth.nix.
+		import protected
 		reverse_proxy localhost:10401
 	}
 
@@ -51,35 +116,80 @@
 		reverse_proxy localhost:10403
 	}
 
+	@forgejo host forgejo.svc.idanreed.com
+	handle @forgejo {
+		# Web UI AND git-over-https (the v1 access mode — ssh is deferred, see
+		# stacks/forgejo/compose.yaml). Forgejo has its own auth: web sessions
+		# for the UI, tokens for git — no forward auth in front of it, which
+		# also keeps non-browser git clients working.
+		reverse_proxy localhost:10550
+	}
+
+	# ------------------------------------------------------------------
+	# Media stack (stacks/media, ports 10050-10058). Auth per the overview
+	# Auth column: FwdAuth rows import `protected`; Jellyfin is Plugin
+	# (its own login + SSO plugin) and Seerr is session-authed (its
+	# mobile/API clients authenticate themselves), so neither gets
+	# forward auth. qBittorrent (gluetun's 127.0.0.1:10057 publish) has
+	# NO route yet, deliberately: overview marks it FwdAuth and its
+	# blueprint entry does not exist — flipping a route live before the
+	# outpost knows the host is the lockout hazard described above. Add
+	# the blueprint entry + route together in a follow-up.
+	# ------------------------------------------------------------------
+
+	@jellyfin host jellyfin.svc.idanreed.com
+	handle @jellyfin {
+		# Auth = Plugin (overview): Jellyfin's own login. NO forward auth —
+		# it would break every native client app.
+		reverse_proxy localhost:10050
+	}
+
+	@radarr host radarr.svc.idanreed.com
+	handle @radarr {
+		import protected
+		reverse_proxy localhost:10051
+	}
+
+	@sonarr host sonarr.svc.idanreed.com
+	handle @sonarr {
+		import protected
+		reverse_proxy localhost:10052
+	}
+
+	@prowlarr host prowlarr.svc.idanreed.com
+	handle @prowlarr {
+		import protected
+		reverse_proxy localhost:10053
+	}
+
+	@seerr host seerr.svc.idanreed.com
+	handle @seerr {
+		# Session auth (Jellyfin accounts) on stable v3.4.1 — NOT forward
+		# auth, per the overview's OIDC* row and the annex security call.
+		reverse_proxy localhost:10054
+	}
+
+	@bazarr host bazarr.svc.idanreed.com
+	handle @bazarr {
+		import protected
+		reverse_proxy localhost:10055
+	}
+
+	@profilarr host profilarr.svc.idanreed.com
+	handle @profilarr {
+		import protected
+		reverse_proxy localhost:10056
+	}
+
+	@cleanuparr host cleanuparr.svc.idanreed.com
+	handle @cleanuparr {
+		import protected
+		reverse_proxy localhost:10058
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {
 		respond "No such service" 404
-	}
-}
-
-# ---------------------------------------------------------------------------
-# Forward auth (not enabled yet)
-# ---------------------------------------------------------------------------
-# Import this into a handle block to put Authentik in front of a service that
-# has no usable auth of its own:
-#
-#	handle @dozzle {
-#		import protected
-#		reverse_proxy localhost:10451
-#	}
-#
-# Requires two things that do not exist yet:
-#   1. A Proxy Provider + embedded-outpost application in Authentik, defined as
-#      a blueprint alongside headscale-oidc.yml.
-#   2. AUTHENTIK_COOKIE_DOMAIN=idanreed.com on the Authentik containers, so the
-#      session cookie is valid across auth.idanreed.com and *.svc.idanreed.com
-#      (already set in headscale-vps/authentik/compose.yaml).
-#
-# Enabling the import before (1) exists will lock you out of the service.
-(protected) {
-	forward_auth https://auth.idanreed.com {
-		uri /outpost.goauthentik.io/auth/caddy
-		copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
 	}
 }
