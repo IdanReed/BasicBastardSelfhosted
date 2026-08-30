@@ -83,9 +83,16 @@ if missing:
 # Kavita
 # ===========================================================================
 # POST /api/Account/register is [AllowAnonymous] and works exactly once: it
-# opens with "if any admin exists, return BadRequest", so 400 is the
-# already-seeded signal, not a failure. On success it returns a UserDto that
-# already carries the api key — no second call needed.
+# opens with "if any admin exists, return BadRequest". On success it returns a
+# UserDto that already carries the api key — no second call needed.
+#
+# BUT a 400 is AMBIGUOUS, and treating it as "already seeded" hides real
+# failures. Kavita's register handler catches its own exceptions, deletes the
+# half-created user and returns 400 as well — so a genuinely broken register
+# (e.g. a KAVITA_TOKEN_KEY under 512 bits, which makes JWT signing throw)
+# looks exactly like an idempotent no-op, and the only symptom is the login
+# that follows failing with 401. The register body is therefore kept and
+# reported if the login does not then succeed.
 kavita_user = {
     "username": os.environ["KAVITA_ADMIN_USER"],
     "password": os.environ["KAVITA_ADMIN_PASSWORD"],
@@ -96,16 +103,26 @@ try:
     api_key = (dto or {}).get("apiKey")
     change(f"kavita admin {kavita_user['username']} registered")
 except urllib.error.HTTPError as e:
+    register_body = detail(e)
     if e.code != 400:
-        sys.exit(f"books-init: FATAL: kavita register HTTP {e.code}: {detail(e)}")
-    log("kavita admin already registered - no change")
+        sys.exit(f"books-init: FATAL: kavita register HTTP {e.code}: "
+                 f"{register_body}")
+    log("kavita admin already registered (or register failed) - trying login")
     try:
         _, dto = call(f"{KAVITA}/api/Account/login", "POST", kavita_user)
         api_key = (dto or {}).get("apiKey")
     except urllib.error.HTTPError as e:
-        sys.exit(f"books-init: FATAL: kavita login HTTP {e.code}: {detail(e)} "
-                 f"(admin exists but these credentials do not match it — the "
-                 f".env changed after the first seed?)")
+        sys.exit(
+            f"books-init: FATAL: kavita register returned 400 AND login then "
+            f"failed with HTTP {e.code}.\n"
+            f"  register said: {register_body}\n"
+            f"  login said:    {detail(e)}\n"
+            f"Two causes look identical here. Either an admin exists with "
+            f"different credentials (.env changed after the first seed), or "
+            f"the register itself ERRORED and Kavita rolled it back — check "
+            f"`docker logs kavita` for a stack trace. A KAVITA_TOKEN_KEY "
+            f"shorter than 512 bits (64 characters) does exactly that: "
+            f"IDX10720 while signing the JWT.")
 
 if not api_key:
     sys.exit("books-init: FATAL: kavita returned no apiKey")
@@ -125,9 +142,20 @@ kv_auth = {"x-api-key": api_key}
 #   fileGroupTypes  = [2, 3] = EPub + Pdf (§8.3 if you want EPUB-only)
 #   folderWatching  = false: inotify against a bind mount is unreliable in
 #                     Docker, and the post-download hook is a precise trigger.
-#   allowMetadataMatching / enableMetadata / allowScrobbling = false: they are
-#                     the only paths that reach external providers, and this
-#                     stack is designed to need no egress.
+#   enableMetadata  = TRUE, and the name is a trap. It does NOT mean "fetch
+#                     metadata from the internet" — it means "parse the
+#                     metadata inside the file". BookParser only calls
+#                     BookService.ParseInfo when it is set; with it false the
+#                     parser falls back to the FILENAME, which for a Book
+#                     library yields an empty Series, and the scanner then
+#                     logs "Unable to parse any meaningful information out of
+#                     file" and indexes NOTHING. Reading the EPUB's own OPF is
+#                     also the entire reason Kavita was chosen over a
+#                     Calibre-based stack. No egress: GetComicInfo reads the
+#                     epub itself.
+#   allowMetadataMatching / allowScrobbling = false: THESE are the external
+#                     ones, and they stay off — this stack is designed to need
+#                     no egress.
 #   metadataProvider = 2 (Hardcover) is REQUIRED even with matching disabled,
 #                     and it is not a formality: MetadataProvider has no zero
 #                     member, so an omitted field binds 0, fails the
@@ -150,7 +178,7 @@ library = {
     "manageReadingLists": False,
     "allowScrobbling": False,
     "allowMetadataMatching": False,
-    "enableMetadata": False,
+    "enableMetadata": True,
     "removePrefixForSortName": False,
     "inheritWebLinksFromFirstChapter": False,
     "fileGroupTypes": [2, 3],

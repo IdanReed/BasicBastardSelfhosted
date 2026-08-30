@@ -138,8 +138,12 @@ let
     </html>
     XML
     cd build
-    zip -q -X -0 $out mimetype
-    zip -q -X -r $out META-INF OEBPS
+    # Built under a .epub name and moved into place: `zip` appends .zip to a
+    # target with no extension, so writing straight to $out silently produces
+    # $out.zip and the derivation fails with "failed to produce output path".
+    zip -q -X -0 book.epub mimetype
+    zip -q -X -r book.epub META-INF OEBPS
+    mv book.epub $out
   '';
 
   # One second of silence, encoded with ffmpeg's NATIVE flac encoder (no
@@ -147,8 +151,10 @@ let
   # file it can actually probe: a renamed text file scans as an invalid item
   # and the indexing subtest would be asserting nothing.
   testAudio = pkgs.runCommand "test-audio" { nativeBuildInputs = [ pkgs.ffmpeg ]; } ''
+    # -f flac is required, not decoration: ffmpeg picks the muxer from the
+    # output file's extension, and $out has none.
     ffmpeg -nostdin -loglevel error \
-      -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -c:a flac "$out"
+      -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -c:a flac -f flac "$out"
   '';
 
   # Seeds /srv the way the real host gets it: Arcane's git sync on the live
@@ -348,7 +354,9 @@ pkgs.testers.runNixOSTest {
     KAVITA_PASS = "test_kavita_password_not_secret"
     ABS_USER = "test_abs_admin"
     ABS_PASS = "test_abs_password_not_secret"
-    TOKEN_KEY = "746573745f6b61766974615f746f6b656e5f6b65795f6e6f745f7365637265"
+    TOKEN_KEY = ("746573745f6b61766974615f746f6b656e5f6b65795f6e6f745f736563"
+                 "7265745f7061646465645f706173745f6b6176697461735f3531325f"
+                 "6269745f6d696e")
 
     CONF = "/mnt/fast/kavita/config/appsettings.json"
     LIBRARY = "/mnt/slow/books/library"
@@ -580,9 +588,11 @@ pkgs.testers.runNixOSTest {
         # this assertion is only meaningful next to the previous subtest,
         # where the fixture password succeeded: together they say the account
         # has a password and it is the seeded one.
-        code = curl(ABS, "/login", "POST",
-                    {"username": ABS_USER, "password": ""}, fail=True)
-        assert code >= 400, f"empty-password login returned HTTP {code}"
+        login_status = curl(ABS, "/login", "POST",
+                            {"username": ABS_USER, "password": ""}, fail=True)
+        assert login_status >= 400, (
+            f"empty-password login returned HTTP {login_status}"
+        )
 
     # -----------------------------------------------------------------------
     # §6.7 both libraries index their test content, offline
@@ -646,11 +656,13 @@ pkgs.testers.runNixOSTest {
         )
         # Negative: a wrong key is refused, so the positive is not an
         # auth-disabled fluke.
-        code = int(services_vm.succeed(
+        opds_status = int(services_vm.succeed(
             "curl -s -o /dev/null -w '%{http_code}' --max-time 30 "
             f"{KAVITA}/api/opds/notarealauthkey00000000000000"
         ).strip())
-        assert code >= 400, f"OPDS accepted a bogus auth key (HTTP {code})"
+        assert opds_status >= 400, (
+            f"OPDS accepted a bogus auth key (HTTP {opds_status})"
+        )
 
     with subtest("the KOReader sync endpoint authenticates by auth key"):
         who = curl(KAVITA, f"/api/koreader/{auth_key}/users/auth")
@@ -787,16 +799,15 @@ pkgs.testers.runNixOSTest {
                 f"sqlite3 {src} \".backup '/tmp/{name}.sqlite'\""
             )
             services_vm.succeed(f"test -s /tmp/{name}.sqlite")
-        # Shelfmark's database FILENAME is not upstream-documented, so its
-        # backup-prepare line is a guess and is deliberately NOT asserted —
-        # sqlite_backup returns 0 for a missing source, so a wrong guess costs
-        # nothing but a silently skipped dump (the cleanuparr precedent).
-        # Print what is actually there so the name can be pinned down from a
-        # suite run instead of by booting the image by hand.
-        print("--- shelfmark config dir (to pin down its db filename) ---")
-        print(services_vm.succeed(
-            "ls -la /mnt/fast/shelfmark/config/ || true"
-        ))
+        # Shelfmark's users.db is not documented upstream — its name was
+        # pinned down from an earlier run of this very suite, which is why it
+        # is asserted here rather than left to the raw-copy path.
+        services_vm.succeed("test -f /mnt/fast/shelfmark/config/users.db")
+        services_vm.succeed(
+            "sqlite3 /mnt/fast/shelfmark/config/users.db "
+            "\".backup '/tmp/shelfmark.sqlite'\""
+        )
+        services_vm.succeed("test -s /tmp/shelfmark.sqlite")
 
     # -----------------------------------------------------------------------
     # §6.16 idempotence under Arcane redeploys
@@ -811,16 +822,21 @@ pkgs.testers.runNixOSTest {
                 f"{container} | grep -qx exited/0",
                 timeout=300,
             )
-            log = services_vm.succeed(f"docker logs {container} 2>&1")
-            assert "CHANGE:" not in log, (
-                f"second {service} run was not a no-op:\n{log}"
+            run_log = services_vm.succeed(f"docker logs {container} 2>&1")
+            assert "CHANGE:" not in run_log, (
+                f"second {service} run was not a no-op:\n{run_log}"
             )
 
     # -----------------------------------------------------------------------
     # §6.17 reboot survival on persistent storage
     # -----------------------------------------------------------------------
     with subtest("the stack returns after a reboot with its data intact"):
-        services_vm.reboot()
+        # shutdown() + start(), NOT reboot(): the driver runs qemu with
+        # -no-reboot, so an in-guest reboot terminates the VM and the next
+        # command dies with "Shell disconnected". Same idiom as the immich
+        # suite.
+        services_vm.shutdown()
+        services_vm.start()
         services_vm.wait_for_unit("multi-user.target")
         # /srv is tmpfs: the seed + decrypt path runs again, exactly as Arcane
         # sync + the decrypt timer would on the real host.

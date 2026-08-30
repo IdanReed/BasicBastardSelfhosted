@@ -442,6 +442,56 @@ rather than against its own variable list. The stack ships without them, and
 the gap ("how do audiobooks actually arrive?") is an operator question rather
 than a silently empty library.
 
+### 21. A JWT key one byte too short, reported as "user already exists"
+
+Found by the books suite's first real run, and it is two bugs stacked so that
+each hides the other.
+
+Kavita signs its JWTs with HMAC-SHA512 over the **raw UTF-8 bytes of the
+`TokenKey` string** and rejects anything under 512 bits. The fixture's key was
+62 characters — 496 bits — and the failure did not appear at startup: the
+container went healthy, `/api/health` answered, and the first *register* call
+threw `IDX10720: … the key size must be greater than: '512' bits, key has
+'496' bits` deep inside the JWT handler.
+
+The second half is what made it expensive. Kavita's register handler catches
+its own exceptions, deletes the half-created user and returns **400** — the
+same status it returns when an admin already exists. `books-init` treated 400
+as "already seeded", logged a cheerful no-change line, and then failed on the
+login that followed with a message blaming the operator's `.env`. The real
+cause was only visible in `docker logs kavita`.
+
+Two fixes, both worth keeping: `.sops.env.example` now specifies
+`openssl rand -hex 64` and says why (note `-hex 32` yields exactly 64
+characters — *on* the boundary, not safely past it), and `books-init` keeps
+the register response body and reports both hypotheses when the follow-up
+login fails, naming IDX10720 explicitly.
+
+Same run also pinned down two filenames that were guesses:
+`/mnt/fast/kavita/config/kavita.db` and
+`/mnt/fast/shelfmark/config/users.db` both exist and are now asserted by the
+suite rather than left to `backup-prepare.sh`'s silent skip.
+
+### 22. `enableMetadata: false` means "index nothing", not "stay offline"
+
+The books stack is built to need no egress, so the Kavita library was created
+with every metadata-shaped flag off. One of them does not mean what it reads
+like. `enableMetadata` does **not** control external providers — it controls
+whether the parser reads the metadata **inside the file**. `BookParser` calls
+`BookService.ParseInfo` only when it is set; with it false the parser falls
+back to the filename, which for a Book library produces an empty `Series`, and
+`ParseFile` logs *"Unable to parse any meaningful information out of file"*.
+
+The visible symptom is a scan that succeeds and finds nothing: *"Found 1 files
+for /books/Test Author"* immediately followed by *"Found 0 Series that need
+processing"* and *"Finished library scan of 0 series … There were no changes"*.
+A deployment would have looked entirely healthy with an empty library.
+
+The genuinely external switches are `allowMetadataMatching` and
+`allowScrobbling`; those stay false. Reading the EPUB's own OPF is local, and
+is the reason this design chose Kavita over a Calibre-based stack in the first
+place.
+
 The `env-file-coverage` lint also warns that `backrest`, `caddy` and `ntfy`
 declare `env_file: .env` but have only `.sops.env.example` — `docker compose up`
 aborts on a missing env file, so those stacks will not start until the real
@@ -465,10 +515,16 @@ construction, both-sided x265 guard proven against injected TRaSH artifacts,
 EICAR→quarantine chain), **immich** (20 subtests: make-style config render
 incl. secret rotation, headless admin seed, v3 multipart upload → asset →
 thumbnail without ML, the literal backup-prepare `pg_dumpall` loop body with
-content checks, reboot durability on a real persistent disk), **proxmox-boot**
+content checks, reboot durability on a real persistent disk), **books** (21 subtests: the sops -> render -> merge chain including that
+Kavita did not silently replace the seeded JWT key, headless seeding of two
+apps in one oneshot and its idempotence, a real EPUB and a real FLAC indexed
+with zero egress, OPDS end to end plus the KOReader auth leg, the deliberate
+OIDC-off contract, the `:ro` library mounts measured rather than reasoned, the
+post-download hook in both directions including that it still exits 0 when its
+target is down, and reboot durability on a real disk), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Sixteen** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Twenty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
