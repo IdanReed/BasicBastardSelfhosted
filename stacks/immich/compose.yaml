@@ -1,0 +1,239 @@
+# Immich — photo management (Data range, port 10102). Design:
+# ServerNotes/designs/service-immich-stack-research.md (the annex; it corrects
+# core-oidc.md where upstream moved — v3, VectorChord, no email_verified
+# mapping). _overview.md owns the port/auth row.
+#
+# Shape (annex §2):
+#   - Only immich-server publishes, loopback-only. The ML inference API
+#     (:3003), postgres (:5432) and valkey (:6379) are compose-internal ONLY —
+#     ML is unauthenticated and the API serves every original photo, so any
+#     0.0.0.0 bind is a whole-tailnet exposure.
+#   - server + machine-learning are released as ONE unit upstream: always bump
+#     both tags together (then run tests/update-images.sh — full tier).
+#   - No PUID/PGID mechanism in the immich images; they run as root by
+#     default, and that is the deliberate choice here (annex §2 "User
+#     handling", hardening deferred §7.5): tailnet-only, loopback-bound,
+#     socketless. The postgres image chowns pgdata itself from its root
+#     entrypoint. So the seerr uid-1000 crash-loop class (finding #14) does
+#     not apply; the bind sources are declared root:root in
+#     nixos/hardware-configuration.nix.
+#   - Config is a RENDERED FILE, not UI state: immich-config-init substitutes
+#     the OIDC client secret from .env into immich.json.template and the
+#     server reads it via IMMICH_CONFIG_FILE (locks the UI settings read-only
+#     — the file is the single source of truth, git-visible and
+#     suite-assertable). Render is make-style (tmpfile + rename, rewrite on
+#     content change), NOT touch-once: rotating IMMICH_OIDC_CLIENT_SECRET
+#     must reach the rendered file on the next stack up (annex §3 rotation
+#     coupling — the VPS secrets.sops.yaml copy rotates in the same motion).
+#   - immich-init seeds the admin headlessly (POST /api/auth/admin-sign-up,
+#     works exactly once) — no wizard, idempotent under Arcane redeploys.
+#
+# Backup contract (annex §5): container_name immich_db + POSTGRES_USER=immich
+# are LOAD-BEARING — nixos/backup-prepare.sh loops `docker exec ${svc}_db
+# pg_dumpall -U ${svc}` for svc=immich. Rename either and the nightly dump
+# silently stops matching. Backrest excludes **/pgdata/** (live pgdata is not
+# restorable; the dump is), photos thumbs/encoded-video, and model-cache.
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:v3.1.0
+    container_name: immich_server
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      immich-config-init:
+        condition: service_completed_successfully
+    # Bound to loopback so Caddy (network_mode: host) is the only path in.
+    ports:
+      - '127.0.0.1:10102:2283'
+    volumes:
+      # The whole UPLOAD_LOCATION tree: upload/ library/ profile/ (originals —
+      # precious), thumbs/ encoded-video/ (regenerable, backup-excluded),
+      # backups/ (Immich's built-in daily pg_dump, kept enabled — it feeds the
+      # v3 web restore flow; the host-side dump stays authoritative).
+      - /mnt/slow/photos:/data
+      # Rendered immich.json (read-only: immich-config-init owns it).
+      - /mnt/fast/immich/config:/config:ro
+    environment:
+      - DB_HOSTNAME=database
+      - DB_USERNAME=immich
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=redis
+      - TZ=America/Chicago
+      - IMMICH_CONFIG_FILE=/config/immich.json
+      # DB_PASSWORD arrives from .env.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's
+    # gitops sync VALIDATES the compose in a staging directory before copying,
+    # where the host-side decrypted .env cannot exist yet — a plain
+    # `env_file: .env` fails that validation and the sync of the whole stack
+    # aborts. required:false passes staging; at deploy time the project dir
+    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # window: a deploy racing the first decrypt starts with unset vars — the
+    # loud guard is each service's own healthcheck/startup failure.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # Keep the image's OWN test (it ships `immich-healthcheck`, probing the
+      # server this container actually runs — the inverse of the inherited-
+      # healthcheck trap, finding #16) and override only the timing: first
+      # boot runs the full schema migration + vchord/vector extension
+      # creation, which can blow the builtin start budget. Docker merges an
+      # unspecified `test` from the image's HEALTHCHECK.
+      start_period: 180s
+    restart: unless-stopped
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
+    container_name: immich_machine_learning
+    # No dependencies in either direction ON PURPOSE (annex §2): the server
+    # degrades gracefully without ML (thumbnails/metadata search are
+    # server-side; only smart search/faces/OCR jobs fail), so ML must never
+    # gate the stack. First real use downloads models from Hugging Face into
+    # /cache (~1 GB warm) — egress required, on-demand by design (no
+    # MACHINE_LEARNING_PRELOAD__*, annex §7.2).
+    volumes:
+      - /mnt/fast/immich/model-cache:/cache
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      # Image's own test kept (its healthcheck is its own HTTP server, not
+      # model presence — finding #16 does not apply); headroom only.
+      start_period: 60s
+    restart: unless-stopped
+
+  database:
+    # Upstream's own postgres image: VectorChord + pgvector + earthdistance
+    # preconfigured (shared_preload_libraries=vchord.so). 17 over 18 to match
+    # the fleet's Postgres 17 (annex §1); restoring the dump needs this same
+    # image (the dump references the vchord/vector extensions).
+    image: ghcr.io/immich-app/postgres:17-vectorchord1.1.1
+    # immich_db + POSTGRES_USER=immich are load-bearing for
+    # nixos/backup-prepare.sh — see header.
+    container_name: immich_db
+    volumes:
+      - /mnt/fast/immich/pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=immich
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+      # POSTGRES_PASSWORD arrives from .env (must equal DB_PASSWORD — two
+      # names because the two images read different vars).
+    # Long form with required:false ON PURPOSE (finding #11): see immich-server.
+    env_file:
+      - path: .env
+        required: false
+    # Upstream compose value; postgres wants more than docker's 64mb default
+    # for parallel workers.
+    shm_size: 128mb
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U immich -d immich']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  redis:
+    # Valkey per upstream (annex §0.5); alpine variant per the paperless
+    # redis:7.4-alpine precedent. Cache/queue only — no volume, no password
+    # (compose-internal and unpublished, same stance as paperless's redis).
+    image: valkey/valkey:9.1-alpine
+    container_name: immich_redis
+    healthcheck:
+      # The valkey image ships redis-cli as an alias; upstream compose uses
+      # exactly this probe.
+      test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # immich-config-init — renders /config/immich.json from immich.json.template
+  # + IMMICH_OIDC_CLIENT_SECRET before the server starts. Immich does NO env
+  # interpolation inside the config file, so the secret has to be substituted
+  # in (qbit-init's seeded-conf problem, but with MAKE-STYLE semantics: unlike
+  # qbit-init's touch-once, this REWRITES whenever template or secret changed
+  # — rotation must reach the file, annex §3). The rendered file on /mnt/fast
+  # is not a new exposure class: the decrypted .env already sits beside the
+  # compose file on /srv.
+  # ---------------------------------------------------------------------------
+  immich-config-init:
+    image: alpine:3.21
+    container_name: immich_config_init
+    entrypoint:
+      - /bin/sh
+      - -ec
+      # $$ everywhere: compose would otherwise interpolate at parse time.
+      - |
+        tmpl=/template/immich.json.template
+        out=/config/immich.json
+        # Hard error on unset/empty, like backrest's config-init: an empty
+        # clientSecret renders an immich.json whose OIDC can never log in.
+        [ -n "$${IMMICH_OIDC_CLIENT_SECRET:-}" ] || { echo "immich-config-init: FATAL: IMMICH_OIDC_CLIENT_SECRET unset (decrypt race? finding #11)" >&2; exit 1; }
+        # The value lands inside a JSON string; the generate command is
+        # `openssl rand -hex 32` so this never fires, but a quote or
+        # backslash would corrupt the file silently.
+        case "$$IMMICH_OIDC_CLIENT_SECRET" in *'"'*|*'\'*)
+          echo "immich-config-init: FATAL: secret contains \" or \\ — would break the rendered JSON" >&2; exit 1;;
+        esac
+        # busybox awk over ENVIRON, not sed/envsubst (finding #4: no apk at
+        # container start; and sed would mangle & or \ in the value). Single
+        # left-to-right pass — substituted output is never rescanned.
+        awk '{
+          line = ""
+          rest = $$0
+          while ((i = index(rest, "__IMMICH_OIDC_CLIENT_SECRET__")) > 0) {
+            line = line substr(rest, 1, i - 1) ENVIRON["IMMICH_OIDC_CLIENT_SECRET"]
+            rest = substr(rest, i + 29)
+          }
+          print line rest
+        }' "$$tmpl" > "$$out.tmp"
+        chmod 600 "$$out.tmp"
+        # Make-style: replace only on content change (tmpfile+rename, so the
+        # server never sees a half-written file); log CHANGE: like media-init
+        # so a second run is provably a no-op.
+        if [ -f "$$out" ] && cmp -s "$$out.tmp" "$$out"; then
+          rm -f "$$out.tmp"
+          echo "immich-config-init: immich.json up to date — no change"
+        else
+          mv "$$out.tmp" "$$out"
+          echo "immich-config-init: CHANGE: rendered immich.json"
+        fi
+    volumes:
+      # Template rides Arcane's whole-directory sync (syncDirectory ON).
+      - ./immich.json.template:/template/immich.json.template:ro
+      - /mnt/fast/immich/config:/config
+    # Long form with required:false ON PURPOSE (finding #11): see immich-server.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # immich-init — headless admin seed (media-init pattern). The seeded local
+  # admin is the bootstrap + password-login fallback identity; OIDC users
+  # auto-register as non-admin, and seeding IMMICH_ADMIN_EMAIL with the real
+  # Authentik email merges the two on first OIDC login (annex §4).
+  # ---------------------------------------------------------------------------
+  immich-init:
+    # python:3.13-alpine rather than curl+jq: same rationale as media-init
+    # (no official image ships both; apk at container start is banned,
+    # finding #4).
+    image: python:3.13-alpine
+    container_name: immich_init
+    entrypoint: ['/bin/sh', '/init/immich-init.sh']
+    depends_on:
+      immich-server:
+        condition: service_healthy
+    volumes:
+      - ./immich-init.sh:/init/immich-init.sh:ro
+    # Long form with required:false ON PURPOSE (finding #11): see immich-server.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"

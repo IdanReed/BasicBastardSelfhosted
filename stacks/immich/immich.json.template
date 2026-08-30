@@ -1,0 +1,21 @@
+{
+  "server": {
+    "externalDomain": "https://immich.svc.idanreed.com"
+  },
+  "machineLearning": {
+    "urls": ["http://immich-machine-learning:3003"]
+  },
+  "passwordLogin": {
+    "enabled": true
+  },
+  "oauth": {
+    "enabled": true,
+    "issuerUrl": "https://auth.idanreed.com/application/o/immich/",
+    "clientId": "immich",
+    "clientSecret": "__IMMICH_OIDC_CLIENT_SECRET__",
+    "scope": "openid email profile",
+    "buttonText": "Login with Authentik",
+    "autoRegister": true,
+    "autoLaunch": false
+  }
+}
