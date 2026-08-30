@@ -94,6 +94,26 @@ sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
 sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
 sqlite_backup audiobookshelf /mnt/fast/audiobookshelf/config/absdatabase.sqlite
 
+# The arr databases are WAL-mode and written continuously (queue/history/RSS
+# churn), so the raw files inside the /mnt/fast include set can snapshot as a
+# torn page set with an out-of-date -wal — same reason as the rest of this
+# section. Paths follow the /config binds in stacks/media/compose.yaml
+# (LSIO layout: <db>.db at the config root; bazarr keeps its under db/).
+# The sibling logs.db files are deliberately NOT dumped — they are log churn,
+# rebuilt on start, and worthless in a restore.
+sqlite_backup radarr         /mnt/fast/radarr/config/radarr.db
+sqlite_backup sonarr         /mnt/fast/sonarr/config/sonarr.db
+sqlite_backup prowlarr       /mnt/fast/prowlarr/config/prowlarr.db
+sqlite_backup bazarr         /mnt/fast/bazarr/config/db/bazarr.db
+sqlite_backup jellyfin       /mnt/fast/jellyfin/config/data/jellyfin.db
+sqlite_backup jellyfin-lib   /mnt/fast/jellyfin/config/data/library.db
+sqlite_backup seerr          /mnt/fast/seerr/config/db/db.sqlite3
+# Cleanuparr's EF-Core sqlite lives somewhere under /mnt/fast/cleanuparr and
+# its filename is UNVERIFIED (v2 is UI-configured; the DB appears at first
+# setup) — it gets the raw-copy path only until the name is pinned down.
+# All of the above paths are asserted to exist by the media suite, so a
+# layout change in a future image fails a test instead of silently skipping.
+
 # ---------------------------------------------------------------------------
 # VPS state
 # ---------------------------------------------------------------------------
