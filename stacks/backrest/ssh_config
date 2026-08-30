@@ -1,4 +1,6 @@
-# Mounted at /root/.ssh/config inside the Backrest container.
+# Mounted at /etc/ssh/ssh_config (system-wide) inside the Backrest container
+# — NOT /root/.ssh/config, which ssh refuses unless root-owned; Arcane's sync
+# delivers files owned by PUID 1000.
 # Referenced by the repo URI "sftp:storagebox:/home/restic".
 #
 # Replace uXXXXXX with the Hetzner Storage Box sub-account username. Use a

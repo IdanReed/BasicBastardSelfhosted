@@ -39,11 +39,12 @@
       },
       "hooks": [
         {
-          "conditions": ["CONDITION_ANY_ERROR"],
+          "conditions": [
+            "CONDITION_ANY_ERROR"
+          ],
           "onError": "ON_ERROR_IGNORE",
-          "actionWebhook": {
-            "webhookUrl": "http://ntfy/backups?priority=high&tags=rotating_light",
-            "method": "POST",
+          "actionShoutrrr": {
+            "shoutrrrUrl": "generic+http://ntfy/backups?title=Backrest+error&priority=high&tags=rotating_light",
             "template": "Repository error on {{ .Repo.Id }}: {{ .Error }}"
           }
         }
@@ -54,7 +55,9 @@
     {
       "id": "fast-volume",
       "repo": "hetzner",
-      "paths": ["/mnt/fast"],
+      "paths": [
+        "/mnt/fast"
+      ],
       "excludes": [
         "**/docker/**",
         "**/pgdata/**",
@@ -67,7 +70,8 @@
         "**/tmp/**",
         "**/__pycache__/**",
         "**/node_modules/**",
-        "/mnt/fast/backrest/cache/**"
+        "/mnt/fast/backrest/cache/**",
+        "/mnt/fast/immich/model-cache/**"
       ],
       "schedule": {
         "cron": "0 3 * * *",
@@ -82,20 +86,22 @@
       },
       "hooks": [
         {
-          "conditions": ["CONDITION_SNAPSHOT_SUCCESS"],
+          "conditions": [
+            "CONDITION_SNAPSHOT_SUCCESS"
+          ],
           "onError": "ON_ERROR_IGNORE",
-          "actionWebhook": {
+          "actionHealthchecks": {
             "webhookUrl": "${DEADMAN_URL}",
-            "method": "POST",
             "template": "ok"
           }
         },
         {
-          "conditions": ["CONDITION_SNAPSHOT_ERROR"],
+          "conditions": [
+            "CONDITION_SNAPSHOT_ERROR"
+          ],
           "onError": "ON_ERROR_IGNORE",
-          "actionWebhook": {
-            "webhookUrl": "http://ntfy/backups?priority=high&tags=rotating_light",
-            "method": "POST",
+          "actionShoutrrr": {
+            "shoutrrrUrl": "generic+http://ntfy/backups?title=Backrest+error&priority=high&tags=rotating_light",
             "template": "Fast volume backup FAILED: {{ .Error }}"
           }
         }
@@ -106,13 +112,15 @@
       "repo": "hetzner",
       "paths": [
         "/mnt/slow/books",
-        "/mnt/slow/immich",
+        "/mnt/slow/photos",
         "/mnt/slow/samba"
       ],
       "excludes": [
         "**/cache/**",
         "**/@eaDir/**",
-        "**/pgdata/**"
+        "**/pgdata/**",
+        "/mnt/slow/photos/thumbs/**",
+        "/mnt/slow/photos/encoded-video/**"
       ],
       "schedule": {
         "cron": "0 4 * * *",
@@ -127,11 +135,12 @@
       },
       "hooks": [
         {
-          "conditions": ["CONDITION_SNAPSHOT_ERROR"],
+          "conditions": [
+            "CONDITION_SNAPSHOT_ERROR"
+          ],
           "onError": "ON_ERROR_IGNORE",
-          "actionWebhook": {
-            "webhookUrl": "http://ntfy/backups?priority=high&tags=rotating_light",
-            "method": "POST",
+          "actionShoutrrr": {
+            "shoutrrrUrl": "generic+http://ntfy/backups?title=Backrest+error&priority=high&tags=rotating_light",
             "template": "Slow volume backup FAILED: {{ .Error }}"
           }
         }
