@@ -154,6 +154,15 @@ pkgs.testers.runNixOSTest {
         # Counting endpoints rather than trusting that the process is up. Their
         # RESULTS are meaningless here (nothing they monitor is running in this
         # VM), but their existence proves the config parsed.
+        # RETRIED. Each endpoint has its own ticker (1m for service probes,
+        # 2m for path probes) and appears in this listing once it has been
+        # evaluated at least once — so sampling immediately after /health
+        # answers would read a nearly-empty list and assert nothing.
+        services_vm.wait_until_succeeds(
+            f"curl -fsS --max-time 30 '{BASE}/api/v1/endpoints/statuses' "
+            "| jq -e 'length >= 40' >/dev/null",
+            timeout=300,
+        )
         raw = services_vm.succeed(
             f"curl -fsS --max-time 30 '{BASE}/api/v1/endpoints/statuses'"
         )
