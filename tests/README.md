@@ -805,6 +805,40 @@ against those endpoints, which is the proof this rule asks for — the point is
 not that HEAD is wrong, it is that HEAD is an assumption most people do not
 know they are making.
 
+### 35. MariaDB 11 dropped `mysqldump`, and the backup would have shipped broken
+
+`backup-prepare.sh`'s MySQL branch ran
+
+    docker exec bookstack_db sh -c 'exec mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases'
+
+and `mariadb:11.8.9` answered `sh: 1: exec: mysqldump: not found`. MariaDB 11.x
+removed the `mysql*` compatibility symlinks entirely — the image ships
+`mariadb-dump`, `mariadb-admin`, `mariadb-check` and so on, and nothing named
+`mysql*` at all.
+
+This one is loud rather than silent: exit 127 sets `rc=1`, which trips
+`OnFailure` and reaches ntfy. But loud only helps after deployment. BookStack
+would have gone live with no working database dump, and the first evidence
+would have been a nightly alert about a service that had been running fine for
+a week.
+
+Two things worth carrying:
+
+- **The env var keeps the `MYSQL_` spelling.** The image's entrypoint still
+  accepts `MYSQL_ROOT_PASSWORD` as an alias for `MARIADB_ROOT_PASSWORD`, and
+  `stacks/tracking/compose.yaml` sets it that way deliberately so this line can
+  read it out of the container's own environment. Only the *binary* was
+  renamed, which is precisely why the mistake is easy to make.
+- **The suite runs the literal command**, not an approximation of it. That is
+  the whole reason this was caught before deploy rather than after: an
+  assertion that "a dump file exists" would have been satisfied by a dump
+  produced any other way, and an assertion that "backup-prepare.sh mentions
+  bookstack" would have been satisfied by the broken line.
+
+The `backup-coverage` lint cannot catch this class — it checks paths and
+container names, and no static check knows which binaries an image ships. The
+suite is the control here.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -855,7 +889,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-four** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-five** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

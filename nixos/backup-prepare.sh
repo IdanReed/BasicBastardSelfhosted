@@ -55,14 +55,26 @@ done
 # ---------------------------------------------------------------------------
 # MySQL / MariaDB
 # ---------------------------------------------------------------------------
+# 🚨 `mariadb-dump`, NOT `mysqldump`. MariaDB 11.x DROPPED the mysql* symlinks
+# entirely — `mariadb:11.8.9` ships mariadb-dump, mariadb-admin, mariadb-check
+# and so on, and no `mysqldump` at all. The old name fails with exit 127
+# ("exec: mysqldump: not found"), which does at least set rc=1 and reach ntfy,
+# but it means BookStack would have had NO backup from the day it deployed.
+# Caught by tests/suites/tracking.nix, which runs this exact command rather
+# than an approximation of it.
+#
+# The ENV VAR keeps the MYSQL_ spelling: the image's entrypoint still accepts
+# MYSQL_ROOT_PASSWORD as an alias for MARIADB_ROOT_PASSWORD, and
+# stacks/tracking/compose.yaml sets it that way deliberately so this line can
+# read it out of the container's own environment.
 if running bookstack_db; then
-    log "mysqldump bookstack"
+    log "mariadb-dump bookstack"
     if docker exec bookstack_db sh -c \
-        'exec mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases' \
+        'exec mariadb-dump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases' \
         > "$DUMPS/bookstack.sql.tmp"; then
         mv -f "$DUMPS/bookstack.sql.tmp" "$DUMPS/bookstack.sql"
     else
-        log "FAILED: mysqldump bookstack"
+        log "FAILED: mariadb-dump bookstack"
         rm -f "$DUMPS/bookstack.sql.tmp"
         rc=1
     fi
