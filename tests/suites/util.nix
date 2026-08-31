@@ -187,7 +187,7 @@ pkgs.testers.runNixOSTest {
         # egress-dependent widget for exactly that reason; this subtest exists
         # to record why the obvious probe is absent.
 
-    with subtest("the four static tools serve"):
+    with subtest("the three static tools serve"):
         for name in ["bentopdf", "mazanoke", "it-tools"]:
             code = status(PORTS[name])
             assert code in (200, 302), f"{name} returned {code}"
@@ -208,7 +208,12 @@ pkgs.testers.runNixOSTest {
         services_vm.shutdown()
         services_vm.start()
         services_vm.wait_for_unit("multi-user.target")
-        services_vm.wait_until_succeeds("test -s /srv/stacks/util/.env", timeout=180)
+        # NOT ".env" — this stack has no secrets since ExcaliDash was
+        # deferred, so decrypt-sops-envs writes nothing here. Wait on the
+        # thing that actually appears: the seeded compose file.
+        services_vm.wait_until_succeeds(
+            "test -s /srv/stacks/util/compose.yaml", timeout=180
+        )
         services_vm.wait_for_unit("load-test-images.service")
         services_vm.succeed(f"{UTIL} up -d --wait --wait-timeout 900")
   '';

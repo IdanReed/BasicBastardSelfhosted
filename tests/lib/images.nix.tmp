@@ -234,3 +234,59 @@
     finalImageName = "ghcr.io/karakeep-app/karakeep";
     finalImageTag = "0.33.2";
   };
+  "ghcr_io_karakeep-app_karakeep-chrome_151_0_7922_47-r1" = {
+    composeRef = "ghcr.io/karakeep-app/karakeep-chrome:151.0.7922.47-r1";
+    imageName = "ghcr.io/karakeep-app/karakeep-chrome";
+    imageDigest = "sha256:5b19bbb160e9ff60681a3abd97e1c4ec9f64212301410de658c3900ab7ef31e7";
+    hash = "sha256-ypbGcOEpuUSZoEZr1x0keH+WCBDOz0HiH0iqKhcJQlI=";
+    finalImageName = "ghcr.io/karakeep-app/karakeep-chrome";
+    finalImageTag = "151.0.7922.47-r1";
+  };
+  "ghcr_io_paperless-ngx_paperless-ngx_2_20" = {
+    composeRef = "ghcr.io/paperless-ngx/paperless-ngx:2.20";
+    imageName = "ghcr.io/paperless-ngx/paperless-ngx";
+    imageDigest = "sha256:6c86cad803970ea782683a8e80e7403444c5bf3cf70de63b4d3c8e87500db92f";
+    hash = "sha256-g/jYJPVb1lPPP9jVsQnZoLKKvvjXpqRlZYxwKrMBBJQ=";
+    finalImageName = "ghcr.io/paperless-ngx/paperless-ngx";
+    finalImageTag = "2.20";
+  };
+  "ghcr_io_seerr-team_seerr_v3_4_1" = {
+    composeRef = "ghcr.io/seerr-team/seerr:v3.4.1";
+    imageName = "ghcr.io/seerr-team/seerr";
+    imageDigest = "sha256:f4768de5f616248d723e05891f3345a1402123775d03bf0890dbfedc0831bda1";
+    hash = "sha256-ey9wDtv/m/y1+EbGk/RmgZhjlt4VLpLDbm6AGcSg60Y=";
+    finalImageName = "ghcr.io/seerr-team/seerr";
+    finalImageTag = "v3.4.1";
+  };
+  "ghcr_io_sysadminsmedia_homebox_0_26_2" = {
+    composeRef = "ghcr.io/sysadminsmedia/homebox:0.26.2";
+    imageName = "ghcr.io/sysadminsmedia/homebox";
+    imageDigest = "sha256:b1ad7e3c63f732a5f6daa466e8116be4f545b3b120383a64dcb62beb00a660cc";
+    hash = "sha256-0PZjSugWBizjx95TAt17OI13ApGxkFGVFzDJBfTW/Zo=";
+    finalImageName = "ghcr.io/sysadminsmedia/homebox";
+    finalImageTag = "0.26.2";
+  };
+  "ghcr_io_tandoorrecipes_recipes_2_6_13" = {
+    composeRef = "ghcr.io/tandoorrecipes/recipes:2.6.13";
+    imageName = "ghcr.io/tandoorrecipes/recipes";
+    imageDigest = "sha256:f6c58afdea7a721d079ebd6ee5483f2c9da77dd1e709e16d60a82c218e80a451";
+    hash = "sha256-UIEIe0mzJ+pAKuGlubmLYl/NYM1zNkGjoA9OzWg5Su8=";
+    finalImageName = "ghcr.io/tandoorrecipes/recipes";
+    finalImageTag = "2.6.13";
+  };
+  "ghcr_io_windmill-labs_windmill_1_798_1" = {
+    composeRef = "ghcr.io/windmill-labs/windmill:1.798.1";
+    imageName = "ghcr.io/windmill-labs/windmill";
+    imageDigest = "sha256:155a4da7ac27d75cf5349c56f59bfb7c26dc832ab23b7d373a22a91df43c6d9b";
+    hash = "sha256-mOZNLrEZdgVZ1f/y6Yy8dRK0jhK96cqGnL0r6622F6E=";
+    finalImageName = "ghcr.io/windmill-labs/windmill";
+    finalImageTag = "1.798.1";
+  };
+  "glanceapp_glance_v0_8_5" = {
+    composeRef = "glanceapp/glance:v0.8.5";
+    imageName = "glanceapp/glance";
+    imageDigest = "sha256:32ab73d80f2b8b5fb0735b0431deb36b93fbb6b2fb43592449b0178c8b83e350";
+    hash = "sha256-QgJUznGWUhjHGk2e8I3KkbpAaelHDtovfMOssLlwwr8=";
+    finalImageName = "glanceapp/glance";
+    finalImageTag = "v0.8.5";
+  };
