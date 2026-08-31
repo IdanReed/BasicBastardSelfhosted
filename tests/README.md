@@ -863,6 +863,34 @@ The general shape is worth keeping in mind when writing any cross-file check:
 what the most permissive row is before trusting a green result — and be
 suspicious of a new lint that passes on the first run, which this one did.
 
+### 37. Homebox answers 500 to a duplicate registration, so the second deploy failed
+
+`tracking-init` provisions Homebox through `POST /api/v1/users/register`, and
+handled an already-registered email by accepting 400/409/422 and confirming the
+credentials still work. The first run was green. The second run — which is what
+every Arcane redeploy does — exited 1:
+
+    tracking-init: FATAL: homebox register HTTP 500:
+    {"error":"ent: constraint failed: constraint failed:
+     UNIQUE constraint failed: users.email (2067)"}
+
+The ent unique-constraint violation is not translated into a client error at
+all; it surfaces as a 500 with the database's message in the body. So the
+idempotency contract every other init in this fleet is held to — *a second run
+logs zero CHANGE lines and exits 0* — was broken from the start, and only a
+suite that reruns the container found it.
+
+The fix accepts 500 **only** when the body names that constraint. That
+narrowness is the point: "the server broke" and "the user is already there" are
+genuinely different, and here the body is the only thing that distinguishes
+them. Widening it to "500 means fine" would turn a real outage into a silent
+pass.
+
+Worth generalising: **an init container that has only ever been run once has
+not been tested.** Every stack suite in this repo now removes the init
+container and brings it up again, precisely because first-run success says
+nothing about redeploy behaviour — and redeploy is the common case.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -918,7 +946,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-six** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-seven** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

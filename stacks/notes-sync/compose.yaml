@@ -127,8 +127,15 @@ services:
     image: syncthing/syncthing:2.1.3
     container_name: syncthing_generate
     entrypoint: ['/bin/sh', '-c']
+    # ⚠ NO `--config` FLAG. The image already sets
+    # STHOMEDIR=/var/syncthing/config, and syncthing 2.x rejects `--config`
+    # given on its own — "either both or none of --config and --data must be
+    # given, use --home to set both at once" — so passing it explicitly makes
+    # this one-shot exit 1 and the app container never gets its credentials.
+    # Letting STHOMEDIR do the work also guarantees this and the app container
+    # resolve the SAME directory, which is the property that actually matters.
     command:
-      - 'exec /bin/entrypoint.sh /bin/syncthing generate --config /var/syncthing/config --gui-user "$$ST_GUI_USER" --gui-password "$$ST_GUI_PASSWORD"'
+      - 'exec /bin/entrypoint.sh /bin/syncthing generate --gui-user "$$ST_GUI_USER" --gui-password "$$ST_GUI_PASSWORD"'
     volumes:
       - /mnt/fast/syncthing/config:/var/syncthing/config
     environment:

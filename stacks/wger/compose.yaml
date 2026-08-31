@@ -185,6 +185,41 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # wger_init — headless first-run (annex §3.2). See wger-init.py: Wger creates
+  # an `admin` account for you with the published password `adminadmin` and
+  # gives you no env var to change it.
+  #
+  # Same image as the app, because this is a Django shell script against the
+  # real ORM. DJANGO_SETTINGS_MODULE and PYTHONPATH are already baked in.
+  # ---------------------------------------------------------------------------
+  wger_init:
+    image: wger/server:2.6
+    container_name: wger_init
+    depends_on:
+      # service_healthy: the entrypoint's bootstrap and migrations must have
+      # finished, or `admin` does not exist yet and this would create a second
+      # one that the real bootstrap then overwrites.
+      wger:
+        condition: service_healthy
+    volumes:
+      - ./wger-init.py:/init/wger-init.py:ro
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'cd /home/wger/src && exec python3 manage.py shell < /init/wger-init.py'
+    environment:
+      - DJANGO_DB_ENGINE=django.db.backends.postgresql
+      - DJANGO_DB_DATABASE=wger
+      - DJANGO_DB_USER=wger
+      - DJANGO_DB_HOST=wger_db
+      - DJANGO_DB_PORT=5432
+      # Required for settings to import at all — see the app service.
+      - DJANGO_DEBUG=False
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
 volumes:
   # Derived: collectstatic rewrites it on every start.
   wger_static:
