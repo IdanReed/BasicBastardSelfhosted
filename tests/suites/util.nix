@@ -257,10 +257,13 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("docker rm -f bkg-sick")
         services_vm.succeed("systemctl start unhealthy-containers.service")
         services_vm.fail("test -e /run/unhealthy-containers.failed")
-        log = services_vm.succeed(
+        # NOT `log` — the driver mypy-checks the test script and `log` is
+        # already bound to an AbstractLogger in its namespace, so assigning a
+        # str to it fails the type check before the VM ever boots.
+        journal = services_vm.succeed(
             "journalctl -u unhealthy-containers.service --no-pager | tail -20"
         )
-        assert "recovered" in log, log
+        assert "recovered" in journal, journal
 
     with subtest("a container still in its start period does NOT trip it"):
         # `--filter health=unhealthy` excludes `starting`. This matters more
