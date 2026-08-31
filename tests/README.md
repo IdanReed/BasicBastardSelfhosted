@@ -543,9 +543,219 @@ declare `env_file: .env` but have only `.sops.env.example` — `docker compose u
 aborts on a missing env file, so those stacks will not start until the real
 `.sops.env` is created.
 
+### 25. A namespaced variable in a shared `.env` is invisible to the app
+
+Every stack gets one `.env`, shared by every container in it, so prefixing a
+key with the service name reads like good hygiene: `BOOKSTACK_APP_KEY` next to
+`HBOX_AUTH_API_KEY_PEPPER` and `NEXTAUTH_SECRET`. It is not hygiene, it is a
+rename. `env_file` injects the variable **verbatim**; BookStack reads `APP_KEY`
+and there is no mapping layer, so the prefixed name simply leaves it unset.
+
+The consequence is specific to that image and much worse than a crash: an
+unset `APP_KEY` makes its init script `sleep infinity` rather than exit. The
+container reports `running` forever, no restart policy fires, and there is no
+exit code to alert on. Only the `/status` healthcheck notices.
+
+The rule is that a `.env` key is named by **the application that reads it**,
+never by the service it belongs to — `HBOX_*` and `NEXTAUTH_SECRET` are
+correctly prefixed only because that is what Homebox and next-auth actually
+read. Prefix only where the app itself does.
+
+### 26. "No such tag in the registry" was a claim the tooling never checked
+
+`update-images.sh` ran `nix-prefetch-docker` once per image with `2>/dev/null`
+and, on any non-zero exit, recorded `UNRESOLVED — no such tag in the registry`.
+`nix-prefetch-docker` exits non-zero for a manifest 404, a registry 5xx, a rate
+limit, a TLS reset and a mid-pull disconnect alike, and the large images hit
+the transient ones often enough that a full run kept reporting a
+"deploy-blocking" bad tag for `immich-machine-learning:v3.1.0` — which a
+manifest HEAD against ghcr answered `200`, and which resolved on the very next
+attempt.
+
+That is worse than an unhelpful error: it is a confident, wrong diagnosis that
+sends you looking for a tag-shape bug in a compose file that is correct. The
+fix is three attempts with backoff and **keeping stderr** — the message now
+prints the actual last error and says outright that this is only a bad tag if
+the error mentions an unknown manifest.
+
+There is a second lesson under the first, worth stating because it cost more
+than the bug did: the same failure was initially blamed on overlapping runs of
+the script, which was *also* a real defect (no locking, and a
+"wait for the tmpfile" guard that fires before the tmpfile exists). Both causes
+were real, and fixing the one you found first is not evidence that it was the
+only one.
+
+### 27. A healthcheck that lies can disable a whole service, not just mislead
+
+Finding #16 is about inherited healthchecks that probe the process instead of
+the application. Dawarich shows the sharper edge of it: `depends_on` with
+`condition: service_healthy` makes a wrong healthcheck **load-bearing for
+something else's existence**.
+
+`APPLICATION_PROTOCOL=https` installs `ActionDispatch::SSL` with `force_ssl`,
+and there is no `ssl_options` exclusion anywhere in that codebase. The
+container healthcheck sends no `X-Forwarded-Proto`, so Rails 301s it to
+`https://127.0.0.1:3000`; wget follows; Puma speaks plain HTTP; the handshake
+fails. The container is then permanently `unhealthy` — and upstream declares
+`sidekiq.depends_on.app.condition: service_healthy`, so **Sidekiq never starts
+at all**. Imports and statistics hang forever, with a web UI that looks
+perfect and an error surface that is empty.
+
+The fix is one flag on the probe (`--header='X-Forwarded-Proto: https'`), but
+the general rule is the point: when a healthcheck gates a `depends_on`, a
+false negative is not a monitoring problem, it is an outage of a *different*
+container. Suites should assert the dependent service is alive by its own
+evidence — here, that Sidekiq registered a heartbeat in Redis — not by the
+health status of the thing it depends on.
+
+The mirror image is in the same stack and just as instructive:
+`config.host_authorization` explicitly **excludes** the health endpoint, so a
+wrong `APPLICATION_HOSTS` yields a healthy container, a happy Arcane, a happy
+Uptime Kuma — and a 403 "Blocked hosts" on every browser request. Any smoke
+test of a reverse-proxy route must fetch `/` with the real `Host:` header;
+the health endpoint is exactly the one path that cannot detect that class of
+failure.
+
+### 28. Running a one-off command in an image whose entrypoint does the setup
+
+Provisioning a Rails app headlessly wants `rails runner` in a throwaway
+container built on the same image — no docker socket, database reached over
+the compose network. It fails in a way that looks like a broken image.
+
+Dawarich's Dockerfile sets `ENV BUNDLE_PATH=/usr/local/bundle/gems`, which
+contradicts the `bundle config --local path vendor/bundle` baked into
+`.bundle/config`. Bundler gives the environment variable precedence, so
+`bundle exec` resolves against an empty gem path. Both real entrypoint scripts
+open with `unset BUNDLE_PATH BUNDLE_BIN` for exactly this reason — a one-off
+container skips those scripts (it must; they end in `exec`) and therefore has
+to repeat the fix itself.
+
+The same class caught the worker command: `sidekiq-entrypoint.sh` ends in a
+hardcoded `exec bundle exec sidekiq` and **ignores its arguments entirely**,
+while upstream's compose still passes `command: ['sidekiq']`. Carrying that
+forward is harmless but implies the command is configurable, which it is not.
+
+Before running anything in an image by a path other than its entrypoint, read
+the entrypoint. The first few lines are usually undoing something the
+Dockerfile did.
+
+### 29. Soft delete plus a unique index means "deleted" still owns the identity
+
+Dawarich seeds `demo@dawarich.app` / `safepassword` as an **active admin**,
+guarded only by `User.none?`, and re-runs `db:seed` on every boot. The obvious
+neutralisation — create the real admin, destroy the demo one — silently does
+not work. `SoftDeletable` overrides `User#destroy` to call `mark_as_deleted!`
+and deliberately never calls `super`, so the row stays, no `dependent:
+:destroy` cascade fires, and `index_users_on_email` is a plain UNIQUE index
+with no `deleted_at IS NULL` predicate — so the "deleted" account keeps
+holding that email forever.
+
+Renaming the seeded account in place sidesteps all of it and leaves exactly
+one user. But the durable lesson is about the assertion, not the fix: the
+suite's most valuable check is the **negative** one — that
+`demo@dawarich.app` / `safepassword` no longer authenticates. A provisioning
+step that silently did nothing would leave a published-password admin on a
+database of everywhere the operator has physically been, and every other
+assertion in the suite would still pass. (`safepassword`, not `password`,
+which is what stale guides say — a negative assertion against the wrong
+credential passes against a completely unprovisioned instance.)
+
+### 30. Compose interpolates `env_file` values, so a `$` in a secret is destroyed
+
+CLAUDE.md already said any value containing `$` must be single-quoted in the
+plaintext `.sops.env`, and attributed it to "the decrypt-and-source path". That
+attribution is wrong — `decrypt-sops-envs` runs `sops -d` into a file and
+sources nothing. **Docker Compose is the interpolator**, and it interpolates
+values read from `env_file`, not just those written inline.
+
+Verified in a throwaway compose project, one value written three ways:
+
+```
+SQ='$argon2id$v=19$m=65540,t=3,p=4$c2FsdA$aGFzaA'   ->  $argon2id$v=19$m=65540,t=3,p=4$c2FsdA$aGFzaA
+BARE=$argon2id$v=19$m=65540,t=3,p=4$c2FsdA$aGFzaA   ->  =19=65540,t=3,p=4
+DQ="$argon2id$v=19$m=65540"                          ->  =19=65540
+```
+
+Single quotes pass through verbatim. Bare and double-quoted forms lose
+`$argon2id`, `$v` and `$m` to empty-variable expansion, and the container
+receives a *different, shorter string* — no error, no warning.
+
+What makes this a finding rather than a footnote is the failure downstream.
+Vaultwarden's admin handler dispatches on a literal `$argon2` prefix test, so a
+mangled token falls through to a **plaintext compare** of whatever you type
+against that mangled string. `/admin` then rejects everything, and the only
+clue is a startup line reading `[NOTICE] You are using a plain text ADMIN_TOKEN
+which is insecure` — accurate, misleading, and easy to scroll past on a first
+boot. The vaultwarden suite therefore checks the value as the *container* sees
+it and then performs a real login round trip; only the round trip distinguishes
+"configured" from "mangled".
+
+Also worth knowing: upstream's advice to `$$`-escape is for an inline
+`environment:` block. In an `env_file` it would arrive as a literal doubled
+dollar.
+
+### 31. An identity decision that no configuration can implement
+
+Worth recording because the failure was not in any one component and no amount
+of image-shopping fixes it. The intended design was Samba authenticating
+against authentik's LDAP outpost — a single identity source for the file
+shares. It cannot be built:
+
+- **SMB2/3 offers only NTLMSSP or Kerberos.** There is no plaintext credential
+  for Samba to forward as an LDAP simple bind; `client plaintext auth` has been
+  deprecated since Samba 4.13.
+- **`ldapsam` requires `sambaSamAccount`/`sambaNTPassword`** in the directory.
+  authentik's outpost emits `top, person, user, organizationalPerson,
+  inetOrgPerson, goauthentik.io/ldap/user, posixAccount` — nothing
+  samba-shaped — stores PBKDF2 (from which MD4 cannot be derived), and is
+  bind-and-search only, so Samba cannot write the hash itself either. authentik
+  #25313 is open and tagged `pr_wanted`.
+- **No `winbindd`** in any candidate image, so `security = ADS` is out.
+- **nixpkgs builds Samba `--without-ldap --without-ads`**, so the
+  native-service route is worse rather than better.
+
+The generalisation: "service X authenticates against IdP Y" is a claim about a
+*protocol path*, not about configuration, and the place it usually breaks is
+the hash format — an IdP that stores a modern password hash cannot serve a
+protocol that needs a specific legacy one. Check the protocol before promising
+the integration. The fallback here is local users with usernames mirroring the
+IdP, which keeps offboarding to one edit without pretending to be SSO.
+
+### 32. The inventory claimed an authentication that was not there
+
+`ServerNotes/designs/_overview.md`'s Auth column is the only written record of
+what is supposed to guard each service, and it was wrong in both directions at
+once. **Arcane** — which mounts the Docker socket, making its web UI
+root-equivalent on this host — was marked `FwdAuth` while its Caddy route
+imported nothing, so the only thing in front of it was its own login.
+Mazanoke had the same gap with far lower stakes. In the other direction,
+rmfakecloud was marked `FwdAuth` when forward auth would break the tablet
+outright, and Syncthing was marked `LDAP` for a service with no LDAP worth the
+coupling.
+
+Every one of those was found by a human reading the row, which is not a
+control. `auth-column-parity` now fails the build when a row claims `FwdAuth`
+and the Caddy handle for its port does not `import protected`.
+
+One implementation note that is the actual lesson: the first version keyed on
+the row's NAME, and silently degraded `Firefly III` (served at `firefly.svc`)
+and `OnlyOffice DocSpace` (`onlyoffice.svc`) to warnings — that is, to no
+coverage at all, for exactly the rows most worth covering. A lint whose
+matching heuristic can miss is a lint that reports success on the cases it
+cannot see. It keys on the **port** now, which appears verbatim in both files.
+
 ## Status
 
-Every suite is green as of 2026-08-30: lints (**16** — the newest:
+Every suite is green as of 2026-08-30: lints (**19** — the three newest:
+`auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
+handle that imports `protected` (it caught Arcane, the socket-mounting UI,
+guarded by nothing but its own login — finding 32); `backup-coverage`, every
+`sqlite_backup` path must live inside a bind mount some compose file actually
+declares and every service in the `pg_dumpall` loop must have the matching
+`container_name` and `POSTGRES_USER`, because that helper returns 0 for a
+MISSING source; and `host-network-declared`, every non-default `network_mode`
+must be listed with its reason, because such a service does not FAIL
+`loopback-binding` — it passes with an empty port set. Also
 `forward-auth-coverage`, every `import protected` Caddyfile host must have a
 blueprint provider assigned to the embedded outpost; `ssh-pubkey-parity`,
 the three ssh-pubkeys.nix copies stay byte-identical; and
@@ -573,10 +783,18 @@ proxied request, Frigate asserted NOT to be in safe mode, the MQTT round trip
 with auth on plus both consumers proven connected, the sha512-pbkdf2 password
 hash that keeps the file readable by the pinned 2.0.x broker, Frigate's
 unauthenticated port 5000 asserted unpublished, and reboot durability),
-**proxmox-boot**
+**tracking** (bookstack + its MariaDB, homebox, karakeep + meilisearch +
+chrome: the seeded `admin@admin.com` proven dead, two tRPC/204-no-body
+bootstraps, and Karakeep's version endpoint pinned so an accidental `latest`
+— which self-reports `nightly` — cannot pass), **firefly** (the
+`remote_user_guard` header spelling proven from the database side, the guard's
+total lack of validation pinned deliberately, and the php-fpm-ping healthcheck
+caught lying with the database stopped), **dawarich** (the force_ssl/Sidekiq
+interlock, host authorization asserted with a wrong `Host` as the control, and
+the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Twenty-four** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
