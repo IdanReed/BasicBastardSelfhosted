@@ -162,3 +162,27 @@
     finalImageName = "ghcr.io/cleanuparr/cleanuparr";
     finalImageTag = "2.10.5";
   };
+  "ghcr_io_dictionarry-hub_profilarr_2_2_0" = {
+    composeRef = "ghcr.io/dictionarry-hub/profilarr:2.2.0";
+    imageName = "ghcr.io/dictionarry-hub/profilarr";
+    imageDigest = "sha256:ddcdd0f340043c2ec0a85ca74b9a6be9be42b1c0288c75fc36a26a43f695860b";
+    hash = "sha256-mWa8eAFbR/oqmJGYBs1QjbNoRLWHJud4Gfr651Fkur0=";
+    finalImageName = "ghcr.io/dictionarry-hub/profilarr";
+    finalImageTag = "2.2.0";
+  };
+  "ghcr_io_getarcaneapp_arcane_v1_17_4" = {
+    composeRef = "ghcr.io/getarcaneapp/arcane:v1.17.4";
+    imageName = "ghcr.io/getarcaneapp/arcane";
+    imageDigest = "sha256:97492274e59c9f822a9c49d67981912b81919c0edad6094e496fa3507348082e";
+    hash = "sha256-mqBArBFkyP5M6KOsb2RX974vPpDh9W/RtxoIpmt7IcQ=";
+    finalImageName = "ghcr.io/getarcaneapp/arcane";
+    finalImageTag = "v1.17.4";
+  };
+  "ghcr_io_goauthentik_server_2026_5_6" = {
+    composeRef = "ghcr.io/goauthentik/server:2026.5.6";
+    imageName = "ghcr.io/goauthentik/server";
+    imageDigest = "sha256:ed120caf710ccf82ef0026f0bc74e51615bc95ebff228a7a2d6fc60c441c3868";
+    hash = "sha256-58hlqmnlLLaIz5S1EBHayHUOSoiQmULhe76jnAiNl/k=";
+    finalImageName = "ghcr.io/goauthentik/server";
+    finalImageTag = "2026.5.6";
+  };

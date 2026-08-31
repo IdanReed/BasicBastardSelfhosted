@@ -442,6 +442,81 @@ in
   };
 
   # ---------------------------------------------------------------------------
+  # Unhealthy-container alerting
+  # ---------------------------------------------------------------------------
+  # NOTHING ELSE IN THIS FLEET REACTS TO A CONTAINER GOING `unhealthy`.
+  # `restart: unless-stopped` only restarts containers that EXIT — a process
+  # that is alive and failing its own healthcheck is restarted by nobody and
+  # reported by nobody. Every stack here has carefully chosen healthchecks
+  # (several of the ledger findings are about exactly that), and until this
+  # unit they were consumed only by `depends_on` at start-up and by a human
+  # running `docker ps`.
+  #
+  # Deliberately NOT a new container. The monitoring annex recommends this even
+  # if Gatus and Beszel are eventually built, because it needs no service to be
+  # up in order to work — which is the property you want from the thing that
+  # tells you a service is down.
+  #
+  # Note what it does NOT do: it does not restart anything. Restarting a
+  # container whose healthcheck is failing is as likely to hide a problem as
+  # fix one (a database mid-migration, a service waiting on a dependency), and
+  # the fleet has no evidence yet about which failures are transient here.
+  # Alert first; automate a response once there is something to automate.
+  systemd.services.unhealthy-containers = {
+    description = "Alert on containers stuck in the unhealthy state";
+    after = [ "docker.service" ];
+    onFailure = [ "notify-failure@%n.service" ];
+    path = [ config.virtualisation.docker.package ] ++ (with pkgs; [ coreutils ]);
+    serviceConfig.Type = "oneshot";
+    script = ''
+      # `--filter health=unhealthy` excludes `starting`, so a container inside
+      # its start_period never trips this — which matters, because several
+      # stacks here have start periods of five minutes (firefly, wger) and a
+      # naive check would page on every deploy.
+      bad=$(docker ps --filter health=unhealthy --format '{{.Names}}' | sort)
+
+      # Alert on state CHANGE, not on every tick — the same pattern
+      # decrypt-sops-envs uses, and for the same reason: this runs on a timer
+      # with OnFailure wired to ntfy, so exiting nonzero for as long as a
+      # container is sick would be a phone push every 15 minutes forever. The
+      # stamp lives in /run and is therefore cleared by a reboot.
+      stamp=/run/unhealthy-containers.failed
+
+      if [ -n "$bad" ]; then
+        echo "Unhealthy containers:"
+        echo "$bad"
+        if [ -e "$stamp" ]; then
+          echo "(already notified; see the journal above)"
+          exit 0
+        fi
+        printf '%s\n' "$bad" > "$stamp"
+        exit 1
+      fi
+
+      if [ -e "$stamp" ]; then
+        echo "recovered: $(tr '\n' ' ' < "$stamp")"
+        rm -f "$stamp"
+      fi
+      echo "no unhealthy containers"
+    '';
+  };
+
+  systemd.timers.unhealthy-containers = {
+    description = "Timer for the unhealthy-container check";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # Every 15 minutes. Fast enough to matter, slow enough that a container
+      # flapping through a restart does not page.
+      OnCalendar = "*:0/15";
+      # 3 minutes after boot, not immediately: docker and every stack need time
+      # to get through their start periods first.
+      OnBootSec = "3min";
+      Persistent = false;
+      Unit = "unhealthy-containers.service";
+    };
+  };
+
+  # ---------------------------------------------------------------------------
   # Firefly III cron
   # ---------------------------------------------------------------------------
   # Firefly's recurring transactions, bill "paid" marks and auto-budget
