@@ -288,7 +288,11 @@ pkgs.testers.runNixOSTest {
 
           # Blocked from off-tailnet: the admin UI and the API proper. The
           # body pins WHICH layer refused — Caddy's matcher, not the backend.
-          for path in ["/if/admin/", "/api/v3/core/users/"]:
+          # /api/v3/flows/instances/ is here so the executor carve-out below
+          # cannot silently regress back to the whole /api/v3/flows/* tree —
+          # flow CRUD, bindings, stages and the inspector are admin surface.
+          for path in ["/if/admin/", "/api/v3/core/users/",
+                       "/api/v3/flows/instances/"]:
               body = peer.succeed(f"curl -s {CA} https://${authHost}{path}")
               assert "restricted to tailnet" in body, (
                   f"{path} not blocked by the Caddy matcher: {body!r}"
