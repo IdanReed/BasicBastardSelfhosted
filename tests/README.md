@@ -1266,7 +1266,14 @@ appears in a subtest name.
 
 ## Status
 
-Green as of 2026-08-31 — **every suite, no exceptions**: lints (**20** — the four newest:
+Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
+`stack-dirs-generated`, the checked-in `nixos/stack-dirs.nix` must byte-match a
+re-run of `nixos/generate-stack-dirs.py` over `stacks/*/compose.yaml` — the
+generator replaced `tmpfiles-ownership`'s hand-maintained `COMPOSE_FILES`
+list, which had silently covered only 17 of 22 stacks (13 bind sources had no
+tmpfiles rule and nothing noticed); `backup-coverage` also gained three
+REVERSE legs (every bind source, every stack, and every postgres/mysql
+container must be either backed up or exempted BY NAME) — the earlier four:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every

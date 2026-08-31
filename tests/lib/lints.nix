@@ -92,6 +92,33 @@ let
     )
   );
 
+  # ---------------------------------------------------------------------------
+  # The one enumeration of /mnt bind mounts
+  # ---------------------------------------------------------------------------
+  # nixos/generate-stack-dirs.py both WRITES nixos/stack-dirs.nix and answers
+  # "which /mnt directories does which stack need" for the lints below. Having
+  # one implementation is the whole point: the previous arrangement had the
+  # generator's job done by hand in hardware-configuration.nix and the checking
+  # done by a hand-maintained COMPOSE_FILES list here, and the list named 17 of
+  # 22 stacks — 13 bind sources with no tmpfiles rule, unnoticed for a campaign.
+  #
+  # The manifest is built from `composeFiles` (a readDir glob, not a list), so a
+  # new stack enters both the generator and the checks by existing. authentik is
+  # dropped: it runs on the VPS, whose filesystems are not this host's.
+  stackDirsGenerator = "${repo + "/nixos/generate-stack-dirs.py"}";
+  stackDirsManifest = pkgs.writeText "stack-dirs-manifest.json" (
+    builtins.toJSON (
+      map (c: { inherit (c) stack; path = "${c.path}"; }) (
+        lib.filter (c: c.stack != "authentik") composeFiles
+      )
+    )
+  );
+  # Emits {sources, directories, byStack} for the manifest above. `sources` is
+  # what a compose file literally binds; `directories` adds the parents, which
+  # need rules of their own (tmpfiles creates a missing parent with default
+  # ownership, not the rule's).
+  stackDirsJson = "${py} ${stackDirsGenerator} --manifest ${stackDirsManifest} --json";
+
   mkLint =
     name: script:
     runCommand "lint-${name}"
@@ -824,9 +851,10 @@ in
               "mutually authenticated by device certificate before anything "
               "else happens — every peer must be added by device ID and "
               "accepted on BOTH sides, so an unknown device is rejected at the "
-              "TLS layer. The host firewall also opens nothing but 22/tcp and "
-              "trusts only tailscale0, so this is tailnet-reachable, not "
-              "LAN-reachable.",
+              "TLS layer. Note 22000 IS LAN-reachable: docker DNATs in "
+              "nat/PREROUTING, which the host firewall's INPUT-only filtering "
+              "never sees. The device certificate is the only control in "
+              "front of it.",
           ("notes-sync", "22000:22000/udp"):
               "Same as the tcp entry: BEP's QUIC transport.",
       }
@@ -1072,8 +1100,9 @@ in
   # ---------------------------------------------------------------------------
   # /srv/stacks tmpfiles ownership
   # ---------------------------------------------------------------------------
-  # nixos/hardware-configuration.nix owns the production tmpfiles rules, and
-  # the VM suites REPLACE that file with tmpfs stubs plus their own rules — so
+  # nixos/hardware-configuration.nix (plus the generated ./stack-dirs.nix it
+  # imports) owns the production tmpfiles rules, and the VM suites REPLACE that
+  # file with tmpfs stubs plus their own rules — so
   # nothing else evaluates it, and reverting 'd /srv/stacks 0755 1000 1000 -'
   # to root ownership (review finding #10) would keep every suite green while
   # killing GitOps delivery in production: Arcane runs as PUID/PGID 1000, so
@@ -1083,6 +1112,7 @@ in
   # hardware config (see default.nix).
   tmpfiles-ownership =
     mkLint "tmpfiles-ownership" ''
+      ${stackDirsJson} > dirs.json
       ${py} - <<'PY'
       import json, sys
 
@@ -1108,52 +1138,35 @@ in
                           f"dead (review finding #10)")
 
       # --- bind-source parity ---------------------------------------------
-      # hardware-configuration.nix's per-stack tmpfiles rules are kept in
-      # sync with the compose files BY HAND; this leg pins the half that
-      # matters in production: every /mnt/{fast,slow} bind source in the
-      # listed compose files must have a 'd' rule, or docker creates it
-      # root-owned on first deploy (the seerr crash-loop class, review
-      # finding #14 — and even root-is-fine stacks like immich want the
-      # parent dirs to exist with deliberate ownership, not docker's).
-      # COMPOSE_FILES is the one list to extend when a new stack gains
-      # /mnt bind mounts; the parsing below is shared, not copied.
-      import yaml, re
-      COMPOSE_FILES = [
-          ("media", "${repo + "/stacks/media/compose.yaml"}"),
-          ("immich", "${repo + "/stacks/immich/compose.yaml"}"),
-          ("books", "${repo + "/stacks/books/compose.yaml"}"),
-          ("automation", "${repo + "/stacks/automation/compose.yaml"}"),
-          ("tracking", "${repo + "/stacks/tracking/compose.yaml"}"),
-          ("firefly", "${repo + "/stacks/firefly/compose.yaml"}"),
-          ("dawarich", "${repo + "/stacks/dawarich/compose.yaml"}"),
-          ("vaultwarden", "${repo + "/stacks/vaultwarden/compose.yaml"}"),
-          ("notes-sync", "${repo + "/stacks/notes-sync/compose.yaml"}"),
-          ("util", "${repo + "/stacks/util/compose.yaml"}"),
-          ("windmill", "${repo + "/stacks/windmill/compose.yaml"}"),
-          ("tandoor", "${repo + "/stacks/tandoor/compose.yaml"}"),
-          ("wger", "${repo + "/stacks/wger/compose.yaml"}"),
-          ("docspace", "${repo + "/stacks/docspace/compose.yaml"}"),
-          ("gatus", "${repo + "/stacks/gatus/compose.yaml"}"),
-          ("beszel", "${repo + "/stacks/beszel/compose.yaml"}"),
-          ("samba", "${repo + "/stacks/samba/compose.yaml"}"),
-      ]
+      # Every /mnt directory the compose files imply must have a 'd' rule in
+      # the EVALUATED services-VM config, or docker creates it root-owned on
+      # first deploy (the seerr crash-loop class, review finding #14 — and
+      # even root-is-fine stacks like immich want the parent dirs to exist
+      # with deliberate ownership, not docker's).
+      #
+      # The enumeration comes from nixos/generate-stack-dirs.py over a
+      # readDir'd manifest — there is NO list to extend. There used to be:
+      # COMPOSE_FILES named 17 of 22 stacks, so backrest, caddy, forgejo,
+      # ntfy and paperless were never checked and 13 bind sources had no rule
+      # at all. A hand-maintained enumeration inside a lint is not a check,
+      # it is a second thing to forget.
+      #
+      # This leg is NOT redundant with stack-dirs-generated (which compares
+      # the generator's output to the checked-in file): it measures the other
+      # end of the chain, the config that would actually be deployed. It is
+      # what fails if hardware-configuration.nix stops importing
+      # stack-dirs.nix, or if something mkForces the rule list away.
+      enum = json.load(open("dirs.json"))
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
-      sources = set()
-      for stack, path in COMPOSE_FILES:
-          with open(path) as f:
-              compose = yaml.safe_load(f)
-          stack_sources = set()
-          for svc in (compose.get("services") or {}).values():
-              for v in svc.get("volumes") or []:
-                  src = v.split(":")[0] if isinstance(v, str) else (v.get("source") or "")
-                  if re.match(r"/mnt/(fast|slow)/", src):
-                      stack_sources.add(src.rstrip("/"))
-          for src in sorted(stack_sources - d_paths):
-              errs.append(f"{stack} bind source {src} has no tmpfiles 'd' rule "
-                          "in nixos/hardware-configuration.nix — docker will "
-                          "create it root-owned on first deploy")
-          sources |= stack_sources
+      for path, stacks in sorted(enum["directories"].items()):
+          if path not in d_paths:
+              errs.append(f"{'/'.join(stacks)} needs {path}, which has no "
+                          "tmpfiles 'd' rule in the evaluated services-VM "
+                          "config — docker will create it root-owned on first "
+                          "deploy. Run nixos/generate-stack-dirs.sh (and check "
+                          "hardware-configuration.nix still imports "
+                          "./stack-dirs.nix).")
 
       if errs:
           print("/srv/stacks tmpfiles problems:", file=sys.stderr)
@@ -1161,9 +1174,43 @@ in
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
       print("/srv/stacks tmpfiles ownership OK (1000:1000); "
-            f"{len(sources)} bind sources across {len(COMPOSE_FILES)} stacks "
-            "all have 'd' rules")
+            f"{len(enum['sources'])} bind sources across "
+            f"{len(enum['byStack'])} stacks, {len(enum['directories'])} "
+            "directories with them, all have 'd' rules")
       PY
+    '';
+
+  # ---------------------------------------------------------------------------
+  # nixos/stack-dirs.nix is what the generator would write
+  # ---------------------------------------------------------------------------
+  # The services VM's ~112 per-stack `d /mnt/...` rules are GENERATED from the
+  # compose files (nixos/generate-stack-dirs.sh) and checked in, because
+  # nixos/ is its own flake root and a flake cannot reference ../stacks/ — the
+  # same constraint that triplicates ssh-pubkeys.nix, and the same remedy:
+  # regenerate here and byte-compare, so drift is a build failure instead of a
+  # silent gap.
+  #
+  # Byte comparison, not rule-set equality, on purpose. The prose explaining
+  # WHY mosquitto is 1883 or docspace's datadir is 999 is the load-bearing part
+  # of those lines; a check that ignored comments would let it rot away from
+  # the value it explains.
+  #
+  # What this does NOT prove: that an ownership is CORRECT for its image. Only
+  # a suite that boots the container can, and each stack suite does.
+  stack-dirs-generated =
+    mkLint "stack-dirs-generated" ''
+      ${py} ${stackDirsGenerator} --manifest ${stackDirsManifest} > generated.nix
+      if ! diff -u ${repo + "/nixos/stack-dirs.nix"} generated.nix > diff.txt; then
+        echo "nixos/stack-dirs.nix is not what the generator produces." >&2
+        echo >&2
+        sed -e 's/^/  /' diff.txt >&2
+        echo >&2
+        echo "Fix: run ./nixos/generate-stack-dirs.sh and commit the result." >&2
+        echo "Do NOT hand-edit stack-dirs.nix; ownership and prose are decided" >&2
+        echo "in nixos/generate-stack-dirs.py (DIR_NOTES / STACK_NOTES)." >&2
+        exit 1
+      fi
+      echo "nixos/stack-dirs.nix matches the generator ($(grep -c '^    "d ' generated.nix) rules)"
     '';
 
   # ---------------------------------------------------------------------------
@@ -1465,8 +1512,34 @@ in
   #
   # Services named in the loop but not yet built are a WARNING, not an error:
   # the loop legitimately runs ahead of the campaign.
+  #
+  # ---------------------------------------------------------------------------
+  # And the REVERSE direction, which is the one that actually lost data
+  # ---------------------------------------------------------------------------
+  # Everything above walks FROM backup-prepare.sh TO the compose files, so it
+  # can only find a declaration that is wrong. A stack nobody ever mentioned
+  # passes it in silence — which is exactly what happened to Forgejo, the git
+  # root for the whole homelab: no dump line, so its WAL-mode sqlite database
+  # was in the backups only as a torn file copy, and no check had an opinion
+  # because no check ever started from the list of stacks.
+  #
+  # The three reverse legs below start from the compose files instead, using
+  # the same enumeration the tmpfiles rules are generated from
+  # (nixos/generate-stack-dirs.py), so a new stack enters them by existing:
+  #
+  #   1. every /mnt bind source is either inside a Backrest plan and not
+  #      swallowed by one of its excludes, or covered by a dump, or explicitly
+  #      allowlisted with a reason;
+  #   2. every stack has at least one dump, or is allowlisted with a reason
+  #      saying why a raw file copy is consistent for it;
+  #   3. every container running a real database ENGINE is dumped logically —
+  #      a file-level copy of a live datadir generally does not restore.
+  #
+  # Both allowlists are stale-checked: an entry that stops being needed is an
+  # error, so they cannot silently become a list of things nobody rechecked.
   backup-coverage =
     mkLint "backup-coverage" ''
+      ${stackDirsJson} > dirs.json
       ${py} - <<'PY'
       import json, re, sys, os
 
@@ -1486,17 +1559,19 @@ in
       # container actually writes there.
       TIER_MOUNTS = {"/mnt", "/mnt/fast", "/mnt/slow"}
       mounts = set()
-      containers = {}   # container_name -> (stack, env dict)
+      containers = {}   # container_name -> {stack, env, mounts, image}
       for c in manifest:
           with open(c["path"]) as f:
               compose = yaml.safe_load(f)
           for name, svc in (compose.get("services") or {}).items():
+              svc_mounts = set()
               for v in svc.get("volumes") or []:
                   src = v.split(":")[0] if isinstance(v, str) else (v.get("source") or "")
                   if src.startswith("/mnt/"):
                       src = src.rstrip("/")
                       if src not in TIER_MOUNTS:
                           mounts.add(src)
+                          svc_mounts.add(src)
               env = {}
               raw = svc.get("environment") or []
               if isinstance(raw, dict):
@@ -1507,7 +1582,12 @@ in
                       env[k] = v
               cn = svc.get("container_name")
               if cn:
-                  containers[cn] = (c["stack"], env)
+                  containers[cn] = {
+                      "stack": c["stack"],
+                      "env": env,
+                      "mounts": svc_mounts,
+                      "image": svc.get("image") or "",
+                  }
 
       errs, warns = [], []
 
@@ -1544,13 +1624,209 @@ in
                       f"container_name: {cn} — expected while that stack is "
                       f"still on the roadmap, a silent no-dump once it exists")
                   continue
-              stack, env = containers[cn]
+              stack, env = containers[cn]["stack"], containers[cn]["env"]
               if env.get("POSTGRES_USER") != svc:
                   errs.append(
                       f"{stack}: {cn} has POSTGRES_USER="
                       f"{env.get('POSTGRES_USER')!r}, but backup-prepare.sh "
                       f"runs `pg_dumpall -U {svc}`. The dump fails and the "
                       f"only signal is rc=1 in a unit nobody reads.")
+
+      # =====================================================================
+      # REVERSE LEG: start from the stacks, not from the backup script
+      # =====================================================================
+      enum = json.load(open("dirs.json"))
+      plans = json.load(open("${(repo + "/stacks/backrest/config.template.json")}"))["plans"]
+
+      def swallowed(path, excludes):
+          """Is EVERYTHING under `path` excluded from this plan?
+
+          Restic's excludes are path globs; the two shapes that occur here are
+          a literal prefix (/mnt/fast/karakeep/meili/**) and a name anywhere
+          (**/cache/**). A pattern that only matches files inside the
+          directory (**/*.log) is not swallowing, and is ignored.
+          """
+          for pat in excludes:
+              p = pat[:-3] if pat.endswith("/**") else pat
+              if p.startswith("**/"):
+                  tail = p[3:]
+                  if "*" in tail:
+                      continue
+                  parts = path.split("/")
+                  for i in range(len(parts)):
+                      if "/".join(parts[:i + 1]).endswith("/" + tail):
+                          return pat
+              elif path == p or path.startswith(p + "/"):
+                  return pat
+          return None
+
+      # --- what the dumps cover -------------------------------------------
+      # A dump covers a bind source when it reads a file inside it (sqlite) or
+      # when it dumps a container that mounts it (pg/mysql: the dump lands in
+      # /mnt/fast/_dumps, so the datadir itself is what the coverage is FOR).
+      dumped_containers = {cn for cn in containers if re.search(
+          r"(?:docker exec|require_running)\s+" + re.escape(cn) + r"\b", script)}
+      if m:
+          dumped_containers |= {f"{s}_db" for s in m.group(1).split()
+                                if f"{s}_db" in containers}
+      # authentik_db is dumped over ssh from the VPS in the same script; it is
+      # in `containers` via headscale-vps/authentik/compose.yaml but has no
+      # /mnt mount on this host, so it never reaches the path legs below.
+
+      dump_covered = set()
+      for _name, path in calls:
+          for src in mounts:
+              if path == src or path.startswith(src + "/"):
+                  dump_covered.add(src)
+      for cn in dumped_containers:
+          dump_covered |= containers[cn]["mounts"]
+
+      # --- 1. every bind source is backed up, or explicitly is not ---------
+      # Keys are checked for staleness below: when a path stops being a bind
+      # source, or starts being backed up, its entry here becomes an error.
+      NOT_BACKED_UP = {
+          "/mnt/slow/data":
+              "The media library and the download scratch beneath it. Tens to "
+              "hundreds of GB of re-acquirable content, and the slow-volume "
+              "plan is an explicit include list this is deliberately not on. "
+              "The *arr databases that DESCRIBE the library are dumped, so a "
+              "restore rebuilds the metadata and re-acquires the files.",
+          "/mnt/slow/data/downloads": "See /mnt/slow/data — in-flight torrents.",
+          "/mnt/slow/data/media": "See /mnt/slow/data — the library itself.",
+          "/mnt/slow/frigate":
+              "Recordings, clips and exports: re-recordable by definition and "
+              "the largest thing on the host. frigate.db, the event/review "
+              "index that gives them meaning, IS dumped. Adding this path "
+              "would blow the retention budget for everything else.",
+          "/mnt/slow/beszel-fsprobe":
+              "An intentionally EMPTY marker directory. Beszel's agent "
+              "statfs()es it to report the slow tier's usage; there is "
+              "nothing in it to back up, now or ever.",
+          "/mnt/fast/backrest/cache":
+              "restic's own cache (XDG_CACHE_HOME), rebuilt from the "
+              "repository on demand. Backing a backup tool's cache up into "
+              "the repository it caches is circular.",
+          "/mnt/fast/backrest/data":
+              "Backrest's operation log — the UI's history of past runs. Not "
+              "needed to restore: restic reads the repository itself, and the "
+              "credentials for it (RESTIC_PASSWORD, the storage-box key) come "
+              "from sops, not from here.",
+          "/mnt/fast/jellyfin/cache":
+              "Transcodes and image cache, regenerated on demand. "
+              "jellyfin.db and library.db are dumped separately.",
+          "/mnt/fast/ntfy/cache":
+              "ntfy's message cache (cache-file): the recent-message buffer "
+              "for clients that were offline, minutes to hours of value. The "
+              "auth/ACL database in lib/ is the part that matters and it is "
+              "dumped.",
+          "/mnt/fast/shelfmark/tmp":
+              "Download scratch; shelfmark's entrypoint repairs it at every "
+              "start.",
+          "/mnt/fast/immich/model-cache":
+              "The CLIP/face-recognition model weights — several GB, "
+              "re-downloaded on first use, identical for every install.",
+          "/mnt/fast/karakeep/meili":
+              "The Meilisearch index, rebuilt from karakeep's sqlite database "
+              "(which is dumped). Restoring a search index is slower than "
+              "reindexing it.",
+          "/mnt/fast/docspace/logs":
+              "Log output from the monolith's supervisord children.",
+      }
+      uncovered = []
+      for src in sorted(enum["sources"]):
+          stacks = "/".join(enum["sources"][src])
+          if src in dump_covered:
+              continue
+          why_not = "no Backrest plan includes it"
+          for plan in plans:
+              if not any(src == p or src.startswith(p.rstrip("/") + "/")
+                         for p in plan["paths"]):
+                  continue
+              hit = swallowed(src, plan.get("excludes") or [])
+              if not hit:
+                  why_not = None
+                  break
+              why_not = f"plan {plan['id']} excludes it ({hit})"
+          if why_not is None:
+              continue
+          if src in NOT_BACKED_UP:
+              continue
+          uncovered.append(
+              f"{stacks}: {src} holds persistent data and is in NO backup — "
+              f"{why_not}, and no dump in backup-prepare.sh reads it. Either "
+              f"add it (a Backrest plan path, or a dump if it is a live "
+              f"database) or add it to NOT_BACKED_UP in this lint with the "
+              f"reason it is worth nothing. Silence is what lost Forgejo.")
+      errs += uncovered
+
+      for src in sorted(set(NOT_BACKED_UP) - set(enum["sources"])):
+          errs.append(f"stale NOT_BACKED_UP entry {src}: no compose file "
+                      f"bind-mounts it any more. Remove it rather than "
+                      f"leaving a standing exemption.")
+      for src in sorted(set(NOT_BACKED_UP) & dump_covered):
+          errs.append(f"{src} is in NOT_BACKED_UP but backup-prepare.sh now "
+                      f"dumps from it. Remove the exemption.")
+
+      # --- 2. every stack has a dump, or says why it does not --------------
+      # A raw file copy is only consistent for data nothing is writing through
+      # a journal. This is the leg Forgejo needed: its tree WAS in the
+      # fast-volume plan, so leg 1 was happy, and the file it was copying was a
+      # live WAL-mode sqlite database.
+      STACKS_WITHOUT_DUMPS = {
+          "backrest":
+              "No database. config.json is re-seeded from "
+              "config.template.json + .sops.env by config-init on every "
+              "deploy, and nothing else here is needed to restore FROM the "
+              "repository.",
+          "caddy":
+              "No database. data/ holds the ACME account key and issued "
+              "certificates and config/ holds Caddy's autosave — both are "
+              "re-obtained from Let's Encrypt on a fresh start (DNS-01, "
+              "credentials in sops). Raw-copied by the fast-volume plan "
+              "anyway.",
+          "notes-sync":
+              "No database engine. rmfakecloud's store and syncthing's "
+              "config and synced trees are plain files, consistent as a raw "
+              "copy; syncthing's index-v2 is excluded from the plan and "
+              "rebuilt from the files themselves.",
+          "samba":
+              "No database — it is a file share. Its tree is "
+              "/mnt/slow/samba/shared, which slow-volume-selective includes "
+              "by name.",
+      }
+      stacks_with_dumps = {s for src in dump_covered
+                           for s in enum["sources"].get(src, [])}
+      for stack in sorted(enum["byStack"]):
+          if stack in stacks_with_dumps or stack in STACKS_WITHOUT_DUMPS:
+              continue
+          errs.append(
+              f"stack {stack!r} keeps persistent data in "
+              f"{', '.join(enum['byStack'][stack])} and backup-prepare.sh "
+              f"dumps NOTHING for it. If it has a database, a raw copy of it "
+              f"inside the Backrest plan is a torn snapshot, not a backup "
+              f"(Forgejo, for a year). If it genuinely has none, add it to "
+              f"STACKS_WITHOUT_DUMPS with the reason.")
+      for stack in sorted(set(STACKS_WITHOUT_DUMPS) - set(enum["byStack"])):
+          errs.append(f"stale STACKS_WITHOUT_DUMPS entry {stack!r}: it has no "
+                      f"/mnt bind mounts any more. Remove it.")
+      for stack in sorted(set(STACKS_WITHOUT_DUMPS) & stacks_with_dumps):
+          errs.append(f"{stack} is in STACKS_WITHOUT_DUMPS but now has a dump. "
+                      f"Remove the exemption.")
+
+      # --- 3. every database ENGINE is dumped logically --------------------
+      # Redis is deliberately not on this list: the two instances that persist
+      # anything (dawarich's sidekiq queue, wger's cache) hold reconstructible
+      # state, and their append-only files raw-copy acceptably.
+      ENGINE_RE = re.compile(r"(postgres|postgis|mariadb|mysql)", re.I)
+      for cn, info in sorted(containers.items()):
+          if not ENGINE_RE.search(info["image"]) or cn in dumped_containers:
+              continue
+          errs.append(
+              f"{info['stack']}: {cn} runs a database engine "
+              f"({info['image']}) that backup-prepare.sh never dumps. A "
+              f"file-level copy of a live datadir does not reliably restore, "
+              f"and the plans exclude **/pgdata/** precisely because of that "
+              f"— so this database is currently in no backup at all.")
 
       for w in warns:
           print("  WARN " + w, file=sys.stderr)
@@ -1560,7 +1836,12 @@ in
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
       print(f"Backup coverage OK ({len(calls)} sqlite paths, "
-            f"{len(warns)} not-yet-built)")
+            f"{len(warns)} not-yet-built); reverse leg: "
+            f"{len(enum['sources'])} bind sources across "
+            f"{len(enum['byStack'])} stacks, "
+            f"{len(NOT_BACKED_UP)} paths and {len(STACKS_WITHOUT_DUMPS)} "
+            f"stacks exempt by name, "
+            f"{len(dumped_containers)} database containers dumped")
       PY
     '';
 
