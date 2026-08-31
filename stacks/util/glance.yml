@@ -1,0 +1,136 @@
+# Glance dashboard configuration.
+#
+# Shipped in the stack directory rather than /mnt/fast so Arcane's
+# syncDirectory delivers it alongside compose.yaml; the container mounts it
+# read-only at the path its ENTRYPOINT hardcodes.
+#
+# TWO RULES THIS FILE FOLLOWS, both load-bearing:
+#
+#   1. NO WIDGET MAY REQUIRE EGRESS. Glance fetches widget content inside the
+#      page-content request handler and wg.Wait()s on every widget goroutine,
+#      so a widget that cannot reach the internet does not degrade — it stalls
+#      the whole page until that widget's HTTP client times out. This host is
+#      tailnet-only. `rss`, `reddit`, `weather`, `hacker-news` and friends are
+#      therefore deliberately absent; add them only if this host ever gets
+#      general egress, and expect the page to be as slow as the slowest feed.
+#
+#   2. NO `auth:` BLOCK. Glance's own login stays off and Caddy's (protected)
+#      snippet does the work — one login instead of two, and this is a
+#      browser-only dashboard so forward auth costs nothing. There is also a
+#      sharp edge behind the loopback publish: docker-proxy re-dials from the
+#      bridge gateway, so every request looks like it comes from one address,
+#      and Glance blocks an IP after 5 failed logins in 5 minutes. Turning its
+#      auth on WITHOUT also setting `server.proxied: true` means the first five
+#      typos lock out everybody at once.
+#
+# ${ENV_VAR} substitution is a HARD STARTUP ERROR on a missing variable, which
+# is the good kind of loud — but it means no placeholder may be spelled that
+# way here.
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  # Read X-Forwarded-* from Caddy. Currently only affects logging, since auth
+  # is off — but it must be true before auth is ever turned on (see rule 2).
+  proxied: true
+
+theme:
+  background-color: 225 14 15
+  primary-color: 210 60 70
+  contrast-multiplier: 1.1
+
+pages:
+  - name: Home
+    columns:
+      - size: small
+        widgets:
+          - type: clock
+            hour-format: 24h
+            timezones:
+              - timezone: America/Chicago
+                label: Home
+
+      - size: full
+        widgets:
+          - type: bookmarks
+            groups:
+              - title: Media
+                links:
+                  - title: Jellyfin
+                    url: https://jellyfin.svc.idanreed.com
+                  - title: Seerr
+                    url: https://seerr.svc.idanreed.com
+                  - title: Radarr
+                    url: https://radarr.svc.idanreed.com
+                  - title: Sonarr
+                    url: https://sonarr.svc.idanreed.com
+                  - title: Bazarr
+                    url: https://bazarr.svc.idanreed.com
+                  - title: Prowlarr
+                    url: https://prowlarr.svc.idanreed.com
+
+              - title: Books
+                links:
+                  - title: Kavita
+                    url: https://kavita.svc.idanreed.com
+                  - title: Audiobookshelf
+                    url: https://audiobookshelf.svc.idanreed.com
+                  - title: Shelfmark
+                    url: https://shelfmark.svc.idanreed.com
+
+              - title: Home
+                links:
+                  - title: Home Assistant
+                    url: https://homeassistant.svc.idanreed.com
+                  - title: Frigate
+                    url: https://frigate.svc.idanreed.com
+
+              - title: Personal
+                links:
+                  - title: Immich
+                    url: https://immich.svc.idanreed.com
+                  - title: Paperless
+                    url: https://paperless.svc.idanreed.com
+                  - title: BookStack
+                    url: https://bookstack.svc.idanreed.com
+                  - title: Homebox
+                    url: https://homebox.svc.idanreed.com
+                  - title: Karakeep
+                    url: https://karakeep.svc.idanreed.com
+                  - title: Firefly III
+                    url: https://firefly.svc.idanreed.com
+                  - title: Dawarich
+                    url: https://dawarich.svc.idanreed.com
+                  - title: Vaultwarden
+                    url: https://vaultwarden.svc.idanreed.com
+                  - title: rmfakecloud
+                    url: https://rmfakecloud.svc.idanreed.com
+                  - title: Syncthing
+                    url: https://syncthing.svc.idanreed.com
+
+              - title: Tools
+                links:
+                  - title: BentoPDF
+                    url: https://bentopdf.svc.idanreed.com
+                  - title: Mazanoke
+                    url: https://mazanoke.svc.idanreed.com
+                  - title: IT-Tools
+                    url: https://it-tools.svc.idanreed.com
+                  - title: ExcaliDash
+                    url: https://excalidash.svc.idanreed.com
+
+              - title: Infrastructure
+                links:
+                  - title: Arcane
+                    url: https://arcane.svc.idanreed.com
+                  - title: Backrest
+                    url: https://backrest.svc.idanreed.com
+                  - title: Forgejo
+                    url: https://forgejo.svc.idanreed.com
+                  - title: Authentik
+                    url: https://auth.idanreed.com
+
+      - size: small
+        widgets:
+          - type: calendar
+            first-day-of-week: monday

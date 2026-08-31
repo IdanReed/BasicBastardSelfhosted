@@ -282,6 +282,309 @@ entries:
       meta_description: "NVR and object detection"
 
   # ===========================================
+  # Firefly stack (stacks/firefly): both vhosts
+  # ===========================================
+  # Firefly III is the only service in the fleet for which forward auth is
+  # the ONLY possible SSO path — there is no OIDC in core at v6.6.6 or on
+  # develop and the feature is milestoned v9.0.0 with no date. It is also the
+  # highest-stakes entry here: its remote_user_guard does no validation of the
+  # header at all, so whatever string the outpost sends IS the account, and
+  # the first one becomes the owner. Deploy this file and rebuild the VPS
+  # BEFORE the Caddy route syncs.
+  #
+  # skip_path_regex is what makes the API usable: Firefly authenticates API
+  # requests with Passport personal access tokens under a SEPARATE guard, and
+  # without this exclusion the outpost 302s every bearer-token client to a
+  # login page before Firefly ever sees the token. It is scoped to ^/api/.*
+  # only — the browser UI, /profile and /oauth stay protected.
+  - model: authentik_providers_proxy.proxyprovider
+    id: firefly-provider
+    state: present
+    identifiers:
+      name: firefly
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://firefly.svc.idanreed.com
+      skip_path_regex: "^/api/.*"
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: firefly-app
+    state: present
+    identifiers:
+      slug: firefly
+    attrs:
+      name: Firefly III
+      provider: !KeyOf firefly-provider
+      policy_engine_mode: any
+      meta_description: "Personal finance manager"
+
+  # The data importer is a SEPARATE provider rather than a second host on the
+  # Firefly one, because the embedded outpost matches forward-auth requests by
+  # external_host — one provider answers for exactly one hostname in
+  # forward_single mode.
+  #
+  # Its UI has no authentication of its own and cannot be given any in PAT
+  # mode, while holding a full-privilege Firefly API token. No skip_path_regex:
+  # it has no API clients, and its calls to firefly:8080 ride the compose
+  # network without touching Caddy.
+  - model: authentik_providers_proxy.proxyprovider
+    id: firefly-importer-provider
+    state: present
+    identifiers:
+      name: firefly-importer
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://firefly-importer.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: firefly-importer-app
+    state: present
+    identifiers:
+      slug: firefly-importer
+    attrs:
+      name: Firefly III Data Importer
+      provider: !KeyOf firefly-importer-provider
+      policy_engine_mode: any
+      meta_description: "CSV / SimpleFIN import for Firefly III"
+
+  # Tracking and dawarich stacks are deliberately ABSENT: bookstack, homebox,
+  # karakeep and dawarich all drive their own native OIDC (their own -oidc
+  # blueprints, once the client secrets exist). Dawarich in particular must
+  # NEVER be added here — its tracker clients pass an API key in the query
+  # string and cannot follow a redirect, so the exclusion list would be its
+  # entire data plane.
+
+  # ===========================================
+  # Vaultwarden (stacks/vaultwarden): /admin ONLY
+  # ===========================================
+  # The only entry here whose Caddy route protects a PATH rather than a host:
+  # stacks/caddy/Caddyfile imports (protected) inside a `path /admin*` handle
+  # and leaves everything else unauthenticated by Authentik, because every
+  # Bitwarden client authenticates with a bearer token and the notification
+  # websocket is on the same port — a 302 there makes clients fall back to
+  # polling silently.
+  #
+  # external_host is still the BARE VHOST, not a path: the embedded outpost
+  # matches forward-auth requests by X-Forwarded-Host and has no concept of the
+  # path Caddy chose to send it. Restricting which paths are protected is
+  # Caddy's job and Caddy's alone.
+  #
+  # Note DISABLE_ADMIN_TOKEN is deliberately NOT set on the container — the
+  # argon2 ADMIN_TOKEN stays in place alongside this, so a forward-auth outage
+  # still leaves a way in and a leaked token still needs an Authentik session.
+  - model: authentik_providers_proxy.proxyprovider
+    id: vaultwarden-provider
+    state: present
+    identifiers:
+      name: vaultwarden
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://vaultwarden.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: vaultwarden-app
+    state: present
+    identifiers:
+      slug: vaultwarden-admin
+    attrs:
+      name: Vaultwarden Admin
+      provider: !KeyOf vaultwarden-provider
+      policy_engine_mode: any
+      meta_description: "Vaultwarden server administration panel (/admin only)"
+
+  # ===========================================
+  # Notes/Sync stack (stacks/notes-sync): syncthing GUI only
+  # ===========================================
+  # rmfakecloud is deliberately ABSENT and must stay that way: the reMarkable
+  # is a non-interactive JWT client and roughly forty of its ~forty-five routes
+  # are tablet paths, so a forward-auth exclusion list would be the entire data
+  # plane. It authenticates its own /ui/* with argon2id + JWT.
+  #
+  # Syncthing's GUI is a browser surface and gets the full treatment. Note the
+  # container ALSO keeps its own seeded user/password: the API key is a
+  # full-admin credential that bypasses GUI auth, so anything reaching the port
+  # directly must still meet a lock. The Caddy route strips a client-supplied
+  # X-API-Key for the same reason.
+  - model: authentik_providers_proxy.proxyprovider
+    id: syncthing-provider
+    state: present
+    identifiers:
+      name: syncthing
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://syncthing.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: syncthing-app
+    state: present
+    identifiers:
+      slug: syncthing
+    attrs:
+      name: Syncthing
+      provider: !KeyOf syncthing-provider
+      policy_engine_mode: any
+      meta_description: "File synchronisation (web GUI)"
+
+  # ===========================================
+  # Util stack (stacks/util): glance and it-tools
+  # ===========================================
+  # BentoPDF is already above as the pilot. ExcaliDash is deliberately ABSENT:
+  # it drives its own OIDC (AUTH_MODE=oidc_enforced, so it is CLOSED even with
+  # the client secret still blank) and stacking forward auth on top would mean
+  # two logins once OIDC works. Mazanoke has no entry because its Caddy route
+  # does not import protected — it is a purely client-side image optimiser.
+  - model: authentik_providers_proxy.proxyprovider
+    id: glance-provider
+    state: present
+    identifiers:
+      name: glance
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://glance.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: glance-app
+    state: present
+    identifiers:
+      slug: glance
+    attrs:
+      name: Glance
+      provider: !KeyOf glance-provider
+      policy_engine_mode: any
+      meta_description: "Feed and service-link dashboard"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: it-tools-provider
+    state: present
+    identifiers:
+      name: it-tools
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://it-tools.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: it-tools-app
+    state: present
+    identifiers:
+      slug: it-tools
+    attrs:
+      name: IT-Tools
+      provider: !KeyOf it-tools-provider
+      policy_engine_mode: any
+      meta_description: "Client-side developer utilities"
+
+  # ===========================================
+  # Infra: arcane and mazanoke
+  # ===========================================
+  # 🚨 arcane is the highest-privilege entry in this file. It mounts the Docker
+  # socket, so its web UI is root-equivalent on the services VM, and its
+  # _overview.md row has claimed FwdAuth since before the route existed — the
+  # `auth-column-parity` lint is what finally caught the gap. Deploy this file
+  # and rebuild the VPS BEFORE the Caddy route syncs: the tool you would
+  # normally use to fix a bad deploy IS Arcane.
+  #
+  # mazanoke is the mundane other half of the same lint failure: a client-side
+  # image optimiser with no auth of its own, marked FwdAuth and not protected.
+  - model: authentik_providers_proxy.proxyprovider
+    id: arcane-provider
+    state: present
+    identifiers:
+      name: arcane
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://arcane.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: arcane-app
+    state: present
+    identifiers:
+      slug: arcane
+    attrs:
+      name: Arcane
+      provider: !KeyOf arcane-provider
+      policy_engine_mode: any
+      meta_description: "Container and stack management (ROOT-EQUIVALENT: mounts the Docker socket)"
+
+  - model: authentik_providers_proxy.proxyprovider
+    id: mazanoke-provider
+    state: present
+    identifiers:
+      name: mazanoke
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://mazanoke.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: mazanoke-app
+    state: present
+    identifiers:
+      slug: mazanoke
+    attrs:
+      name: Mazanoke
+      provider: !KeyOf mazanoke-provider
+      policy_engine_mode: any
+      meta_description: "Client-side image optimiser"
+
+  # ===========================================
+  # Windmill (stacks/windmill)
+  # ===========================================
+  # Forward auth is the ONLY SSO Windmill can have — OIDC is an Enterprise
+  # feature and the OSS build has no path to it. Note this gates ACCESS only:
+  # Windmill does not read X-Authentik-* headers, so users still log in with a
+  # local Windmill account afterwards.
+  #
+  # NO skip_path_regex here, deliberately. Carving out ^/api/.* would expose
+  # the entire authenticated API to anyone who can reach the vhost. In-fleet
+  # callers use the loopback/bridge address instead, which never traverses
+  # Caddy — see the Caddyfile handle.
+  - model: authentik_providers_proxy.proxyprovider
+    id: windmill-provider
+    state: present
+    identifiers:
+      name: windmill
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://windmill.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: windmill-app
+    state: present
+    identifiers:
+      slug: windmill
+    attrs:
+      name: Windmill
+      provider: !KeyOf windmill-provider
+      policy_engine_mode: any
+      meta_description: "Workflow orchestration (browser access only)"
+
+  # ===========================================
   # Embedded outpost assignment
   # ===========================================
   # The embedded outpost ships with authentik itself and answers on the server
@@ -320,3 +623,12 @@ entries:
         - !KeyOf cleanuparr-provider
         - !KeyOf shelfmark-provider
         - !KeyOf frigate-provider
+        - !KeyOf firefly-provider
+        - !KeyOf firefly-importer-provider
+        - !KeyOf vaultwarden-provider
+        - !KeyOf syncthing-provider
+        - !KeyOf glance-provider
+        - !KeyOf it-tools-provider
+        - !KeyOf arcane-provider
+        - !KeyOf mazanoke-provider
+        - !KeyOf windmill-provider

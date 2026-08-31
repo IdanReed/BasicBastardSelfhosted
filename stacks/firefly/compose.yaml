@@ -1,0 +1,229 @@
+# Firefly III + data importer — personal finance (Tracking range, ports
+# 10303 and 10305). Design: ServerNotes/designs/custom-finance.md and
+# ServerNotes/designs/service-tracking-stack-research.md (the annex).
+# _overview.md owns the port/auth rows.
+#
+# THIS IS ONE OF THREE STACKS IN THE TRACKING RANGE (annex §1). The other two
+# are stacks/tracking (10300-10302) and stacks/dawarich (10304). The lints key
+# on ports, not stack names, so all three stay inside 10300-10349.
+#
+# 🚨 THIS IS THE ONLY STACK IN THE FLEET WHOSE AUTHENTICATION IS ENTIRELY
+# OUTSIDE ITSELF. Firefly has no OIDC at v6.6.6 or on develop — the feature is
+# milestoned v9.0.0 with no date — so forward auth is the only SSO path, and
+# `remote_user_guard` does NO VALIDATION of the header it trusts: whatever
+# string arrives IS the account, and the first one seen becomes the owner.
+# Everything below that looks paranoid is load-bearing:
+#   - the publish is 127.0.0.1 only, so the container is unreachable except
+#     through Caddy's `import protected` handle;
+#   - the header is spelled HTTP_X_AUTHENTIK_EMAIL, i.e. one the Authentik
+#     outpost sets and Caddy's copy_headers overwrites on every request;
+#   - the importer, which has NO authentication of its own and holds a
+#     full-privilege API token, gets its own Authentik application rather than
+#     riding Firefly's.
+#
+# Backup contract: `firefly_db` is dumped by nixos/backup-prepare.sh's
+# pg_dumpall loop, which builds `container_name` as "<svc>_db" and runs
+# `pg_dumpall -U <svc>` — both the container_name and POSTGRES_USER=firefly
+# below are load-bearing. Attachments live in /mnt/fast/firefly/upload and are
+# covered by the fast-volume plan's include set.
+
+services:
+  # ---------------------------------------------------------------------------
+  # firefly — the application.
+  #
+  # Runs as 33:33 (www-data). PUID/PGID are INERT here: the image ends on
+  # `USER www-data` at build time and never invokes an id-remap entrypoint, so
+  # /mnt/fast/firefly/upload must be pre-owned 33:33 by tmpfiles. Getting that
+  # wrong produces a container that starts, serves, and fails only when someone
+  # attaches a receipt.
+  # ---------------------------------------------------------------------------
+  firefly:
+    # Docker tag `version-6.6.6`; the git tag is `v6.6.6`, and `version-6.6.5`
+    # does not exist (upstream skipped it). Bump CORE FIRST, importer second —
+    # the importer hard-gates on core >= 6.6.0 at runtime.
+    image: fireflyiii/core:version-6.6.6
+    container_name: firefly
+    depends_on:
+      firefly_db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10303:8080'
+    volumes:
+      - /mnt/fast/firefly/upload:/var/www/html/storage/upload
+    environment:
+      - TZ=America/Chicago
+      - DEFAULT_LANGUAGE=en_US
+      - APP_URL=https://firefly.svc.idanreed.com
+      # `**` is upstream's own documented value for "behind a reverse proxy"
+      # (.env.example: "Set it to ** and reverse proxies work just fine"). It
+      # is safe precisely because the publish is loopback-only.
+      - TRUSTED_PROXIES=**
+      - SITE_OWNER=idan@idanreed.com
+      - DB_CONNECTION=pgsql
+      - DB_HOST=firefly_db
+      - DB_PORT=5432
+      - DB_DATABASE=firefly
+      - DB_USERNAME=firefly
+      # ---- Forward auth. Read the three notes; each is a silent failure. ----
+      - AUTHENTICATION_GUARD=remote_user_guard
+      # 🚨 The default is `REMOTE_USER`, and it CAN NEVER MATCH: RemoteUserGuard
+      # reads request()->server($header), i.e. the raw $_SERVER bag, and the
+      # image's nginx never sets REMOTE_USER. Inbound HTTP headers arrive there
+      # CGI-mangled, so `X-Authentik-Email` must be spelled like this. The
+      # diagnostic when it is wrong is a specific error page: "configured to
+      # use the 'remote user guard', but was unable to link you to a user".
+      - AUTHENTICATION_GUARD_HEADER=HTTP_X_AUTHENTIK_EMAIL
+      # Same header again, deliberately. This one is stored as the user's
+      # `remote_guard_alt_email` preference rather than as the login itself,
+      # and it has NO default at all — leaving it unset means Firefly holds no
+      # email for the account and cannot send it anything.
+      - AUTHENTICATION_GUARD_EMAIL=HTTP_X_AUTHENTIK_EMAIL
+      # ⚠ NEVER set FIREFLY_III_CLIENT_ID: /oauth/authorize requires a
+      # StatefulGuard and RemoteUserGuard is not one, so the OAuth flow fatals.
+      # Declared unfixable upstream. Personal access tokens only — which is why
+      # minting one is an operator step (see .sops.env.example).
+      #
+      # ---- Healthcheck: the fix is this env var, not a compose stanza. ----
+      # The image DOES ship a HEALTHCHECK (5s interval, 300s start period,
+      # exactly right for Firefly's slow first migration) and it curls
+      # http://localhost:8080$HEALTHCHECK_PATH. The default value
+      # `/healthcheck` is a LIE: nginx routes it to php-fpm's own
+      # `ping.path`/`ping.response = OK`, which answers before Laravel is ever
+      # invoked — so it reports healthy against a dead database. `/health` is
+      # a real Laravel route that runs User::count(). Changing the variable
+      # repairs the builtin probe rather than replacing it, which is why there
+      # is no `healthcheck:` block below.
+      - HEALTHCHECK_PATH=/health
+      # ---- Offline / quiet. ----
+      # Both already default false at v6.6.6; set explicitly because they are
+      # the two settings that would otherwise reach out from a tailnet-only
+      # host, and because the env var only seeds the admin-UI value — so the
+      # intent needs to be written down somewhere.
+      - ENABLE_EXTERNAL_MAP=false
+      - ENABLE_EXTERNAL_RATES=false
+      # Defaults TRUE: mails a stack trace to SITE_OWNER on every exception.
+      - SEND_ERROR_MESSAGE=false
+      # There is no SMTP server on this host and no env var to disable the
+      # update check (it is gated on an admin-UI setting that defaults off).
+      - MAIL_MAILER=log
+      # APP_KEY and DB_PASSWORD and STATIC_CRON_TOKEN arrive from .env.
+      # ⚠ APP_KEY must be EXACTLY 32 characters (or `base64:` + 32 bytes). A
+      # wrong LENGTH fails as "Auth driver [remote_user_guard] for guard
+      # [remote_user_guard] is not defined" — the encrypter fails during config
+      # resolution and guard registration collapses downstream, so the message
+      # points at the auth config. Expect to lose an afternoon to it.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
+    # sync of the whole stack.
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # firefly_db — PostgreSQL.
+  #
+  # Stay on 17: postgres:18-alpine moved PGDATA to
+  # /var/lib/postgresql/18/docker while 17 uses /var/lib/postgresql/data.
+  # The PATCH version is pinned, not the `17-alpine` minor alias — and it is
+  # deliberately the same string paperless already uses, so the two stacks
+  # share one entry in tests/images.nix and one image on the host.
+  # ---------------------------------------------------------------------------
+  firefly_db:
+    image: postgres:17.9-alpine
+    container_name: firefly_db
+    volumes:
+      - /mnt/fast/firefly/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=firefly
+      - POSTGRES_DB=firefly
+      # POSTGRES_PASSWORD arrives from .env and must match DB_PASSWORD.
+    # Long form with required:false ON PURPOSE (finding #11): see firefly.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # -U is required: pg_isready defaults to the OS user (root here), which
+      # does not exist as a role, so without it this reports "no response"
+      # against a perfectly healthy server.
+      test: ['CMD-SHELL', 'pg_isready -U firefly -d firefly']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # firefly_importer — the data importer (CSV, camt.053, SimpleFIN, Nordigen).
+  #
+  # 🚨 IT HAS NO AUTHENTICATION AND CANNOT BE GIVEN ANY in personal-access-
+  # token mode, while holding a token with full access to every transaction in
+  # Firefly. Its own Authentik application (firefly-importer.svc.idanreed.com,
+  # see headscale-vps/authentik/blueprints/custom/forward-auth.yaml) is a HARD
+  # REQUIREMENT, not defence in depth. Do not merge it into Firefly's provider:
+  # the embedded outpost matches forward-auth requests by external_host, and
+  # one forward_single provider answers for exactly one hostname.
+  #
+  # No volume: its state is uploaded import configurations held in the session,
+  # which are re-uploadable, and upstream ships no volume either. It talks to
+  # Firefly over the compose network, so those calls never traverse Caddy and
+  # are unaffected by forward auth.
+  # ---------------------------------------------------------------------------
+  firefly_importer:
+    # The importer's repo carries BOTH tag conventions live — modern
+    # `version-2.3.4` with no `v`, legacy `version-v1.0.x` with one — and its
+    # `-cli` variants are a DIFFERENT image (headless, no webserver). Core and
+    # importer version independently (6.x vs 2.x); never assume matching pins.
+    image: fireflyiii/data-importer:version-2.3.4
+    container_name: firefly_importer
+    depends_on:
+      # service_healthy, not service_started: the importer checks
+      # GET {FIREFLY_III_URL}/api/v1/about at runtime and hard-gates on core
+      # >= 6.6.0 (config/importer.php: minimum_version), so starting it against
+      # a still-migrating Firefly just produces a confusing version error.
+      firefly:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10305:8080'
+    environment:
+      - TZ=America/Chicago
+      # Internal, over the compose network — this is what the version gate and
+      # every API call use. No trailing slash, scheme included.
+      - FIREFLY_III_URL=http://firefly:8080
+      # The browser-facing name, used to build links back into Firefly. If
+      # VANITY_URL is set then FIREFLY_III_URL must be too, per .env.example.
+      - VANITY_URL=https://firefly.svc.idanreed.com
+      - TRUSTED_PROXIES=**
+      - EXPECT_SECURE_URL=true
+      # Same php-fpm ping lie as the core image, same one-variable fix. The
+      # importer's /health is a bare 200 with no upstream check, so it proves
+      # the process is up and nothing more — it will NOT detect a broken
+      # connection to Firefly. That is what the suite is for.
+      - HEALTHCHECK_PATH=/health
+      # CAN_POST_AUTOIMPORT, CAN_POST_FILES and IMPORT_DIR_ALLOWLIST are
+      # deliberately UNSET. They turn on unauthenticated POST endpoints gated
+      # only by AUTO_IMPORT_SECRET, on a service that already has no auth of
+      # its own; a scheduled import is not worth that. Turn them on together
+      # with a >=16-character secret if it is ever wanted.
+      #
+      # FIREFLY_III_ACCESS_TOKEN arrives from .env and must be minted BY HAND
+      # once (see .sops.env.example) — there is no CLI and no API path to it.
+      # The importer runs, and its UI loads, with the token unset; it simply
+      # cannot talk to Firefly until it is set.
+    # Long form with required:false ON PURPOSE (finding #11): see firefly.
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+# NO cron sidecar here, deliberately. Upstream's compose adds an `alpine`
+# container that runs `apk add tzdata` AT CONTAINER START and then loops on
+# wget — which is finding #4 in tests/README.md (a container that fetches from
+# the network to become functional is a stack that breaks when the network
+# does). Firefly's recurring transactions, bill reminders and auto-budgets
+# instead come from a systemd timer on the host hitting
+# GET /api/v1/cron/$STATIC_CRON_TOKEN — see nixos/configuration.nix. That
+# route takes no auth and the token must be EXACTLY 32 characters; at any
+# other length it falls through to per-user token handling and 500s.

@@ -37,8 +37,8 @@
   "clamav_clamav_1_5" = {
     composeRef = "clamav/clamav:1.5";
     imageName = "clamav/clamav";
-    imageDigest = "sha256:0e85467cb0d6e7d860a45035707741cd5ffc032ffefc6002a3510c75b6d07027";
-    hash = "sha256-mUR3XaloyMm6DTxlGB/BBLfTlDQISAc4yfmkoRMM1/Y=";
+    imageDigest = "sha256:f0954d679017eb6d48221e2b2be3ac5457bf278a844f39b672376f55a085f591";
+    hash = "sha256-cWHxno7evBi8pCnFvXlRAwMbJrYdcjd9xa6tzcheA9k=";
     finalImageName = "clamav/clamav";
     finalImageTag = "1.5";
   };
@@ -50,6 +50,22 @@
     finalImageName = "codeberg.org/forgejo/forgejo";
     finalImageTag = "16.0";
   };
+  "corentinth_it-tools_2024_10_22-7ca5933" = {
+    composeRef = "corentinth/it-tools:2024.10.22-7ca5933";
+    imageName = "corentinth/it-tools";
+    imageDigest = "sha256:8b8128748339583ca951af03dfe02a9a4d7363f61a216226fc28030731a5a61f";
+    hash = "sha256-+XnDXJcbgU9VoakkAGEui2Sv/vnejRVdg/qaFWHDejk=";
+    finalImageName = "corentinth/it-tools";
+    finalImageTag = "2024.10.22-7ca5933";
+  };
+  "ddvk_rmfakecloud_0_0_31" = {
+    composeRef = "ddvk/rmfakecloud:0.0.31";
+    imageName = "ddvk/rmfakecloud";
+    imageDigest = "sha256:2f5c45cbf0c53a5fb7bc38c97dd9d26d3701c5a5e04d0e9206311ba258c32fac";
+    hash = "sha256-FKF23Abhdcc1k9WAKR37G4S5gWsEogDQ40g4/cq+1oM=";
+    finalImageName = "ddvk/rmfakecloud";
+    finalImageTag = "0.0.31";
+  };
   "eclipse-mosquitto_2_0_22" = {
     composeRef = "eclipse-mosquitto:2.0.22";
     imageName = "eclipse-mosquitto";
@@ -58,6 +74,30 @@
     finalImageName = "eclipse-mosquitto";
     finalImageTag = "2.0.22";
   };
+  "fireflyiii_core_version-6_6_6" = {
+    composeRef = "fireflyiii/core:version-6.6.6";
+    imageName = "fireflyiii/core";
+    imageDigest = "sha256:ae69fdd95cdef9038cd7a460a5aec731f14813973e4f096511d5a4ea9ff0e972";
+    hash = "sha256-iFqkIHBU4R7F66Nty9WFyRug+oMD/2ACLamHds8njtY=";
+    finalImageName = "fireflyiii/core";
+    finalImageTag = "version-6.6.6";
+  };
+  "fireflyiii_data-importer_version-2_3_4" = {
+    composeRef = "fireflyiii/data-importer:version-2.3.4";
+    imageName = "fireflyiii/data-importer";
+    imageDigest = "sha256:26459e1f014544f1ae56d1beed9c6a0ddf208b1eaa24cf11fa77ebd1f51422c8";
+    hash = "sha256-7a0Ge9he4PGAeDsF3h1wlqqo97r7Y25jQlPrK6yc0Ls=";
+    finalImageName = "fireflyiii/data-importer";
+    finalImageTag = "version-2.3.4";
+  };
+  "freikin_dawarich_1_14_0" = {
+    composeRef = "freikin/dawarich:1.14.0";
+    imageName = "freikin/dawarich";
+    imageDigest = "sha256:f251f08d6330a9b22506c862407e53b0b4aec620a63953a446e19cd610d7d476";
+    hash = "sha256-VsWtODv4u5QE/TbUkffYgvdNy6gHR1SK4h6Ece84K0k=";
+    finalImageName = "freikin/dawarich";
+    finalImageTag = "1.14.0";
+  };
   "garethgeorge_backrest_v1_9_1" = {
     composeRef = "garethgeorge/backrest:v1.9.1";
     imageName = "garethgeorge/backrest";
@@ -65,6 +105,14 @@
     hash = "sha256-lxt64sZTGpYrxVZFPp4jlbl8ai/bd9C6i2h835jyO74=";
     finalImageName = "garethgeorge/backrest";
     finalImageTag = "v1.9.1";
+  };
+  "getmeili_meilisearch_v1_41_0" = {
+    composeRef = "getmeili/meilisearch:v1.41.0";
+    imageName = "getmeili/meilisearch";
+    imageDigest = "sha256:860fa4baed04ae1c235de870edab0c8006227546dea1bbb6411fbfc5e27cf1db";
+    hash = "sha256-8l73wnHweuexM9dc7yZCV4+T96vx70PCcRx7Q8FrjmE=";
+    finalImageName = "getmeili/meilisearch";
+    finalImageTag = "v1.41.0";
   };
   "ghcr_io_advplyr_audiobookshelf_2_36_0" = {
     composeRef = "ghcr.io/advplyr/audiobookshelf:2.36.0";
@@ -178,6 +226,22 @@
     finalImageName = "ghcr.io/immich-app/postgres";
     finalImageTag = "17-vectorchord1.1.1";
   };
+  "ghcr_io_karakeep-app_karakeep_0_33_2" = {
+    composeRef = "ghcr.io/karakeep-app/karakeep:0.33.2";
+    imageName = "ghcr.io/karakeep-app/karakeep";
+    imageDigest = "sha256:b069e4307dec06ea06d16989c6861c30a1ff208568be44ed5fb5d422cd3e950c";
+    hash = "sha256-HzE4SHDwIEdB7/4v61MzyjjWhDc5gY7DSd2+WqDLPbo=";
+    finalImageName = "ghcr.io/karakeep-app/karakeep";
+    finalImageTag = "0.33.2";
+  };
+  "ghcr_io_karakeep-app_karakeep-chrome_151_0_7922_47-r1" = {
+    composeRef = "ghcr.io/karakeep-app/karakeep-chrome:151.0.7922.47-r1";
+    imageName = "ghcr.io/karakeep-app/karakeep-chrome";
+    imageDigest = "sha256:5b19bbb160e9ff60681a3abd97e1c4ec9f64212301410de658c3900ab7ef31e7";
+    hash = "sha256-ypbGcOEpuUSZoEZr1x0keH+WCBDOz0HiH0iqKhcJQlI=";
+    finalImageName = "ghcr.io/karakeep-app/karakeep-chrome";
+    finalImageTag = "151.0.7922.47-r1";
+  };
   "ghcr_io_paperless-ngx_paperless-ngx_2_20" = {
     composeRef = "ghcr.io/paperless-ngx/paperless-ngx:2.20";
     imageName = "ghcr.io/paperless-ngx/paperless-ngx";
@@ -193,6 +257,30 @@
     hash = "sha256-ey9wDtv/m/y1+EbGk/RmgZhjlt4VLpLDbm6AGcSg60Y=";
     finalImageName = "ghcr.io/seerr-team/seerr";
     finalImageTag = "v3.4.1";
+  };
+  "ghcr_io_sysadminsmedia_homebox_0_26_2" = {
+    composeRef = "ghcr.io/sysadminsmedia/homebox:0.26.2";
+    imageName = "ghcr.io/sysadminsmedia/homebox";
+    imageDigest = "sha256:b1ad7e3c63f732a5f6daa466e8116be4f545b3b120383a64dcb62beb00a660cc";
+    hash = "sha256-0PZjSugWBizjx95TAt17OI13ApGxkFGVFzDJBfTW/Zo=";
+    finalImageName = "ghcr.io/sysadminsmedia/homebox";
+    finalImageTag = "0.26.2";
+  };
+  "ghcr_io_windmill-labs_windmill_1_798_1" = {
+    composeRef = "ghcr.io/windmill-labs/windmill:1.798.1";
+    imageName = "ghcr.io/windmill-labs/windmill";
+    imageDigest = "sha256:155a4da7ac27d75cf5349c56f59bfb7c26dc832ab23b7d373a22a91df43c6d9b";
+    hash = "sha256-mOZNLrEZdgVZ1f/y6Yy8dRK0jhK96cqGnL0r6622F6E=";
+    finalImageName = "ghcr.io/windmill-labs/windmill";
+    finalImageTag = "1.798.1";
+  };
+  "glanceapp_glance_v0_8_5" = {
+    composeRef = "glanceapp/glance:v0.8.5";
+    imageName = "glanceapp/glance";
+    imageDigest = "sha256:32ab73d80f2b8b5fb0735b0431deb36b93fbb6b2fb43592449b0178c8b83e350";
+    hash = "sha256-QgJUznGWUhjHGk2e8I3KkbpAaelHDtovfMOssLlwwr8=";
+    finalImageName = "glanceapp/glance";
+    finalImageTag = "v0.8.5";
   };
   "gotenberg_gotenberg_8_31" = {
     composeRef = "gotenberg/gotenberg:8.31";
@@ -226,6 +314,14 @@
     finalImageName = "lscr.io/linuxserver/bazarr";
     finalImageTag = "1.6.0";
   };
+  "lscr_io_linuxserver_bookstack_version-v26_05_4" = {
+    composeRef = "lscr.io/linuxserver/bookstack:version-v26.05.4";
+    imageName = "lscr.io/linuxserver/bookstack";
+    imageDigest = "sha256:3e1aea5d8dd3bb3a5cf16fa7e3b847e2889eedd8516b2825ac379d365b07ba6f";
+    hash = "sha256-pnE02aYPSJUdMDy3WOz9Q4okFOEtyvRJR5tvlExDpl0=";
+    finalImageName = "lscr.io/linuxserver/bookstack";
+    finalImageTag = "version-v26.05.4";
+  };
   "lscr_io_linuxserver_prowlarr_2_5_2" = {
     composeRef = "lscr.io/linuxserver/prowlarr:2.5.2";
     imageName = "lscr.io/linuxserver/prowlarr";
@@ -257,6 +353,22 @@
     hash = "sha256-TbKMUIDefITrsAP9mIdP1T7hb0iCYyXXmAtXoAsQnmI=";
     finalImageName = "lscr.io/linuxserver/sonarr";
     finalImageTag = "4.0.19";
+  };
+  "mariadb_11_8_9" = {
+    composeRef = "mariadb:11.8.9";
+    imageName = "mariadb";
+    imageDigest = "sha256:2439dcd7d14010ecd1ff7a4e1c5abe8e208c34fe35290744deeeaac3569043c3";
+    hash = "sha256-RGRQqypV9iJ7mr9LpoOSZ6pud9EO6juZq2UM3190T14=";
+    finalImageName = "mariadb";
+    finalImageTag = "11.8.9";
+  };
+  "postgis_postgis_17-3_5-alpine" = {
+    composeRef = "postgis/postgis:17-3.5-alpine";
+    imageName = "postgis/postgis";
+    imageDigest = "sha256:08f4b1e1f4a571008c60272ceb9e0d1f9f8f643792d006b74a35b1bec44c2218";
+    hash = "sha256-iw0miPOAYALtIf9VSRgEqDseqwhXDIzETUY5naEU2eU=";
+    finalImageName = "postgis/postgis";
+    finalImageTag = "17-3.5-alpine";
   };
   "postgres_16_13-alpine" = {
     composeRef = "postgres:16.13-alpine";
@@ -298,6 +410,14 @@
     finalImageName = "redis";
     finalImageTag = "7.4-alpine";
   };
+  "syncthing_syncthing_2_1_3" = {
+    composeRef = "syncthing/syncthing:2.1.3";
+    imageName = "syncthing/syncthing";
+    imageDigest = "sha256:8c8ff37ab6aa8be23b700648a90fa9412e214852e9fd6ea8477c8334792daec0";
+    hash = "sha256-cimA9IBFrBGIy49RoQKApPdyXlgSPC8m30hPyL6yuLo=";
+    finalImageName = "syncthing/syncthing";
+    finalImageTag = "2.1.3";
+  };
   "valkey_valkey_9_1-alpine" = {
     composeRef = "valkey/valkey:9.1-alpine";
     imageName = "valkey/valkey";
@@ -305,6 +425,30 @@
     hash = "sha256-MNqkpCQqn11UE8bvqGeBTsTpkLeIhWV+7UnGT9tfq8M=";
     finalImageName = "valkey/valkey";
     finalImageTag = "9.1-alpine";
+  };
+  "vaultwarden_server_1_37_2" = {
+    composeRef = "vaultwarden/server:1.37.2";
+    imageName = "vaultwarden/server";
+    imageDigest = "sha256:094b5689ed81549bd293418395c7cf495ae9d960fc2d4928cef2083ef913d912";
+    hash = "sha256-eZu7Be9lm/hCvqkG+oZ7fyP+YTBG3osSeXWrIZiV/2k=";
+    finalImageName = "vaultwarden/server";
+    finalImageTag = "1.37.2";
+  };
+  "zimengxiong_excalidash-backend_0_6_0" = {
+    composeRef = "zimengxiong/excalidash-backend:0.6.0";
+    imageName = "zimengxiong/excalidash-backend";
+    imageDigest = "sha256:cbdab75f31b21e342b464d6404a454791e5da7452e3614b137021a800fc4cac6";
+    hash = "sha256-xTYe7BevAxoMlSIUeruczauLhNU0AKslCl4gJn5QSjQ=";
+    finalImageName = "zimengxiong/excalidash-backend";
+    finalImageTag = "0.6.0";
+  };
+  "zimengxiong_excalidash-frontend_0_6_0" = {
+    composeRef = "zimengxiong/excalidash-frontend:0.6.0";
+    imageName = "zimengxiong/excalidash-frontend";
+    imageDigest = "sha256:4ec5b20c03034b96d37cfb87b5c39e9cc5958441a3abd8dcc413d11dfb11809c";
+    hash = "sha256-HX4kQxiFh/wbZ7l2Qr1uPfsCJNbW3x+8EanTVNuWGqM=";
+    finalImageName = "zimengxiong/excalidash-frontend";
+    finalImageTag = "0.6.0";
   };
   _unresolved = [
   ];

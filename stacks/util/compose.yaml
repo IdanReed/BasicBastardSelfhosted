@@ -1,8 +1,35 @@
+# Util — small browser tools (Util range, ports 10400-10449).
+# Design: ServerNotes/designs/service-util-stack-research.md.
+# _overview.md owns the port/auth rows.
+#
 # Published ports are bound to 127.0.0.1 so Caddy (network_mode: host) is the
 # only way in. Publishing on 0.0.0.0 made every service reachable directly from
 # the tailnet — tailscale0 is a trusted interface, so the host firewall does
 # not filter it — which would let anyone on the tailnet skip forward auth
 # entirely by using the port number.
+#
+# NOT IN THIS STACK, and both absences are deliberate:
+#   - **Vaultwarden (10400)** has its own stack. Three independent reasons, any
+#     one sufficient: Arcane deploys per PROJECT, so an IT-Tools tag bump here
+#     would restart the password manager; stack-env-drift enforces key sets per
+#     stack, and folding ADMIN_TOKEN in would put the fleet's most sensitive
+#     rotation beside a static PDF toolkit; and it is the only Util service
+#     with a dump line, an attachments tree and a non-database artifact that
+#     must travel with the database.
+#   - **TeXlyre (10405)** is DEFERRED: no image exists for it, and even with
+#     one it would not work here — LaTeX compiles in the browser via WASM but
+#     the TeX Live packages are fetched on demand from upstream-hosted
+#     servers, and collaboration needs their y-webrtc and PeerJS signalling.
+#     A self-hosted TeXlyre with no egress is an editor that cannot compile.
+#
+# Backup contract: ExcaliDash is the only service here with state, and it needs
+# a NEW `sqlite_backup excalidash /mnt/fast/excalidash/dev.db` line in
+# nixos/backup-prepare.sh. The filename really is `dev.db` — an unfortunate
+# upstream default that its production compose ships. The suite asserts the
+# file exists, because sqlite_backup returns 0 for a MISSING source and would
+# otherwise back up nothing forever (finding #25's class). Glance, IT-Tools,
+# BentoPDF and Mazanoke hold NO state and must never acquire a backup line: a
+# speculative one would be a permanently-silent no-op.
 services:
   bentopdf:
     image: ghcr.io/alam00000/bentopdf:1.16.1
@@ -20,4 +47,217 @@ services:
     container_name: mazanoke
     ports:
       - '127.0.0.1:10403:80'
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # glance — feed and service-link dashboard.
+  #
+  # Its own auth stays OFF and Caddy's (protected) does the work instead: one
+  # login rather than two, and the dashboard is browser-only so forward auth
+  # costs nothing. That also sidesteps a sharp edge — Glance blocks an IP after
+  # 5 failed logins in 5 minutes, and behind a loopback publish EVERY request
+  # arrives from the docker bridge gateway, so without `server.proxied: true`
+  # the first five typos would lock out everyone at once.
+  #
+  # Stateless: the config is a read-only file and the container writes nothing,
+  # so there is no volume and no backup line.
+  # ---------------------------------------------------------------------------
+  glance:
+    # `v` prefix REQUIRED — `glanceapp/glance:0.8.5` is a 404. Note bentopdf
+    # above has none and mazanoke does; three images, both conventions, one
+    # compose file.
+    image: glanceapp/glance:v0.8.5
+    container_name: glance
+    ports:
+      - '127.0.0.1:10402:8080'
+    volumes:
+      # Shipped in the stack directory rather than /mnt/fast so Arcane's
+      # syncDirectory delivers it with the compose file. The ENTRYPOINT
+      # hardcodes --config /app/config/glance.yml, so the mount path is fixed.
+      # :ro is safe — Glance never writes it, and its file watcher works fine
+      # on a read-only bind.
+      - ./glance.yml:/app/config/glance.yml:ro
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      # The image ships no HEALTHCHECK. /api/healthz is
+      # `func(w, _) { w.WriteHeader(http.StatusOK) }` — an UNCONDITIONAL 200,
+      # so be clear about what this buys: Glance exits at startup on an invalid
+      # config, so "the process is listening" really does imply "a valid config
+      # parsed at boot". What it cannot detect is a failed hot RELOAD, which
+      # leaves the old config running and healthz still 200.
+      #
+      # ⚠ Never probe /api/pages/{page}/content/ instead: widget fetches happen
+      # in the content handler and wg.Wait() on every widget goroutine, so with
+      # no egress that endpoint stalls until each widget's HTTP client times
+      # out. The shell and healthz are unaffected.
+      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:8080/api/healthz']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # it-tools — 80+ client-side developer utilities. A static nginx SPA: no
+  # accounts, no state, no config, and no auth possible. (protected) in Caddy
+  # is the only lock it can ever have, exactly like bentopdf.
+  #
+  # ⚠ This pin is UPSTREAM, which last published in October 2024. A maintained
+  # fork exists at ghcr.io/sharevb/it-tools (note: its `latest` and `stable`
+  # are DIFFERENT digests). Switching is an operator decision — _overview.md
+  # names this repo — and is queued rather than taken here.
+  # ---------------------------------------------------------------------------
+  it-tools:
+    # No `v` on Docker Hub, though the git tag carries one.
+    image: corentinth/it-tools:2024.10.22-7ca5933
+    container_name: it-tools
+    ports:
+      - '127.0.0.1:10407:80'
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      # No HEALTHCHECK in the Dockerfile (production stage is
+      # nginx:stable-alpine with a bare CMD). This is a liveness probe and
+      # nothing more — there is nothing else to probe on a static SPA.
+      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:80/']
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # excalidash-backend — the API and SQLite store behind the whiteboard.
+  #
+  # 🚨 NO `ports:` STANZA, and it must stay that way. The frontend proxies to it
+  # over the compose network; a published backend port would be a second,
+  # unauthenticated door to the same API — and overview-sync would then demand
+  # an inventory row for it.
+  #
+  # 🚨 AUTH_MODE=oidc_enforced FROM DAY ONE, which means this service is
+  # UNUSABLE until the Authentik client secret lands. That is deliberate. The
+  # alternative (`AUTH_MODE=local`) gates registration behind a one-time admin
+  # setup code PRINTED ONLY TO STDOUT — a browser-plus-log-scrape wizard this
+  # fleet does not accept — and the documented escape,
+  # DISABLE_ONBOARDING_GATE=true, leaves open registration on a service the
+  # whole tailnet can reach. Unusable-and-closed beats usable-and-open.
+  #
+  # ⚠ config.ts THROWS AT STARTUP (crash loop, not degradation) if the mode
+  # enables auth and any of OIDC_ISSUER_URL, OIDC_CLIENT_ID or
+  # OIDC_REDIRECT_URI is empty. OIDC_CLIENT_SECRET is NOT in that set — a
+  # public client is allowed — which is exactly what makes this posture work:
+  # the three non-secret values are real production strings, the secret is a
+  # placeholder, and the container boots and fails only at /auth/oidc/start.
+  # ---------------------------------------------------------------------------
+  excalidash-backend:
+    # No `v` prefix. 0.6.1/0.6.2 exist but are prerelease `-dev` builds.
+    image: zimengxiong/excalidash-backend:0.6.0
+    container_name: excalidash_backend
+    # Reaps zombies AND forwards SIGTERM so prisma.$disconnect actually runs.
+    init: true
+    volumes:
+      # ⚠ The container `chown -R`s this host directory to 1001:1001 on EVERY
+      # start — its Dockerfile deliberately omits USER so the entrypoint can
+      # fix permissions, then su-execs to uid 1001. That differs from this
+      # fleet's usual 1000:1000 and root conventions; plan for it rather than
+      # being surprised. backup-prepare.sh runs as root, so reading it is
+      # unaffected.
+      - /mnt/fast/excalidash:/app/prisma
+    environment:
+      - TZ=America/Chicago
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/prisma/dev.db
+      - AUTH_MODE=oidc_enforced
+      # ⚠ TRAILING SLASH REQUIRED on the issuer — Authentik's discovery
+      # document is served at .../application/o/<slug>/ and the client builds
+      # the well-known path by appending.
+      - OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/excalidash/
+      - OIDC_CLIENT_ID=excalidash
+      # Upstream: "must be exact".
+      - OIDC_REDIRECT_URI=https://excalidash.svc.idanreed.com/api/auth/oidc/callback
+      # Promotes AND DEMOTES on every authenticated request, so removing
+      # someone from the group takes effect immediately rather than at next
+      # login. The group must exist in Authentik or nobody is an admin.
+      - OIDC_ADMIN_GROUPS=excalidash-admins
+      # If Authentik does not emit email_verified=true, sign-in throws. Either
+      # map the claim there or set OIDC_REQUIRE_EMAIL_VERIFIED=false here.
+      #
+      # 🚨 ENFORCE_HTTPS_REDIRECT DEFAULTS TRUE and the middleware arms
+      # whenever NODE_ENV=production and any FRONTEND_URL origin is https —
+      # which is exactly this configuration. The healthcheck then dials
+      # http://127.0.0.1:8000/health with no X-Forwarded-Proto, the policy
+      # misses the loopback host, falls back to the canonical https host and
+      # returns a 302. `statusCode === 200` is false, so the container is
+      # PERMANENTLY unhealthy, `up --wait` never returns, and the frontend's
+      # dependency never releases. TRUST_PROXY does not save it — the check is
+      # on a header loopback never sends. This is the fourth instance in the
+      # campaign of an app-level HTTPS enforcement its own loopback probe
+      # cannot satisfy (Dawarich's APPLICATION_PROTOCOL was the third).
+      - ENFORCE_HTTPS_REDIRECT=false
+      # The backend's CORS allow-list. Exact, no trailing slash.
+      - FRONTEND_URL=https://excalidash.svc.idanreed.com
+      # ONE hop: the hop this backend sees is nginx inside the frontend
+      # container, not Caddy.
+      - TRUST_PROXY=1
+      # BACKUP_SCHEDULE is deliberately UNSET. ExcaliDash has its own backup
+      # cron; enabling it would write into /mnt/fast a second copy of data
+      # Backrest already snapshots, under a retention policy nobody watches.
+      #
+      # EXCALIDASH_JWT_SECRET, EXCALIDASH_CSRF_SECRET and
+      # EXCALIDASH_OIDC_CLIENT_SECRET arrive from .env — see .sops.env.example
+      # for why the first two must be set explicitly rather than left to
+      # upstream's auto-generation.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
+    # sync of the WHOLE stack — which here would take bentopdf and mazanoke
+    # down with it, since they currently sync fine only because this stack had
+    # no env_file at all.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # Declared in upstream's docker-compose.prod.yml, not baked into the
+      # image — and it is honest: the handler runs `SELECT 1` through Prisma
+      # and returns 503 with {"database":"unavailable"} when that fails. It is
+      # only usable because ENFORCE_HTTPS_REDIRECT is off above.
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://127.0.0.1:8000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # excalidash-frontend — nginx serving the SPA and proxying /api + socket.io
+  # to the backend.
+  # ---------------------------------------------------------------------------
+  excalidash-frontend:
+    image: zimengxiong/excalidash-frontend:0.6.0
+    container_name: excalidash_frontend
+    depends_on:
+      # service_healthy, not upstream's bare `depends_on: [backend]`. The
+      # frontend's own healthcheck probes NGINX, so it reports healthy while
+      # the API is down — that probe must not be allowed to stand in for a
+      # backend check.
+      excalidash-backend:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10406:80'
+    environment:
+      - TZ=America/Chicago
+      # Substituted into nginx.conf.template by the image's entrypoint; drives
+      # the /api proxy and the socket.io upgrade.
+      - BACKEND_URL=excalidash-backend:8000
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:80/']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
     restart: unless-stopped

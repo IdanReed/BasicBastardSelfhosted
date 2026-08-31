@@ -1,0 +1,341 @@
+# Dawarich — self-hosted location history (Tracking range, port 10304).
+# Design: ServerNotes/designs/service-tracking-stack-research.md (the annex).
+# _overview.md owns the port/auth row.
+#
+# THIS IS ONE OF THREE STACKS IN THE TRACKING RANGE (annex §1). The other two
+# are stacks/tracking (bookstack + homebox + karakeep, 10300-10302) and
+# stacks/firefly (10303/10305). They are split because thirteen containers and
+# ~6 GB of images do not fit the generic suite's budget, and because one
+# `.sops.env` key set spanning five unrelated apps would make rotating any one
+# secret touch every other app's fixture. The lints key on ports, not stack
+# names, so all three stay inside 10300-10349.
+#
+# Four containers: Rails app, a Sidekiq worker, PostGIS, and Redis. None of
+# them is optional — see the depends_on chain, which is the single most
+# load-bearing thing in this file (§6 of the annex, reproduced on the app
+# healthcheck below).
+#
+# Backup contract: `dawarich_db` is dumped by nixos/backup-prepare.sh's
+# pg_dumpall loop, which builds `container_name` as "<svc>_db" and runs
+# `pg_dumpall -U <svc>` — so BOTH the container_name and POSTGRES_USER=dawarich
+# below are load-bearing, and neither matches what upstream's compose uses
+# (upstream ships POSTGRES_USER=postgres and a database still called
+# `dawarich_development` under RAILS_ENV=production).
+
+services:
+  # ---------------------------------------------------------------------------
+  # dawarich — the Rails app.
+  #
+  # 🚨 NEVER set a compose `user:` here. web-entrypoint.sh gosu-drops to
+  # PUID/PGID *only if* it starts as uid 0, chowning the mounts on the way
+  # down. Starting unprivileged skips that branch entirely and crash-loops on
+  # the mounts. Upstream warns about it inline, twice.
+  #
+  # The entrypoint is referenced BY BARE NAME on purpose: the Dockerfile
+  # installs it to /usr/local/bin, and the script sources a sibling
+  # (entrypoint-env-guard.sh) via `dirname "$0"` — invoking it by any other
+  # path breaks that lookup.
+  # ---------------------------------------------------------------------------
+  dawarich:
+    image: freikin/dawarich:1.14.0
+    container_name: dawarich
+    depends_on:
+      dawarich_db:
+        condition: service_healthy
+      dawarich_redis:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10304:3000'
+    volumes:
+      - /mnt/fast/dawarich/public:/var/app/public
+      - /mnt/fast/dawarich/storage:/var/app/storage
+      - /mnt/fast/dawarich/watched:/var/app/tmp/imports/watched
+      # NOTE the app root is /var/app, not /app. And upstream's fourth mount,
+      # `dawarich_db_data:/dawarich_db_data`, is deliberately ABSENT: nothing
+      # in the codebase references that path, and it mounts live pgdata into
+      # the application container for no reason.
+    entrypoint: web-entrypoint.sh
+    # `bundle exec` is OMITTED on purpose — web-entrypoint.sh ends in
+    # `exec bundle exec "${@}"`, so including it here would run
+    # `bundle exec bundle exec ...`.
+    command: ['bin/rails', 'server', '-p', '3000', '-b', '::']
+    environment:
+      - RAILS_ENV=production
+      # Gates the self-hosted code paths, including OIDC. Not optional.
+      - SELF_HOSTED=true
+      - TIME_ZONE=America/Chicago
+      - RAILS_LOG_TO_STDOUT=true
+      # 🚨 BARE hostnames, comma-separated, no scheme. production.rb splits on
+      # "," and appends to config.hosts. A wrong value here does NOT show up in
+      # the healthcheck — config.host_authorization explicitly EXCLUDES
+      # /api/v1/health — so the container reports healthy, Arcane is happy,
+      # Uptime Kuma is happy, and every browser request gets 403 "Blocked
+      # hosts". Any smoke test must fetch `/` with the real Host header.
+      # localhost/127.0.0.1 are here so a shell inside the VM can curl the
+      # loopback publish without tripping host authorization.
+      - APPLICATION_HOSTS=dawarich.svc.idanreed.com,localhost,127.0.0.1
+      # 🚨 THE TRAP (annex §6). `https` installs ActionDispatch::SSL with
+      # force_ssl, and there is no ssl_options exclusion anywhere in the repo —
+      # so any request without X-Forwarded-Proto gets 301'd to
+      # https://127.0.0.1:3000, where Puma speaks plain HTTP and the handshake
+      # fails. Upstream's healthcheck sends no such header, so the container
+      # would be permanently `unhealthy`; and because the sidekiq service
+      # declares `condition: service_healthy` on this one, SIDEKIQ WOULD NEVER
+      # START AT ALL. Imports and statistics then hang forever with the web UI
+      # looking perfect.
+      #
+      # It is set to https anyway — dropping to http would generate http://
+      # URLs in the OIDC redirect_uri and in mail — and the healthcheck below
+      # carries the header that makes it work.
+      - APPLICATION_PROTOCOL=https
+      - DATABASE_HOST=dawarich_db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=dawarich
+      - DATABASE_USERNAME=dawarich
+      - REDIS_URL=redis://dawarich_redis:6379
+      # Both entrypoints chown the mounts and gosu-drop to these. See the
+      # `user:` warning in this service's header.
+      - PUID=1000
+      - PGID=1000
+      - WEB_CONCURRENCY=2
+      # Reverse geocoding is OFF (no PHOTON_API_HOST): self-hosting Photon
+      # needs a ~150 GB planet index, and the public instance is rate-limited
+      # to 1 rps by the app itself. Costs only human-readable place names.
+      # STORE_GEODATA still governs whether whatever geocoding *is* configured
+      # gets cached, so it stays on.
+      - STORE_GEODATA=true
+      - PROMETHEUS_EXPORTER_ENABLED=false
+      # OIDC ships READY and OFF (annex §4): with the OIDC_* vars unset the app
+      # warns and falls back to email/password, exactly like Kavita and
+      # audiobookshelf in the books stack. Turning it on needs
+      # OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET and SELF_HOSTED=true (already
+      # set); the redirect URI is /users/auth/openid_connect/callback.
+      #
+      # SECRET_KEY_BASE and DATABASE_PASSWORD arrive from .env.
+      # 🚨 SECRET_KEY_BASE MUST NEVER ROTATE: application.rb derives the
+      # ActiveRecord encryption keys from it when the OTP_ENCRYPTION_* vars are
+      # absent, so rotating it makes every encrypted attribute (2FA secrets,
+      # geocoding credentials) undecryptable — and Geocoding::Config only LOGS
+      # A WARNING and treats geocoding as disabled, so the damage is silent.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
+    # sync of the whole stack.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image ships NO Dockerfile HEALTHCHECK. This is upstream's compose
+      # probe plus the one flag that makes it survive APPLICATION_PROTOCOL=https
+      # — see the env comment above; without the header this returns 301 and
+      # sidekiq never starts.
+      #
+      # Grepping the body rather than trusting the status code is upstream's
+      # own choice and worth keeping: the endpoint is excluded from host
+      # authorization AND from request logging, so a 200 here proves less than
+      # usual.
+      test:
+        - CMD-SHELL
+        - >-
+          wget -qO - --header='X-Forwarded-Proto: https'
+          http://127.0.0.1:3000/api/v1/health | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'
+      interval: 10s
+      timeout: 10s
+      # 30 x 10s = five minutes, and it is justified: the first boot runs
+      # migrations and seeds ~250 country multipolygons into PostGIS.
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # dawarich_sidekiq — the background worker. Imports, statistics, geocoding.
+  #
+  # Gated on the app being HEALTHY, not merely started, because the app is what
+  # runs migrations and seeds. That dependency is also what makes the
+  # healthcheck trap above fatal rather than cosmetic.
+  # ---------------------------------------------------------------------------
+  dawarich_sidekiq:
+    image: freikin/dawarich:1.14.0
+    container_name: dawarich_sidekiq
+    depends_on:
+      dawarich:
+        condition: service_healthy
+      dawarich_db:
+        condition: service_healthy
+      dawarich_redis:
+        condition: service_healthy
+    volumes:
+      - /mnt/fast/dawarich/public:/var/app/public
+      - /mnt/fast/dawarich/storage:/var/app/storage
+      - /mnt/fast/dawarich/watched:/var/app/tmp/imports/watched
+    entrypoint: sidekiq-entrypoint.sh
+    # NO `command:` — sidekiq-entrypoint.sh ends in a hardcoded
+    # `exec bundle exec sidekiq` and ignores its arguments entirely. Upstream
+    # passes `['sidekiq']` here, which does nothing; carrying it forward would
+    # only imply the command is configurable.
+    environment:
+      - RAILS_ENV=production
+      - SELF_HOSTED=true
+      # Upstream does NOT set TIME_ZONE on this container, which silently
+      # leaves the worker on config/application.rb's Europe/Berlin default
+      # while the web app runs in local time — enough to shift every daily
+      # statistics bucket. Set it on both.
+      - TIME_ZONE=America/Chicago
+      - RAILS_LOG_TO_STDOUT=true
+      - APPLICATION_HOSTS=dawarich.svc.idanreed.com,localhost,127.0.0.1
+      - APPLICATION_PROTOCOL=https
+      - DATABASE_HOST=dawarich_db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=dawarich
+      - DATABASE_USERNAME=dawarich
+      - REDIS_URL=redis://dawarich_redis:6379
+      - PUID=1000
+      - PGID=1000
+      - BACKGROUND_PROCESSING_CONCURRENCY=3
+      - STORE_GEODATA=true
+      - PROMETHEUS_EXPORTER_ENABLED=false
+    # Long form with required:false ON PURPOSE (finding #11): see dawarich.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # Sidekiq has no HTTP surface. Upstream's probe is a process check, and
+      # for once that is the honest answer rather than finding #16 — the suite
+      # proves the worker actually drains a job.
+      test: ['CMD-SHELL', 'pgrep -f sidekiq || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # dawarich_init — headless first-run (annex §3). See dawarich-init.rb for
+  # why it exists; in short, db/seeds.rb creates demo@dawarich.app /
+  # safepassword as an ACTIVE ADMIN on first boot and nothing upstream can
+  # change that.
+  #
+  # It runs `rails runner` in a throwaway container built on the SAME image,
+  # reaching the database over the compose network — no docker socket, which
+  # is the point.
+  #
+  # 🚨 The `unset` is not cosmetic. The Dockerfile sets ENV
+  # BUNDLE_PATH=/usr/local/bundle/gems, which contradicts the
+  # `bundle config --local path vendor/bundle` baked into .bundle/config, and
+  # Bundler gives the environment variable precedence — so a plain
+  # `bundle exec` resolves against an empty gem path and fails. Both of the
+  # real entrypoint scripts open with the same two unsets for the same reason;
+  # this container skips them (it must, they end in `exec`) and so has to
+  # repeat the fix.
+  # ---------------------------------------------------------------------------
+  dawarich_init:
+    image: freikin/dawarich:1.14.0
+    container_name: dawarich_init
+    depends_on:
+      # service_healthy, not service_started: the app container is what runs
+      # migrations and seeds, so a runner started earlier would either race the
+      # schema or race the very seed it exists to undo.
+      dawarich:
+        condition: service_healthy
+    volumes:
+      - ./dawarich-init.rb:/init/dawarich-init.rb:ro
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'unset BUNDLE_PATH BUNDLE_BIN; exec bundle exec rails runner /init/dawarich-init.rb'
+    environment:
+      # Boot requirements only. APPLICATION_HOSTS is request-time and
+      # irrelevant here; SELF_HOSTED defaults true in 01_constants.rb.
+      # REDIS_URL is needed because production.rb eager-loads and three
+      # initializers (sidekiq, rack_attack, geocoder) read it at boot.
+      - RAILS_ENV=production
+      - RAILS_LOG_TO_STDOUT=true
+      - DATABASE_HOST=dawarich_db
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=dawarich
+      - DATABASE_USERNAME=dawarich
+      - REDIS_URL=redis://dawarich_redis:6379
+      # SECRET_KEY_BASE is REQUIRED even here: application.rb raises
+      # "OTP_ENCRYPTION_PRIMARY_KEY required in production" without it, because
+      # the OTP keys are derived from it.
+      #
+      # DAWARICH_ADMIN_EMAIL, DAWARICH_ADMIN_PASSWORD, SECRET_KEY_BASE and
+      # DATABASE_PASSWORD all arrive from .env.
+    # Long form with required:false ON PURPOSE (finding #11): see dawarich.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # dawarich_db — PostGIS, not plain Postgres. config/database.yml declares
+  # `adapter: postgis`, so a stock postgres image fails at connect time.
+  #
+  # container_name and POSTGRES_USER are BOTH load-bearing for
+  # nixos/backup-prepare.sh (`docker exec dawarich_db pg_dumpall -U dawarich`).
+  # Upstream ships POSTGRES_USER=postgres and POSTGRES_DB=dawarich_development;
+  # both are renamed here to satisfy that contract.
+  #
+  # Stay on the 17 line: postgres:18 moved PGDATA to
+  # /var/lib/postgresql/18/docker, and 17 is what every other stack feeding the
+  # dump loop uses. `postgis/postgis` publishes linux/amd64 ONLY — fine for the
+  # x86_64 services VM, and nix-prefetch-docker resolves for the host arch, so
+  # the pin works in tests/images.nix too.
+  #
+  # ⚠ `17-3.5-alpine` is a MOVING tag and there is no patch-pinned alpine
+  # alternative — the only more specific 17.x tags in that repo are the 2024
+  # beta/rc series. This is the one image in the fleet whose host-side version
+  # can drift without a compose change. The suites are unaffected (images.nix
+  # pins the digest), so the drift surfaces as a test/host mismatch rather than
+  # silently, which is the best available outcome. Do not "fix" it by moving to
+  # the non-alpine tag: that is a 1 GB image.
+  # ---------------------------------------------------------------------------
+  dawarich_db:
+    image: postgis/postgis:17-3.5-alpine
+    container_name: dawarich_db
+    # Postgres uses shared memory for parallel query and sorting; the docker
+    # default of 64 MB makes the country-boundary seed and later statistics
+    # queries fail with "could not resize shared memory segment".
+    shm_size: 1gb
+    volumes:
+      - /mnt/fast/dawarich/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=dawarich
+      - POSTGRES_DB=dawarich
+      # POSTGRES_PASSWORD arrives from .env and must match DATABASE_PASSWORD.
+    # Long form with required:false ON PURPOSE (finding #11): see dawarich.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # -U is required: pg_isready defaults to the OS user (root here), which
+      # does not exist as a role, so without it this reports "no response"
+      # against a perfectly healthy server.
+      test: ['CMD-SHELL', 'pg_isready -U dawarich -d dawarich']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # dawarich_redis — Sidekiq's queue (logical DB 1) and the Rails cache (DB 0).
+  #
+  # Runs as uid 999 and does NOT chown its data directory, which is why
+  # /mnt/fast/dawarich/redis is declared 999:999 in
+  # nixos/hardware-configuration.nix.
+  # ---------------------------------------------------------------------------
+  dawarich_redis:
+    image: redis:7.4-alpine
+    container_name: dawarich_redis
+    volumes:
+      - /mnt/fast/dawarich/redis:/data
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
