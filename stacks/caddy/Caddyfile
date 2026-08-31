@@ -55,13 +55,61 @@
 # outpost with nothing to match the Host against — every request 404s or
 # redirect-loops instead of reaching the service. Add the blueprint entry and
 # deploy the VPS first, then flip the import here.
+#
+# 🚨 THE `route` WRAPPER AND THE STRIP ARE ONE MECHANISM. Do not separate them,
+# and do not "simplify" the wrapper away.
+#
+# WHAT THE STRIP IS FOR, stated accurately — the obvious version of this claim
+# is WRONG and was checked before it was written here. Running
+# `caddy adapt` on this file with caddy 2.11.2 shows `copy_headers` expanding,
+# per header, into an UNCONDITIONAL `request_header -X-Authentik-<Field>`
+# followed by a `set` guarded by a `not vars {…} == ""` matcher, all inside
+# `handle_response` with `match: status_code 2xx`. So for THE FIVE NAMED
+# HEADERS a client-supplied value is already deleted on every 2xx auth
+# response — including the ones a provider's skip_path_regex waves through
+# (Firefly's `^/api/.*`), which answer 200 with no headers at all. The "client
+# sets X-Authentik-Username and Firefly's remote_user_guard believes it" story
+# does not survive contact with the adapted JSON.
+#
+# What IS open, and what this line closes:
+#   1. THE REST OF THE FAMILY. Authentik's outpost also emits X-authentik-jwt
+#      and the X-authentik-meta-* set; nothing in `copy_headers` names them, so
+#      a client-supplied one is forwarded verbatim by Caddy's
+#      forward-unknown-headers default. Nothing here consumes them today —
+#      which is exactly the state in which someone turns one on.
+#   2. ORDER INDEPENDENCE. The five are protected only as a SIDE EFFECT of
+#      copy_headers' expansion. Shorten that list, or reach for a Caddy version
+#      that expands it differently, and the protection silently leaves with it.
+#      A prefix strip does not depend on any of that.
+# It is the same move as the X-API-Key strip on the Syncthing route below, one
+# class more dangerous, and it is defence in depth — not the only wall.
+#
+# ⚠ WHY `route`, verified against caddy v2.11.2's directiveOrder
+# (caddyconfig/httpcaddyfile/directives.go): `forward_auth` is entry 44 and
+# `request_header` is entry 45 — request_header sorts AFTER forward_auth. Write
+# these two as bare directives and Caddy runs them in THAT order, so the strip
+# would delete exactly the headers the outpost had just copied in, and every
+# protected app would lose its identity. Inside a `route` block the written
+# order is the executed order, and `caddy adapt` confirms it: the headers
+# handler with `delete: ["X-Authentik-*"]` is handle[0], the forward_auth
+# reverse_proxy is handle[1]. Nothing else in this file relies on
+# forward_auth's own slot: every protected handle contains only `import
+# protected` and `reverse_proxy` (plus Syncthing's X-API-Key strip, which
+# strips for the benefit of the backend and does not care).
+#
+# The `*` suffix is a real prefix wildcard, and case does not matter: the
+# runtime lowercases BOTH the pattern and the field
+# (modules/caddyhttp/headers/headers.go, the `HasSuffix(fieldName, "*")` arm).
 (protected) {
-	forward_auth https://headscale-vps.tailnet.idanreed.com {
-		uri /outpost.goauthentik.io/auth/caddy
-		copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
-		header_up Host auth.idanreed.com
-		transport http {
-			tls_server_name auth.idanreed.com
+	route {
+		request_header -X-Authentik-*
+		forward_auth https://headscale-vps.tailnet.idanreed.com {
+			uri /outpost.goauthentik.io/auth/caddy
+			copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email X-Authentik-Name X-Authentik-Uid
+			header_up Host auth.idanreed.com
+			transport http {
+				tls_server_name auth.idanreed.com
+			}
 		}
 	}
 }

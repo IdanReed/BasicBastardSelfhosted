@@ -22,7 +22,11 @@ services:
       - PAPERLESS_DBENGINE=postgresql
       - PAPERLESS_DBHOST=db
       - PAPERLESS_DBUSER=paperless
-      - PAPERLESS_DBPASS=paperless
+      # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_USER, PAPERLESS_ADMIN_PASSWORD
+      # and PAPERLESS_DBPASS arrive from .env. DBPASS was the literal
+      # `paperless` here until 2026-08-31 — a database password committed to a
+      # public repo, in a stack that already had a .sops.env for everything
+      # else.
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000
       - PAPERLESS_TIKA_ENDPOINT=http://tika:9998
@@ -51,7 +55,18 @@ services:
     environment:
       - POSTGRES_DB=paperless
       - POSTGRES_USER=paperless
-      - POSTGRES_PASSWORD=paperless
+      # POSTGRES_PASSWORD arrives from .env and must equal PAPERLESS_DBPASS.
+      #
+      # 🚨 initdb applies it on FIRST start only. A cluster already
+      # initialised with the old hardcoded `paperless` keeps that password
+      # forever no matter what this file says — see .sops.env.example for the
+      # ALTER USER one-liner.
+    # Same long form and same reason as the app service above (finding #11):
+    # this stack's secrets are one .env shared by both containers, so the db
+    # needs the env_file it never had.
+    env_file:
+      - path: .env
+        required: false
     restart: unless-stopped
 
   redis:
