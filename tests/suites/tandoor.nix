@@ -186,7 +186,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("compose up brings the app and database healthy"):
         try:
-            services_vm.succeed(f"{TANDOOR} up -d --wait --wait-timeout 900")
+            services_vm.succeed(f"{TANDOOR} up -d --wait --wait-timeout 900 tandoor tandoor_db")
         except Exception:
             diag("compose up failed")
             raise
@@ -286,7 +286,7 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_until_succeeds("test -s /srv/stacks/tandoor/.env", timeout=180)
         services_vm.wait_for_unit("load-test-images.service")
-        services_vm.succeed(f"{TANDOOR} up -d --wait --wait-timeout 900")
+        services_vm.succeed(f"{TANDOOR} up -d --wait --wait-timeout 900 tandoor tandoor_db")
         services_vm.succeed("docker exec tandoor test ! -f /opt/recipes/db.sqlite3")
         assert sql(
             f"select is_superuser from auth_user where username='{ADMIN}'"

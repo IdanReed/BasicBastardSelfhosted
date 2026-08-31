@@ -130,3 +130,35 @@
     finalImageName = "ghcr.io/alam00000/bentopdf";
     finalImageTag = "1.16.1";
   };
+  "ghcr_io_blakeblackshear_frigate_0_17_2" = {
+    composeRef = "ghcr.io/blakeblackshear/frigate:0.17.2";
+    imageName = "ghcr.io/blakeblackshear/frigate";
+    imageDigest = "sha256:d4351369984d4a9e2a49ac59736f6490856a7ea11f7790040746d21496967010";
+    hash = "sha256-VnjWSg6Ym0hBCQn9o9ujaDyXJrMN1Y6AaFj/xVUsvw4=";
+    finalImageName = "ghcr.io/blakeblackshear/frigate";
+    finalImageTag = "0.17.2";
+  };
+  "ghcr_io_calibrain_shelfmark_1_3_13" = {
+    composeRef = "ghcr.io/calibrain/shelfmark:1.3.13";
+    imageName = "ghcr.io/calibrain/shelfmark";
+    imageDigest = "sha256:ee0f3a15a8cc37a43a39fb9e768eac0c9a4ac328014b9b914bad7c1be232bd90";
+    hash = "sha256-JQYBXwf9vdUolIkebA1qjjADZ0vdUjzjE9kfV6TVmdg=";
+    finalImageName = "ghcr.io/calibrain/shelfmark";
+    finalImageTag = "1.3.13";
+  };
+  "ghcr_io_civilblur_mazanoke_v1_1_5" = {
+    composeRef = "ghcr.io/civilblur/mazanoke:v1.1.5";
+    imageName = "ghcr.io/civilblur/mazanoke";
+    imageDigest = "sha256:e43dc48de575b7a032bbefd96b890d69c1f141417e43d5d096469aa1398711d6";
+    hash = "sha256-4Jcx9/SR4/FGifTh1SBWzD2JKueaysmv4ndDQdcwmE0=";
+    finalImageName = "ghcr.io/civilblur/mazanoke";
+    finalImageTag = "v1.1.5";
+  };
+  "ghcr_io_cleanuparr_cleanuparr_2_10_5" = {
+    composeRef = "ghcr.io/cleanuparr/cleanuparr:2.10.5";
+    imageName = "ghcr.io/cleanuparr/cleanuparr";
+    imageDigest = "sha256:c7cd53ad559a67147637de3d825f66ef6e6a5498490b73f49c6e4d72f13bed76";
+    hash = "sha256-nDwB4DkBKrnJM2IVTDZSzTroCBqkkmfSyEtVRek4dpE=";
+    finalImageName = "ghcr.io/cleanuparr/cleanuparr";
+    finalImageTag = "2.10.5";
+  };

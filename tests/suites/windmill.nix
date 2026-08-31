@@ -202,7 +202,7 @@ pkgs.testers.runNixOSTest {
         # of the kind finding #16 exists to warn about. Its liveness is
         # asserted from the server below.
         try:
-            services_vm.succeed(f"{WM} up -d --wait --wait-timeout 1200")
+            services_vm.succeed(f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_worker windmill_db")
         except Exception:
             diag("compose up failed")
             raise
@@ -330,7 +330,7 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_until_succeeds("test -s /srv/stacks/windmill/.env", timeout=180)
         services_vm.wait_for_unit("load-test-images.service")
-        services_vm.succeed(f"{WM} up -d --wait --wait-timeout 1200")
+        services_vm.succeed(f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_worker windmill_db")
         code, _ = login(ADMIN, ADMIN_PASS)
         assert code < 300, f"post-reboot login returned {code}"
         code, _ = login(DEFAULT_ADMIN, DEFAULT_PASS)
