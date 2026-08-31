@@ -1,0 +1,258 @@
+# Notes/Sync — rmfakecloud + Syncthing (Notes range, ports 10200-10249).
+# Design: ServerNotes/designs/service-notes-sync-stack-research.md (the annex)
+# and ServerNotes/designs/custom-remarkable-notes.md.
+# _overview.md owns the port/auth rows.
+#
+# TWO SERVICES THAT THE ANNEX ORIGINALLY GROUPED WITH TWO OTHERS. Samba moved
+# out to its own host-networking stack and Windmill stayed at 10253 in the
+# Automation range — both by operator decision on 2026-08-31, both recorded in
+# the annex. What is left is the reMarkable pipeline: the tablet syncs to
+# rmfakecloud, and Syncthing moves the resulting vault around.
+#
+# Backup contract: NO dump step and no `sqlite_backup` line, deliberately.
+# rmfakecloud has no database — users are YAML documents and notebooks are blob
+# trees, so the /mnt/fast include set covers it whole. Syncthing's index-v2/
+# SQLite is WAL-mode, continuously written and entirely DERIVED (a rescan
+# rebuilds it), so it is EXCLUDED in stacks/backrest instead. Adding a
+# speculative sqlite_backup line for either would produce exactly the
+# karakeep-shaped silent no-op that backup-prepare.sh's own comments warn about
+# — the helper returns 0 for a missing source.
+
+services:
+  # ---------------------------------------------------------------------------
+  # rmfakecloud — a reMarkable cloud replacement.
+  #
+  # 🚨 THE FIRST LOGIN CREATES THE ADMIN, AND THE ENDPOINT IS UNAUTHENTICATED.
+  # With an empty data directory, the first POST to /ui/api/login owns the
+  # instance as admin — whatever email string arrives becomes the owner
+  # permanently. There is no OPEN_REGISTRATION-style switch that closes this
+  # window. The loopback-only publish and notes-sync-init racing to be first are
+  # the only guards, which is why nothing may point Caddy at this container
+  # before the admin exists.
+  #
+  # Runs as 1000:1000 ON PURPOSE, and this is a decision rather than a default.
+  # The image is FROM scratch with no entrypoint script and no PUID/PGID, so it
+  # would happily run as root — but custom-remarkable-notes.md has Windmill
+  # mounting this data directory read-only to scan .rm files, and Windmill runs
+  # as 1000. A root-owned tree would make that scan silently see nothing.
+  # Changing the uid later means recursively chowning every notebook, so it has
+  # to be right from the first boot.
+  # ---------------------------------------------------------------------------
+  rmfakecloud:
+    # No `v` prefix. ghcr.io/ddvk/rmfakecloud does NOT exist — Docker Hub is
+    # the only publication.
+    image: ddvk/rmfakecloud:0.0.31
+    container_name: rmfakecloud
+    user: "1000:1000"
+    ports:
+      - '127.0.0.1:10200:3000'
+    volumes:
+      - /mnt/fast/rmfakecloud/data:/data
+    environment:
+      - TZ=America/Chicago
+      - PORT=3000
+      - DATADIR=/data
+      # 🚨 MUST be https:// and MUST NOT carry a port. Tablet software >= 3.15
+      # rejects both, and it does so as a `log.Warn` followed by sync simply
+      # failing — not an error the tablet surfaces.
+      #
+      # Consequence worth stating plainly: *.svc.idanreed.com is a public A
+      # record pointing into 100.64.0.0/10, so THE REMARKABLE MUST BE ON THE
+      # TAILNET. That is a materially different tablet setup from the
+      # /etc/hosts + local-proxy dance in the upstream docs, and it is a
+      # prerequisite rather than a detail.
+      - STORAGE_URL=https://rmfakecloud.svc.idanreed.com
+      # Without this, SetTrustedProxies(nil) runs and every log line and rate
+      # decision sees the docker bridge gateway instead of the real client.
+      - RM_TRUST_PROXY=true
+      # Caddy terminates TLS. Unset, the container logs "RM_HTTPS_COOKIE is not
+      # set, use only when not using https!" on every start and issues a
+      # non-Secure session cookie. Setting it means a BROWSER on the plain-HTTP
+      # loopback publish cannot hold a session — which is fine: the init
+      # container and the suite use the bearer token from the login response
+      # body, and the UI middleware falls back from cookie to Authorization.
+      - RM_HTTPS_COOKIE=true
+      # JWT_SECRET_KEY arrives from .env.
+      # 🚨 NEVER ROTATE IT, and never let it go unset. It signs both the device
+      # tokens and the UI cookie, so rotating it invalidates EVERY TABLET
+      # ENROLMENT. Unset is the dangerous case: config.go generates 32 random
+      # bytes, logs "WARN The authentication will fail the next time you start
+      # the server!", and carries on. The container is healthy, the tablet
+      # syncs, and the NEXT RESTART silently invalidates every token — which
+      # presents as "the tablet stopped syncing after a reboot" with no error
+      # anywhere.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
+    # sync of the whole stack.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image is FROM scratch plus a rootfs tarball: no shell, no curl, no
+      # wget, nothing but the Go binary. So an HTTP probe is IMPOSSIBLE from
+      # inside this container, however much /health deserves one.
+      #
+      # This is the binary's own CLI verb, which cli.Handle runs BEFORE
+      # app.NewApp ever starts the server. It exits 0 after successfully reading
+      # the user store and log.Fatals if the data directory is unreadable.
+      #
+      # BE HONEST ABOUT WHAT IT PROVES: the data directory is readable and the
+      # user store parses. It does NOT prove the HTTP server is listening. It
+      # was chosen because the realistic failure here is a bind-mount ownership
+      # or path mistake — the uid decision above makes that a live risk — and
+      # this catches exactly that. The HTTP side is covered by the suite and,
+      # in production, by Uptime Kuma.
+      test: ['CMD', '/rmfakecloud-docker', 'listusers']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # syncthing_generate — writes cert.pem/key.pem and the GUI credentials into
+  # the config volume before syncthing itself starts.
+  #
+  # `syncthing generate` is idempotent by construction: it refuses to overwrite
+  # an existing key ("Key exists; will not overwrite"), so every redeploy after
+  # the first is a no-op. That refusal is also what protects the DEVICE
+  # IDENTITY — key.pem IS the device ID, and regenerating it makes every peer
+  # treat this host as a stranger that must be re-accepted by hand.
+  #
+  # It reuses the image's own entrypoint rather than a second image, which keeps
+  # the su-exec uid drop and lets both credentials come from env_file.
+  # ---------------------------------------------------------------------------
+  syncthing_generate:
+    image: syncthing/syncthing:2.1.3
+    container_name: syncthing_generate
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'exec /bin/entrypoint.sh /bin/syncthing generate --config /var/syncthing/config --gui-user "$$ST_GUI_USER" --gui-password "$$ST_GUI_PASSWORD"'
+    volumes:
+      - /mnt/fast/syncthing/config:/var/syncthing/config
+    environment:
+      - PUID=1000
+      - PGID=1000
+    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # syncthing — file synchronisation.
+  #
+  # 🚨 Every bind-mounted tree here must be PRE-OWNED 1000:1000 by tmpfiles.
+  # The entrypoint's chown is `chown "${PUID}:${PGID}" "${HOME}" || true` —
+  # NON-RECURSIVE, and the `|| true` carries an upstream comment reading "maybe
+  # it'll work anyway, so we let the error slide". So it fixes /var/syncthing
+  # and nothing beneath it. Get this wrong and the container starts, reports
+  # HEALTHY, and marks the folder errored on first scan: finding #14 with the
+  # crash-loop replaced by silence, which is worse.
+  #
+  # ⚠ VERSION-LOCK, one-way: Syncthing 2.0 migrated the index database from
+  # LevelDB to SQLite and there is NO downgrade path once index-v2/ exists. A
+  # 2.x config directory cannot be read by a 1.x binary. Treat a major bump the
+  # way the tracking annex treats Meilisearch. Also keep update-images.sh off
+  # the `-rc` tags — 2.1.4-rc.1 and -rc.2 exist and would pass a registry check.
+  # ---------------------------------------------------------------------------
+  syncthing:
+    image: syncthing/syncthing:2.1.3
+    container_name: syncthing
+    depends_on:
+      syncthing_generate:
+        condition: service_completed_successfully
+    ports:
+      - '127.0.0.1:10201:8384'
+      # 🚨 BARE PUBLISHES, and they are the only ones in the fleet. Syncthing's
+      # BEP peers dial THIS host; a loopback publish makes the server
+      # undialable and leaves only the public relay pool, which needs egress
+      # and is slow. Upstream's own README-Docker.md says to use host
+      # networking for this reason; a bare publish is the smaller hammer.
+      #
+      # This is safe in a way that publishing an admin UI never is: BEP is
+      # MUTUALLY AUTHENTICATED BY DEVICE CERTIFICATE before it does anything.
+      # Every peer must be added by device ID on both sides and explicitly
+      # accepted, and an unknown device is rejected at the TLS layer — so
+      # publishing 22000 grants nobody anything. The host firewall also opens
+      # nothing but 22/tcp and trusts only tailscale0, which makes this
+      # tailnet-reachable rather than LAN-reachable.
+      #
+      # The loopback-binding lint carries a NAMED EXEMPTION for exactly these
+      # two lines (tests/lib/lints.nix), and errors if the exemption ever goes
+      # unused. Do not bind the tailnet IP instead: headscale assigns it at
+      # runtime and it cannot be a literal in a git-tracked compose file.
+      - '22000:22000/tcp'
+      - '22000:22000/udp'
+    volumes:
+      - /mnt/fast/syncthing/config:/var/syncthing/config
+      - /mnt/fast/vault:/var/syncthing/vault
+    environment:
+      - TZ=America/Chicago
+      - PUID=1000
+      - PGID=1000
+      # 🚨 KEEP THIS. Upstream's README tells you to UNSET it so the GUI falls
+      # back to the config default 127.0.0.1:8384 — and doing that installs
+      # lib/api's localhostMiddleware, after which every request arriving with
+      # `Host: syncthing.svc.idanreed.com` gets a bare 403 "Host check error"
+      # with nothing in the logs to explain it. That is finding #15
+      # (qBittorrent) in a different coat. The container's own netns is the
+      # boundary here, and the GUI publish is loopback-only.
+      - STGUIADDRESS=0.0.0.0:8384
+      # The baked healthcheck hardcodes 127.0.0.1:8384 while DefaultConfig
+      # calls ProbeFreePorts() on first run and will MOVE the GUI if 8384 looks
+      # taken. Inside a fresh netns that is unlikely, but it would be a
+      # permanently-unhealthy container with a perfectly fine application.
+      - STNOPORTPROBING=1
+      # STGUIAPIKEY, ST_GUI_USER and ST_GUI_PASSWORD arrive from .env.
+      # ⚠ The API key is a FULL-ADMIN credential that bypasses GUI auth
+      # entirely, which is why it is a sops value and why the Caddy vhost must
+      # never forward an attacker-supplied X-API-Key.
+      # ⚠ And note it does NOT override the random key `generate` wrote into
+      # config.xml — guiconfiguration.go accepts either, so rotating this
+      # revokes nothing on its own.
+      #
+      # The four egress switches (global announce, relays, NAT, usage
+      # reporting) are turned off by notes-sync-init through the REST API
+      # rather than here: they live in config.xml, not the environment.
+    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
+    env_file:
+      - path: .env
+        required: false
+    # NO healthcheck stanza ON PURPOSE: the image's builtin is honest —
+    # `curl -fkLsS -m 2 127.0.0.1:8384/rest/noauth/health | grep -o OK`, a real
+    # HTTP liveness check. It says nothing about the database or whether any
+    # folder is in sync, which is what the suite is for.
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # notes-sync-init — headless first-run for both services (annex §3).
+  #
+  # Every mutation logs "notes-sync-init: CHANGE: ...". A second run — every
+  # Arcane redeploy reruns this container — must log ZERO change lines.
+  # ---------------------------------------------------------------------------
+  notes-sync-init:
+    image: python:3.13-alpine
+    container_name: notes_sync_init
+    entrypoint: ['/bin/sh', '/init/notes-sync-init.sh']
+    depends_on:
+      rmfakecloud:
+        condition: service_healthy
+      syncthing:
+        condition: service_healthy
+    volumes:
+      - ./notes-sync-init.sh:/init/notes-sync-init.sh:ro
+      # READ-ONLY, and only so the CHANGE line can be honest: the script checks
+      # whether rmfakecloud's user store is empty BEFORE logging in, because
+      # the login itself is create-or-authenticate and gives no way to tell
+      # afterwards which one happened. If the layout is not what it expects it
+      # says so rather than guessing — a wrong CHANGE line would break the
+      # "a second run prints none" contract that every other init in this fleet
+      # is held to.
+      - /mnt/fast/rmfakecloud/data:/rmdata:ro
+    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"

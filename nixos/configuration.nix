@@ -441,6 +441,74 @@ in
     };
   };
 
+  # ---------------------------------------------------------------------------
+  # Firefly III cron
+  # ---------------------------------------------------------------------------
+  # Firefly's recurring transactions, bill "paid" marks and auto-budget
+  # rollovers only happen when something calls GET /api/v1/cron/<token>. Nothing
+  # inside the container does it.
+  #
+  # Upstream's answer is a sidecar built on `alpine` that runs `apk add tzdata`
+  # AT CONTAINER START and then loops on wget. That is finding #4 in
+  # tests/README.md — a container that must fetch from the network to become
+  # functional is a stack that breaks when the network does — so the sidecar is
+  # deliberately absent from stacks/firefly/compose.yaml and this timer replaces
+  # it. It also gets the failure path the sidecar never had: onFailure -> ntfy.
+  #
+  # Everything here is conditional on the stack actually being deployed, because
+  # this unit ships with the host config while the stack is delivered by
+  # Arcane's git sync — the two are not deployed together and this must be a
+  # no-op in between.
+  systemd.services.firefly-cron = {
+    description = "Trigger Firefly III's scheduled tasks";
+    after = [ "docker.service" ];
+    onFailure = [ "notify-failure@%n.service" ];
+    path = with pkgs; [ curl coreutils gnugrep ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      env=/srv/stacks/firefly/.env
+
+      # The stack is not deployed (or its .env has not been decrypted yet).
+      # Silent success: this is the normal state on a host that does not run
+      # Firefly, and alerting on it would train the alert to be ignored.
+      if [ ! -r "$env" ]; then
+        echo "$env not present - firefly stack not deployed, nothing to do."
+        exit 0
+      fi
+
+      # Read verbatim, NOT sourced: the .env is a docker env_file, where a
+      # value is everything after the first '=' with no shell quoting applied.
+      # `source`-ing it would both mangle values and run anything in there.
+      token=$(grep -m1 '^STATIC_CRON_TOKEN=' "$env" | cut -d= -f2-)
+
+      # Length is checked HERE rather than left to Firefly: Binder\CLIToken
+      # requires exactly 32 characters, and at any other length the route falls
+      # through to per-user token handling and answers 500 — which curl reports
+      # as a generic HTTP error that says nothing about the real cause.
+      if [ "''${#token}" -ne 32 ]; then
+        echo "STATIC_CRON_TOKEN in $env is ''${#token} chars, must be exactly 32."
+        echo "Recurring transactions and bills are NOT being processed."
+        exit 1
+      fi
+
+      # The loopback publish, not the Caddy vhost: this route takes no
+      # authentication (the token is the credential), so going through Caddy
+      # would only add the forward-auth outpost as a dependency of a cron job.
+      curl -fsS --max-time 120 "http://127.0.0.1:10303/api/v1/cron/$token"
+    '';
+  };
+
+  systemd.timers.firefly-cron = {
+    description = "Timer for Firefly III scheduled tasks";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # 01:00, well clear of backup-prepare (02:45) and the Backrest window.
+      OnCalendar = "*-*-* 01:00:00";
+      Persistent = true;
+      Unit = "firefly-cron.service";
+    };
+  };
+
   # Shared docker network so stacks can reach each other by service name.
   # Needed because containers cannot reach a loopback-bound host port, and all
   # published ports are now bound to 127.0.0.1 — so Backrest reaches Ntfy at

@@ -15,6 +15,14 @@
 #   ./tests/run.sh immich         # heavy: config render, v3 API, thumbs sans ML, reboot
 #   ./tests/run.sh books          # heavy: kavita/abs seeding, OPDS, :ro mounts, hook
 #   ./tests/run.sh automation     # heavy: HA storage config, MQTT round trip, frigate
+#   ./tests/run.sh tracking       # heavy: bookstack/homebox/karakeep headless seeding
+#   ./tests/run.sh firefly        # heavy: remote_user_guard + the healthcheck lie
+#   ./tests/run.sh dawarich       # heavy: the force_ssl/sidekiq interlock + seeded admin
+#   ./tests/run.sh vaultwarden    # the ADMIN_TOKEN $-mangling regression + backup paths
+#   ./tests/run.sh notes-sync     # heavy: rmfakecloud create-once window + the bare 22000 publish
+#   ./tests/run.sh util           # glance/it-tools/excalidash: the https-redirect healthcheck trap
+#   ./tests/run.sh windmill       # heavy: the seeded dependency cache + admin@windmill.dev retired
+#   ./tests/run.sh restore        # the restore DRILL: dump -> destroy -> restore, both engines
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
@@ -65,7 +73,7 @@ case "$TARGET" in
     exec nix-build tests -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore)
     exec nix-build tests -A "checks.$TARGET" --no-out-link
     ;;
 

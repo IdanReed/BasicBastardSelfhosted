@@ -200,6 +200,100 @@
     # not on it, which is how many GB of re-recordable video stays out of the
     # backups. Do not add it.
     "d /mnt/slow/frigate 0755 root root -"
+    # Tracking stack bind-mount roots (stacks/tracking/compose.yaml). This
+    # stack alone carries THREE different ownership conventions, and
+    # normalising any of them breaks it (annex §8):
+    #   - bookstack is an LSIO image: it drops to PUID/PGID and runs
+    #     `lsiown -R abc:abc /config` at every start, so 1000:1000 matches
+    #     what it will enforce anyway.
+    #   - its MariaDB starts as root and chowns its own datadir before
+    #     dropping to mysql, so root:root is correct there.
+    #   - homebox (default variant) runs as ROOT with no PUID/PGID and no
+    #     chown-on-start.
+    #   - karakeep MUST be root-owned: a non-root uid dies with EACCES on
+    #     /app/apps/web/.next/cache, which is INSIDE the image, so chowning
+    #     the host mount cannot fix it (upstream #1324, closed unfixed). This
+    #     is the inverse of the /srv/stacks convention — do not "fix" it.
+    "d /mnt/fast/bookstack 0755 root root -"
+    "d /mnt/fast/bookstack/config 0755 1000 1000 -"
+    "d /mnt/fast/bookstack/db 0755 root root -"
+    "d /mnt/fast/homebox 0755 root root -"
+    "d /mnt/fast/karakeep 0755 root root -"
+    "d /mnt/fast/karakeep/data 0755 root root -"
+    "d /mnt/fast/karakeep/meili 0755 root root -"
+    # Firefly III (stacks/firefly/compose.yaml) — a FOURTH convention in the
+    # same port range. The image ends on `USER www-data` at BUILD time and
+    # never invokes an id-remap entrypoint, so PUID/PGID are inert and the
+    # upload directory must be pre-owned 33:33 or attachment upload fails at
+    # runtime with a permission error and no startup symptom at all.
+    # Its Postgres starts as root and chowns its own datadir, as everywhere
+    # else here.
+    "d /mnt/fast/firefly 0755 root root -"
+    "d /mnt/fast/firefly/upload 0755 33 33 -"
+    "d /mnt/fast/firefly/pgdata 0755 root root -"
+    # Dawarich (stacks/dawarich/compose.yaml). Both of its entrypoints
+    # gosu-drop to PUID/PGID *only if* they start as uid 0, chowning first —
+    # which is why its compose sets no `user:` and these are 1000:1000 to
+    # match what the entrypoint will enforce. Setting `user:` there instead
+    # would skip the chown branch entirely and crash-loop on a root-owned
+    # mount; upstream warns about it inline, twice.
+    "d /mnt/fast/dawarich 0755 root root -"
+    "d /mnt/fast/dawarich/public 0755 1000 1000 -"
+    "d /mnt/fast/dawarich/storage 0755 1000 1000 -"
+    "d /mnt/fast/dawarich/watched 0755 1000 1000 -"
+    "d /mnt/fast/dawarich/pgdata 0755 root root -"
+    # The redis image runs as uid 999 and does NOT chown its data directory.
+    # This holds the sidekiq queue: losing it drops in-flight import and
+    # statistics jobs, which is survivable, but a wrong owner makes redis
+    # exit at start and takes sidekiq with it.
+    "d /mnt/fast/dawarich/redis 0755 999 999 -"
+    # Vaultwarden (stacks/vaultwarden/compose.yaml). Runs as ROOT: the debian
+    # image declares no USER and start.sh execs the binary directly, so
+    # root:root is what it will write as. That also matches backup-prepare.sh,
+    # which reads db.sqlite3 from here as root.
+    #
+    # The path is load-bearing beyond ownership: backup-prepare.sh hardcodes
+    # /mnt/fast/vaultwarden/db.sqlite3, and sqlite_backup returns 0 for a
+    # MISSING source — so moving this mount would turn the vault's only dump
+    # into a permanent silent no-op rather than an error.
+    "d /mnt/fast/vaultwarden 0755 root root -"
+    # Notes/Sync stack bind-mount roots (stacks/notes-sync/compose.yaml).
+    # ALL 1000:1000, and for two different reasons:
+    #   - rmfakecloud is FROM scratch with no entrypoint and no PUID/PGID, so
+    #     it cannot fix anything itself. Its compose sets `user: "1000:1000"`
+    #     deliberately (Windmill later mounts this tree read-only as uid 1000
+    #     to scan .rm files, and a root-owned tree would make that scan
+    #     silently see nothing), which means the ownership MUST come from here.
+    #   - syncthing's entrypoint chown is `chown PUID:PGID $HOME || true` —
+    #     NON-RECURSIVE, with an upstream comment saying "maybe it'll work
+    #     anyway, so we let the error slide". It fixes /var/syncthing and
+    #     nothing beneath it, so config/ and every synced tree must be
+    #     pre-owned. Getting this wrong yields a HEALTHY container with an
+    #     errored folder: finding #14 with the crash-loop replaced by silence.
+    "d /mnt/fast/rmfakecloud 0755 1000 1000 -"
+    "d /mnt/fast/rmfakecloud/data 0755 1000 1000 -"
+    "d /mnt/fast/syncthing 0755 1000 1000 -"
+    "d /mnt/fast/syncthing/config 0755 1000 1000 -"
+    "d /mnt/fast/vault 0755 1000 1000 -"
+    # ExcaliDash's SQLite store (stacks/util/compose.yaml). 1001:1001 is not a
+    # typo and not this fleet's usual convention: the backend's Dockerfile
+    # deliberately omits USER so its entrypoint can run as root, then
+    # `chown -R nodejs:nodejs` (uid 1001) this directory on EVERY start before
+    # su-exec'ing down. Declaring it 1001:1001 just means the container has
+    # nothing to do; declaring it 1000:1000 would be silently overwritten on
+    # the next boot. backup-prepare.sh reads it as root, so the dump is
+    # unaffected either way.
+    "d /mnt/fast/excalidash 0755 1001 1001 -"
+    # Windmill's Postgres (stacks/windmill/compose.yaml). Only the pgdata root
+    # — the DEPENDENCY CACHE is deliberately a named docker volume and must
+    # never get a rule here: the image bakes CPython 3.11 and 3.12 into
+    # /tmp/windmill/cache at build time, a named volume is seeded from the
+    # image on first use, and a bind mount is never seeded. Pointing it at
+    # /mnt/fast would delete both interpreters, and UV_PYTHON_PREFERENCE=
+    # only-managed forbids a system fallback, so the first Python job would
+    # try to download one and hang offline.
+    "d /mnt/fast/windmill 0755 root root -"
+    "d /mnt/fast/windmill/pgdata 0755 root root -"
   ];
 
   # Swap (optional - can be added if needed)

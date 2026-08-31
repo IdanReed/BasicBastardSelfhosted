@@ -1,0 +1,218 @@
+# Windmill — workflow orchestration (Automation range, port 10253).
+# Design: ServerNotes/designs/service-notes-sync-stack-research.md (the annex,
+# §3.4/§4.4/§7.4) and ServerNotes/designs/custom-finance.md.
+# _overview.md owns the port/auth row.
+#
+# ITS OWN STACK AT 10253, not part of stacks/automation and not in the
+# Notes/Sync range. Operator decision 2026-08-31: `_overview.md` and
+# `custom-remarkable-notes.md` both already use 10253, including the DESKTOP
+# worker's BASE_INTERNAL_URL — moving it would have edited a machine this
+# campaign is not allowed to touch. The lints key on ports, not stack names.
+#
+# 🚨 THE THING MOST LIKELY TO BE "FIXED" INCORRECTLY IS THE WORKER'S CACHE
+# VOLUME. It is a NAMED volume, deliberately, and translating it to this
+# fleet's usual `/mnt/fast/windmill/cache:/tmp/windmill/cache` would break
+# every Python job. The image bakes CPython 3.11 and 3.12 INTO
+# /tmp/windmill/cache/py_runtime at build time; a named volume is seeded from
+# the image on first use, while a bind mount is never seeded and simply shadows
+# the directory with an empty host path. And because the image sets
+# UV_PYTHON_PREFERENCE=only-managed, there is no system-python fallback — the
+# first Python job would run `uv python install`, which needs egress, and hang.
+#
+# Backup contract: `windmill_db` is dumped by nixos/backup-prepare.sh's
+# pg_dumpall loop, so BOTH `container_name: windmill_db` and
+# POSTGRES_USER=windmill below are load-bearing — and `windmill` must be added
+# to that loop's service list. The dependency cache is a named volume under
+# /var/lib/docker, i.e. outside every include set, which is correct: it is
+# regenerable.
+
+services:
+  # ---------------------------------------------------------------------------
+  # windmill_server — API and web UI.
+  #
+  # Runs as 1000:1000 with HOME=/tmp, both required together. The image creates
+  # a `windmill` uid-1000 user and then never USERs to it, so without this it
+  # runs as ROOT and executes arbitrary user scripts as root, with the docker
+  # client, crane, nsjail and kubectl on $PATH. Upstream documents the HOME=/tmp
+  # half in a comment; every directory under /tmp/windmill is already 777 in the
+  # image for exactly this purpose.
+  # ---------------------------------------------------------------------------
+  windmill_server:
+    # No `v` prefix. 🚨 `latest` is the MAIN BRANCH BUILD, not the newest
+    # release — `latest` and `main` resolve to the same digest, and upstream's
+    # own .env ships WM_IMAGE=...:main, so the canonical copy-paste deployment
+    # tracks main. This is the third instance of the Karakeep-latest-is-nightly
+    # pattern. There is also a moving minor alias `1.798`; pin the full
+    # three-part number.
+    #
+    # ⚠ 1.798.1 is the newest PUBLISHED IMAGE, not the newest release: GitHub's
+    # latest is v1.799.0 but `windmill:1.799.0` 404s on ghcr (the server image
+    # publish for that release lagged), while `windmill-extra:1.799.0` exists.
+    # Recorded so a future "there is a newer release" does not chase a tag that
+    # is not there. `windmill-ee` (Enterprise, needs a licence) and
+    # `windmill-full` are DIFFERENT images; neither is wanted.
+    image: ghcr.io/windmill-labs/windmill:1.798.1
+    container_name: windmill_server
+    user: "1000:1000"
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10253:8000'
+    environment:
+      - TZ=America/Chicago
+      - MODE=server
+      # Required alongside `user:` — see this service's header.
+      - HOME=/tmp
+      - BASE_URL=https://windmill.svc.idanreed.com
+      - RUST_LOG=info
+      # ⚠ Do NOT add a /var/run/docker.sock mount, however many upstream
+      # examples do. Their own warning: it "grants user scripts full access to
+      # the host Docker daemon (host filesystem access and privilege
+      # escalation)". This fleet has exactly one socket-mounting container by
+      # design, and the stated reason for keeping sops decryption on the host
+      # is to keep secrets away from it.
+      #
+      # ⚠ FAVOR_UNSHARE_PID is deliberately UNSET. It only works with
+      # `privileged: true`, which is not used anywhere in this fleet — setting
+      # one without the other yields workers that fail to start jobs.
+      #
+      # DATABASE_URL and SUPERADMIN_SECRET arrive from .env.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
+    # sync of the whole stack.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # No builtin. /api/health/status, NOT /api/version: the version endpoint
+      # answers from the binary and says nothing about the database.
+      #
+      # BE HONEST ABOUT IT: this returns 503 only when the DATABASE is
+      # unreachable, and 200 for a merely degraded instance (no workers, say).
+      # It also caches for a fixed 5 seconds, so it lags reality by up to that.
+      # "No workers running" is therefore a suite assertion, not something this
+      # probe can catch.
+      test: ['CMD-SHELL', 'curl -fsS -o /dev/null http://127.0.0.1:8000/api/health/status']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # windmill_worker — executes jobs. Same image, MODE=worker.
+  # ---------------------------------------------------------------------------
+  windmill_worker:
+    image: ghcr.io/windmill-labs/windmill:1.798.1
+    container_name: windmill_worker
+    user: "1000:1000"
+    depends_on:
+      windmill_db:
+        condition: service_healthy
+      windmill_server:
+        condition: service_healthy
+    volumes:
+      # 🚨 NAMED VOLUME, NOT A BIND MOUNT. See this file's header — the image
+      # bakes CPython 3.11 and 3.12 into this path at build time, a named
+      # volume is seeded from the image contents on first use, and a bind mount
+      # is never seeded. With UV_PYTHON_PREFERENCE=only-managed there is no
+      # system fallback, so a bind mount here means the first Python job tries
+      # to download an interpreter and hangs offline.
+      - windmill_dependency_cache:/tmp/windmill/cache
+    environment:
+      - TZ=America/Chicago
+      - MODE=worker
+      - HOME=/tmp
+      # worker.rs UNIONS the database's worker_tags with this variable for
+      # WORKER_GROUP=default; the "silently ignored" behaviour applies only to
+      # named groups.
+      - WORKER_GROUP=default
+      - RUST_LOG=info
+      # DATABASE_URL arrives from .env.
+    # Long form with required:false ON PURPOSE (finding #11): see the server.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The worker has NO HTTP listener, so there is nothing to probe from
+      # inside its own container — `pgrep` would be a process check of the kind
+      # finding #16 exists to warn about. Asserting the worker is alive is done
+      # FROM THE SERVER SIDE (the suite queries the worker list), which is the
+      # only place the answer actually lives.
+      #
+      # No healthcheck stanza at all, on purpose: a dishonest one would be
+      # worse than none, because `up --wait` would then report success on it.
+      disable: true
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # windmill_db — PostgreSQL.
+  #
+  # container_name and POSTGRES_USER are BOTH load-bearing for
+  # nixos/backup-prepare.sh (`docker exec windmill_db pg_dumpall -U windmill`).
+  # ⚠ Upstream's compose uses POSTGRES_USER=postgres; renaming it here is a
+  # deliberate deviation that DATABASE_URL in .env and the healthcheck below
+  # must both follow.
+  # ---------------------------------------------------------------------------
+  windmill_db:
+    # The same patch-pinned tag paperless and firefly use, so all three share
+    # one entry in tests/images.nix and one image on the host. Stay on 17:
+    # postgres:18-alpine moved PGDATA to /var/lib/postgresql/18/docker.
+    image: postgres:17.9-alpine
+    container_name: windmill_db
+    shm_size: 1gb
+    volumes:
+      - /mnt/fast/windmill/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=windmill
+      - POSTGRES_DB=windmill
+      # POSTGRES_PASSWORD arrives from .env and must match the password inside
+      # DATABASE_URL.
+    # Long form with required:false ON PURPOSE (finding #11): see the server.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # -U is required: pg_isready defaults to the OS user (root here), which
+      # does not exist as a role, so without it this reports "no response"
+      # against a perfectly healthy server.
+      test: ['CMD-SHELL', 'pg_isready -U windmill -d windmill']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # windmill_init — headless first-run (annex §3.4).
+  #
+  # Upstream's documented path is: deploy, log in as admin@windmill.dev /
+  # changeme, then use the Instance Settings UI. There is no forced password
+  # change, so taken at face value that is a browser-only setup with a
+  # published default credential sitting live in the meantime.
+  #
+  # SUPERADMIN_SECRET is the way out: the binary's own usage text calls it a
+  # "virtual superadmin token", and presenting it as a bearer token
+  # authenticates against the ordinary API without ever using `changeme`.
+  # ---------------------------------------------------------------------------
+  windmill_init:
+    image: python:3.13-alpine
+    container_name: windmill_init
+    entrypoint: ['/bin/sh', '/init/windmill-init.sh']
+    depends_on:
+      windmill_server:
+        condition: service_healthy
+    volumes:
+      - ./windmill-init.sh:/init/windmill-init.sh:ro
+    # Long form with required:false ON PURPOSE (finding #11): see the server.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+volumes:
+  # See the worker's volume comment. This must stay a named volume.
+  windmill_dependency_cache:

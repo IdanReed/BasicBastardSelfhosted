@@ -38,7 +38,7 @@ running() { docker ps --format '{{.Names}}' | grep -qx "$1"; }
 # pg_dumpall against the container's superuser. A logical dump is restorable;
 # a file-level copy of a live pgdata directory generally is not, which is why
 # the Backrest plans exclude **/pgdata/**.
-for svc in paperless immich firefly dawarich tandoor wger; do
+for svc in paperless immich firefly dawarich tandoor wger windmill; do
     container="${svc}_db"
     running "$container" || continue
 
@@ -88,8 +88,23 @@ sqlite_backup() {
 }
 
 sqlite_backup vaultwarden    /mnt/fast/vaultwarden/db.sqlite3
-sqlite_backup karakeep       /mnt/fast/karakeep/data.db
+# Karakeep keeps TWO sqlite databases under DATA_DIR: the app database and a
+# separate job queue (liteque). This path used to read
+# /mnt/fast/karakeep/data.db, which the app never creates — and since
+# sqlite_backup returns 0 for a missing source, that line backed up nothing at
+# all, forever, with a clean exit. Both paths are asserted by the tracking
+# suite so it cannot silently regress. The queue is reconstructible, but it is
+# a few KB and dumping it costs nothing.
+sqlite_backup karakeep       /mnt/fast/karakeep/data/db.db
+sqlite_backup karakeep-queue /mnt/fast/karakeep/data/queue.db
 sqlite_backup homebox        /mnt/fast/homebox/homebox.db
+# ExcaliDash (stacks/util/compose.yaml). The filename really is dev.db —
+# an unfortunate upstream default that its own production compose ships
+# (DATABASE_URL=file:/app/prisma/dev.db), and diverging from it would mean
+# diverging from every upstream doc. Prisma writes -journal/-wal siblings,
+# so this dump is the restorable copy. The util suite asserts the path
+# exists, because sqlite_backup returns 0 for a missing source.
+sqlite_backup excalidash     /mnt/fast/excalidash/dev.db
 sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
 sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
 # Frigate's event/review/user index (stacks/automation/compose.yaml). WAL-mode

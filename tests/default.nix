@@ -165,6 +165,17 @@ let
     # broken config (safe mode) — the generic suite would pass on a stack
     # doing nothing at all.
     automation = callSuite ./suites/automation.nix { };
+    # One of the three Tracking-range stacks (annex §1). Hand-written: a
+    # restart:"no" init oneshot, and three apps whose builtin healthchecks
+    # variously lie.
+    tracking = callSuite ./suites/tracking.nix { };
+    firefly = callSuite ./suites/firefly.nix { };
+    dawarich = callSuite ./suites/dawarich.nix { };
+    vaultwarden = callSuite ./suites/vaultwarden.nix { };
+    notes-sync = callSuite ./suites/notes-sync.nix { };
+    util = callSuite ./suites/util.nix { };
+    windmill = callSuite ./suites/windmill.nix { };
+    restore = callSuite ./suites/restore.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting

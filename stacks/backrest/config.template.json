@@ -75,7 +75,12 @@
         "/mnt/fast/kavita/config/cache-long/**",
         "/mnt/fast/kavita/config/temp/**",
         "/mnt/fast/frigate/config/model_cache/**",
-        "/mnt/fast/homeassistant/tts/**"
+        "/mnt/fast/homeassistant/tts/**",
+        "/mnt/fast/bookstack/db/**",
+        "/mnt/fast/karakeep/meili/**",
+        "/mnt/fast/vaultwarden/icon_cache/**",
+        "/mnt/fast/vaultwarden/tmp/**",
+        "/mnt/fast/syncthing/config/index-v2/**"
       ],
       "schedule": {
         "cron": "0 3 * * *",
