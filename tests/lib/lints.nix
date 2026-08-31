@@ -1089,6 +1089,8 @@ in
           ("notes-sync", "${repo + "/stacks/notes-sync/compose.yaml"}"),
           ("util", "${repo + "/stacks/util/compose.yaml"}"),
           ("windmill", "${repo + "/stacks/windmill/compose.yaml"}"),
+          ("tandoor", "${repo + "/stacks/tandoor/compose.yaml"}"),
+          ("wger", "${repo + "/stacks/wger/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}

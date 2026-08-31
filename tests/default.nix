@@ -176,6 +176,8 @@ let
     util = callSuite ./suites/util.nix { };
     windmill = callSuite ./suites/windmill.nix { };
     restore = callSuite ./suites/restore.nix { };
+    tandoor = callSuite ./suites/tandoor.nix { };
+    wger = callSuite ./suites/wger.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting

@@ -23,6 +23,8 @@
 #   ./tests/run.sh util           # glance/it-tools/excalidash: the https-redirect healthcheck trap
 #   ./tests/run.sh windmill       # heavy: the seeded dependency cache + admin@windmill.dev retired
 #   ./tests/run.sh restore        # the restore DRILL: dump -> destroy -> restore, both engines
+#   ./tests/run.sh tandoor        # heavy: the silent SQLite fallback, proven absent
+#   ./tests/run.sh wger           # heavy: admin/adminadmin retired + static files really served
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
@@ -73,7 +75,7 @@ case "$TARGET" in
     exec nix-build tests -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger)
     exec nix-build tests -A "checks.$TARGET" --no-out-link
     ;;
 

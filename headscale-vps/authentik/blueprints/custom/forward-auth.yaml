@@ -585,6 +585,37 @@ entries:
       meta_description: "Workflow orchestration (browser access only)"
 
   # ===========================================
+  # Food domain (stacks/wger): wger only
+  # ===========================================
+  # Tandoor is deliberately ABSENT: it drives its own OIDC and ships
+  # OIDC-ready/OIDC-off on a local superuser. Note it must NEVER be given
+  # forward auth by setting REMOTE_USER_AUTH — that puts RemoteUserBackend in
+  # AUTHENTICATION_BACKENDS, and Tandoor's /setup/ view refuses to run at all
+  # when it is present, so a fresh instance would have no way in.
+  - model: authentik_providers_proxy.proxyprovider
+    id: wger-provider
+    state: present
+    identifiers:
+      name: wger
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://wger.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: wger-app
+    state: present
+    identifiers:
+      slug: wger
+    attrs:
+      name: Wger
+      provider: !KeyOf wger-provider
+      policy_engine_mode: any
+      meta_description: "Workout and nutrition tracking"
+
+  # ===========================================
   # Embedded outpost assignment
   # ===========================================
   # The embedded outpost ships with authentik itself and answers on the server
@@ -632,3 +663,4 @@ entries:
         - !KeyOf arcane-provider
         - !KeyOf mazanoke-provider
         - !KeyOf windmill-provider
+        - !KeyOf wger-provider

@@ -523,6 +523,39 @@
 	}
 
 	# ------------------------------------------------------------------
+	# Food domain (10350-10399). Two stacks, one per app — see
+	# stacks/tandoor/compose.yaml's header for why they cannot share one.
+	# ------------------------------------------------------------------
+
+	@tandoor host tandoor.svc.idanreed.com
+	handle @tandoor {
+		# NO forward auth: Tandoor drives its own OIDC against Authentik and
+		# ships OIDC-ready and OIDC-off, running on the local superuser that
+		# tandoor_init creates until the client secret lands. Same posture as
+		# the books stack.
+		#
+		# ⚠ Never set REMOTE_USER_AUTH on this service to make forward auth
+		# work: doing so puts RemoteUserBackend in AUTHENTICATION_BACKENDS,
+		# and the /setup/ view refuses to run at all when it is there — so a
+		# fresh instance would have no way in.
+		reverse_proxy localhost:10350
+	}
+
+	@wger host wger.svc.idanreed.com
+	handle @wger {
+		# Forward auth. Wger has no OIDC in this version, and its own login
+		# stays underneath — the account wger_init provisions is the fallback
+		# if the outpost is unreachable.
+		#
+		# The upstream port is the NGINX SIDECAR, not gunicorn: wger/server
+		# serves no static files at all (no whitenoise in INSTALLED_APPS), so
+		# proxying straight to the app would render a page with no CSS and no
+		# JS — plausible-looking and completely broken.
+		import protected
+		reverse_proxy localhost:10351
+	}
+
+	# ------------------------------------------------------------------
 	# Vaultwarden (Util range, 10400 — its own stack, see
 	# stacks/vaultwarden/compose.yaml for why).
 	#
