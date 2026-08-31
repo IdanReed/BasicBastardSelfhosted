@@ -539,10 +539,13 @@ Adjacent, same class: `proxy.separator` defaults to `,` while Authentik joins
 group values with `|`. A mismatch also silently collapses everyone to
 `default_role`.
 
-The `env-file-coverage` lint also warns that `backrest`, `caddy` and `ntfy`
-declare `env_file: .env` but have only `.sops.env.example` — `docker compose up`
-aborts on a missing env file, so those stacks will not start until the real
-`.sops.env` is created.
+The `env-file-coverage` lint also warns about stacks that declare
+`env_file` but ship only a `.sops.env.example` — most of the fleet, by now
+(operator queue: the real `.sops.env` files are created at deploy time). Note
+the missing file does NOT abort `docker compose up`: every stack uses the
+long form `path: .env, required: false` precisely so it cannot (finding #11);
+the stack starts with those variables unset, which is the quieter and
+therefore worse failure — the WARN is the only early signal.
 
 ### 25. A namespaced variable in a shared `.env` is invisible to the app
 
@@ -1390,6 +1393,23 @@ auth and sops, nothing to do with either. Both images were already pinned in
 `images.nix`; only the suites' `stackImages` lists were short. When a suite
 gains a stack (or a stack gains a service), the preload list is part of the
 contract — and the failure mode points everywhere except at the list.
+
+### 61. A secret the sops model structurally cannot hold
+
+`SIMPLEFIN_TOKEN` looks like every other `.sops.env` key and is nothing like
+them: it is a one-time-use claim URL that the remote bridge *invalidates on
+first import*, and the importer's own validation
+(`SimpleFINService::isBase64ClaimUrl`) throws if the variable holds anything
+else — including the durable access URL the claim exchange returns. That
+credential is persisted only into a JSON the user downloads from the
+importer's UI: a plaintext bank-read credential on a laptop, outside sops,
+outside the backup set, invisible to every lint. The provisioning model here
+assumes secrets are durable-at-rest and provisioned-before-start; a
+claim-and-exchange credential violates both halves, and nothing in the
+tooling can tell — the key would sit in sops looking provisioned while being
+dead after one use. The `.sops.env.example` comments now carry the whole
+story; the general lesson is to ask, for every new secret, *who invalidates
+this and when* — not just where it is stored.
 
 ## Status
 
