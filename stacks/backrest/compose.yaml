@@ -52,7 +52,24 @@ services:
       - ./config-init.sh:/template/config-init.sh:ro
       - ./config.template.json:/template/config.template.json:ro
       - /mnt/fast/backrest/config:/config
-      - /var/lib/backup:/keys:ro
+      # ONE FILE, not the whole /var/lib/backup directory (which is what this
+      # mounted until 2026-08-31). The directory also holds vps_ed25519 — the
+      # passwordless-sudo identity for the PUBLIC VPS — which this container
+      # has no use for whatsoever: config-init reads exactly one path, the
+      # storage-box key, and only to decide whether to let Backrest start.
+      #
+      # ⚠ Single-file binds behave differently from directory binds when the
+      # source is MISSING: docker manufactures a DIRECTORY at the host path
+      # (verified, and the same trap the header documents for /config). That
+      # is why the gate in config-init.sh tests `-f` before `-s`, and it is
+      # self-healing — the tmpfiles `C+` rule in nixos/configuration.nix
+      # removes whatever is at the path before re-copying the key.
+      #
+      # The source must stay a REAL FILE, never the /run/secrets symlink
+      # sops-nix would install by default: a symlink target outside the bind
+      # dangles inside the container. That is why BACKUP_STORAGEBOX_SSH_KEY
+      # has no custom `path` and a tmpfiles C+ rule materialises it instead.
+      - /var/lib/backup/storagebox_ed25519:/keys/storagebox_ed25519:ro
     networks:
       - homelab
     restart: "no"
@@ -85,6 +102,13 @@ services:
       # file 1000-owned — mounting it there breaks every ssh with "Bad owner
       # or permissions". /etc/ssh/ssh_config carries no ownership check.
       - ./ssh_config:/etc/ssh/ssh_config:ro
+      # The pinned Hetzner Storage Box host keys behind that config's
+      # `StrictHostKeyChecking yes`. Read-only and OUTSIDE the writable layer
+      # on purpose: the container's own ~/.ssh/known_hosts is discarded on
+      # every recreate, which is what turned `accept-new` into a fresh TOFU
+      # each time. Verified against Hetzner's published fingerprints — see the
+      # header of known_hosts.
+      - ./known_hosts:/etc/ssh/ssh_known_hosts:ro
       # Data to back up. Read-only: Backrest never needs to write here, and the
       # host-side dump job is what puts dumps into /mnt/fast/_dumps.
       - /mnt/fast:/mnt/fast:ro
