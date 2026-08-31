@@ -75,6 +75,38 @@ in
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
 
+    # This unit IS the deploy plane for authentik: `up -d --wait` failing means
+    # a rebuild left the identity provider down or mid-migration, which
+    # presents to users as "login is broken" and to headscale as OIDC
+    # discovery failing — and because oidc.only_start_if_oidc_is_available is
+    # false (modules/headscale.nix) headscale itself stays happily up, so
+    # nothing else in the fleet turns red. Silent by construction until now.
+    #
+    # Restart=on-failure below means this fires only once the restart limit is
+    # exhausted and systemd puts the unit in `failed` — that is intended: a
+    # single transient pull/healthcheck failure that the next retry fixes is
+    # not worth a phone notification.
+    onFailure = [ "notify-failure@%n.service" ];
+
+    # Without these, OnFailure above would NEVER fire. systemd only enters the
+    # `failed` state — the state OnFailure keys on — when the start-rate limit
+    # is exceeded, and its defaults are 5 starts per 10 SECONDS
+    # (DefaultStartLimitIntervalSec/DefaultStartLimitBurst), while RestartSec
+    # below is 30s: attempts can never accumulate inside a 10s window, so the
+    # unit retries forever, stays permanently "activating", and the notifier
+    # sits unused. This is a general trap for every `Restart=on-failure` +
+    # slow-`RestartSec` unit in the fleet, not a quirk of this one.
+    #
+    # 5 attempts over a 4h window: worst case is 5 × (10min TimeoutStartSec +
+    # 30s) ≈ 52min, comfortably inside 4h, so the limit is genuinely reached
+    # and the unit really does fail. Generous rather than tight on purpose —
+    # a converge that needs three tries during a slow boot must not be turned
+    # into a phone alert, and the containers carry their own
+    # `restart: unless-stopped` underneath this. Eventually giving up is the
+    # point: an unattended infinite retry is exactly what made this silent.
+    startLimitIntervalSec = 14400;
+    startLimitBurst = 5;
+
     path = [ config.virtualisation.docker.package ];
 
     serviceConfig = {

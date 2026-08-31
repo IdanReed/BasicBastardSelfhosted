@@ -128,6 +128,62 @@ in
     };
   };
 
+  # ---------------------------------------------------------------------------
+  # Failure notification
+  # ---------------------------------------------------------------------------
+  # Template unit used as OnFailure= by the units on this host whose silent
+  # failure matters: headscale, caddy, authentik, tailscale-autoconnect. Until
+  # this landed the VPS had OnFailure on nothing at all — a dead control plane
+  # said nothing to anyone.
+  #
+  # 🚨 READ THIS BEFORE TRUSTING IT. Delivery is BEST EFFORT AND PARTLY
+  # SELF-REFERENTIAL, and there is no way around that without building
+  # infrastructure this fleet has deliberately not built:
+  #
+  #   - ntfy runs on the SERVICES VM (stacks/ntfy), published on
+  #     127.0.0.1:10001 and reachable only through that host's Caddy, which
+  #     binds the tailnet IP. ntfy.svc.idanreed.com is a public Cloudflare A
+  #     record pointing into 100.64.0.0/10, so the name resolves from
+  #     anywhere but only routes from inside the tailnet. There is no public
+  #     ntfy endpoint to fall back to.
+  #   - Therefore: an alert about headscale or tailscale-autoconnect travels
+  #     over the very tailnet whose coordination server just failed. In
+  #     practice established WireGuard sessions survive a headscale outage
+  #     (headscale is the control plane, not the data plane) so the alert
+  #     usually still gets out — but "usually" is the honest word, and a
+  #     VPS that has fully left the tailnet CANNOT report anything.
+  #
+  # The out-of-band backstop is deliberately somewhere else and is the reason
+  # this is acceptable: stacks/gatus/gatus.yaml runs on the services VM and
+  # probes https://headscale.idanreed.com/health and
+  # https://auth.idanreed.com/-/health/ready/ over the PUBLIC internet, then
+  # alerts through ntfy's loopback address. That path shares nothing with the
+  # tailnet, so it is what actually catches "the VPS is gone".
+  #
+  # The body is echoed to the journal before the publish, so `journalctl -u
+  # notify-failure@...` is a local record even when nothing was delivered.
+  # This unit never fails itself: a notifier that can fail just produces more
+  # failed units and no notification.
+  systemd.services."notify-failure@" = {
+    description = "Notify Ntfy that %i failed";
+    serviceConfig.Type = "oneshot";
+    scriptArgs = "%i";
+    script = ''
+      unit="$1"
+      body="$(${pkgs.systemd}/bin/systemctl status --full --lines=30 "$unit" 2>&1 | head -c 3000)"
+      echo "headscale-vps: $unit failed"
+      echo "$body"
+      ${pkgs.curl}/bin/curl -fsS --max-time 20 \
+        -H "Title: headscale-vps: $unit failed" \
+        -H "Priority: high" \
+        -H "Tags: rotating_light" \
+        -d "$body" \
+        https://ntfy.svc.idanreed.com/alerts \
+        || echo "ntfy notification failed — see the tailnet caveat in configuration.nix"
+      exit 0
+    '';
+  };
+
   # Tailscale auto-login service.
   #
   # --login-server is REQUIRED. Without it `tailscale up --authkey` registers
@@ -138,15 +194,57 @@ in
   # This host joins its own Headscale, so it must wait for the full public
   # path to be up: headscale on loopback, and Caddy holding a valid
   # certificate for headscale.idanreed.com.
+  # It is also NOT boot-only. See the timer below.
   systemd.services.tailscale-autoconnect = {
     description = "Automatic connection to Headscale";
-    after = [ "network-online.target" "tailscale.service" "headscale.service" "caddy.service" ];
-    wants = [ "network-online.target" "tailscale.service" ];
+    # tailscaleD, with the d. `services.tailscale.enable` creates
+    # tailscaled.service and there is no tailscale.service — systemd silently
+    # ignores an ordering dependency on a unit that does not exist, so the
+    # previous "tailscale.service" here bought nothing and this unit could
+    # start before the daemon it talks to. Harmless before, because the script
+    # slept 2s and had one shot; now that it re-runs on a timer it matters,
+    # and the settle loop below is the belt to this braces.
+    # (nixos/configuration.nix:176-177 still has the typo, on the twin unit.)
+    after = [ "network-online.target" "tailscaled.service" "headscale.service" "caddy.service" ];
+    wants = [ "network-online.target" "tailscaled.service" ];
     wantedBy = [ "multi-user.target" ];
+
+    onFailure = [ "notify-failure@%n.service" ];
+
+    # Without these, OnFailure above could never fire: systemd reaches the
+    # `failed` state only when the start-rate limit is exceeded, and the
+    # defaults (5 starts / 10 SECONDS) can never be hit by a unit whose
+    # RestartSec is 30s. The unit would retry every 30s forever, always
+    # "activating", never failed, and the notifier would never run — a
+    # permanently-off-tailnet host reporting nothing.
+    #
+    # The three numbers here (8min cap per attempt, 3 attempts, 30min window)
+    # are sized against each other and against the timer below:
+    #   - the script's own bounded waits are 60s + 300s, so TimeoutStartSec
+    #     8min bounds an attempt without ever cutting a legitimate one short;
+    #   - 3 attempts therefore span at most ~26min, comfortably inside the
+    #     30min window, so the limit is genuinely reached and the unit really
+    #     does enter `failed` rather than looping forever;
+    #   - 30min is well under the timer's 1h minimum gap, so the next timed
+    #     run is never refused with "start request repeated too quickly".
+    # Giving up is not permanent: the timer below starts it again every hour.
+    startLimitIntervalSec = 1800;
+    startLimitBurst = 3;
 
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = true;
+      TimeoutStartSec = "8min";
+
+      # RemainAfterExit is deliberately FALSE, which is a change: with it true
+      # the unit stays `active` forever after the first success, and a unit
+      # that is never inactive can never satisfy OnUnitInactiveSec — the timer
+      # below would be installed and would never fire. (OnUnitActiveSec is not
+      # a fix either: it would fire, but `systemctl start` on an already-active
+      # RemainAfterExit oneshot is a no-op, so the run would do nothing.)
+      # Nothing orders itself after this unit, so losing the latched active
+      # state costs nothing.
+      RemainAfterExit = false;
+
       # First boot races ACME issuance, which can take a minute or two.
       # Retry rather than leaving the host off its own tailnet until someone
       # notices and reruns this by hand.
@@ -157,15 +255,28 @@ in
     script = ''
       set -euo pipefail
 
-      # Wait for tailscaled to be ready
-      sleep 2
-
-      # Check if already authenticated
-      status="$(${pkgs.tailscale}/bin/tailscale status -json | ${pkgs.jq}/bin/jq -r .BackendState)"
-      if [ "$status" = "Running" ]; then
-        echo "Already connected to Headscale"
-        exit 0
-      fi
+      # Settle before deciding, rather than sampling once after a fixed sleep.
+      # This runs repeatedly now (timer below), so it can land while tailscaled
+      # is mid-restart and reporting "Starting" — and treating "Starting" as
+      # "not connected" would push an already-registered node through
+      # `tailscale up --authkey` again, which fails outright if the preauth key
+      # was single-use and has been consumed. Wait for a terminal state
+      # instead. `|| true` because tailscaled may not be answering yet at all.
+      status=""
+      for i in $(seq 1 12); do
+        status="$(${pkgs.tailscale}/bin/tailscale status -json 2>/dev/null \
+                  | ${pkgs.jq}/bin/jq -r .BackendState 2>/dev/null || true)"
+        case "$status" in
+          Running)
+            echo "Already connected to Headscale"
+            exit 0 ;;
+          NeedsLogin|NeedsMachineAuth|Stopped)
+            # Terminal: no amount of waiting fixes these, go register.
+            break ;;
+        esac
+        echo "tailscaled backend state '$status' ($i/12), waiting..."
+        sleep 5
+      done
 
       # Wait for our own control plane to answer over HTTPS. Bounded, so a
       # genuine misconfiguration still surfaces as a unit failure.
@@ -196,6 +307,41 @@ in
         --authkey "$authkey" \
         --hostname=headscale-vps
     '';
+  };
+
+  # The re-run that makes tailscale-autoconnect a repair loop instead of a
+  # one-shot boot script.
+  #
+  # The failure it exists for: a node that loses its registration — key expiry
+  # (see the long oidc.expiry comment in modules/headscale.nix), a control
+  # plane rebuilt from an old backup, a node deleted by mistake — goes to
+  # NeedsLogin and STAYS there. The old unit ran once at boot with
+  # RemainAfterExit=true and never ran again, so recovery required a human to
+  # notice and a reboot or a manual `systemctl start`. On a headless VPS
+  # whose alerting runs over the tailnet it just lost, that human notices
+  # late.
+  #
+  # OnUnitInactiveSec, not OnCalendar/OnBootSec: it measures from when the
+  # service last STOPPED, so a run that takes five minutes does not shorten
+  # the next gap, and the service and its timer cannot overlap. This is the
+  # half that required RemainAfterExit=false above — a unit that never goes
+  # inactive never triggers it.
+  #
+  # Hourly with a 10-minute jitter. The script is a no-op costing one
+  # `tailscale status` call when the node is already Running (it exits before
+  # touching the network or the authkey), so the cost of hourly is nil, and
+  # an hour is the worst-case recovery latency for a node that fell off. A
+  # PERSISTENTLY broken autoconnect will therefore alert about once an hour —
+  # that is intended, not fatigue: it means this host is off the tailnet.
+  systemd.timers.tailscale-autoconnect = {
+    description = "Re-check the Headscale registration hourly";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnUnitInactiveSec = "1h";
+      RandomizedDelaySec = "10m";
+      AccuracySec = "1m";
+      Unit = "tailscale-autoconnect.service";
+    };
   };
 
   # Ensure directories exist.

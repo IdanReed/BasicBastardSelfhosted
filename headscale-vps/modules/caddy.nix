@@ -58,20 +58,61 @@
     '';
 
     virtualHosts."auth.idanreed.com".extraConfig = ''
-      # HSTS (security review 2026-08-30 item 6): AUTHENTIK_COOKIE_DOMAIN is
-      # the apex (required for forward-auth), so the session cookie travels to
-      # every subdomain — an accepted risk whose cheap mitigation is strict
-      # transport. Scoping truth as above: full apex-wide protection needs the
-      # apex host to serve includeSubDomains; this covers auth.* itself.
+      # HSTS (security review 2026-08-30 item 6).
+      #
+      # What this header does, stated correctly — the previous version of this
+      # comment claimed HSTS was "the cheap mitigation" for the apex cookie
+      # scope, and that is simply not what HSTS does. HSTS pins the BROWSER to
+      # HTTPS for this name: it removes the plaintext downgrade and the
+      # sslstrip-style MITM. It has no effect whatsoever on which hosts a
+      # cookie is sent to.
+      #
+      # The cookie risk is therefore UNMITIGATED and accepted, not reduced:
+      # AUTHENTIK_COOKIE_DOMAIN is the apex (required, or the forward-auth
+      # outpost's session is invisible to *.svc.idanreed.com), so the Authentik
+      # session cookie is attached to requests to EVERY idanreed.com
+      # subdomain — including names this repo does not run, e.g. whatever
+      # serves the apex. Any one of them that is compromised or
+      # attacker-controlled can read the cookie out of the request it receives
+      # and replay it here. HTTPS everywhere does not change that; it only
+      # means the theft happens over TLS.
+      #
+      # The actual mitigations, neither of which is taken: narrow the cookie
+      # domain (breaks forward auth, which is the whole reason it is the apex),
+      # or stop sharing an apex with anything not equally trusted.
+      #
+      # Scoping truth as above: includeSubDomains here only covers
+      # *.auth.idanreed.com; apex-wide HSTS must be served by the apex host
+      # (vps-personal), which is outside this repo.
       header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
       # Security review 2026-08-30 item 5: the admin UI and the API do not
       # need to be public — only login flows do (OIDC redirects arrive from
       # browsers anywhere). BUT the login page is itself a SPA that calls
-      # /api/v3/flows/* (flow executor) and /api/v3/root/* (branding/config)
-      # from the browser, so those two API prefixes must stay public or
-      # every login breaks. /outpost.goauthentik.io/* (forward-auth checks)
-      # is a different prefix and deliberately not matched here.
+      # authentik's own API from the browser, so the endpoints it needs must
+      # stay public or every public login breaks with an opaque JS error.
+      # /outpost.goauthentik.io/* (forward-auth checks) is a different prefix
+      # and deliberately not matched here.
+      #
+      # WHY THE CARVE-OUT IS EXACTLY THESE TWO PREFIXES, and why the flows
+      # half is now `executor` rather than all of `flows`:
+      #   - web/src/flow/FlowExecutor.ts issues precisely two API calls,
+      #     flowsExecutorGet and flowsExecutorSolve — i.e. GET and POST on
+      #     /api/v3/flows/executor/<slug>/. Nothing in the flow bundle touches
+      #     any other /api/v3/flows/ route.
+      #   - Corroborated locally: the verbatim login POST captured against the
+      #     pinned image for the fail2ban filter (../configuration.nix, the
+      #     authentik.conf sample line) is
+      #     "path": "/api/v3/flows/executor/default-authentication-flow/".
+      #   - /api/v3/root/* is the branding/config fetch the executor shell
+      #     needs before it can render anything.
+      # The rest of /api/v3/flows/* — instances/, bindings/, stages/,
+      # inspector/ — is flow CRUD and the flow inspector: admin surface with
+      # no unauthenticated caller, and precisely what item 5 wanted off the
+      # public internet. Narrowing therefore keeps every public login working
+      # and takes the flow-administration API back behind the tailnet.
+      # tests/suites/vps.nix already asserts the kept path
+      # (/api/v3/flows/executor/default/) reaches the backend from off-tailnet.
       #
       # Allowed sources: the tailnet (admin access arrives over it once
       # headscale extra_records maps auth.idanreed.com to the VPS tailnet IP
@@ -79,7 +120,7 @@
       # loopback (local curl/ops on the VPS itself).
       @restricted {
         path /if/admin* /api/v3/*
-        not path /api/v3/flows/* /api/v3/root/*
+        not path /api/v3/flows/executor/* /api/v3/root/*
         not remote_ip 100.64.0.0/10 127.0.0.0/8 ::1
       }
       respond @restricted "restricted to tailnet" 403
@@ -89,4 +130,22 @@
       reverse_proxy 127.0.0.1:9000
     '';
   };
+
+  # Caddy is the only public listener on this host, so its failure takes
+  # HTTPS for headscale AND authentik with it — and the embedded DERP relay,
+  # which is proxied at /derp. Established WireGuard sessions survive (that is
+  # why the notifier can still reach ntfy over the tailnet), but nothing new
+  # can register. See notify-failure@ in ../configuration.nix for the honest
+  # limits of that delivery path; the out-of-band backstop is the Gatus probe
+  # pair in stacks/gatus/gatus.yaml, which dials both public names from the
+  # services VM over the internet.
+  # No startLimit* override is needed here, unlike headscale.service and
+  # tailscale-autoconnect.service. Read off the built unit, not assumed: the
+  # nixpkgs caddy module ships StartLimitIntervalSec=14400 and
+  # StartLimitBurst=10 alongside Restart=on-failure/RestartSec=5s, so ten
+  # rapid failures reach the limit in ~50s and the unit genuinely enters
+  # `failed` — which is the state OnFailure keys on. It also sets
+  # RestartPreventExitStatus=1, so a Caddyfile that does not parse fails on
+  # the first try instead of looping.
+  systemd.services.caddy.onFailure = [ "notify-failure@%n.service" ];
 }

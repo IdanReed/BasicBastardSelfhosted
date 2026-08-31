@@ -1011,3 +1011,91 @@ endpoints:
     alerts:
       - type: ntfy
 
+
+  # ---------------------------------------------------------------------------
+  # The VPS (headscale-vps) — the only endpoints in this file that are NOT on
+  # the services VM.
+  # ---------------------------------------------------------------------------
+  # 🚨 THESE ARE THE ONLY OUT-OF-BAND ALERT PATH THE FLEET HAS. Everything
+  # above measures a host Gatus shares with ntfy. These three dial the VPS's
+  # PUBLIC names, which resolve to its public IP and route over the internet,
+  # not the tailnet — so they still work, and still alert, when the tailnet is
+  # exactly what has failed. That matters because the VPS's own systemd
+  # OnFailure notifiers publish to ntfy OVER the tailnet
+  # (headscale-vps/configuration.nix, notify-failure@): a VPS that has fully
+  # left the tailnet cannot report anything about itself, and this group is
+  # what notices.
+  #
+  # No `service` twin for any of them: a loopback probe of the VPS would have
+  # to run ON the VPS, and there is no Gatus there (monitoring outside the
+  # services VM is explicitly out of scope). The path probe is the whole story
+  # here, so each one is aimed at a health endpoint that actually exercises the
+  # backend rather than at `/`.
+  #
+  # ⚠ If headscale `extra_records` is ever configured to map these names to
+  # the VPS's tailnet IP (the operator step described in
+  # headscale-vps/modules/caddy.nix), these probes silently become tailnet
+  # probes and lose the independence that is their entire point. Split-DNS
+  # that name to the tailnet IP for admin access only, or pin these three to
+  # the public IP with `client.dns-resolver`.
+
+  - name: "headscale (vps: public https -> caddy -> headscale)"
+    group: "vps"
+    url: "https://headscale.idanreed.com/health"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      # /health is headscale's own handler (hscontrol/handlers.go
+      # HealthHandler): it PINGS THE DATABASE and answers
+      # {"status":"pass"} / 200, or {"status":"fail"} / 500. Asserting the body
+      # and not just the status is what makes this more than a Caddy probe —
+      # Caddy answering 200 for a dead headscale is not possible here, but a
+      # headscale that is up with an unreadable sqlite file is, and that is the
+      # state where the whole tailnet stops being able to re-register.
+      - "[STATUS] == 200"
+      - "[BODY].status == pass"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  - name: "authentik (vps: public https -> caddy -> authentik)"
+    group: "vps"
+    url: "https://auth.idanreed.com/-/health/ready/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      # /-/health/ready/ (authentik/root/monitoring.py ReadyView) forces a
+      # database connection and returns 200, or 503 if postgres is down.
+      # /-/health/live/ is deliberately NOT used: it returns 200
+      # unconditionally as long as the process exists, which is the failure
+      # mode a container healthcheck already covers. Neither path is under
+      # /api/v3, so the @restricted matcher in
+      # headscale-vps/modules/caddy.nix does not block this probe's
+      # off-tailnet source.
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  - name: "headscale OIDC discovery (vps: the auth.* 404 regression)"
+    group: "vps"
+    url: "https://auth.idanreed.com/application/o/headscale/.well-known/openid-configuration"
+    interval: 5m
+    client:
+      ignore-redirect: true
+    conditions:
+      # The named regression this probe exists for is in the header comment of
+      # headscale-vps/modules/caddy.nix: auth.idanreed.com once had nothing
+      # listening on it, so OIDC discovery fell through to headscale and 404'd
+      # — and because oidc.only_start_if_oidc_is_available is false, headscale
+      # stayed green while every browser login was broken. Both other probes
+      # in this group stay green in that state; this one does not.
+      # Pinning the issuer catches the blueprint being un-applied or the
+      # provider being renamed, which present identically to a 404 to a user.
+      - "[STATUS] == 200"
+      - "[BODY].issuer == https://auth.idanreed.com/application/o/headscale/"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
