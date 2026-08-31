@@ -12,7 +12,31 @@ services:
       - '127.0.0.1:10000:3552'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - arcane_data:/app/data
+      # A BIND, not the named `arcane_data` volume it was until 2026-08-31.
+      #
+      # A named volume lives under /var/lib/docker, which the fast-volume
+      # Backrest plan excludes with `**/docker/**` — so Arcane's own database
+      # was in NO backup at all. That database holds the GitOps sync
+      # definitions, and recreating those by hand after a restore does not
+      # reproduce them: `syncDirectory` is a per-sync flag that DEFAULTS OFF
+      # in v1.17.4, so a hand-made sync silently reverts to single-file mode
+      # and stops delivering the sibling `.sops.env` files. Every stack then
+      # deploys with its secrets unset, and the only symptom is each app
+      # failing its own way. A restore that looks complete and ships no
+      # secrets is the worst shape a backup gap can take.
+      #
+      # The image declares `VOLUME /app/data` and its DATABASE_URL default is
+      # `file:data/arcane.db` (WAL) — so the file to protect is
+      # /mnt/fast/arcane/arcane.db, and a raw copy of a live WAL database is a
+      # torn snapshot, not a backup (the Forgejo lesson). It needs a
+      # `sqlite_backup arcane /mnt/fast/arcane/arcane.db` line in
+      # nixos/backup-prepare.sh, not just a plan path.
+      #
+      # 1000:1000 on the host directory, matching PUID/PGID below: root-owned,
+      # Arcane cannot write its own database (the same failure mode that made
+      # /srv/stacks 1000:1000 — finding #10). The tmpfiles rule is generated
+      # into nixos/stack-dirs.nix from THIS line.
+      - /mnt/fast/arcane:/app/data
       - /srv/stacks:/srv/stacks
     environment:
       - APP_URL=http://localhost:3552
@@ -31,6 +55,3 @@ services:
       - path: .env
         required: false
     restart: unless-stopped
-
-volumes:
-  arcane_data:
