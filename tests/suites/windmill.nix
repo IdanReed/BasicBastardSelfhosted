@@ -207,7 +207,7 @@ pkgs.testers.runNixOSTest {
             # and the init container would never run at all.
             services_vm.succeed(f"{WM} up -d")
             services_vm.succeed(
-                f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_worker windmill_db"
+                f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_db"
             )
         except Exception:
             diag("compose up failed")
@@ -339,9 +339,18 @@ pkgs.testers.runNixOSTest {
         # Start EVERYTHING first, including the one-shots — enumerating
         # services in the --wait call below means only those get created,
         # and the init container would never run at all.
+        #
+        # ⚠ windmill_worker is deliberately NOT in the --wait list. It has
+        # `healthcheck: disable: true` (it has no HTTP listener, so any probe
+        # would be the process check finding #16 warns about), and naming a
+        # healthcheck-less service explicitly makes compose ERROR with
+        # "container windmill_worker has no healthcheck configured" — it
+        # tolerates one only when waiting on the whole project. Its liveness is
+        # asserted from the server's worker list below, which is where the
+        # answer actually lives.
         services_vm.succeed(f"{WM} up -d")
         services_vm.succeed(
-            f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_worker windmill_db"
+            f"{WM} up -d --wait --wait-timeout 1200 windmill_server windmill_db"
         )
         code, _ = login(ADMIN, ADMIN_PASS)
         assert code < 300, f"post-reboot login returned {code}"

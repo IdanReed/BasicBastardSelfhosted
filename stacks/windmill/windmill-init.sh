@@ -135,16 +135,22 @@ if code < 300 and body:
 if workspace in existing:
     log(f"workspace '{workspace}' already exists")
 else:
+    # ⚠ `username` is REJECTED on this version:
+    #     400 Bad request: username is not allowed when username creation is
+    #     automated
+    # Older Windmill required it, newer derives it. Send the minimal body and
+    # add `username` back only if the server asks for it, so this works either
+    # way rather than pinning to whichever behaviour today's image has.
+    payload = {"id": workspace, "name": workspace}
     code, body = request(
-        f"{WM}/api/workspaces/create",
-        method="POST",
-        body={
-            "id": workspace,
-            "name": workspace,
-            "username": admin_email.split("@")[0],
-        },
-        token=token,
+        f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
     )
+    if code == 400 and "username" in body.lower() and "not allowed" not in body.lower():
+        payload["username"] = admin_email.split("@")[0]
+        code, body = request(
+            f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
+        )
+
     if code < 300:
         log(f"CHANGE: created workspace '{workspace}'")
     elif code == 400 and "already exists" in body.lower():

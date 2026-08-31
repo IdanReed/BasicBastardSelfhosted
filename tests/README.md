@@ -1012,6 +1012,28 @@ rather than writing it**, because a preprocessor has no concept of "this one is
 just documentation". The same trap exists in Compose files (`$$`), systemd
 units (`%`), and anything rendered through envsubst.
 
+### 42. `up --wait` errors on a healthcheck-less service — but only if you name it
+
+Compose refuses outright:
+
+    container windmill_worker has no healthcheck configured
+
+Windmill's worker has `healthcheck: disable: true` on purpose — it has no HTTP
+listener, so any container-level probe would be the process check finding #16
+exists to warn about, and its liveness is asserted from the server's worker
+list instead. Naming it explicitly in `up -d --wait` turns that deliberate
+absence into a hard error.
+
+The asymmetry is the trap: `up -d --wait` over the **whole project** tolerates
+a service with no healthcheck and simply waits for it to be running. Naming the
+same service explicitly does not. So the fix for finding #39 — enumerate the
+long-lived services rather than waiting on everything — introduced this one,
+because the enumeration included a service whose healthcheck was deliberately
+absent.
+
+Both rules together: enumerate the long-lived services **that have
+healthchecks**, and assert everything else by its own evidence.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -1067,7 +1089,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Forty-one** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
