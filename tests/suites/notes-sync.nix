@@ -180,7 +180,7 @@ pkgs.testers.runNixOSTest {
     STCFG = "/mnt/fast/syncthing/config"
 
     # Fixture values from tests/fixtures/notes-sync.sops.env.
-    RM_ADMIN = "rm-admin@test.invalid"
+    RM_ADMIN = "rmadmin@test.invalid"
     RM_PASS = "test_rmfakecloud_password_not_secret"
     ST_KEY = "test_syncthing_api_key_not_secret_00000000000000000000"
 

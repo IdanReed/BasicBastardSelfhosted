@@ -19,6 +19,7 @@ exec python3 - <<'PY'
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -161,16 +162,25 @@ except urllib.error.HTTPError as e:
 # `exchange` is the headless path — its sibling `apiKeys.create` requires a
 # browser cookie.
 #
-# ⚠ KNOWN COST, stated rather than hidden: this mints a NEW api key on every
-# run, so one accumulates per Arcane redeploy. They are listed and revocable
-# in Karakeep's UI. The alternative — only exchanging on the run that creates
-# the user — would leave a drifted password undetected until a human tried to
-# log in, and silent credential drift is the failure this check exists for.
-# Revisit if a cheaper credential probe appears; `users.create` returning 409
-# is not one, because it says nothing about the password.
+# 🚨 THE KEY NAME MUST BE UNIQUE PER RUN. A fixed name works exactly once:
+# the second call returns
+#   500 {"code":"INTERNAL_SERVER_ERROR","path":"apiKeys.exchange"}
+# — a unique-constraint violation surfaced as a generic 500, with nothing in
+# the body to distinguish it from a real fault. An earlier version of this
+# script used the fixed name "tracking-init" and a comment claiming the cost
+# was "one key accumulates per redeploy". That was wrong in the worse
+# direction: it did not accumulate, it made every redeploy exit 1. Found by
+# the suite rerunning this container, which is the only way to find it.
+#
+# So: mint under a nonce name, verify, then revoke it again. That keeps the
+# credential check on EVERY run — silent password drift is what it exists for,
+# and `users.create` returning a duplicate error says nothing about the
+# password — without leaving a key behind each time.
+nonce = str(int(time.time()))
+key_name = f"tracking-init-{nonce}"
 try:
     _, res = call(f"{KARAKEEP}/api/trpc/apiKeys.exchange", "POST", {"json": {
-        "keyName": "tracking-init",
+        "keyName": key_name,
         "email": os.environ["KARAKEEP_ADMIN_EMAIL"],
         "password": os.environ["KARAKEEP_ADMIN_PASSWORD"],
     }})
@@ -184,6 +194,23 @@ key = (((res or {}).get("result") or {}).get("data") or {}).get("json") or {}
 if not key.get("key"):
     sys.exit(f"tracking-init: FATAL: apiKeys.exchange returned no key: {res!r}")
 log("karakeep credentials verified (api key mintable)")
+
+# Best-effort cleanup, deliberately NOT fatal. The verification above has
+# already done its job by this point, and failing the whole provisioning run
+# over a leftover verification key would be the wrong trade — but say so out
+# loud, because a key nobody knows about is worse than one they were told to
+# revoke.
+if key.get("id"):
+    try:
+        call(f"{KARAKEEP}/api/trpc/apiKeys.revoke", "POST",
+             {"json": {"id": key["id"]}},
+             headers={"Authorization": f"Bearer {key['key']}"})
+    except Exception as exc:
+        log(f"WARNING: could not revoke the verification key {key_name!r} "
+            f"({exc}) - revoke it by hand in Karakeep's settings")
+else:
+    log(f"WARNING: apiKeys.exchange returned no id, so the verification key "
+        f"{key_name!r} could not be revoked - remove it by hand")
 
 log(f"done ({changes} change(s))")
 PY

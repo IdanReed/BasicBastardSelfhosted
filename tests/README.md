@@ -891,6 +891,40 @@ not been tested.** Every stack suite in this repo now removes the init
 container and brings it up again, precisely because first-run success says
 nothing about redeploy behaviour — and redeploy is the common case.
 
+### 38. rmfakecloud strips the hyphen from an email, on create but not on login
+
+`sanitizeEmail` runs when an account is created and **not** when one is looked
+up, so any character it removes produces an account nobody can log into. The
+symptom is a bare 401, indistinguishable from a wrong password. Its own log is
+the only place the truth appears:
+
+```
+Creating an admin user
+[ui] stat /data/users/rm-admin@test.invalid/.userprofile:
+     no such file or directory cannot load user, login failed
+401 POST /ui/api/login
+```
+
+The whitelist is `[^a-zA-Z0-9.@-_]+`. In a character class `@-_` is an ASCII
+**range**, 0x40–0x5F — `@ A-Z [ \ ] ^ _`. So the surviving set is letters,
+digits, `.`, `@`, `_` and four punctuation oddities, and **the hyphen is
+stripped**. Upstream discussion of this bug focuses on `+`, which is the
+memorable case; the hyphen is the common one, and it is what this fleet's own
+test fixture hit.
+
+Two things worth carrying:
+
+- **A character class containing an unescaped `-` between two characters is a
+  range, not three literals.** Reading `@-_` as "at-sign, hyphen, underscore"
+  is the natural mistake and produces exactly the wrong mental model. When a
+  whitelist matters, enumerate what it *admits* rather than what you think it
+  lists.
+- The guard in `notes-sync-init.sh` now checks the email against the real
+  admitted set rather than against `+`, and refuses up front. Validating input
+  against a rule you derived by *reading* the regex — instead of by running
+  it — is how the first version of that guard came to check for the wrong
+  character.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -946,7 +980,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-seven** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-eight** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

@@ -294,6 +294,25 @@
     # try to download one and hang offline.
     "d /mnt/fast/windmill 0755 root root -"
     "d /mnt/fast/windmill/pgdata 0755 root root -"
+    # Food domain — TWO stacks (stacks/tandoor, stacks/wger), one per app,
+    # because both are Django and both read the BARE name SECRET_KEY out of
+    # their environment.
+    #
+    # Tandoor runs as ROOT (its Dockerfile has no USER instruction; nginx and
+    # gunicorn both run as root, and boot.sh chmods the media root on every
+    # start), so root:root is what it will write as.
+    #
+    # 🚨 Wger's media directory must be 1000:1000. Its base image does
+    # `deluser ubuntu` then `adduser wger --uid 1000` and the production image
+    # ends on `USER wger` — there is NO PUID/PGID, no id-remap entrypoint and
+    # no chown-on-start, so a root-owned bind source makes collectstatic fail
+    # on the very first boot. Finding #14's crash-loop pattern.
+    "d /mnt/fast/tandoor 0755 root root -"
+    "d /mnt/fast/tandoor/pgdata 0755 root root -"
+    "d /mnt/fast/tandoor/mediafiles 0755 root root -"
+    "d /mnt/fast/wger 0755 root root -"
+    "d /mnt/fast/wger/pgdata 0755 root root -"
+    "d /mnt/fast/wger/media 0755 1000 1000 -"
   ];
 
   # Swap (optional - can be added if needed)

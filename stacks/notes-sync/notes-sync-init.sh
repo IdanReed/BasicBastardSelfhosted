@@ -90,16 +90,35 @@ def wait_for(url, *, headers=None, tries=60, delay=2):
 rm_email = env("RMFAKECLOUD_ADMIN_EMAIL")
 rm_pass = env("RMFAKECLOUD_ADMIN_PASSWORD")
 
-# ⚠ sanitizeEmail rewrites the identifier ON CREATE ONLY — login looks the user
-# up with the raw string. Its whitelist regexp is [^a-zA-Z0-9.@-_]+, where
-# `@-_` parses as an ASCII RANGE (0x40-0x5F) that does not contain '+'. So
-# idan+rm@example.com is stored as idanrm@example.com and every later login
-# fails with a bare 401. Refuse up front rather than create an account that can
-# never be logged into.
-if "+" in rm_email:
+# 🚨 sanitizeEmail rewrites the identifier ON CREATE ONLY — login looks the user
+# up with the RAW string. So any character it strips produces an account that
+# can never be logged into, and the symptom is a bare 401 that looks exactly
+# like a wrong password. Observed directly:
+#
+#   Creating an admin user
+#   [ui] stat /data/users/rm-admin@test.invalid/.userprofile: no such file
+#        or directory cannot load user, login failed
+#   401 POST /ui/api/login
+#
+# The whitelist is `[^a-zA-Z0-9.@-_]+`, and `@-_` parses as an ASCII RANGE
+# (0x40-0x5F = @ A-Z [ \ ] ^ _). So the surviving set is letters, digits, '.',
+# '@', '_' and four punctuation oddities — which means the HYPHEN is stripped,
+# and a hyphen is far more common in an email local part than the '+' that the
+# upstream discussion focuses on. Refuse anything outside the real set rather
+# than creating an unreachable account.
+ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789"
+    ".@[\\]^_"
+)
+bad = sorted({c for c in rm_email if c not in ALLOWED})
+if bad:
     fatal(
-        f"RMFAKECLOUD_ADMIN_EMAIL contains '+' ({rm_email}). rmfakecloud strips "
-        "it on create but not on login, so the account would be unreachable."
+        f"RMFAKECLOUD_ADMIN_EMAIL contains {bad!r}, which rmfakecloud strips on "
+        f"create but NOT on login ({rm_email!r} would be stored as "
+        f"{''.join(c for c in rm_email if c in ALLOWED)!r}). The account would "
+        "be unreachable and every login would return a bare 401."
     )
 
 wait_for(f"{RM}/health")
