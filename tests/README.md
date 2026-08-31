@@ -567,7 +567,13 @@ apps in one oneshot and its idempotence, a real EPUB and a real FLAC indexed
 with zero egress, OPDS end to end plus the KOReader auth leg, the deliberate
 OIDC-off contract, the `:ro` library mounts measured rather than reasoned, the
 post-download hook in both directions including that it still exits 0 when its
-target is down, and reboot durability on a real disk), **proxmox-boot**
+target is down, and reboot durability on a real disk), **automation** (21 subtests: the pre-seeded `.storage/http` proving Home
+Assistant loaded a STABLE config rather than a five-minute trial, a real
+proxied request, Frigate asserted NOT to be in safe mode, the MQTT round trip
+with auth on plus both consumers proven connected, the sha512-pbkdf2 password
+hash that keeps the file readable by the pinned 2.0.x broker, Frigate's
+unauthenticated port 5000 asserted unpublished, and reboot durability),
+**proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
 **Twenty-four** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:

@@ -47,12 +47,12 @@ OUT = os.path.join(STORAGE, "http")
 # not preserve the source address — docker-proxy terminates the connection and
 # re-dials from the bridge gateway, so HA sees the gateway. The compose file
 # pins the subnet precisely so this value is stable across recreates.
-PROXY = os.environ.get("HA_TRUSTED_PROXY", "172.30.250.1/32")
+PROXY = os.environ.get("HA_TRUSTED_PROXY", "10.89.250.1/32")
 if "/" not in PROXY:
     # ip_network() rejects a host address with a prefix, and a bare address is
     # ambiguous. Fail loudly rather than write something that silently 400s.
     sys.exit(f"ha-config-init: FATAL: HA_TRUSTED_PROXY={PROXY!r} is not a "
-             f"network in CIDR form (e.g. 172.30.250.1/32)")
+             f"network in CIDR form (e.g. 10.89.250.1/32)")
 
 with open(TEMPLATE) as fh:
     desired = json.load(fh)
@@ -60,19 +60,29 @@ with open(TEMPLATE) as fh:
 desired["data"]["stable"]["trusted_proxies"] = [PROXY]
 
 
+# Absence and a null VALUE are different things, and `.get()` cannot tell them
+# apart — which silently dropped `"pending": null` from the rendered file
+# until a suite run caught it. That is not a cosmetic loss: Home Assistant
+# does raw key access on `pending`, so the file it produced would have
+# KeyError'd on load.
+MISSING = object()
+
+
 def merge(current, desired):
     """Recursive per-key merge; returns (merged, changed)."""
     merged = dict(current)
     changed = False
     for key, value in desired.items():
-        if isinstance(value, dict) and merged.get(key) is None:
+        have = merged.get(key, MISSING)
+        if isinstance(value, dict) and (have is MISSING or have is None):
             merged[key] = {}
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            sub, sub_changed = merge(merged[key], value)
+            have = merged[key]
+        if isinstance(value, dict) and isinstance(have, dict):
+            sub, sub_changed = merge(have, value)
             if sub_changed:
                 merged[key] = sub
                 changed = True
-        elif merged.get(key) != value:
+        elif have is MISSING or have != value:
             merged[key] = value
             changed = True
     return merged, changed

@@ -122,12 +122,26 @@ def seed_mqtt(token):
     # The broker step. Reached by service name on the compose network — the
     # same address frigate uses, and the reason mosquitto needs no host
     # publish for the stack's own event chain to work.
+    #
+    # `other_settings` is REQUIRED and is a voluptuous *section*, so the
+    # browser's collapsed "advanced" panel is not optional over the API — its
+    # absence is a 400 `{"other_settings": "required key not provided"}`. Two
+    # of its members are required in turn (`set_client_cert`, `set_ca_cert`),
+    # and `transport` carries a default that only applies if the key is
+    # present. Plain TCP, no client certificate, no CA verification: the
+    # broker is on the compose network and speaks plaintext MQTT.
     try:
         _, res = call(f"/api/config/config_entries/flow/{flow_id}", "POST", {
             "broker": os.environ.get("MQTT_BROKER", "mosquitto"),
             "port": int(os.environ.get("MQTT_PORT", "1883")),
+            "protocol": "5",
             "username": "homeassistant",
             "password": password,
+            "other_settings": {
+                "set_client_cert": False,
+                "set_ca_cert": "off",
+                "transport": "tcp",
+            },
         }, token=token)
     except urllib.error.HTTPError as e:
         sys.exit(f"automation-init: FATAL: mqtt broker step HTTP {e.code}: "
