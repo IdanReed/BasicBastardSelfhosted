@@ -24,8 +24,16 @@ name: lints
 
 on:
   push:
-    branches:
-      - "**"
+    # Every branch EXCEPT Renovate's. renovate-pins.yml owns those, and it
+    # runs this same `./tests/run.sh` as its last step — after it has fixed
+    # the digest pins. Running here as well would fail first (a fresh
+    # Renovate branch always has a stale tests/lib/images.nix by
+    # construction) and then never re-run, because the fix commit is pushed
+    # with the automatic token and Forgejo does not trigger workflows off
+    # those. The PR would carry a permanently red `lints` beside a green
+    # `renovate-pins` for the same tree. See renovate-pins.yml's header.
+    branches-ignore:
+      - "renovate/**"
 
 jobs:
   lints:
