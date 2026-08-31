@@ -260,7 +260,12 @@ pkgs.testers.runNixOSTest {
     # The gateway of the subnet pinned in compose.yaml. Home Assistant must
     # trust THIS, not 127.0.0.1: a loopback publish does not preserve the
     # source address, because docker-proxy re-dials from the bridge gateway.
-    GATEWAY = "172.30.250.1"
+    #
+    # Keep it in step with the `networks.default.ipam` block in
+    # stacks/automation/compose.yaml — it is outside docker's default
+    # 172.17.0.0/12 pool on purpose, so that a pinned subnet cannot collide
+    # with an auto-allocated one.
+    GATEWAY = "10.89.250.1"
 
     HTTP_STORE = "/mnt/fast/homeassistant/.storage/http"
     PASSWD = "/mnt/fast/mosquitto/config/passwd"

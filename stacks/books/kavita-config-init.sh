@@ -100,22 +100,33 @@ if isinstance(oidc, dict) and not oidc.get("Secret"):
     print("kavita-config-init: no OIDC client secret - OIDC left disabled")
 
 
+# Absence and a null VALUE are different things, and `.get()` cannot tell them
+# apart. Latent here — nothing in appsettings.json.template is null — but the
+# identical merge in the automation stack's ha-config-init silently dropped a
+# `"pending": null` key, which would have made Home Assistant KeyError on
+# load. Same code, same fix, so it cannot resurface in whichever copy gets
+# edited next.
+MISSING = object()
+
+
 def merge(current, desired):
     """Recursive per-key merge; returns (merged, changed)."""
     merged = dict(current)
     changed = False
     for key, value in desired.items():
-        # `is None` counts as absent rather than as a differing scalar:
-        # otherwise a serialized `"OpenIdConnectSettings": null` would take
-        # the replace branch and report a CHANGE on every single run.
-        if isinstance(value, dict) and merged.get(key) is None:
+        have = merged.get(key, MISSING)
+        # A serialized `"OpenIdConnectSettings": null` counts as absent rather
+        # than as a differing scalar; otherwise it would take the replace
+        # branch and report a CHANGE on every single run.
+        if isinstance(value, dict) and (have is MISSING or have is None):
             merged[key] = {}
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            sub, sub_changed = merge(merged[key], value)
+            have = merged[key]
+        if isinstance(value, dict) and isinstance(have, dict):
+            sub, sub_changed = merge(have, value)
             if sub_changed:
                 merged[key] = sub
                 changed = True
-        elif merged.get(key) != value:
+        elif have is MISSING or have != value:
             merged[key] = value
             changed = True
     return merged, changed
