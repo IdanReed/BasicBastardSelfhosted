@@ -761,6 +761,36 @@ in
       manifest = json.load(open("${manifest}"))
       errs = []
 
+      # ---- Named exemptions -------------------------------------------------
+      # A bare (0.0.0.0) publish is normally the exact thing this lint exists to
+      # stop. A protocol whose peers must dial THIS host is the one case it
+      # cannot serve, and the honest way to handle that is a per-entry
+      # allow-list with the argument written down — not a blanket skip and not
+      # a silent exception in one compose file.
+      #
+      # An entry must state why publishing that port grants nobody anything.
+      # "It is inconvenient otherwise" is not a reason; "the protocol is
+      # mutually authenticated before it does anything" is.
+      #
+      # Unused entries are an ERROR, not a nicety: a stale exemption is a
+      # standing permission for a port nobody is publishing any more, and it
+      # would silently cover the next stack that happens to reuse the number.
+      EXEMPT = {
+          ("notes-sync", "22000:22000/tcp"):
+              "Syncthing BEP. Peers dial THIS host; a loopback publish makes "
+              "the server undialable and leaves only the public relay pool, "
+              "which needs egress and defeats the point. Safe because BEP is "
+              "mutually authenticated by device certificate before anything "
+              "else happens — every peer must be added by device ID and "
+              "accepted on BOTH sides, so an unknown device is rejected at the "
+              "TLS layer. The host firewall also opens nothing but 22/tcp and "
+              "trusts only tailscale0, so this is tailnet-reachable, not "
+              "LAN-reachable.",
+          ("notes-sync", "22000:22000/udp"):
+              "Same as the tcp entry: BEP's QUIC transport.",
+      }
+      used = set()
+
       for c in manifest:
           for n, line in enumerate(open(c["path"]), 1):
               # Long-form ports entries put host_ip on a DIFFERENT line, so a
@@ -786,6 +816,10 @@ in
               # part and does not affect the host-address check.
               spec = m.group(0).strip().lstrip("- ").strip("'\"")
               parts = spec.split(":")
+              key = (c["stack"], spec)
+              if key in EXEMPT:
+                  used.add(key)
+                  continue
               if len(parts) == 2:
                   errs.append(f"{c['stack']} compose.yaml:{n}: '{spec}' binds "
                               f"0.0.0.0 — reachable from the whole tailnet, "
@@ -793,6 +827,12 @@ in
               elif len(parts) == 3 and parts[0] not in ("127.0.0.1",):
                   errs.append(f"{c['stack']} compose.yaml:{n}: '{spec}' binds "
                               f"{parts[0]} rather than 127.0.0.1")
+
+      for key in sorted(EXEMPT.keys() - used):
+          errs.append(f"stale loopback-binding exemption for {key[0]} "
+                      f"'{key[1]}' — nothing publishes it any more. Remove the "
+                      f"entry rather than leaving a standing permission that "
+                      f"would silently cover the next stack to reuse the port.")
 
       if errs:
           print("Port binding problems:", file=sys.stderr)
@@ -1042,6 +1082,13 @@ in
           ("immich", "${repo + "/stacks/immich/compose.yaml"}"),
           ("books", "${repo + "/stacks/books/compose.yaml"}"),
           ("automation", "${repo + "/stacks/automation/compose.yaml"}"),
+          ("tracking", "${repo + "/stacks/tracking/compose.yaml"}"),
+          ("firefly", "${repo + "/stacks/firefly/compose.yaml"}"),
+          ("dawarich", "${repo + "/stacks/dawarich/compose.yaml"}"),
+          ("vaultwarden", "${repo + "/stacks/vaultwarden/compose.yaml"}"),
+          ("notes-sync", "${repo + "/stacks/notes-sync/compose.yaml"}"),
+          ("util", "${repo + "/stacks/util/compose.yaml"}"),
+          ("windmill", "${repo + "/stacks/windmill/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
@@ -1242,6 +1289,290 @@ in
   # Headscale ACL policy
   # ---------------------------------------------------------------------------
   # policy.hujson switches the tailnet to default-deny. A syntax error or an
+  # ---------------------------------------------------------------------------
+  # network_mode must be declared, because it makes a service INVISIBLE
+  # ---------------------------------------------------------------------------
+  # `loopback-binding` and `mk-stack-suite`'s probe list are both built from
+  # `ports:` entries. A service with `network_mode: host` has no `ports:`, so it
+  # does not FAIL those checks — it passes them with an empty set, while being
+  # bound to every interface the host has. `trustedInterfaces = ["tailscale0"]`
+  # means there is no firewall backstop either. The same is true of
+  # `network_mode: service:<x>`, which silently moves a service's publishing
+  # decisions into another service's stanza.
+  #
+  # So host networking converts a decision into an invisibility, and the only
+  # defence is to make the set enumerable: every non-default network_mode must
+  # be listed here with the argument for it. An unused entry is an error — a
+  # stale declaration is a standing permission for a service that no longer
+  # exists, and it would silently cover the next one to take the name.
+  host-network-declared =
+    mkLint "host-network-declared" ''
+      ${py} - <<'PY'
+      import json, sys, yaml
+
+      manifest = json.load(open("${manifest}"))
+
+      DECLARED = {
+          ("caddy", "caddy"):
+              "host — the reverse proxy itself. It binds the tailnet IP "
+              "directly ({$TAILNET_IP} in the Caddyfile) and terminates TLS "
+              "for every vhost, so it cannot sit behind its own publish. Its "
+              "`bind` directive IS the boundary that ports: would otherwise "
+              "provide, which is why this one is safe to make invisible.",
+          ("media", "qbittorrent"):
+              "service:gluetun — the kill-switch, and the whole point of the "
+              "media stack's design. qbittorrent has no network namespace of "
+              "its own, so if gluetun dies it has NO route at all rather than "
+              "falling back to the host's. Its UI is published by gluetun's "
+              "127.0.0.1:10057 entry, which loopback-binding does check.",
+      }
+
+      found, errs = set(), []
+      for c in manifest:
+          with open(c["path"]) as f:
+              compose = yaml.safe_load(f)
+          for name, svc in (compose.get("services") or {}).items():
+              mode = (svc or {}).get("network_mode")
+              if not mode:
+                  continue
+              key = (c["stack"], name)
+              found.add(key)
+              if key not in DECLARED:
+                  errs.append(
+                      f"{c['stack']}/{name} sets network_mode: {mode!r} but is "
+                      f"not declared in host-network-declared. That makes it "
+                      f"INVISIBLE to loopback-binding and to mk-stack-suite's "
+                      f"port probe — they build their lists from `ports:`, so "
+                      f"this service passes them with an empty set rather than "
+                      f"failing. Add an entry with the reason, or give it a "
+                      f"loopback publish instead.")
+
+      for key in sorted(DECLARED.keys() - found):
+          errs.append(f"stale host-network declaration for {key[0]}/{key[1]} — "
+                      f"it no longer sets network_mode. Remove the entry rather "
+                      f"than leaving a standing permission.")
+
+      if errs:
+          print("network_mode problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"network_mode declarations OK ({len(found)} services)")
+      PY
+    '';
+
+  # ---------------------------------------------------------------------------
+  # Backup coverage: backup-prepare.sh <-> the compose files
+  # ---------------------------------------------------------------------------
+  # `sqlite_backup` returns 0 for a MISSING source — `[ -f "$src" ] || return 0`
+  # — so a wrong path backs up nothing, forever, with a clean exit and no
+  # notification. That is not hypothetical: the Karakeep line pointed at
+  # /mnt/fast/karakeep/data.db, a file the app never creates, and nothing
+  # noticed until someone read the script. The pg_dumpall loop has the mirror
+  # problem: it builds `container_name` as "<svc>_db" and runs
+  # `pg_dumpall -U <svc>`, so a stack that names its database container
+  # anything else is silently skipped by `running "$container" || continue`.
+  #
+  # This lint checks the halves that are checkable without a running host:
+  # every sqlite path must live under a directory some compose file actually
+  # bind-mounts, and every service in the pg loop must have a compose service
+  # with the matching container_name AND POSTGRES_USER. Whether the file is
+  # really THERE is a suite assertion — each stack suite asserts its own paths.
+  #
+  # Services named in the loop but not yet built are a WARNING, not an error:
+  # the loop legitimately runs ahead of the campaign.
+  backup-coverage =
+    mkLint "backup-coverage" ''
+      ${py} - <<'PY'
+      import json, re, sys, os
+
+      manifest = json.load(open("${manifest}"))
+      script = open("${(repo + "/nixos/backup-prepare.sh")}").read()
+
+      import yaml
+      # Every /mnt bind-mount source across every compose file, plus each
+      # service's container_name and environment.
+      mounts = set()
+      containers = {}   # container_name -> (stack, env dict)
+      for c in manifest:
+          with open(c["path"]) as f:
+              compose = yaml.safe_load(f)
+          for name, svc in (compose.get("services") or {}).items():
+              for v in svc.get("volumes") or []:
+                  src = v.split(":")[0] if isinstance(v, str) else (v.get("source") or "")
+                  if src.startswith("/mnt/"):
+                      mounts.add(src.rstrip("/"))
+              env = {}
+              raw = svc.get("environment") or []
+              if isinstance(raw, dict):
+                  env = {k: str(v) for k, v in raw.items()}
+              else:
+                  for e in raw:
+                      k, _, v = str(e).partition("=")
+                      env[k] = v
+              cn = svc.get("container_name")
+              if cn:
+                  containers[cn] = (c["stack"], env)
+
+      errs, warns = [], []
+
+      # --- sqlite_backup <name> <path> ------------------------------------
+      calls = re.findall(r"^sqlite_backup\s+(\S+)\s+(\S+)\s*$", script, re.M)
+      if not calls:
+          errs.append("no sqlite_backup calls parsed from backup-prepare.sh — "
+                      "the parser has rotted; fix it before trusting this lint")
+      for name, path in calls:
+          if not path.startswith("/mnt/"):
+              errs.append(f"sqlite_backup {name}: {path} is not under /mnt")
+              continue
+          # The path must sit inside (or at) some declared bind-mount source.
+          if not any(path == m or path.startswith(m + "/") for m in mounts):
+              errs.append(
+                  f"sqlite_backup {name} reads {path}, which is not inside any "
+                  f"/mnt bind mount declared by a compose file. sqlite_backup "
+                  f"returns 0 for a missing source, so this line backs up "
+                  f"NOTHING and exits clean.")
+
+      # --- the pg_dumpall loop --------------------------------------------
+      m = re.search(r"^for svc in ([^;]+); do", script, re.M)
+      if not m:
+          errs.append("could not parse the pg_dumpall `for svc in ...` loop — "
+                      "the parser has rotted")
+      else:
+          for svc in m.group(1).split():
+              cn = f"{svc}_db"
+              if cn not in containers:
+                  warns.append(
+                      f"pg_dumpall loop names '{svc}' but no compose file has "
+                      f"container_name: {cn} — expected while that stack is "
+                      f"still on the roadmap, a silent no-dump once it exists")
+                  continue
+              stack, env = containers[cn]
+              if env.get("POSTGRES_USER") != svc:
+                  errs.append(
+                      f"{stack}: {cn} has POSTGRES_USER="
+                      f"{env.get('POSTGRES_USER')!r}, but backup-prepare.sh "
+                      f"runs `pg_dumpall -U {svc}`. The dump fails and the "
+                      f"only signal is rc=1 in a unit nobody reads.")
+
+      for w in warns:
+          print("  WARN " + w, file=sys.stderr)
+      if errs:
+          print("Backup coverage problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"Backup coverage OK ({len(calls)} sqlite paths, "
+            f"{len(warns)} not-yet-built)")
+      PY
+    '';
+
+  # ---------------------------------------------------------------------------
+  # _overview.md's Auth column <-> what is actually configured
+  # ---------------------------------------------------------------------------
+  # The inventory's Auth cell is the only place the intended posture for a
+  # service is written down, and it has been wrong three times in one campaign:
+  # rmfakecloud was marked FwdAuth when forward auth would break the tablet
+  # entirely, Syncthing was marked LDAP, and ExcaliDash was marked FwdAuth when
+  # it drives its own OIDC. Each was caught by a human reading the row, which
+  # is not a control.
+  #
+  # This checks the direction that is mechanically decidable: a row that claims
+  # FwdAuth must have a Caddy handle that imports `protected`. The reverse
+  # direction (a protected host with no row) is already covered by
+  # overview-sync, and the blueprint half by forward-auth-coverage.
+  #
+  # A row whose service has NO Caddy route at all is a WARNING: the inventory
+  # is deliberately a roadmap, and rows routinely land before stacks do.
+  auth-column-parity =
+    mkLint "auth-column-parity" ''
+      ${py} - <<'PY'
+      import re, sys
+
+      overview = open("${../../../ServerNotes/designs/_overview.md}").read()
+      caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
+
+      # --- Caddyfile: upstream PORT -> (host, does its handle import protected?)
+      # Keyed on the port rather than on the row's NAME. Names do not survive
+      # the trip: "Firefly III" is served at firefly.svc, "OnlyOffice DocSpace"
+      # at onlyoffice.svc, and any slug heuristic silently degrades those to a
+      # warning — i.e. to no coverage at all, for exactly the rows most worth
+      # covering. The port is in both files and is unambiguous.
+      matchers, routes = {}, {}
+      current, current_depth, depth = None, 0, 0
+      for raw in caddyfile.splitlines():
+          line = re.sub(r"#.*$", "", raw)
+          m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
+          if m:
+              matchers[m.group(1)] = m.group(2)
+          h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
+          if h and current is None:
+              current, current_depth = h.group(1), depth
+          if current is not None:
+              if re.match(r"\s*import\s+protected\s*$", line):
+                  routes.setdefault(current, {"protected": False})["protected"] = True
+              p = re.search(r"\breverse_proxy\s+localhost:(\d+)", line)
+              if p:
+                  r = routes.setdefault(current, {"protected": False})
+                  r["port"] = int(p.group(1))
+                  r["host"] = matchers.get(current)
+          depth += line.count("{") - line.count("}")
+          if current is not None and depth <= current_depth:
+              current = None
+
+      by_port = {}
+      for name, r in routes.items():
+          if "port" in r:
+              # A handle may hold several reverse_proxy lines (vaultwarden
+              # splits /admin from the rest); `protected` is true if ANY path
+              # in it is protected, which is what the row can honestly claim.
+              prev = by_port.get(r["port"])
+              by_port[r["port"]] = {
+                  "host": r.get("host") or (prev or {}).get("host"),
+                  "protected": r["protected"] or bool((prev or {}).get("protected")),
+              }
+
+      assert by_port.get(10401, {}).get("protected"), (
+          "auth-column-parity found no protected bentopdf pilot on 10401 — the "
+          "Caddyfile parser has rotted; fix it before trusting this lint")
+
+      # --- _overview rows --------------------------------------------------
+      errs, warns, checked = [], [], 0
+      for line in overview.splitlines():
+          cells = [c.strip() for c in line.strip().strip("|").split("|")]
+          if len(cells) < 5 or not re.search(r"\d", cells[2] or ""):
+              continue
+          name, port_cell, auth = cells[0], cells[2], cells[3]
+          # Struck-through rows are parked/deferred by design.
+          if name.startswith("~~"):
+              continue
+          if "FwdAuth" not in auth:
+              continue
+          checked += 1
+          ports = [int(p) for p in re.findall(r"\b(\d{4,5})\b", port_cell)]
+          hit = next((by_port[p] for p in ports if p in by_port), None)
+          if hit is None:
+              warns.append(f"{name!r} is marked FwdAuth but no Caddy handle "
+                           f"proxies any of its ports {ports} — expected while "
+                           f"the stack is still on the roadmap")
+              continue
+          if not hit["protected"]:
+              errs.append(
+                  f"{name!r} is marked FwdAuth in _overview.md but the Caddy "
+                  f"handle for {hit['host']} does not `import protected` — the "
+                  f"inventory claims an authentication that is not there.")
+
+      for w in warns:
+          print("  WARN " + w, file=sys.stderr)
+      if errs:
+          print("Auth column problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"Auth column OK ({checked} FwdAuth rows, {len(warns)} not routed yet)")
+      PY
+    '';
+
   # unresolvable user reference means headscale refuses to load the policy, and
   # the failure mode is "nothing on the tailnet can reach anything".
   headscale-policy =
