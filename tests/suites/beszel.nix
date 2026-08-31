@@ -334,14 +334,50 @@ pkgs.testers.runNixOSTest {
             # containing filesystem, so an empty dir on each tier reports the
             # tier without exposing its contents. If that assumption were ever
             # wrong this is where it fails.
+            #
+            # ⚠ NOT `len(efs) == 2`. Whichever device FILESYSTEM names gets
+            # PROMOTED out of `efs` and becomes the root entry — the fixture
+            # says vdb, so /mnt/fast lands in `d` and only /mnt/slow stays in
+            # `efs`. Counting efs alone would therefore assert the wrong thing
+            # in one configuration and be trivially satisfiable in the other.
+            # What matters is that BOTH tiers are represented somewhere with a
+            # real size.
             efs = stats.get("efs") or {}
-            assert len(efs) == 2, (
-                f"expected both tiers in extra-filesystems, got {efs!r}. "
-                "One entry usually means a device-key collision — "
-                "registerFilesystemStats drops the second silently."
+            sizes = [("root", stats.get("d") or 0)] + [
+                (dev, e.get("d") or 0) for dev, e in efs.items()
+            ]
+            nonzero = [(k, v) for k, v in sizes if v > 0]
+            assert len(nonzero) >= 2, (
+                f"expected both storage tiers to report a size, got {sizes!r}"
             )
-            for dev, e in efs.items():
-                assert e["d"] > 0, f"{dev} reports zero total: {e!r}"
+
+        with subtest("🚨 BOTH tiers registered — neither was silently dropped"):
+            # agent/disk.go's registerFilesystemStats keys each filesystem by
+            # its device basename and, on a collision, `return "", nil, false`:
+            # the second is dropped with NO log line and NO error (finding
+            # #46). The registration log is the only place both mounts can be
+            # observed by name, and a dropped one never appears — so this, not
+            # a count of the payload, is the honest assertion.
+            logs = services_vm.succeed("docker logs beszel-agent 2>&1")
+            for mount in ["/extra-filesystems/fast", "/extra-filesystems/slow"]:
+                assert f"mount={mount}" in logs, (
+                    f"{mount} was never registered. If both tiers share a "
+                    f"device basename the second is dropped silently — on the "
+                    f"host that means a whole storage tier vanishing from the "
+                    f"dashboard, which looks exactly like a tier that is fine."
+                    f"\n{logs}"
+                )
+
+        with subtest("🚨 FILESYSTEM names a device that exists (finding #44)"):
+            # A wrong value does not fail: one WARN, then `healthy` and a 0 GB
+            # disk forever. The warning IS the signal, so assert its absence
+            # rather than trying to distinguish a real zero from a fake one.
+            logs = services_vm.succeed("docker logs beszel-agent 2>&1")
+            assert "Partition details not found" not in logs, (
+                "FILESYSTEM names a device with no mount the agent can see; "
+                "root disk stats will be reported as 0 forever.\n" + logs
+            )
+            assert "Root I/O device not detected" not in logs, logs
 
         with subtest("🚨 10452 is unreachable from another machine"):
             ip = services_vm.succeed(
