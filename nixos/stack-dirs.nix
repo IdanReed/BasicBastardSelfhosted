@@ -21,6 +21,16 @@
 # hardware-configuration.nix, which imports this file.
 {
   systemd.tmpfiles.rules = [
+    # === arcane (bind sources in its compose.yaml) ===
+    # 1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
+    # reason /srv/stacks is 1000:1000, finding #10) and writes its own SQLite
+    # DB into /app/data; root-owned it cannot. The directory exists at all
+    # because Arcane's state moved OUT of the arcane_data named volume, which
+    # lived under /var/lib/docker and was excluded from every backup by
+    # **/docker/** — a restore would have come up with no GitOps sync
+    # definitions, and hand-recreated syncs default syncDirectory OFF, which
+    # silently stops delivering .sops.env.
+    "d /mnt/fast/arcane 0755 1000 1000 -"
     # === automation (bind sources in its compose.yaml) ===
     # Ownership, VERIFIED per image (annex §2.3):
     #   - home assistant runs as ROOT and has no PUID/PGID mechanism at all.
