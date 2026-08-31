@@ -58,6 +58,14 @@
     finalImageName = "corentinth/it-tools";
     finalImageTag = "2024.10.22-7ca5933";
   };
+  "crazymax_samba_4_23_8" = {
+    composeRef = "crazymax/samba:4.23.8";
+    imageName = "crazymax/samba";
+    imageDigest = "sha256:b37f7af97c773eddb593537f64da6389e5ee6695bcecf44f3ba1a8a6bcf34125";
+    hash = "sha256-XK+bajrD5jIoedhyz0Ldz5NZoHm15b1aGKK+zRZnP1k=";
+    finalImageName = "crazymax/samba";
+    finalImageTag = "4.23.8";
+  };
   "ddvk_rmfakecloud_0_0_31" = {
     composeRef = "ddvk/rmfakecloud:0.0.31";
     imageName = "ddvk/rmfakecloud";
@@ -305,6 +313,22 @@
     hash = "sha256-atlBNyHFkLCx4Eg9zeVkIesDq2SZPJuNiCWEH++MR/g=";
     finalImageName = "gotenberg/gotenberg";
     finalImageTag = "8.31";
+  };
+  "henrygd_beszel_0_18_8" = {
+    composeRef = "henrygd/beszel:0.18.8";
+    imageName = "henrygd/beszel";
+    imageDigest = "sha256:4c51486968efa0b0a702c1b0967966a2e06fb250b7418f3072d2488faea27c51";
+    hash = "sha256-TbFht12yqGMEEPUpX0MyVFFFAI4HW/lbtmUhLOSs3qI=";
+    finalImageName = "henrygd/beszel";
+    finalImageTag = "0.18.8";
+  };
+  "henrygd_beszel-agent_0_18_8" = {
+    composeRef = "henrygd/beszel-agent:0.18.8";
+    imageName = "henrygd/beszel-agent";
+    imageDigest = "sha256:3b1939746690e423072b4a99bf4c4af6dd9562a68978a33738a3c4a4cc000c39";
+    hash = "sha256-1xsL/szZbEhwsYmLWtkqBgqgPrxuwzhbvpEEaZVPN9g=";
+    finalImageName = "henrygd/beszel-agent";
+    finalImageTag = "0.18.8";
   };
   "jellyfin_jellyfin_10_11_11" = {
     composeRef = "jellyfin/jellyfin:10.11.11";
