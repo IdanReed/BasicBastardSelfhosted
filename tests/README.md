@@ -1265,7 +1265,7 @@ appears in a subtest name.
 
 ## Status
 
-Green as of 2026-08-31, with `samba` re-running as noted below: lints (**20** — the four newest:
+Green as of 2026-08-31 — **every suite, no exceptions**: lints (**20** — the four newest:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
@@ -1358,8 +1358,8 @@ stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
 **`gatus` is green on its FIRST run** — the only suite in this campaign to
 manage that. **`docspace`** is green at 12 subtests after two real failures
 (#47, #48). **`beszel`** is green at 15 subtests after three runs — one of my
-own test bugs and one real upstream behaviour (#49). **`samba`** reached 13 of
-14 on its first run; the fourteenth was finding #50, and it is re-running.
+own test bugs and one real upstream behaviour (#49). **`samba`** is green at 14 subtests, after
+finding #50 on its first run.
 
 The pattern across the campaign is worth stating plainly: **fourteen of the
 sixteen stack suites failed the first time they ran, and every one of those
