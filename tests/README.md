@@ -992,6 +992,26 @@ recurring in a file whose own comments warn about it: the container had been
 quietly auto-generating both into its volume, which is exactly the state the
 `.sops.env.example` said to avoid.
 
+### 41. Documenting a templating syntax inside the file that is templated
+
+Glance resolves environment references over the **raw file text, before YAML
+parsing**, so a dollar-brace reference anywhere in `glance.yml` is substituted —
+comments included. A missing variable is a hard startup error, repeated forever
+because the container restarts:
+
+    Config has errors: parsing variable: environment variable ENV_VAR not found
+
+The reference that broke it was inside a comment *warning about this exact
+behaviour*. The comment named the syntax literally in order to explain it, and
+naming it was enough to trigger it.
+
+The behaviour itself is the good kind of loud — a typo'd variable name fails at
+boot rather than rendering an empty string into a widget. The lesson is about
+the comment: in any file that is preprocessed, **describe a syntax in words
+rather than writing it**, because a preprocessor has no concept of "this one is
+just documentation". The same trap exists in Compose files (`$$`), systemd
+units (`%`), and anything rendered through envsubst.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -1047,7 +1067,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Forty** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty-one** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
