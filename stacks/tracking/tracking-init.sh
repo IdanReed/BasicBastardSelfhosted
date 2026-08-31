@@ -91,9 +91,24 @@ try:
     change(f"homebox owner {os.environ['HOMEBOX_ADMIN_EMAIL']} registered")
 except urllib.error.HTTPError as e:
     body = detail(e)
-    # Homebox answers 4xx for an already-registered email. Distinguish that
-    # from a real failure by confirming the credentials actually work.
-    if e.code not in (400, 409, 422):
+    # 🚨 Homebox answers **500**, not a 4xx, for an already-registered email:
+    #     {"error":"ent: constraint failed: constraint failed: UNIQUE
+    #      constraint failed: users.email (2067)"}
+    # The ent constraint violation is not translated into a client error at
+    # all. Verified from a suite run — the second pass of this script exited 1
+    # and broke the idempotency contract, which is exactly the failure that
+    # every Arcane redeploy would have hit.
+    #
+    # So the accepted set includes 500, and a UNIQUE-constraint body is treated
+    # as "already exists". That is deliberately narrow: a 500 for any OTHER
+    # reason must still be fatal, because "the server broke" and "the user is
+    # already there" are not the same thing and only the body distinguishes
+    # them here.
+    already_exists = (
+        e.code in (400, 409, 422)
+        or (e.code == 500 and "UNIQUE constraint failed: users.email" in body)
+    )
+    if not already_exists:
         sys.exit(f"tracking-init: FATAL: homebox register HTTP {e.code}: {body}")
     log("homebox user already exists - no change")
 

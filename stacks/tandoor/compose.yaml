@@ -137,6 +137,42 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # tandoor_init — headless first-run (annex §3.1). See tandoor-init.py for why
+  # it exists; in short, Tandoor's only path to a first superuser is a browser
+  # form, and there is no management command for it.
+  #
+  # Runs from the SAME image so the ORM, the settings and django-scopes are the
+  # ones the app actually uses — a python:alpine sidecar could not import
+  # cookbook at all.
+  # ---------------------------------------------------------------------------
+  tandoor_init:
+    image: ghcr.io/tandoorrecipes/recipes:2.6.13
+    container_name: tandoor_init
+    depends_on:
+      # service_healthy, not service_started: boot.sh runs the migrations, and
+      # this script queries tables they create.
+      tandoor:
+        condition: service_healthy
+    volumes:
+      - ./tandoor-init.py:/init/tandoor-init.py:ro
+    # `venv/bin/python`, not the system python3: the image installs its
+    # dependencies into /opt/recipes/venv, and /usr/local/bin/python3 cannot
+    # import django at all.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'cd /opt/recipes && exec venv/bin/python manage.py shell < /init/tandoor-init.py'
+    environment:
+      - DB_ENGINE=django.db.backends.postgresql
+      - POSTGRES_HOST=tandoor_db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=tandoor
+      - POSTGRES_USER=tandoor
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
 volumes:
   # Derived: collectstatic --clear rewrites it on every start.
   tandoor_staticfiles:
