@@ -105,11 +105,13 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 2;
 
-        # 22000 is published on 0.0.0.0 in production and the host firewall is
-        # what keeps it tailnet-only. The suite asserts the outsider CAN reach
-        # it, so the port has to be open here — this mirrors what
-        # `trustedInterfaces = ["tailscale0"]` achieves in production, where
-        # the outsider would be a tailnet peer rather than an off-tailnet host.
+        # 22000 is published on 0.0.0.0 in production and is LAN-reachable
+        # there too: docker's publish DNATs in nat/PREROUTING, which the host
+        # firewall's INPUT filtering never sees. The suite asserts the outsider
+        # CAN reach it — that IS the production behaviour, and device-cert
+        # authentication is the only control in front of the port. These lines
+        # just keep the test VM's own INPUT chain from getting in the way of
+        # that probe.
         networking.firewall.allowedTCPPorts = [ 22000 ];
         networking.firewall.allowedUDPPorts = [ 22000 ];
 

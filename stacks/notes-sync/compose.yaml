@@ -182,9 +182,15 @@ services:
       # MUTUALLY AUTHENTICATED BY DEVICE CERTIFICATE before it does anything.
       # Every peer must be added by device ID on both sides and explicitly
       # accepted, and an unknown device is rejected at the TLS layer — so
-      # publishing 22000 grants nobody anything. The host firewall also opens
-      # nothing but 22/tcp and trusts only tailscale0, which makes this
-      # tailnet-reachable rather than LAN-reachable.
+      # publishing 22000 grants nobody anything.
+      #
+      # Be honest about the reach: 22000 IS reachable from the whole LAN, not
+      # just the tailnet. `networking.firewall` only filters the INPUT chain
+      # and nothing sets `filterForward`, while docker's publish installs a
+      # DNAT in nat/PREROUTING and an ACCEPT in FORWARD — so the host's
+      # `allowedTCPPorts = [ 22 ]` never sees this packet. Device-cert
+      # authentication is the ONLY control in front of this port, which is
+      # why it has to be the whole argument.
       #
       # The loopback-binding lint carries a NAMED EXEMPTION for exactly these
       # two lines (tests/lib/lints.nix), and errors if the exemption ever goes
