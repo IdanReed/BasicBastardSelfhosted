@@ -1232,6 +1232,37 @@ freshly formatted filesystem. 1 GB of empty ext4 rounds to 0.00 GB used, and
 "no data yet" is not a defect. `d` (total) is the field a wrong `FILESYSTEM`
 zeroes, and it is the one worth asserting.
 
+### 50. A reboot test on tmpfs asserts the wrong thing
+
+The samba suite passed 13 of 14 subtests and then timed out waiting for the
+container to come back healthy after a reboot:
+
+```
+directory_create_or_exist: mkdir failed on directory
+/var/lib/samba/private/msg.sock: No such file or directory
+```
+
+The image symlinks `/var/lib/samba/private` into `/data`, which is the
+`/mnt/fast/samba` bind. Every stack suite up to this point mounts
+`/mnt/{fast,slow}` as **tmpfs**, because until now nothing needed them to be
+real — so the reboot wiped `/data`, and restarting the *existing* container did
+not rebuild the tree, because the entrypoint does not re-initialise a container
+it has already initialised.
+
+The behaviour is real. It just is not the behaviour of a reboot: on the
+services VM `/mnt/fast` is a partition and survives one. **What the subtest
+actually measured was losing the data disk**, which is a different scenario
+with a different answer (the DR runbook's, not this suite's) — and meanwhile
+the thing it claimed to measure, persistence, is unmeasurable on tmpfs by
+construction. It could only ever have passed by accident.
+
+Fixed by giving the samba suite two real ext4 disks, as the beszel suite
+already does for its own reasons. The general lesson is worth stating because
+it applies to every suite here: **a fixture chosen for convenience can quietly
+redefine what a test means.** tmpfs is the right default for a suite that only
+needs a writable path, and the wrong one the moment the word "survives"
+appears in a subtest name.
+
 ## Status
 
 Green as of 2026-08-30, with three exceptions stated below: lints (**20** — the four newest:
@@ -1334,7 +1365,7 @@ the suites have never executed, because each needs image pins
 `tests/update-images.sh` had not yet resolved. Treat them as unproven until
 `./tests/run.sh <name>` has passed once.
 
-**Forty-nine** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Fifty** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
