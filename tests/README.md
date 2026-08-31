@@ -839,16 +839,45 @@ The `backup-coverage` lint cannot catch this class — it checks paths and
 container names, and no static check knows which binaries an image ships. The
 suite is the control here.
 
+### 36. A lint made vacuous by the one mount that covers everything
+
+`backup-coverage` was written to catch the Karakeep class: a `sqlite_backup`
+path pointing at a file no container creates, which the helper silently treats
+as success. Its check was "the path must be inside a `/mnt` bind mount some
+compose file declares".
+
+`stacks/backrest` declares `- /mnt/fast:/mnt/fast:ro`, because snapshotting
+everything is its job. So **every** path under `/mnt/fast` is inside a declared
+mount, and the lint passed everything — including the exact bug it was written
+for. It reported success on 18 paths and had verified nothing.
+
+Excluding whole-tier mounts (`/mnt`, `/mnt/fast`, `/mnt/slow`) from the
+evidence set makes the check mean what it says: only a **service-specific**
+mount is evidence that some container actually writes there. That immediately
+found a real one — a `sqlite_backup uptimekuma /mnt/fast/uptimekuma/kuma.db`
+line for a stack that has never been built, a permanently-silent no-op sitting
+in the script looking exactly like a working backup.
+
+The general shape is worth keeping in mind when writing any cross-file check:
+**if one entry in the corpus matches everything, the check is that entry.** Ask
+what the most permissive row is before trusting a green result — and be
+suspicious of a new lint that passes on the first run, which this one did.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
-`sqlite_backup` path must live inside a bind mount some compose file actually
-declares and every service in the `pg_dumpall` loop must have the matching
-`container_name` and `POSTGRES_USER`, because that helper returns 0 for a
-MISSING source; and `host-network-declared`, every non-default `network_mode`
+`sqlite_backup` path must live inside a **service-specific** bind mount some
+compose file declares and every service in the `pg_dumpall` loop must have the
+matching `container_name` and `POSTGRES_USER`, because that helper returns 0
+for a MISSING source. The "service-specific" qualifier is load-bearing and was
+missing from the first version: `stacks/backrest` mounts `/mnt/fast:ro`
+wholesale, so accepting any declared mount made the check **vacuous** — the
+Karakeep bug it was written for would have passed. Excluding whole-tier mounts
+immediately found a real one, a `uptimekuma` line for a stack that has never
+been built; and `host-network-declared`, every non-default `network_mode`
 must be listed with its reason, because such a service does not FAIL
 `loopback-binding` — it passes with an empty port set. Also
 `forward-auth-coverage`, every `import protected` Caddyfile host must have a
@@ -889,7 +918,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-five** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-six** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

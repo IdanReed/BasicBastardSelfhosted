@@ -1392,6 +1392,15 @@ in
       import yaml
       # Every /mnt bind-mount source across every compose file, plus each
       # service's container_name and environment.
+      #
+      # 🚨 WHOLE-TIER MOUNTS ARE EXCLUDED, and without that this lint is
+      # VACUOUS. stacks/backrest declares `- /mnt/fast:/mnt/fast:ro` so it can
+      # snapshot everything, which means EVERY path under /mnt/fast sits inside
+      # a declared bind mount — including the Karakeep path that pointed at a
+      # file the app never creates. The first version of this check passed that
+      # bug happily. Only a SERVICE-SPECIFIC mount is evidence that some
+      # container actually writes there.
+      TIER_MOUNTS = {"/mnt", "/mnt/fast", "/mnt/slow"}
       mounts = set()
       containers = {}   # container_name -> (stack, env dict)
       for c in manifest:
@@ -1401,7 +1410,9 @@ in
               for v in svc.get("volumes") or []:
                   src = v.split(":")[0] if isinstance(v, str) else (v.get("source") or "")
                   if src.startswith("/mnt/"):
-                      mounts.add(src.rstrip("/"))
+                      src = src.rstrip("/")
+                      if src not in TIER_MOUNTS:
+                          mounts.add(src)
               env = {}
               raw = svc.get("environment") or []
               if isinstance(raw, dict):
@@ -1429,9 +1440,11 @@ in
           if not any(path == m or path.startswith(m + "/") for m in mounts):
               errs.append(
                   f"sqlite_backup {name} reads {path}, which is not inside any "
-                  f"/mnt bind mount declared by a compose file. sqlite_backup "
-                  f"returns 0 for a missing source, so this line backs up "
-                  f"NOTHING and exits clean.")
+                  f"SERVICE-SPECIFIC /mnt bind mount declared by a compose "
+                  f"file (whole-tier mounts like backrest's /mnt/fast:ro do "
+                  f"not count — they would make this check vacuous). "
+                  f"sqlite_backup returns 0 for a missing source, so this line "
+                  f"backs up NOTHING and exits clean.")
 
       # --- the pg_dumpall loop --------------------------------------------
       m = re.search(r"^for svc in ([^;]+); do", script, re.M)

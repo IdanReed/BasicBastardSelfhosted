@@ -117,7 +117,14 @@ sqlite_backup homebox        /mnt/fast/homebox/homebox.db
 # so this dump is the restorable copy. The util suite asserts the path
 # exists, because sqlite_backup returns 0 for a missing source.
 sqlite_backup excalidash     /mnt/fast/excalidash/dev.db
-sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
+# NO uptimekuma LINE. It used to be here, for a stack that has never been
+# built — a permanently-silent no-op, since sqlite_backup returns 0 for a
+# missing source. Removed rather than left "ready": a speculative backup
+# line is indistinguishable from a working one until the day you need it,
+# and the backup-coverage lint now fails on exactly this shape. Add it back
+# together with the stack, not before. (Monitoring is also moving to Gatus,
+# which is config-file-only and has no database to dump — see
+# ServerNotes/designs/service-monitoring-stack-research.md.)
 sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
 # Frigate's event/review/user index (stacks/automation/compose.yaml). WAL-mode
 # and continuously written, like the recorder DB above and the arr databases

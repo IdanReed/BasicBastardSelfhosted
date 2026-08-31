@@ -1,0 +1,190 @@
+# Wger — workout and nutrition tracker (Food range, port 10351).
+# Design: ServerNotes/designs/service-food-stack-research.md.
+# _overview.md owns the port/auth row.
+#
+# SEPARATE FROM TANDOOR — see stacks/tandoor/compose.yaml's header. Both read
+# the bare `SECRET_KEY` from their environment, and `env_file` gives every
+# service in a project the whole .env, so one stack would have silently shared
+# one signing key between two applications.
+#
+# THREE containers plus a cache, and the nginx one is not optional: wger/server
+# serves no static files at all.
+#
+# Backup contract: `wger` is already named in nixos/backup-prepare.sh's
+# pg_dumpall loop, so `container_name: wger_db` and `POSTGRES_USER=wger` below
+# are load-bearing.
+
+services:
+  # ---------------------------------------------------------------------------
+  # wger — workout and nutrition tracker.
+  #
+  # 🚨 NOT PUBLISHED. `wger/server` serves NO static files — there is no
+  # whitenoise in INSTALLED_APPS — so publishing gunicorn directly gives an app
+  # that renders, answers the API, and has no CSS and no JS. The nginx sidecar
+  # below is what gets the port.
+  #
+  # Runs as uid 1000, hard-coded: the base Dockerfile does `deluser ubuntu` then
+  # `adduser wger --uid 1000`, and the production image ends on `USER wger`.
+  # There is no PUID/PGID and no chown-on-start, so /mnt/fast/wger/media must be
+  # pre-owned 1000:1000 or `collectstatic` fails on the first boot — finding
+  # #14's crash-loop pattern.
+  # ---------------------------------------------------------------------------
+  wger:
+    # `2.6`, NOT `2.6.0` (which tracks master) and NOT `latest` (a 2.7 alpha).
+    image: wger/server:2.6
+    container_name: wger
+    depends_on:
+      wger_db:
+        condition: service_healthy
+      wger_cache:
+        condition: service_healthy
+    volumes:
+      - wger_static:/home/wger/static
+      - /mnt/fast/wger/media:/home/wger/media
+    environment:
+      - TIME_ZONE=America/Chicago
+      - SITE_URL=https://wger.svc.idanreed.com
+      - DJANGO_DEBUG=False
+      # 🚨 REQUIRED, and its absence is silent: without it the entrypoint runs
+      # `wger bootstrap` on a fresh database and then NEVER MIGRATES AGAIN, so
+      # every subsequent image bump leaves the schema behind the code.
+      - DJANGO_PERFORM_MIGRATIONS=True
+      # 🚨 ALSO REQUIRED. Without it SECURE_PROXY_SSL_HEADER is never set, so
+      # Django believes every request is plain HTTP and the https CSRF origin
+      # below can never match — every POST fails with a CSRF error that points
+      # at the wrong thing.
+      - X_FORWARDED_PROTO_HEADER_SET=True
+      - CSRF_TRUSTED_ORIGINS=https://wger.svc.idanreed.com
+      # BOTH default to TRUE in settings_global.py — the "prod.env has them
+      # off" belief is about a file that is not in this image. Leave either
+      # unset and the instance is open to anyone who can reach the vhost.
+      - ALLOW_REGISTRATION=False
+      - ALLOW_GUEST_USERS=False
+      - DJANGO_DB_ENGINE=django.db.backends.postgresql
+      - DJANGO_DB_DATABASE=wger
+      - DJANGO_DB_USER=wger
+      - DJANGO_DB_HOST=wger_db
+      - DJANGO_DB_PORT=5432
+      - DJANGO_CACHE_BACKEND=django_redis.cache.RedisCache
+      - DJANGO_CACHE_LOCATION=redis://wger_cache:6379/1
+      - DJANGO_CACHE_CLIENT_CLASS=django_redis.client.DefaultClient
+      - DJANGO_MEDIA_ROOT=/home/wger/media
+      - DJANGO_STATIC_ROOT=/home/wger/static
+      # 🚨 EVERY ONE OF THESE IS EGRESS AT STARTUP (finding #4's class). The
+      # entrypoint reads all five, and with any of them true a tailnet-only
+      # host spends its boot trying to reach the internet — and an offline VM
+      # suite hangs. They are named explicitly rather than left to their
+      # defaults precisely because "what does this container fetch at start"
+      # should be answerable by reading the compose file.
+      - LOAD_ONLINE_FIXTURES_ON_STARTUP=False
+      - DOWNLOAD_EXERCISE_IMAGES_ON_STARTUP=False
+      - DOWNLOAD_EXERCISE_VIDEOS_ON_STARTUP=False
+      - SYNC_EXERCISES_ON_STARTUP=False
+      - SYNC_INGREDIENTS_ON_STARTUP=False
+      # No celery, no beat container. Everything the periodic tasks do here is
+      # an ingredient/exercise sync against the internet, which this host does
+      # not have.
+      - USE_CELERY=False
+      - ENABLE_EMAIL=False
+      - EXPOSE_PROMETHEUS_METRICS=False
+      # Behind Caddy AND the nginx sidecar. django-axes locks an account after
+      # repeated failures and keys on the client IP; with a loopback publish
+      # every request arrives from the docker bridge gateway, so without a
+      # correct proxy count the first few typos would lock out everyone.
+      - AXES_IPWARE_PROXY_COUNT=2
+      - NUMBER_OF_PROXIES=2
+      # SECRET_KEY and DJANGO_DB_PASSWORD arrive from .env — bare names,
+      # because this stack has its own .env and nothing else reads them.
+      # ⚠ An unset SECRET_KEY is NEARLY INVISIBLE: main.py falls back to
+      # `secrets.token_urlsafe(50)` with a `warnings.warn` and nothing else, so
+      # a NEW key is generated on every restart. The symptom is "everyone is
+      # logged out after every restart", diagnosed weeks later.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # Upstream's own probe. A liveness check — it does not touch the database
+      # — but its 300s start period is justified: the first boot migrates and
+      # loads 872 exercise bases plus 2429 translations. The suite asserts
+      # /api/v2/ingredient/?limit=1 instead, which is a real DB read.
+      # ⚠ Do NOT use /api/v2/language/ for that: LanguageViewSet.dispatch is
+      # wrapped in @cache_page and answers from cache.
+      test: ['CMD-SHELL', 'wget -q -O /dev/null -T 10 http://127.0.0.1:8000/api/v2/version/']
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 300s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # wger_nginx — serves /static/ and /media/ and proxies the rest. NOT optional;
+  # see the wger service above and nginx.conf's header for why the config is
+  # written here rather than copied from upstream.
+  # ---------------------------------------------------------------------------
+  wger_nginx:
+    image: nginx:1.30.4-alpine
+    container_name: wger_nginx
+    depends_on:
+      wger:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:10351:80'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - wger_static:/wger/static:ro
+      - /mnt/fast/wger/media:/wger/media:ro
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      # Probes THROUGH nginx to the app, not nginx itself. Upstream's sidecar
+      # healthcheck is `service nginx status` — no HTTP at all, so it cannot
+      # detect a broken proxy_pass or an unresolvable upstream, which is the
+      # only interesting way this container fails. Sixth instance of finding
+      # #16 in this campaign.
+      test: ['CMD-SHELL', 'wget -q -O /dev/null -T 10 http://127.0.0.1:80/api/v2/version/']
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  wger_db:
+    image: postgres:17.9-alpine
+    container_name: wger_db
+    volumes:
+      - /mnt/fast/wger/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=wger
+      - POSTGRES_DB=wger
+      # POSTGRES_PASSWORD arrives from .env, shared with DJANGO_DB_PASSWORD.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wger -d wger']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  wger_cache:
+    image: redis:7.4-alpine
+    container_name: wger_cache
+    # No volume: this is a CACHE. Nothing here is worth persisting, and giving
+    # it a bind mount would put churn into the /mnt/fast include set for state
+    # that is regenerated on demand.
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  # Derived: collectstatic rewrites it on every start.
+  wger_static:
