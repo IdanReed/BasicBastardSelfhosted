@@ -7,6 +7,24 @@ let
   sshPubkeys = import ./ssh-pubkeys.nix;
 in
 {
+  # Modules are imported HERE, not from nixos/flake.nix — deliberately, and
+  # differently from headscale-vps.
+  #
+  # tests/default.nix builds this host's config as `evalHost [ sopsModule
+  # ../nixos/configuration.nix ]`, i.e. it enters through this file and NOT
+  # through the flake. A module listed in flake.nix instead would be deployed
+  # to the real host while being invisible to every lint that reads
+  # servicesConfig — which is precisely the drift the `module-list-parity`
+  # lint exists to catch on the VPS, where the flake genuinely is the entry
+  # point and tests/default.nix has to mirror its list by hand. Importing
+  # from here means there is no second list to keep in sync, so this host
+  # needs no such lint.
+  imports = [
+    ./modules/ci-secrets.nix
+    ./modules/renovate.nix
+    ./modules/forgejo-runner.nix
+  ];
+
   # System identity
   networking.hostName = "services-vm";
   system.stateVersion = "25.11";

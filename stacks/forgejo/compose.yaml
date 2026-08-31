@@ -41,6 +41,13 @@ services:
       # Single-user instance: the admin is created headless with the CLI
       # (`forgejo admin user create`); nobody self-registers.
       - FORGEJO__service__DISABLE_REGISTRATION=true
+      # Actions, off by default in Forgejo and easy to forget because GitHub
+      # has no equivalent switch. This is only HALF the toggle: Actions must
+      # also be turned on PER REPOSITORY (repo Settings -> Units -> Actions),
+      # which is likewise off by default on new repos. Both are required
+      # before nixos/modules/forgejo-runner.nix's registration means anything
+      # or .forgejo/workflows/* ever fires.
+      - FORGEJO__actions__ENABLED=true
     volumes:
       - /mnt/fast/forgejo/data:/data
     ports:

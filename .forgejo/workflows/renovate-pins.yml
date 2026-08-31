@@ -1,0 +1,182 @@
+# Closes the one gap Renovate structurally cannot: the digest pins.
+#
+# Renovate bumps a compose `image:` tag. tests/lib/images.nix still holds the
+# OLD content-addressed {digest, hash} that the offline VM suites load, so the
+# `image-pins` lint fails every Renovate PR the moment it is opened — on
+# purpose (see renovate.json's description). This workflow runs
+# ./tests/update-images.sh on the Renovate branch, commits the regenerated
+# images.nix back to it, and then runs the lints itself. The PR goes green and
+# becomes MERGEABLE — never merged: renovate.json sets both `automerge` and
+# `platformAutomerge` to false, and nothing here merges anything.
+#
+# ===========================================================================
+# LOOP PREVENTION — two independent mechanisms, because one of them is
+# invisible and the other is cheap
+# ===========================================================================
+#
+# 1. THE PRIMARY MECHANISM IS FORGEJO'S, AND IT IS A DIVERGENCE FROM GITHUB.
+#    Forgejo's Actions documentation states it outright, of the automatic
+#    per-job token:
+#
+#      "In order to avoid infinite recursion, no workflow will be triggered
+#       as a side effect of a change authored with this token."
+#      — https://forgejo.org/docs/latest/user/actions/basic-concepts/
+#
+#    So the push below cannot re-trigger this workflow, or lints.yml, or
+#    anything else. On GitHub Actions the same property holds for
+#    GITHUB_TOKEN; what diverges is that Forgejo applies it to the change's
+#    AUTHORSHIP rather than to the event source, which is why the rule below
+#    is absolute:
+#
+#    🚨 THE PUSH MUST USE THE AUTOMATIC TOKEN. NEVER A PAT. A PAT — including
+#    the Renovate PAT in nixos/renovate.sops.env — is a normal user
+#    credential; a push made with one is an ordinary authored change and DOES
+#    trigger workflows. Swapping the token here for "a PAT so it has more
+#    permissions" converts this file into an infinite CI loop that costs a
+#    real host real cycles. There is nothing here that needs more than the
+#    automatic token has.
+#
+# 2. BELT AND SUSPENDERS: the guard step below refuses to do anything when
+#    the branch tip was authored by this workflow's own identity. Mechanism 1
+#    means it should never fire. It exists because (a) a future Forgejo
+#    release could change that behaviour and the failure mode would be a
+#    runaway loop rather than an error, and (b) it makes the invariant
+#    readable to a human, which a documented-elsewhere behaviour does not.
+#
+#    Note what the guard is NOT: it is not a correctness requirement for
+#    update-images.sh. That script holds a flock and is idempotent, so a
+#    double run is harmless — only an unbounded trigger chain is not.
+#
+# ===========================================================================
+# SCOPE: renovate/** ONLY
+# ===========================================================================
+# This workflow commits to the branch it is running on. That is safe exactly
+# once: on a bot branch that exists to be reviewed and then deleted. It must
+# never run on main, and `branches: ["renovate/**"]` is what guarantees that
+# — the prefix is fixed on the other side by renovate.json's `branchPrefix`,
+# so the two halves are one decision written twice. Changing either without
+# the other either strands PRs with stale pins (harmless, visible) or points
+# a committing workflow at the default branch (not harmless). If you change
+# branchPrefix, change this line in the same commit.
+#
+# lints.yml deliberately does NOT run on these branches (its trigger is
+# branches-ignore: renovate/**). If it did, it would fire first, fail on the
+# stale pins, and — because of mechanism 1 above — never re-run after the fix
+# commit, leaving a permanently red check next to a green one. The lint step
+# at the bottom of this job is the replacement, and it runs AFTER the fix.
+#
+# ===========================================================================
+# KNOWN ROUGH EDGE: the `suites` check on a FRESH Renovate PR
+# ===========================================================================
+# suites.yml triggers on `pull_request`, and a pull_request trigger cannot be
+# filtered by HEAD branch — its `branches:` filter matches the BASE. So it
+# cannot be excluded the way lints.yml was, and it fires against the tree as
+# it stood when Renovate opened the PR, i.e. before this workflow's fix
+# commit. Its first step is the same `./tests/run.sh`, so it goes red on the
+# stale pins, and mechanism 1 means the fix commit does not re-trigger it.
+#
+# Consequence for the reviewer: a brand-new Renovate PR shows `renovate-pins`
+# green and `suites` red at its "Contract lints" step. RE-RUN `suites` from
+# the Forgejo UI once `renovate-pins` has finished; it then checks out the
+# branch tip, which has the pins, and the result is meaningful. Nothing is
+# merged in the meantime — automerge is off on both switches.
+#
+# Not solved here on purpose. The clean fixes each cost more than the manual
+# re-run: `prCreation: "not-pending"` would make Renovate defer PR creation
+# until branch checks settle, but Renovate only re-evaluates that on its NEXT
+# run — a WEEK later on this timer. Moving the core suites into this workflow
+# would fix the ordering and then duplicate two hours of VM boots against
+# suites.yml, which still cannot be told to skip. If this becomes annoying
+# rather than theoretical, the shortest real fix is to raise Renovate's timer
+# frequency and then adopt prCreation: "not-pending".
+name: renovate-pins
+
+on:
+  push:
+    branches:
+      - "renovate/**"
+
+jobs:
+  pins:
+    # `nix` tier only — no VM is booted here, same as lints.yml. suites.yml
+    # (which needs kvm) covers the Renovate PR separately, on pull_request.
+    runs-on: [self-hosted, nix]
+    # update-images.sh resolves every image in the repo against its registry,
+    # with three attempts and a backoff per image. Warm that is minutes; on a
+    # bad network day it is not. Well short of the runner's 6h ceiling.
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out the renovate branch
+        uses: actions/checkout@v4
+        with:
+          # The BRANCH, not the detached commit: the push at the end needs a
+          # local branch to push from.
+          ref: ${{ github.ref_name }}
+          # Two commits is enough for the guard's `git log -1` and for a
+          # readable commit subject; a full history is wasted I/O here.
+          fetch-depth: 2
+          # Explicit, and load-bearing: this is the credential the push uses
+          # (checkout persists it into the remote's http.extraheader by
+          # default). Naming it here is what makes the loop-prevention
+          # argument above auditable instead of implicit — see the 🚨 note.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard against a self-triggered run
+        id: guard
+        run: |
+          set -euo pipefail
+          author="$(git log -1 --pretty=%ae)"
+          echo "branch tip authored by: $author"
+          if [ "$author" = "forgejo-actions@svc.idanreed.com" ]; then
+            echo "This commit is ours. Forgejo should not have triggered this"
+            echo "run at all (automatic-token pushes do not trigger"
+            echo "workflows) — stopping before doing anything, and treat the"
+            echo "fact that this step spoke at all as a finding worth chasing."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve image digests
+        if: steps.guard.outputs.skip != 'true'
+        # Rewrites tests/lib/images.nix from whatever the compose files now
+        # say. Full tier, not `light`: a light run records the heavy images in
+        # `_skipped`, and image-pins treats a skipped entry as acceptable —
+        # which would let a Renovate PR go green with a paperless or
+        # authentik tag that was never actually resolved.
+        run: ./tests/update-images.sh
+
+      - name: Commit the refreshed pins
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- tests/lib/images.nix; then
+            echo "images.nix unchanged — nothing to commit."
+            echo "(Expected when Renovate bumped something with no pin, e.g."
+            echo " the caddy Dockerfile's xcaddy version, which produces no"
+            echo " new compose reference.)"
+            exit 0
+          fi
+
+          # This identity is what the guard step matches on, and what makes
+          # Renovate treat the branch as modified-by-someone-else so it stops
+          # force-pushing over the fix (see gitAuthor in
+          # nixos/modules/renovate.nix). The two must not collide.
+          git config user.name  "forgejo-actions"
+          git config user.email "forgejo-actions@svc.idanreed.com"
+
+          git add tests/lib/images.nix
+          git commit -m "tests: refresh image pins for $(git log -1 --pretty=%s HEAD)"
+
+          # Uses the credential actions/checkout persisted, i.e. the automatic
+          # token. See the 🚨 note in the header before changing this line.
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Contract lints
+        if: steps.guard.outputs.skip != 'true'
+        # After the commit, not before: if the lints fail we still want the
+        # pin fix pushed, so the red check is about a REAL problem rather than
+        # about the digests this job exists to fix.
+        run: ./tests/run.sh
