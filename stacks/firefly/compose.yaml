@@ -212,6 +212,44 @@ services:
       # once (see .sops.env.example) — there is no CLI and no API path to it.
       # The importer runs, and its UI loads, with the token unset; it simply
       # cannot talk to Firefly until it is set.
+      #
+      # ---- SimpleFIN: configured, but NOT scheduled, and that is the whole
+      # ---- point. Do not "finish" this by adding a timer.
+      #
+      # SIMPLEFIN_TOKEN also arrives from .env. It is NOT the durable bank
+      # credential and cannot be made into one: the importer requires a
+      # base64-encoded SimpleFIN Bridge CLAIM URL (it regex-checks the decoded
+      # string for /simplefin/claim/ and throws on anything else, including on
+      # a bare access URL), POSTs to it on the first import, and the Bridge
+      # invalidates it at that moment. The access URL that comes back is
+      # written to `access_token` in the importer's downloadable Configuration
+      # JSON — session state, not a volume, because this service HAS no volume.
+      #
+      # So the chain that a scheduled sync would need is:
+      #   a volume (or bind) to hold the config JSON
+      #     + CAN_POST_AUTOIMPORT + IMPORT_DIR_ALLOWLIST + AUTO_IMPORT_SECRET
+      #     + something to fire the POST.
+      # Every link but the last is the refusal three paragraphs up. Turning
+      # them on would put an unauthenticated POST endpoint, and a plaintext
+      # file that reads every transaction on every linked bank account, on the
+      # one container in this stack that has no login of its own. That is an
+      # OPERATOR decision, not a tidy-up: see ServerNotes/designs/_todo.md,
+      # "Wire SimpleFIN into Firefly III", which records the three options and
+      # leaves the choice to Idan.
+      #
+      # Until then a SimpleFIN import is a person at
+      # https://firefly-importer.svc.idanreed.com (behind its own Authentik
+      # application) uploading the saved config JSON and clicking import.
+      #
+      # SIMPLEFIN_CORS_ORIGIN_URL and the SIMPLEFIN_* tuning knobs
+      # (timeouts, retries, MAX_TRANSACTIONS, caching, expense matching,
+      # clustering) are deliberately unset — config/simplefin.php supplies a
+      # default for every one of them, and pinning defaults here would be six
+      # more strings to drift out of date across importer upgrades. Set one
+      # only when a real import proves it is needed.
+      # SIMPLEFIN_DEMO_URL / SIMPLEFIN_DEMO_TOKEN are likewise unset: their
+      # defaults point at bridge.simplefin.org's DEMO endpoint and are only
+      # reached if someone picks "demo" in the UI.
     # Long form with required:false ON PURPOSE (finding #11): see firefly.
     env_file:
       - path: .env
