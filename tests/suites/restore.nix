@@ -199,8 +199,12 @@ pkgs.testers.runNixOSTest {
 
         # Destroy the cluster completely — not `drop table`, which would leave
         # roles and settings behind and prove much less.
-        sh(f"docker rm -f {PG}")
-        sh(f"docker volume prune -f >/dev/null 2>&1 || true")
+        # -v removes the container's ANONYMOUS volume with it, which is where
+        # postgres put its cluster. `docker volume prune` would also work here
+        # and is what the reflex reaches for — but it would take every other
+        # stack's named volumes with it, and a drill that destroys unrelated
+        # state to prove a point is not a drill.
+        sh(f"docker rm -fv {PG}")
         sh(
             f"docker run -d --name {PG} "
             "-e POSTGRES_USER=drill -e POSTGRES_DB=drill "
