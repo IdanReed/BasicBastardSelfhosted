@@ -246,7 +246,16 @@ pkgs.testers.runNixOSTest {
             assert fast != slow, f"both tiers are on {fast}"
 
         with subtest("the fixture .sops.env decrypted to a 0600 .env"):
-            services_vm.wait_for_unit("decrypt-sops-envs.service")
+            # NOT wait_for_unit: decrypt-sops-envs is a transient oneshot
+            # with no RemainAfterExit (a minutely timer re-fires it), so
+            # waiting on the UNIT races its inactive-after-success state and
+            # fails with "inactive and there are no pending jobs". The
+            # artifact it must produce is the synchronisation point —
+            # mk-stack-suite already documents this; this suite did not
+            # follow it.
+            services_vm.wait_until_succeeds(
+                "test -s /srv/stacks/beszel/.env", timeout=90
+            )
             services_vm.succeed("test -f /srv/stacks/beszel/.env")
             mode = services_vm.succeed(
                 "stat -c %a /srv/stacks/beszel/.env"
