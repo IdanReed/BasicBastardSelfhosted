@@ -117,11 +117,27 @@ systems:
     token: $TOKEN
 EOF
 
+# 0600 like the key beside it: config.yml carries TOKEN in cleartext, and
+# TOKEN is the credential the agent presents to the hub — the same class of
+# secret as id_ed25519, so it gets the same mode. Set on the tmpfile so the
+# token is never briefly world-readable under $DATA_DIR, and again after the
+# rename for the same reason the key does it.
+chmod 600 "$tmp_cfg"
 if [ -f "$CFG_PATH" ] && cmp -s "$tmp_cfg" "$CFG_PATH"; then
   rm -f "$tmp_cfg"
+  # Content-equal is not mode-equal: every config.yml written before this
+  # chmod existed is still 0644 on disk, and it survives a redeploy precisely
+  # because the content matches. Repair it here — and log it, because it IS a
+  # mutation (house rule), which costs one CHANGE line on the first run after
+  # this change and zero on every run after that.
+  if [ "$(stat -c %a "$CFG_PATH")" != "600" ]; then
+    chmod 600 "$CFG_PATH"
+    log "CHANGE: tightened $CFG_PATH to 0600 (it held TOKEN at 0644)"
+  fi
   log "systems config already correct"
 else
   mv "$tmp_cfg" "$CFG_PATH"
+  chmod 600 "$CFG_PATH"
   log "CHANGE: wrote $CFG_PATH ($SYSTEM_NAME)"
 fi
 
