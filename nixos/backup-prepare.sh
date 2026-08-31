@@ -92,6 +92,13 @@ sqlite_backup karakeep       /mnt/fast/karakeep/data.db
 sqlite_backup homebox        /mnt/fast/homebox/homebox.db
 sqlite_backup uptimekuma     /mnt/fast/uptimekuma/kuma.db
 sqlite_backup homeassistant  /mnt/fast/homeassistant/home-assistant_v2.db
+# Frigate's event/review/user index (stacks/automation/compose.yaml). WAL-mode
+# and continuously written, like the recorder DB above and the arr databases
+# below, so the raw file inside the /mnt/fast include set is a torn snapshot
+# and this dump is the restorable copy. The recordings under /mnt/slow/frigate
+# are deliberately not backed up at all — they are re-recordable and the slow
+# plan's include list omits them.
+sqlite_backup frigate        /mnt/fast/frigate/config/frigate.db
 sqlite_backup audiobookshelf /mnt/fast/audiobookshelf/config/absdatabase.sqlite
 # The other two books-stack databases (stacks/books/compose.yaml). Kavita's is
 # WAL-mode by default since 0.8.2, so the raw file inside the /mnt/fast include

@@ -23,6 +23,35 @@ cd "$(dirname "$0")/.."
 OUT="tests/lib/images.nix"
 TIER="${1:-all}"
 
+# ---------------------------------------------------------------------------
+# Single-instance guard
+# ---------------------------------------------------------------------------
+# This script truncates "$OUT.tmp" once and then APPENDS one entry per image
+# before `mv`ing it into place, so two overlapping runs interleave their
+# entries and one of them moves a corrupt file over images.nix. That failure
+# does not look like a race: entries simply go missing, which reads exactly
+# like the registry having lost a tag.
+#
+# It is easy to hit, because a full run takes long enough to want to
+# background — and "wait for the tmpfile to disappear" is NOT a safe way to
+# tell whether a run is in progress: the tmpfile does not exist during the
+# opening collect-references phase, so that guard fires early and starts a
+# second run on top of the first. Waiting on the PROCESS is the only correct
+# way; this lock makes getting it wrong harmless.
+#
+# -E 99 so a lock failure is distinguishable from the exit 1 this script uses
+# for unresolved tags.
+LOCKFILE="${TMPDIR:-/tmp}/basicbastard-update-images.lock"
+if [ "${UPDATE_IMAGES_LOCKED:-}" != "1" ]; then
+  rc=0
+  UPDATE_IMAGES_LOCKED=1 flock -E 99 -w 0 "$LOCKFILE" "$0" "$@" || rc=$?
+  if [ "$rc" -eq 99 ]; then
+    echo "!! another update-images.sh already holds $LOCKFILE — refusing to" >&2
+    echo "   run concurrently (they would interleave into one images.nix.tmp)." >&2
+  fi
+  exit "$rc"
+fi
+
 # Images too large to pin on every developer machine by default. They are only
 # needed by suites/stacks-heavy.nix.
 HEAVY_RE='paperless-ngx|goauthentik|apache/tika|gotenberg|backrest'

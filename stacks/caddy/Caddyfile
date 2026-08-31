@@ -236,6 +236,51 @@
 		reverse_proxy localhost:10152
 	}
 
+	# ------------------------------------------------------------------
+	# Automation stack (stacks/automation, ports 10250-10252). Mosquitto
+	# has no route on purpose: MQTT is not HTTP, and its consumers
+	# (Frigate, Home Assistant) reach it by service name on the compose
+	# network. Reaching it from IoT devices is a second-NIC + firewall
+	# job, not a Caddy one.
+	# ------------------------------------------------------------------
+
+	@homeassistant host homeassistant.svc.idanreed.com
+	handle @homeassistant {
+		# NO forward auth, and this one is not a preference:
+		# /api/webhook/* is unauthenticated BY DESIGN and is what the
+		# mobile app posts location to, and every bearer-token REST and
+		# websocket client would be bounced to a login page. The
+		# canonical header-auth component for HA is archived, and
+		# hass-oidc-auth's own docs say to remove proxy auth. HA
+		# authenticates itself (local accounts today, Authentik via
+		# hass-oidc-auth later — annex §7.3).
+		#
+		# Home Assistant is one long-lived websocket, so without this a
+		# `caddy reload` force-closes every session and the UI visibly
+		# reconnects. Caddy needs nothing else for websockets — do not
+		# port nginx's Connection/Upgrade headers here.
+		reverse_proxy localhost:10250 {
+			stream_close_delay 30s
+		}
+	}
+
+	@frigate host frigate.svc.idanreed.com
+	handle @frigate {
+		# Forward auth, and Frigate meets us more than halfway: its own
+		# auth is disabled (stacks/automation/frigate.yaml) and its
+		# nginx strips every inbound header before re-injecting a
+		# whitelist that contains verbatim the five X-Authentik-*
+		# headers the snippet below already copies. So identity comes
+		# from Authentik and Frigate maps it to admin/viewer.
+		#
+		# Rollout order is load-bearing, as always: the blueprint entry
+		# plus a VPS rebuild BEFORE this route syncs. Doubly so here —
+		# with `auth.enabled: false` in its config, an unprotected
+		# Frigate is an unauthenticated NVR.
+		import protected
+		reverse_proxy localhost:10252
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {

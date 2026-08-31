@@ -246,6 +246,42 @@ entries:
       meta_description: "Book and audiobook search + download"
 
   # ===========================================
+  # Automation stack (stacks/automation): frigate only
+  # ===========================================
+  # Home Assistant is deliberately ABSENT: /api/webhook/* is unauthenticated
+  # by design (the mobile app posts location to it) and every bearer-token
+  # REST/websocket client would be bounced to a login page — HA authenticates
+  # itself. Mosquitto is not HTTP at all.
+  #
+  # Frigate's own auth is DISABLED in stacks/automation/frigate.yaml, and its
+  # nginx strips inbound headers before re-injecting a whitelist containing
+  # exactly the five X-Authentik-* headers the (protected) snippet copies —
+  # so this provider is the only thing authenticating it. Deploy this and
+  # rebuild the VPS BEFORE the Caddy route syncs.
+  - model: authentik_providers_proxy.proxyprovider
+    id: frigate-provider
+    state: present
+    identifiers:
+      name: frigate
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://frigate.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: frigate-app
+    state: present
+    identifiers:
+      slug: frigate
+    attrs:
+      name: Frigate
+      provider: !KeyOf frigate-provider
+      policy_engine_mode: any
+      meta_description: "NVR and object detection"
+
+  # ===========================================
   # Embedded outpost assignment
   # ===========================================
   # The embedded outpost ships with authentik itself and answers on the server
@@ -283,3 +319,4 @@ entries:
         - !KeyOf profilarr-provider
         - !KeyOf cleanuparr-provider
         - !KeyOf shelfmark-provider
+        - !KeyOf frigate-provider

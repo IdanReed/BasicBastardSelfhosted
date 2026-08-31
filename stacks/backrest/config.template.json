@@ -73,7 +73,9 @@
         "/mnt/fast/backrest/cache/**",
         "/mnt/fast/immich/model-cache/**",
         "/mnt/fast/kavita/config/cache-long/**",
-        "/mnt/fast/kavita/config/temp/**"
+        "/mnt/fast/kavita/config/temp/**",
+        "/mnt/fast/frigate/config/model_cache/**",
+        "/mnt/fast/homeassistant/tts/**"
       ],
       "schedule": {
         "cron": "0 3 * * *",

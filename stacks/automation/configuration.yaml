@@ -1,0 +1,52 @@
+# Home Assistant config (annex §3.1). Git-managed, mounted read-only.
+#
+# Read-only is safe: HA's only write path to this file is dead code guarded on
+# a pre-0.92 version check. The /config DIRECTORY must still be writable —
+# .HA_VERSION is rewritten on every version change and that write is not
+# wrapped in a try/except.
+#
+# ⚠ THERE IS DELIBERATELY NO `http:` BLOCK HERE, and adding one would break
+# the deployment in a way that takes five minutes to show up. Since 2026.8.0
+# HA migrates `http:` ONCE into a storage-backed config, stages it as
+# *pending*, and — unless an admin promotes it through the UI within
+# AUTO_REVERT_DELAY (5 minutes) — reverts to the previous stable config and
+# never applies the pending one again. Headless, that means Caddy is trusted
+# for exactly five minutes and then permanently is not, with the healthcheck
+# green throughout. ha-config-init pre-seeds .storage/http instead, which is
+# where that configuration now lives. (YAML `http:` is removed outright in
+# 2027.2.0.)
+
+# The standard bundle. Includes the frontend (whose absence is the one
+# CRITICAL_INTEGRATIONS failure that drops HA into recovery mode), plus
+# mobile_app, history, logbook and the discovery integrations. The discovery
+# ones (zeroconf/ssdp/dhcp) are inert on a bridge network and fail silently by
+# design — devices here are added by IP or arrive over MQTT.
+default_config:
+
+homeassistant:
+  # Still YAML-authoritative — these two keys are NOT part of the http config
+  # that moved into storage.
+  internal_url: "https://homeassistant.svc.idanreed.com"
+  external_url: "https://homeassistant.svc.idanreed.com"
+
+# ⚠ THERE IS DELIBERATELY NO `mqtt:` BLOCK HERE either, and this one is worth
+# spelling out because every guide on the internet still shows one. MQTT's
+# YAML schema accepts ONLY platform names (`sensor:`, `light:`, …) — `broker`,
+# `port`, `username` and `password` are `extra keys not allowed`, and there is
+# no YAML-to-config-entry import path left. The failure is silent in the worst
+# way: HA logs "Invalid config for 'mqtt'", starts anyway, serves a healthy
+# /manifest.json, and simply never connects to the broker — so Frigate's
+# events never arrive and nothing looks broken.
+#
+# The broker connection is a config ENTRY, created headlessly by
+# automation-init through the config-flow REST API (the same one the UI
+# drives), with credentials from .env.
+
+# No `automation:` include yet, deliberately. The zero-UI shape for it is
+# `!include_dir_merge_list automations/` (reviewable files in git rather than
+# one UI-rewritten blob, at the cost of HA's automation editor) — but
+# `!include_dir_merge_list` RAISES on a missing directory, and there are no
+# automations to ship yet. Add the directory and this line together.
+
+logger:
+  default: info
