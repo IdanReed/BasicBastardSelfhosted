@@ -180,6 +180,7 @@ let
     wger = callSuite ./suites/wger.nix { };
     gatus = callSuite ./suites/gatus.nix { };
     beszel = callSuite ./suites/beszel.nix { };
+    samba = callSuite ./suites/samba.nix { };
     docspace = callSuite ./suites/docspace.nix { };
   };
 

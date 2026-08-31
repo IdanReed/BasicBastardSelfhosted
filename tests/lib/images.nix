@@ -274,6 +274,14 @@
     finalImageName = "ghcr.io/tandoorrecipes/recipes";
     finalImageTag = "2.6.13";
   };
+  "ghcr_io_twin_gatus_v5_36_0" = {
+    composeRef = "ghcr.io/twin/gatus:v5.36.0";
+    imageName = "ghcr.io/twin/gatus";
+    imageDigest = "sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f0";
+    hash = "sha256-phSPgKeBnZyn4DKd6wR++JKsnJRnDsTlguDNzKQvLHg=";
+    finalImageName = "ghcr.io/twin/gatus";
+    finalImageTag = "v5.36.0";
+  };
   "ghcr_io_windmill-labs_windmill_1_798_1" = {
     composeRef = "ghcr.io/windmill-labs/windmill:1.798.1";
     imageName = "ghcr.io/windmill-labs/windmill";
@@ -370,6 +378,14 @@
     finalImageName = "mariadb";
     finalImageTag = "11.8.9";
   };
+  "mysql_8_4_6" = {
+    composeRef = "mysql:8.4.6";
+    imageName = "mysql";
+    imageDigest = "sha256:869218921e61d6c3c89820955d63cca42971f0e3e6c1e2792247bbd944ebc6e9";
+    hash = "sha256-P0xvP10x/5ebvehT5WsJ690N1pP2jASk7CUFFvNpE6w=";
+    finalImageName = "mysql";
+    finalImageTag = "8.4.6";
+  };
   "nginx_1_30_4-alpine" = {
     composeRef = "nginx:1.30.4-alpine";
     imageName = "nginx";
@@ -377,6 +393,22 @@
     hash = "sha256-pznF0twPb4as4Q5ju2alGn/ZCzAHfBh9APsYdo8yw5I=";
     finalImageName = "nginx";
     finalImageTag = "1.30.4-alpine";
+  };
+  "onlyoffice_docspace_3_7_2" = {
+    composeRef = "onlyoffice/docspace:3.7.2";
+    imageName = "onlyoffice/docspace";
+    imageDigest = "sha256:0002035c86a568f4798ac46b622769434b9317e2a429a7fa7ce503abc25cfc64";
+    hash = "sha256-ddKtXCbIQvI4Y31mme2/Zy1syonrRy0oUDT51hkOZjY=";
+    finalImageName = "onlyoffice/docspace";
+    finalImageTag = "3.7.2";
+  };
+  "onlyoffice_documentserver_9_4_0" = {
+    composeRef = "onlyoffice/documentserver:9.4.0";
+    imageName = "onlyoffice/documentserver";
+    imageDigest = "sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b";
+    hash = "sha256-9a6jXW5S4eQTKMvYYvzg4k8BNpMnxqP3cyN+QpF6VHs=";
+    finalImageName = "onlyoffice/documentserver";
+    finalImageTag = "9.4.0";
   };
   "postgis_postgis_17-3_5-alpine" = {
     composeRef = "postgis/postgis:17-3.5-alpine";
