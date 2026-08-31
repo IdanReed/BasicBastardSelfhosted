@@ -1128,7 +1128,7 @@ On the host it is a live hazard rather than a test artefact: if the tiers ever
 end up on one device, one of them silently disappears from the dashboard —
 and a tier you are not being shown looks exactly like a tier that is fine.
 
-### 47. Three containers, three non-root uids, and root-owned is the wrong default
+### 47. A data directory the database could not write, named as someone else's failure
 
 The docspace suite's first run failed with
 
@@ -1136,33 +1136,67 @@ The docspace suite's first run failed with
 dependency failed to start: container docspace_db is unhealthy
 ```
 
-naming a container that had nothing wrong with it. The cause was two tmpfiles
-rules:
-
-```
-"d /mnt/fast/docspace/mysqldata 0755 root root -"
-"d /mnt/fast/docspace/app      0755 root root -"
-```
-
 `mysql:8.4.6` drops to uid 999 **before** `--initialize` and aborts on a data
 directory it cannot write ("the designated data directory /var/lib/mysql/ is
-unusable"). `onlyoffice/docspace:3.7.2` is `USER onlyoffice` — uid 104, gid 107
-— so its entrypoint starts **already dropped** and cannot chown its way out of
-a root-owned `/app/onlyoffice/data`, where it wants to `mkdir -p .secrets` on
-first run. `onlyoffice/documentserver:9.4.0` runs as root and chowns from its
-entrypoint, so it was fine.
+unusable"), so `"d /mnt/fast/docspace/mysqldata 0755 root root -"` restart-looped
+it. Finding #14 (seerr) in another image: **`root root` is not the conservative
+choice for a bind mount, it is docker's default and it is the one that breaks.**
+These rules exist precisely because docker creates missing bind sources
+root-owned; writing `root root` into them reproduces the bug they were added to
+prevent.
 
-Three containers in one stack, three different privilege models, and nothing
-in the compose file says so — the uid lives in the image's Dockerfile.
+⚠️ **A correction, because I got the second half of this wrong the first time.**
+I also changed `app` and `logs` to 104:107 on the theory that
+`onlyoffice/docspace:3.7.2` is `USER onlyoffice` and could not chown its way
+out. The image *is* `USER onlyoffice`, but the compose file sets `user: root`
+following upstream — so those directories were never the problem, and that
+half of the diagnosis was speculation dressed as a finding. The ownership is
+kept (it degrades rather than breaks if `user: root` is ever dropped) but it
+fixed nothing.
 
-This is finding #14 (seerr) for the fifth and sixth time, and the repetition is
-the point: **`root root` is not the conservative choice for a bind mount, it is
-docker's default and it is the one that breaks.** The rules exist precisely
-because docker creates missing bind sources root-owned; writing `root root`
-into them reproduces the bug the rules were written to prevent. The header
-comment on the docspace block now lists all three uids explicitly, because the
-only way to know is to `docker inspect --format '{{.Config.User}}'` each image
-and the failure names the wrong container.
+### 48. An unused branch of a config file killed the server
+
+With mysql fixed, the docspace container came up and its healthcheck still
+never passed. Every process under supervisord started except **openresty**,
+which crash-looped to FATAL — while the container stayed `Up`, because
+supervisord does not exit when one program gives up. The only symptom outside
+the container was `up --wait` timing out.
+
+The error was only in `/var/log/supervisor/openresty_stderr.log`, inside the
+container:
+
+```
+nginx: [emerg] unknown "document_container_name" variable
+```
+
+The image ships `upstream.conf.template`:
+
+```
+map "$DOCUMENT_SERVER_URL_EXTERNAL" "$document_server_vs_path" {
+    default "$DOCUMENT_SERVER_URL_EXTERNAL";
+    ""      "http://$DOCUMENT_CONTAINER_NAME";
+}
+```
+
+The nginx image's envsubst pass substitutes only variables that are **set**, so
+an unset `DOCUMENT_CONTAINER_NAME` survives into the generated config as a
+literal. And `DOCUMENT_SERVER_URL_EXTERNAL` **is** set — so the `""` branch is
+dead code that can never match. It does not matter: nginx parses the whole file
+before serving anything and rejects it outright.
+
+Two things worth keeping from this one. **A config value can be required even
+when the code path that uses it is unreachable** — "we set the other variable,
+so this one is optional" is a reasonable inference and it is wrong. And
+**supervisord converts a fatal sub-process into a healthy-looking container**:
+without a healthcheck that actually fetches through nginx, this stack would
+have deployed, stayed `Up`, and served nothing. The compose healthcheck
+(`curl /api/2.0/settings`) is what caught it, which is the argument for
+replacing the image's baked `supervisorctl status` probe rather than trusting
+it.
+
+Found by building a **local** repro — the same compose with the bind paths
+rewritten and mysql on a named volume — after two 15-minute VM iterations. For
+a stack this slow the local loop is worth the ten minutes it costs to set up.
 
 ## Status
 
@@ -1266,7 +1300,7 @@ the suites have never executed, because each needs image pins
 `tests/update-images.sh` had not yet resolved. Treat them as unproven until
 `./tests/run.sh <name>` has passed once.
 
-**Forty-seven** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty-eight** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
