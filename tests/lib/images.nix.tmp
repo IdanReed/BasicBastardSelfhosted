@@ -338,3 +338,123 @@
     finalImageName = "lscr.io/linuxserver/prowlarr";
     finalImageTag = "2.5.2";
   };
+  "lscr_io_linuxserver_qbittorrent_5_2_3" = {
+    composeRef = "lscr.io/linuxserver/qbittorrent:5.2.3";
+    imageName = "lscr.io/linuxserver/qbittorrent";
+    imageDigest = "sha256:a00b6a597a3832a1814cde0ef60abc55c94644f3f80902c3432f6af6de8d4a96";
+    hash = "sha256-WHA70XvYD+gcbakTnsYgKiK7HJ1o2tC4d/6y1b0xvIA=";
+    finalImageName = "lscr.io/linuxserver/qbittorrent";
+    finalImageTag = "5.2.3";
+  };
+  "lscr_io_linuxserver_radarr_6_3_0" = {
+    composeRef = "lscr.io/linuxserver/radarr:6.3.0";
+    imageName = "lscr.io/linuxserver/radarr";
+    imageDigest = "sha256:119aaa4a4f7349bcd2a136c5373a0d7925b5479915c7dfe0c0ad352db2a6d438";
+    hash = "sha256-6pkx0xLk7AFTw8hWBckUPKfgGZbNTLDk67xneOmMjP0=";
+    finalImageName = "lscr.io/linuxserver/radarr";
+    finalImageTag = "6.3.0";
+  };
+  "lscr_io_linuxserver_sonarr_4_0_19" = {
+    composeRef = "lscr.io/linuxserver/sonarr:4.0.19";
+    imageName = "lscr.io/linuxserver/sonarr";
+    imageDigest = "sha256:c19aa4ecdf03d73e1d5c901da33744cb7eb4d921f89bafed1ca264601d7fa224";
+    hash = "sha256-TbKMUIDefITrsAP9mIdP1T7hb0iCYyXXmAtXoAsQnmI=";
+    finalImageName = "lscr.io/linuxserver/sonarr";
+    finalImageTag = "4.0.19";
+  };
+  "mariadb_11_8_9" = {
+    composeRef = "mariadb:11.8.9";
+    imageName = "mariadb";
+    imageDigest = "sha256:2439dcd7d14010ecd1ff7a4e1c5abe8e208c34fe35290744deeeaac3569043c3";
+    hash = "sha256-RGRQqypV9iJ7mr9LpoOSZ6pud9EO6juZq2UM3190T14=";
+    finalImageName = "mariadb";
+    finalImageTag = "11.8.9";
+  };
+  "nginx_1_30_4-alpine" = {
+    composeRef = "nginx:1.30.4-alpine";
+    imageName = "nginx";
+    imageDigest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+    hash = "sha256-pznF0twPb4as4Q5ju2alGn/ZCzAHfBh9APsYdo8yw5I=";
+    finalImageName = "nginx";
+    finalImageTag = "1.30.4-alpine";
+  };
+  "postgis_postgis_17-3_5-alpine" = {
+    composeRef = "postgis/postgis:17-3.5-alpine";
+    imageName = "postgis/postgis";
+    imageDigest = "sha256:08f4b1e1f4a571008c60272ceb9e0d1f9f8f643792d006b74a35b1bec44c2218";
+    hash = "sha256-iw0miPOAYALtIf9VSRgEqDseqwhXDIzETUY5naEU2eU=";
+    finalImageName = "postgis/postgis";
+    finalImageTag = "17-3.5-alpine";
+  };
+  "postgres_16_13-alpine" = {
+    composeRef = "postgres:16.13-alpine";
+    imageName = "postgres";
+    imageDigest = "sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50";
+    hash = "sha256-07iy6tVD2L+3eoZM7wzqBr69UVzfr9suCT3uK13NL+o=";
+    finalImageName = "postgres";
+    finalImageTag = "16.13-alpine";
+  };
+  "postgres_17_9-alpine" = {
+    composeRef = "postgres:17.9-alpine";
+    imageName = "postgres";
+    imageDigest = "sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609";
+    hash = "sha256-wUfbwIV1ZCshwFfp+9hZN9LuaO3VPz365jHceDFEO/c=";
+    finalImageName = "postgres";
+    finalImageTag = "17.9-alpine";
+  };
+  "python_3_13-alpine" = {
+    composeRef = "python:3.13-alpine";
+    imageName = "python";
+    imageDigest = "sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d";
+    hash = "sha256-VezYqm4Tbx9aFHtkIb7RI/cx5uRz0iVQTHEmv7GO3NY=";
+    finalImageName = "python";
+    finalImageTag = "3.13-alpine";
+  };
+  "qmcgaw_gluetun_v3_41_3" = {
+    composeRef = "qmcgaw/gluetun:v3.41.3";
+    imageName = "qmcgaw/gluetun";
+    imageDigest = "sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027";
+    hash = "sha256-ao1WZ8MYI/gXIqNLYQW7GLB8tmWqExvhAlJjXCPXp1o=";
+    finalImageName = "qmcgaw/gluetun";
+    finalImageTag = "v3.41.3";
+  };
+  "redis_7_4-alpine" = {
+    composeRef = "redis:7.4-alpine";
+    imageName = "redis";
+    imageDigest = "sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf";
+    hash = "sha256-SAxWBbQAa0iI5ehP2eImFgfOHjRlm4fxLJSiKZx6/Q4=";
+    finalImageName = "redis";
+    finalImageTag = "7.4-alpine";
+  };
+  "syncthing_syncthing_2_1_3" = {
+    composeRef = "syncthing/syncthing:2.1.3";
+    imageName = "syncthing/syncthing";
+    imageDigest = "sha256:8c8ff37ab6aa8be23b700648a90fa9412e214852e9fd6ea8477c8334792daec0";
+    hash = "sha256-cimA9IBFrBGIy49RoQKApPdyXlgSPC8m30hPyL6yuLo=";
+    finalImageName = "syncthing/syncthing";
+    finalImageTag = "2.1.3";
+  };
+  "valkey_valkey_9_1-alpine" = {
+    composeRef = "valkey/valkey:9.1-alpine";
+    imageName = "valkey/valkey";
+    imageDigest = "sha256:de31910896150d5e754a07d57d227cfdde4e258ddd0d1aa4607f2d2f95843715";
+    hash = "sha256-MNqkpCQqn11UE8bvqGeBTsTpkLeIhWV+7UnGT9tfq8M=";
+    finalImageName = "valkey/valkey";
+    finalImageTag = "9.1-alpine";
+  };
+  "vaultwarden_server_1_37_2" = {
+    composeRef = "vaultwarden/server:1.37.2";
+    imageName = "vaultwarden/server";
+    imageDigest = "sha256:094b5689ed81549bd293418395c7cf495ae9d960fc2d4928cef2083ef913d912";
+    hash = "sha256-eZu7Be9lm/hCvqkG+oZ7fyP+YTBG3osSeXWrIZiV/2k=";
+    finalImageName = "vaultwarden/server";
+    finalImageTag = "1.37.2";
+  };
+  "wger_server_2_6" = {
+    composeRef = "wger/server:2.6";
+    imageName = "wger/server";
+    imageDigest = "sha256:997ead43aabdcd67d054f933e07d2b23875f01bf43271a267cb7796925ca27c4";
+    hash = "sha256-qC0sKiYeoiGCCXSLRD7bTDQj4wiQpd6kgsZhLqunP2E=";
+    finalImageName = "wger/server";
+    finalImageTag = "2.6";
+  };

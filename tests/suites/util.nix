@@ -16,6 +16,17 @@
 #     stateful service is exactly the moment a leftover `env_file` would start
 #     failing Arcane's staged sync for bentopdf and mazanoke too (finding #11).
 #   - every published port is loopback-only, with a positive control.
+#   - **The unhealthy-container alert**, exercised here because this is the
+#     cheapest suite with a host, docker, and containers. Nothing else in the
+#     fleet reacts to a container going `unhealthy` — `restart: unless-stopped`
+#     only restarts containers that EXIT — so the timer in
+#     nixos/configuration.nix is the only consumer of every healthcheck these
+#     stacks define. Four assertions: it passes while all is well, it FAILS
+#     once when a container is sick (which is what reaches ntfy), it SUCCEEDS
+#     on the second run (or a sick container pushes to a phone four times an
+#     hour forever), and a container inside its START PERIOD does not trip it.
+#     That last one matters: firefly and wger have five-minute start periods
+#     and a check that counted `starting` as sick would page on every deploy.
 #
 # 🚨 ExcaliDash was here and is DEFERRED — see stacks/util/compose.yaml. Its
 # entrypoint runs `npx prisma generate` unconditionally at container start and
@@ -202,6 +213,72 @@ pkgs.testers.runNixOSTest {
                 f"curl -s --max-time 10 http://{ip}:{port}/ >/dev/null",
             )
         outsider.succeed(f"ping -c1 -W5 {ip} >/dev/null")
+
+    # -----------------------------------------------------------------------
+    # The unhealthy-container alert (nixos/configuration.nix). Exercised here
+    # rather than in its own suite because it needs a host with docker and some
+    # containers, and this is the cheapest one that has both.
+    # -----------------------------------------------------------------------
+    with subtest("the unhealthy-container check passes while everything is well"):
+        services_vm.succeed("systemctl start unhealthy-containers.service")
+        out = services_vm.succeed(
+            "systemctl show -p Result unhealthy-containers.service"
+        )
+        assert "Result=success" in out, out
+        services_vm.fail("test -e /run/unhealthy-containers.failed")
+
+    with subtest("🚨 it FAILS when a container is unhealthy, and only once"):
+        # A throwaway container with a healthcheck that cannot pass. Named with
+        # the bkg- prefix so it is obviously not part of any stack.
+        services_vm.succeed(
+            "docker run -d --name bkg-sick "
+            "--health-cmd 'exit 1' --health-interval 2s --health-retries 1 "
+            "--health-start-period 0s "
+            "corentinth/it-tools:2024.10.22-7ca5933 sleep 600"
+        )
+        services_vm.wait_until_succeeds(
+            "docker inspect -f '{{.State.Health.Status}}' bkg-sick "
+            "| grep -qx unhealthy",
+            timeout=120,
+        )
+
+        # First run: must FAIL, which is what reaches ntfy through OnFailure.
+        services_vm.fail("systemctl start unhealthy-containers.service")
+        services_vm.succeed("test -e /run/unhealthy-containers.failed")
+        services_vm.succeed("grep -qx bkg-sick /run/unhealthy-containers.failed")
+
+        # Second run: must SUCCEED. The unit runs every 15 minutes, so without
+        # the state-change stamp a single sick container would push to a phone
+        # four times an hour until someone fixed it — and an alert that repeats
+        # forever is one you learn to ignore.
+        services_vm.succeed("systemctl start unhealthy-containers.service")
+
+    with subtest("it reports recovery and clears its stamp"):
+        services_vm.succeed("docker rm -f bkg-sick")
+        services_vm.succeed("systemctl start unhealthy-containers.service")
+        services_vm.fail("test -e /run/unhealthy-containers.failed")
+        log = services_vm.succeed(
+            "journalctl -u unhealthy-containers.service --no-pager | tail -20"
+        )
+        assert "recovered" in log, log
+
+    with subtest("a container still in its start period does NOT trip it"):
+        # `--filter health=unhealthy` excludes `starting`. This matters more
+        # than it looks: firefly and wger have five-minute start periods, and a
+        # check that counted `starting` as sick would page on every deploy.
+        services_vm.succeed(
+            "docker run -d --name bkg-slow "
+            "--health-cmd 'exit 1' --health-interval 2s --health-retries 30 "
+            "--health-start-period 300s "
+            "corentinth/it-tools:2024.10.22-7ca5933 sleep 600"
+        )
+        services_vm.wait_until_succeeds(
+            "docker inspect -f '{{.State.Health.Status}}' bkg-slow "
+            "| grep -qx starting",
+            timeout=60,
+        )
+        services_vm.succeed("systemctl start unhealthy-containers.service")
+        services_vm.succeed("docker rm -f bkg-slow")
 
     with subtest("state survives a reboot"):
         # shutdown()+start(), not reboot(): qemu runs with -no-reboot.
