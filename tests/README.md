@@ -1128,6 +1128,42 @@ On the host it is a live hazard rather than a test artefact: if the tiers ever
 end up on one device, one of them silently disappears from the dashboard —
 and a tier you are not being shown looks exactly like a tier that is fine.
 
+### 47. Three containers, three non-root uids, and root-owned is the wrong default
+
+The docspace suite's first run failed with
+
+```
+dependency failed to start: container docspace_db is unhealthy
+```
+
+naming a container that had nothing wrong with it. The cause was two tmpfiles
+rules:
+
+```
+"d /mnt/fast/docspace/mysqldata 0755 root root -"
+"d /mnt/fast/docspace/app      0755 root root -"
+```
+
+`mysql:8.4.6` drops to uid 999 **before** `--initialize` and aborts on a data
+directory it cannot write ("the designated data directory /var/lib/mysql/ is
+unusable"). `onlyoffice/docspace:3.7.2` is `USER onlyoffice` — uid 104, gid 107
+— so its entrypoint starts **already dropped** and cannot chown its way out of
+a root-owned `/app/onlyoffice/data`, where it wants to `mkdir -p .secrets` on
+first run. `onlyoffice/documentserver:9.4.0` runs as root and chowns from its
+entrypoint, so it was fine.
+
+Three containers in one stack, three different privilege models, and nothing
+in the compose file says so — the uid lives in the image's Dockerfile.
+
+This is finding #14 (seerr) for the fifth and sixth time, and the repetition is
+the point: **`root root` is not the conservative choice for a bind mount, it is
+docker's default and it is the one that breaks.** The rules exist precisely
+because docker creates missing bind sources root-owned; writing `root root`
+into them reproduces the bug the rules were written to prevent. The header
+comment on the docspace block now lists all three uids explicitly, because the
+only way to know is to `docker inspect --format '{{.Config.User}}'` each image
+and the failure names the wrong container.
+
 ## Status
 
 Green as of 2026-08-30, with three exceptions stated below: lints (**20** — the four newest:
@@ -1210,18 +1246,27 @@ config directory proven to be a hard startup failure rather than a silent
 no-op), **beszel** (the key/token/signature triangle end to end, real disk
 numbers rather than the agent's own health — see findings 44 and 46 for why
 that distinction is the whole suite — and `config.yml`'s declarative-AND-
-destructive `SyncSystems` pinned deliberately), **proxmox-boot**
+destructive `SyncSystems` pinned deliberately), **samba** (an authenticated
+SMB write/read round trip and — the assertion the suite exists for — a wrong
+password for an EXISTING user REFUSED, because `map to guest = bad user` turns
+a silently-failed user creation into guest access that every positive test
+built on anonymous auth would pass; plus the exposure decision proved from both
+sides: smbd IS bound to the LAN nic and the FIREWALL is what stops the
+outsider, then 445 opened at runtime for a real off-host round trip and closed
+again), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-🚨 **Not yet run: `docspace`, `gatus` and `beszel`.** All three are written
-and parse, and their stacks were verified against the real images by hand
-outside the harness — but the suites themselves have never executed, because
-each needs image pins that `tests/update-images.sh` had not yet resolved. Treat
-them as unproven until `./tests/run.sh <name>` has passed once. Every suite in
-this campaign so far has failed on its first run and found something real; the
-prior probability that these three are correct as written is low.
+**`gatus` is green** — the first suite in this campaign to pass on its first
+run. **`docspace` failed on its first run** (finding #47) and is green after
+the fix.
 
-**Forty-six** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+🚨 **Not yet run: `beszel` and `samba`.** Both are written and parse, and both
+stacks were verified against the real images by hand outside the harness — but
+the suites have never executed, because each needs image pins
+`tests/update-images.sh` had not yet resolved. Treat them as unproven until
+`./tests/run.sh <name>` has passed once.
+
+**Forty-seven** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
