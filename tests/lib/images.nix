@@ -266,6 +266,14 @@
     finalImageName = "ghcr.io/sysadminsmedia/homebox";
     finalImageTag = "0.26.2";
   };
+  "ghcr_io_tandoorrecipes_recipes_2_6_13" = {
+    composeRef = "ghcr.io/tandoorrecipes/recipes:2.6.13";
+    imageName = "ghcr.io/tandoorrecipes/recipes";
+    imageDigest = "sha256:f6c58afdea7a721d079ebd6ee5483f2c9da77dd1e709e16d60a82c218e80a451";
+    hash = "sha256-UIEIe0mzJ+pAKuGlubmLYl/NYM1zNkGjoA9OzWg5Su8=";
+    finalImageName = "ghcr.io/tandoorrecipes/recipes";
+    finalImageTag = "2.6.13";
+  };
   "ghcr_io_windmill-labs_windmill_1_798_1" = {
     composeRef = "ghcr.io/windmill-labs/windmill:1.798.1";
     imageName = "ghcr.io/windmill-labs/windmill";
@@ -362,6 +370,14 @@
     finalImageName = "mariadb";
     finalImageTag = "11.8.9";
   };
+  "nginx_1_30_4-alpine" = {
+    composeRef = "nginx:1.30.4-alpine";
+    imageName = "nginx";
+    imageDigest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+    hash = "sha256-pznF0twPb4as4Q5ju2alGn/ZCzAHfBh9APsYdo8yw5I=";
+    finalImageName = "nginx";
+    finalImageTag = "1.30.4-alpine";
+  };
   "postgis_postgis_17-3_5-alpine" = {
     composeRef = "postgis/postgis:17-3.5-alpine";
     imageName = "postgis/postgis";
@@ -434,21 +450,13 @@
     finalImageName = "vaultwarden/server";
     finalImageTag = "1.37.2";
   };
-  "zimengxiong_excalidash-backend_0_6_0" = {
-    composeRef = "zimengxiong/excalidash-backend:0.6.0";
-    imageName = "zimengxiong/excalidash-backend";
-    imageDigest = "sha256:cbdab75f31b21e342b464d6404a454791e5da7452e3614b137021a800fc4cac6";
-    hash = "sha256-xTYe7BevAxoMlSIUeruczauLhNU0AKslCl4gJn5QSjQ=";
-    finalImageName = "zimengxiong/excalidash-backend";
-    finalImageTag = "0.6.0";
-  };
-  "zimengxiong_excalidash-frontend_0_6_0" = {
-    composeRef = "zimengxiong/excalidash-frontend:0.6.0";
-    imageName = "zimengxiong/excalidash-frontend";
-    imageDigest = "sha256:4ec5b20c03034b96d37cfb87b5c39e9cc5958441a3abd8dcc413d11dfb11809c";
-    hash = "sha256-HX4kQxiFh/wbZ7l2Qr1uPfsCJNbW3x+8EanTVNuWGqM=";
-    finalImageName = "zimengxiong/excalidash-frontend";
-    finalImageTag = "0.6.0";
+  "wger_server_2_6" = {
+    composeRef = "wger/server:2.6";
+    imageName = "wger/server";
+    imageDigest = "sha256:997ead43aabdcd67d054f933e07d2b23875f01bf43271a267cb7796925ca27c4";
+    hash = "sha256-qC0sKiYeoiGCCXSLRD7bTDQj4wiQpd6kgsZhLqunP2E=";
+    finalImageName = "wger/server";
+    finalImageTag = "2.6";
   };
   _unresolved = [
   ];
