@@ -1,42 +1,32 @@
-# Util suite: bentopdf, mazanoke, glance, it-tools and ExcaliDash's two
-# containers.
+# Util suite: bentopdf, mazanoke, glance and it-tools.
 #
-# Four of the six are static SPAs where "it serves" is the whole contract, so
-# this suite is deliberately short — but ExcaliDash brings two traps that
-# nothing generic would catch, and both are the kind that leave a green
-# container.
+# All four are static-or-nearly-static browser tools where "it serves" is close
+# to the whole contract, so this suite is deliberately short. Its value is in
+# the two things that are NOT obvious.
 #
 # Genuinely under test:
-#   - 🚨 **ExcaliDash reaches HEALTHY at all.** ENFORCE_HTTPS_REDIRECT defaults
-#     TRUE and its middleware arms whenever NODE_ENV=production and a
-#     FRONTEND_URL origin is https — exactly this configuration. The probe then
-#     dials http://127.0.0.1:8000/health with no X-Forwarded-Proto, the policy
-#     misses the loopback host, falls back to the canonical https host and
-#     returns a 302. `statusCode === 200` is false, so the container is
-#     permanently unhealthy and `up --wait` never returns. TRUST_PROXY does not
-#     save it. Reaching healthy IS the assertion.
-#   - 🚨 **The backend boots with an EMPTY OIDC client secret.** That is the
-#     non-obvious half of shipping `oidc_enforced` before the secret exists:
-#     config.ts throws at startup when the issuer, client id or redirect URI is
-#     empty, but the SECRET is deliberately not in that required set. If a
-#     future version adds it, this stack crash-loops on deploy — so pin it.
-#   - **The backend is not published.** A published backend port would be a
-#     second, unauthenticated door to the same API.
-#   - dev.db exists where backup-prepare.sh looks — sqlite_backup returns 0 for
-#     a missing source, so a wrong path backs up nothing forever.
-#   - Glance serves its shell and healthz OFFLINE. Its content endpoint is
-#     never probed: widget fetches happen inside that handler and wg.Wait() on
-#     every widget goroutine, so with no egress it stalls the whole page rather
-#     than degrading one tile.
+#   - **Glance serves its shell and healthz OFFLINE, and its content endpoint
+#     is never probed.** Widget fetches happen inside the page-content handler
+#     and `wg.Wait()` on every widget goroutine, so with no egress that endpoint
+#     stalls the whole page rather than degrading one tile. glance.yml ships no
+#     egress-dependent widget for that reason; this suite records why the
+#     obvious probe is absent.
+#   - **The stack needs no secrets at all**, asserted rather than assumed. It
+#     HAD a `.sops.env` while ExcaliDash was in it, and dropping the last
+#     stateful service is exactly the moment a leftover `env_file` would start
+#     failing Arcane's staged sync for bentopdf and mazanoke too (finding #11).
 #   - every published port is loopback-only, with a positive control.
 #
+# 🚨 ExcaliDash was here and is DEFERRED — see stacks/util/compose.yaml. Its
+# entrypoint runs `npx prisma generate` unconditionally at container start and
+# its schema hardcodes a binaryTarget for the OTHER architecture, so it always
+# reaches binaries.prisma.sh and dies without egress. That is a crash loop on a
+# tailnet-only host, not a slow start. Found by this suite's first run.
+#
 # Documented gaps:
-#   - **Any ExcaliDash login.** oidc_enforced with no client secret means there
-#     is no way in, by design. The suite proves it is closed and boots, not
-#     that anyone can use it.
-#   - **Forward auth** for glance/it-tools/bentopdf — that hop needs the VPS
-#     outpost and is tests/suites/forward-auth.nix's job.
-#   - **Glance's hot-reload failure mode**: a bad reload leaves the old config
+#   - **Forward auth** for all four — that hop needs the VPS outpost and is
+#     tests/suites/forward-auth.nix's job.
+#   - **Glance's hot-reload failure mode**: a bad reload leaves the OLD config
 #     running with healthz still 200, and nothing can detect it from outside.
 
 {
@@ -54,8 +44,6 @@ let
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
     images."glanceapp_glance_v0_8_5"
     images."corentinth_it-tools_2024_10_22-7ca5933"
-    images."zimengxiong_excalidash-backend_0_6_0"
-    images."zimengxiong_excalidash-frontend_0_6_0"
   ];
 
   seedSrv = pkgs.runCommand "srv-seed-util" { } ''
@@ -64,7 +52,6 @@ let
     chmod -R u+w $out/stacks/util
     rm -f $out/stacks/util/.env
     rm -f $out/stacks/util/.sops.env.example
-    cp ${../fixtures/util.sops.env} $out/stacks/util/.sops.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -117,9 +104,6 @@ pkgs.testers.runNixOSTest {
           "d /var/lib/sops-nix 0700 root root -"
           "d /mnt/fast 0755 root root -"
           "d /mnt/slow 0755 root root -"
-          # 1001:1001, matching production — the backend chowns this to uid
-          # 1001 on every start, so any other owner is silently overwritten.
-          "d /mnt/fast/excalidash 0755 1001 1001 -"
         ];
 
         systemd.services.seed-srv = {
@@ -153,7 +137,6 @@ pkgs.testers.runNixOSTest {
         "bentopdf": 10401,
         "glance": 10402,
         "mazanoke": 10403,
-        "excalidash-frontend": 10406,
         "it-tools": 10407,
     }
 
@@ -161,10 +144,8 @@ pkgs.testers.runNixOSTest {
         print("=== diagnostics: " + label + " ===")
         for cmd in [
             "docker ps -a",
-            "docker logs excalidash_backend 2>&1 | tail -60",
-            "docker logs excalidash_frontend 2>&1 | tail -30",
             "docker logs glance 2>&1 | tail -30",
-            "ls -la /mnt/fast/excalidash 2>&1",
+            "docker logs it-tools 2>&1 | tail -20",
             "df -h /var/lib/docker /mnt; free -m",
         ]:
             print("--- " + cmd)
@@ -178,69 +159,24 @@ pkgs.testers.runNixOSTest {
 
     start_all()
 
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("the stack needs no secrets at all"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_until_succeeds("test -s /srv/stacks/util/.env", timeout=120)
-        stat = services_vm.succeed("stat -c '%a %u:%g' /srv/stacks/util/.env").strip()
-        assert stat == "600 1000:1000", f".env is {stat}"
-        for k in ["EXCALIDASH_JWT_SECRET", "EXCALIDASH_CSRF_SECRET"]:
-            services_vm.succeed(f"grep -q '^{k}=.' /srv/stacks/util/.env")
-        # Present and EMPTY, and the next subtest is what makes that safe.
-        services_vm.succeed(
-            "grep -qx 'EXCALIDASH_OIDC_CLIENT_SECRET=' /srv/stacks/util/.env"
-        )
+        # Asserted rather than assumed: this stack HAD a .sops.env while
+        # ExcaliDash was in it, and dropping the last stateful service is
+        # exactly the moment a leftover env_file would start failing Arcane's
+        # staged sync for bentopdf and mazanoke too.
+        services_vm.fail("test -e /srv/stacks/util/.sops.env")
+        services_vm.fail("grep -q env_file /srv/stacks/util/compose.yaml")
 
     services_vm.wait_for_unit("load-test-images.service")
 
     with subtest("compose up brings every container healthy"):
-        # This single line carries the ENFORCE_HTTPS_REDIRECT assertion: with
-        # the flag left at its default the backend's own probe 302s forever,
-        # --wait never returns, and the frontend's service_healthy dependency
-        # never releases.
         try:
             services_vm.succeed(f"{UTIL} up -d --wait --wait-timeout 900")
         except Exception:
             diag("compose up failed")
             raise
-
-    with subtest("the ExcaliDash backend booted with an EMPTY OIDC secret"):
-        # The non-obvious half of shipping oidc_enforced before the secret
-        # exists. config.ts throws at STARTUP when the issuer, client id or
-        # redirect URI is empty; the client secret is deliberately not in that
-        # required set, because a public client is allowed. If a future version
-        # adds it, this stack crash-loops on deploy rather than at login.
-        env = services_vm.succeed(
-            "docker inspect --format "
-            "'{{range .Config.Env}}{{println .}}{{end}}' excalidash_backend"
-        )
-        assert "EXCALIDASH_OIDC_CLIENT_SECRET=" in env
-        assert "AUTH_MODE=oidc_enforced" in env, env
-        assert "ENFORCE_HTTPS_REDIRECT=false" in env, env
-        health = services_vm.succeed(
-            "docker inspect --format '{{.State.Health.Status}}' excalidash_backend"
-        ).strip()
-        assert health == "healthy", f"backend health is {health}"
-
-    with subtest("the ExcaliDash backend is NOT published"):
-        # A published backend port would be a second, unauthenticated door to
-        # the same API — and overview-sync would demand an inventory row for it.
-        out = services_vm.succeed(
-            "docker inspect --format '{{json .NetworkSettings.Ports}}' "
-            "excalidash_backend"
-        ).strip()
-        assert '"HostPort"' not in out, f"backend publishes a port: {out}"
-
-    with subtest("ExcaliDash's SQLite file is where backup-prepare.sh looks"):
-        # sqlite_backup returns 0 for a MISSING source, so without this the
-        # only line covering this stack could be a permanent silent no-op.
-        services_vm.succeed("test -f /mnt/fast/excalidash/dev.db")
-        owner = services_vm.succeed("stat -c '%u:%g' /mnt/fast/excalidash").strip()
-        assert owner == "1001:1001", (
-            f"/mnt/fast/excalidash is {owner}; the backend chowns it to "
-            "1001:1001 on every start, so anything else means the container "
-            "did not run its entrypoint as root"
-        )
 
     with subtest("Glance serves offline, and its content endpoint is left alone"):
         assert status(PORTS["glance"], "/api/healthz") == 200
@@ -252,7 +188,7 @@ pkgs.testers.runNixOSTest {
         # to record why the obvious probe is absent.
 
     with subtest("the four static tools serve"):
-        for name in ["bentopdf", "mazanoke", "it-tools", "excalidash-frontend"]:
+        for name in ["bentopdf", "mazanoke", "it-tools"]:
             code = status(PORTS[name])
             assert code in (200, 302), f"{name} returned {code}"
 
@@ -275,6 +211,5 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_until_succeeds("test -s /srv/stacks/util/.env", timeout=180)
         services_vm.wait_for_unit("load-test-images.service")
         services_vm.succeed(f"{UTIL} up -d --wait --wait-timeout 900")
-        services_vm.succeed("test -f /mnt/fast/excalidash/dev.db")
   '';
 }

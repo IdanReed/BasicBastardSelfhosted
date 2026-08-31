@@ -244,7 +244,13 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     with subtest("compose up brings the long-lived containers healthy"):
         try:
-            services_vm.succeed(f"{NS} up -d --wait --wait-timeout 900 rmfakecloud syncthing")
+            # Start EVERYTHING first, including the one-shots — enumerating
+            # services in the --wait call below means only those get created,
+            # and the init container would never run at all.
+            services_vm.succeed(f"{NS} up -d")
+            services_vm.succeed(
+                f"{NS} up -d --wait --wait-timeout 900 rmfakecloud syncthing"
+            )
         except Exception:
             diag("compose up failed")
             raise
@@ -437,7 +443,13 @@ pkgs.testers.runNixOSTest {
             "test -s /srv/stacks/notes-sync/.env", timeout=180
         )
         services_vm.wait_for_unit("load-test-images.service")
-        services_vm.succeed(f"{NS} up -d --wait --wait-timeout 900 rmfakecloud syncthing")
+        # Start EVERYTHING first, including the one-shots — enumerating
+        # services in the --wait call below means only those get created,
+        # and the init container would never run at all.
+        services_vm.succeed(f"{NS} up -d")
+        services_vm.succeed(
+            f"{NS} up -d --wait --wait-timeout 900 rmfakecloud syncthing"
+        )
 
         after = st("/rest/system/status")["myID"]
         assert before == after, (
