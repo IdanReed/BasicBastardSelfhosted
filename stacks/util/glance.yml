@@ -4,7 +4,7 @@
 # syncDirectory delivers it alongside compose.yaml; the container mounts it
 # read-only at the path its ENTRYPOINT hardcodes.
 #
-# TWO RULES THIS FILE FOLLOWS, both load-bearing:
+# THREE RULES THIS FILE FOLLOWS, all load-bearing:
 #
 #   1. NO WIDGET MAY REQUIRE EGRESS. Glance fetches widget content inside the
 #      page-content request handler and wg.Wait()s on every widget goroutine,
@@ -14,6 +14,20 @@
 #      therefore deliberately absent; add them only if this host ever gets
 #      general egress, and expect the page to be as slow as the slowest feed.
 #
+#      The same rule is why there is NO `monitor` widget here even though every
+#      target would be reachable on the tailnet: `monitor` fetches each site
+#      inside that same content handler, so N services become N serial-ish
+#      HTTP round trips in front of the page render, and one wedged service
+#      (not down — wedged, so it never RSTs) holds the dashboard hostage for
+#      its full timeout. Status is Gatus's job; this file LINKS to Gatus.
+#      Duplicating the checks here would also mean two sets of thresholds
+#      drifting apart, with the one nobody configured alerts on winning.
+#
+#      Icons are the same trap one layer out: Glance's `si:`/`di:` icon
+#      prefixes resolve to CDN URLs fetched by the BROWSER. They would not
+#      stall the server, but they render as broken images for anyone whose
+#      client has no internet, so every link here is text-only on purpose.
+#
 #   2. NO `auth:` BLOCK. Glance's own login stays off and Caddy's (protected)
 #      snippet does the work — one login instead of two, and this is a
 #      browser-only dashboard so forward auth costs nothing. There is also a
@@ -22,6 +36,25 @@
 #      and Glance blocks an IP after 5 failed logins in 5 minutes. Turning its
 #      auth on WITHOUT also setting `server.proxied: true` means the first five
 #      typos lock out everybody at once.
+#
+#   3. EVERY CADDY-ROUTED SERVICE APPEARS ON EXACTLY ONE OF THE TWO PAGES.
+#      The split below is ORGANISATION, NOT A SECURITY BOUNDARY — every user
+#      on the tailnet is trusted, both pages sit behind the same single
+#      (protected) import, and Glance page navigation is client-side anyway.
+#      "Admin" means "you only open this when something needs tending", not
+#      "restricted". Do not reason about it as a privilege tier, and do not
+#      let a service fall off the list because it felt too internal: an
+#      unlisted service is one nobody remembers exists at 2am.
+#
+#      As of this writing stacks/caddy/Caddyfile defines 38 `*.svc` hosts and
+#      37 of them are linked below; the single omission is `glance` itself
+#      (you are here). Any future omission gets a line in this comment saying
+#      why. Nothing verifies this mechanically — no lint parses this file —
+#      so `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the
+#      URLs below is the check, and it is worth doing when adding a stack.
+#      `headscale.idanreed.com` is NOT a Caddy route on this host at all — it
+#      lives on the VPS and serves a coordination API with no browser UI, so
+#      there is nothing to bookmark. Its liveness belongs in Gatus.
 #
 # 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML PARSING —
 # SO COMMENTS ARE NOT EXEMPT. A dollar-brace reference anywhere in this file,
@@ -49,8 +82,22 @@ theme:
   primary-color: 210 60 70
   contrast-multiplier: 1.1
 
+# Column layout note (applies to both pages): Glance allows at most 3 columns
+# and requires either 1 or 2 of them to be `full`, so the only legal shapes are
+# small-full-small, small-full and full-full. "Home" uses small-full-small
+# (clock / links / calendar); "Admin" uses small-full — there is no ambient
+# information worth a third column on a page you open to fix something.
 pages:
+  # ===========================================================================
+  # Page 1 — HOME. Things a person opens on purpose.
+  #
+  # The *arr suite is NOT here: Radarr/Sonarr/Bazarr/Prowlarr/Profilarr/
+  # Cleanuparr are how the library gets filled, not how it gets used, and
+  # burying Jellyfin and Seerr under six management UIs was the concrete
+  # complaint that produced this restructure. They are on Admin.
+  # ===========================================================================
   - name: Home
+    slug: home
     columns:
       - size: small
         widgets:
@@ -59,6 +106,17 @@ pages:
             timezones:
               - timezone: America/Chicago
                 label: Home
+
+          # The one piece of status on this page, and it is a LINK, not a
+          # check (rule 1). Gatus owns uptime; this is the door to it.
+          - type: bookmarks
+            groups:
+              - title: Status
+                links:
+                  - title: Gatus — uptime
+                    url: https://gatus.svc.idanreed.com
+                  - title: Beszel — hosts
+                    url: https://beszel.svc.idanreed.com
 
       - size: full
         widgets:
@@ -70,14 +128,6 @@ pages:
                     url: https://jellyfin.svc.idanreed.com
                   - title: Seerr
                     url: https://seerr.svc.idanreed.com
-                  - title: Radarr
-                    url: https://radarr.svc.idanreed.com
-                  - title: Sonarr
-                    url: https://sonarr.svc.idanreed.com
-                  - title: Bazarr
-                    url: https://bazarr.svc.idanreed.com
-                  - title: Prowlarr
-                    url: https://prowlarr.svc.idanreed.com
 
               - title: Books
                 links:
@@ -101,25 +151,47 @@ pages:
                     url: https://immich.svc.idanreed.com
                   - title: Paperless
                     url: https://paperless.svc.idanreed.com
+                  - title: Vaultwarden
+                    url: https://vaultwarden.svc.idanreed.com
+                  - title: Dawarich
+                    url: https://dawarich.svc.idanreed.com
+                  - title: rmfakecloud
+                    url: https://rmfakecloud.svc.idanreed.com
+                  - title: Syncthing
+                    url: https://syncthing.svc.idanreed.com
+
+              # Services in flight elsewhere in this campaign are NOT
+              # pre-listed — a bookmark to a service that does not exist is a
+              # 502 with a friendly name. When they land:
+              #   SilverBullet (10202) and Outline (10203) join this group;
+              #   Ghostfolio (10306) and Owl (10307) join "Money and Health";
+              #   Grafana (10456) joins "Infrastructure" on the Admin page.
+              - title: Notes and Inventory
+                links:
                   - title: BookStack
                     url: https://bookstack.svc.idanreed.com
                   - title: Homebox
                     url: https://homebox.svc.idanreed.com
                   - title: Karakeep
                     url: https://karakeep.svc.idanreed.com
+
+              # Firefly III is here; its DATA IMPORTER is on Admin. They are
+              # separate hostnames with separate Authentik applications
+              # (the importer holds a full-privilege Firefly PAT and has no
+              # login of its own), and separating them here matches that.
+              - title: Money and Health
+                links:
                   - title: Firefly III
                     url: https://firefly.svc.idanreed.com
-                  - title: Dawarich
-                    url: https://dawarich.svc.idanreed.com
-                  - title: Vaultwarden
-                    url: https://vaultwarden.svc.idanreed.com
-                  - title: rmfakecloud
-                    url: https://rmfakecloud.svc.idanreed.com
-                  - title: Syncthing
-                    url: https://syncthing.svc.idanreed.com
+                  - title: Tandoor
+                    url: https://tandoor.svc.idanreed.com
+                  - title: wger
+                    url: https://wger.svc.idanreed.com
 
-              - title: Tools
+              - title: Documents and Tools
                 links:
+                  - title: DocSpace
+                    url: https://docspace.svc.idanreed.com
                   - title: BentoPDF
                     url: https://bentopdf.svc.idanreed.com
                   - title: Mazanoke
@@ -127,18 +199,84 @@ pages:
                   - title: IT-Tools
                     url: https://it-tools.svc.idanreed.com
 
-              - title: Infrastructure
-                links:
-                  - title: Arcane
-                    url: https://arcane.svc.idanreed.com
-                  - title: Backrest
-                    url: https://backrest.svc.idanreed.com
-                  - title: Forgejo
-                    url: https://forgejo.svc.idanreed.com
-                  - title: Authentik
-                    url: https://auth.idanreed.com
-
       - size: small
         widgets:
           - type: calendar
             first-day-of-week: monday
+
+  # ===========================================================================
+  # Page 2 — ADMIN. Things you open when something needs tending.
+  #
+  # Not a privilege tier (rule 3). Same login, same tailnet, same trust.
+  # ===========================================================================
+  - name: Admin
+    slug: admin
+    columns:
+      - size: small
+        widgets:
+          - type: bookmarks
+            groups:
+              # Repeated from Home on purpose: this is the first thing you
+              # want on the page you opened BECAUSE something is wrong, and a
+              # duplicated link costs nothing (rule 1 — these are links, so
+              # there is no second set of checks to drift).
+              - title: Status
+                links:
+                  - title: Gatus — uptime
+                    url: https://gatus.svc.idanreed.com
+                  - title: Beszel — hosts
+                    url: https://beszel.svc.idanreed.com
+                  - title: ntfy — alerts
+                    url: https://ntfy.svc.idanreed.com
+
+              - title: Identity
+                links:
+                  # On the VPS, not this host — the only link here that does
+                  # not resolve to a *.svc.idanreed.com Caddy route.
+                  - title: Authentik
+                    url: https://auth.idanreed.com
+
+      - size: full
+        widgets:
+          - type: bookmarks
+            groups:
+              - title: Infrastructure
+                links:
+                  - title: Arcane — containers
+                    url: https://arcane.svc.idanreed.com
+                  - title: Forgejo — git
+                    url: https://forgejo.svc.idanreed.com
+                  - title: Backrest — backups
+                    url: https://backrest.svc.idanreed.com
+                  - title: Windmill — jobs
+                    url: https://windmill.svc.idanreed.com
+
+              # The library-filling half of the media stack. Everything here
+              # is behind the same gluetun kill-switch as qBittorrent; if
+              # these are unreachable while Jellyfin is fine, suspect the VPN
+              # container before the services.
+              - title: Media management
+                links:
+                  - title: Radarr
+                    url: https://radarr.svc.idanreed.com
+                  - title: Sonarr
+                    url: https://sonarr.svc.idanreed.com
+                  - title: Bazarr
+                    url: https://bazarr.svc.idanreed.com
+                  - title: Prowlarr
+                    url: https://prowlarr.svc.idanreed.com
+                  - title: Profilarr
+                    url: https://profilarr.svc.idanreed.com
+                  - title: Cleanuparr
+                    url: https://cleanuparr.svc.idanreed.com
+
+              # 🚨 The importer's UI has NO authentication of its own and
+              # holds a Firefly personal access token with full access to
+              # every transaction. It is reachable only through its OWN
+              # Authentik application (firefly-importer, forward_single,
+              # external_host firefly-importer.svc.idanreed.com). This
+              # bookmark is convenience; the lock is in Caddy and Authentik.
+              - title: Data import
+                links:
+                  - title: Firefly III importer
+                    url: https://firefly-importer.svc.idanreed.com
