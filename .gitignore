@@ -13,3 +13,8 @@ nixos/result
 
 # Test-run logs kept out of history (harness archaeology only)
 /tmp/
+
+# update-images.sh writes images.nix.tmp and renames it into place. A run that
+# is killed (or a `git add -A` while one is in flight) leaves the tmp behind —
+# and it got committed three times before this line existed.
+tests/lib/images.nix.tmp
