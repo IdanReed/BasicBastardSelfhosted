@@ -164,15 +164,52 @@ else:
 # ⚠ The verb is DELETE. The openapi operation is `globalUserDelete` and a POST
 # to the same path 405s — an easy way to "retire" an account that is still
 # live, since a 405 in a script nobody reads looks like any other line.
-code, body = request(
-    f"{WM}/api/users/delete/{DEFAULT_ADMIN}", method="DELETE", token=token
-)
-if code < 300:
-    log(f"CHANGE: deleted the default {DEFAULT_ADMIN} account")
-elif code in (404, 400):
+#
+# 🚨 AND THE DELETE IS NOT DISTINGUISHABLE: it returns 2xx whether or not the
+# account existed. Deleting unconditionally and logging a CHANGE on success
+# therefore prints a change line on EVERY run and breaks the idempotency
+# contract — which is exactly what the suite caught. So look first, and only
+# claim a change when there was one.
+def default_admin_exists():
+    """None when the answer cannot be determined."""
+    code, body = request(
+        f"{WM}/api/users/list_as_super_admin?per_page=1000", token=token
+    )
+    if code >= 300 or not body:
+        return None
+    try:
+        return any(
+            (u.get("email") or "").lower() == DEFAULT_ADMIN
+            for u in json.loads(body)
+        )
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+present = default_admin_exists()
+
+if present is False:
     log(f"{DEFAULT_ADMIN} already gone")
 else:
-    fatal(f"DELETE /api/users/delete/{DEFAULT_ADMIN} returned {code}: {body[:400]}")
+    code, body = request(
+        f"{WM}/api/users/delete/{DEFAULT_ADMIN}", method="DELETE", token=token
+    )
+    if code >= 300 and code not in (404, 400):
+        fatal(
+            f"DELETE /api/users/delete/{DEFAULT_ADMIN} returned {code}: "
+            f"{body[:400]}"
+        )
+    if present is True:
+        log(f"CHANGE: deleted the default {DEFAULT_ADMIN} account")
+    else:
+        # Could not read the user list, so the delete was issued blind. Say so
+        # rather than claiming a change — a wrong CHANGE line is worse than an
+        # honest unknown, because the whole contract is "a second run prints
+        # none".
+        log(
+            f"delete requested for {DEFAULT_ADMIN}; could not determine "
+            f"whether it existed (user list unavailable)"
+        )
 
 log("done")
 PY

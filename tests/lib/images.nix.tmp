@@ -322,3 +322,19 @@
     finalImageName = "lscr.io/linuxserver/bazarr";
     finalImageTag = "1.6.0";
   };
+  "lscr_io_linuxserver_bookstack_version-v26_05_4" = {
+    composeRef = "lscr.io/linuxserver/bookstack:version-v26.05.4";
+    imageName = "lscr.io/linuxserver/bookstack";
+    imageDigest = "sha256:3e1aea5d8dd3bb3a5cf16fa7e3b847e2889eedd8516b2825ac379d365b07ba6f";
+    hash = "sha256-pnE02aYPSJUdMDy3WOz9Q4okFOEtyvRJR5tvlExDpl0=";
+    finalImageName = "lscr.io/linuxserver/bookstack";
+    finalImageTag = "version-v26.05.4";
+  };
+  "lscr_io_linuxserver_prowlarr_2_5_2" = {
+    composeRef = "lscr.io/linuxserver/prowlarr:2.5.2";
+    imageName = "lscr.io/linuxserver/prowlarr";
+    imageDigest = "sha256:ab91301778251f82a31bbfc87f0497376d59e84439d9a1ceff6a61d594d1e3d7";
+    hash = "sha256-trhuZM+usGIDVAv4K1qcitKrxHYJdcyBfar3mHLfQpQ=";
+    finalImageName = "lscr.io/linuxserver/prowlarr";
+    finalImageTag = "2.5.2";
+  };
