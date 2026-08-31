@@ -329,6 +329,19 @@ pkgs.testers.runNixOSTest {
             services_vm.succeed(f"sed -i 's|{pat}|{repl}|' {SSHCFG}")
             services_vm.succeed(f"grep -qF '{expect}' {SSHCFG}")
 
+        # The host-key PIN must follow the endpoint the same way. Production
+        # ships Hetzner's published keys in known_hosts with
+        # StrictHostKeyChecking yes; this VM's sshd is the stand-in, so the
+        # pin is re-pointed at it — NOT relaxed to accept-new, which would
+        # stop testing that a wrong key is fatal. ssh-keyscan of the gateway
+        # replaces the file wholesale; the grep asserts the scan produced
+        # keys rather than an empty file (keyscan exits 0 on nothing).
+        KNOWN = "/srv/stacks/backrest/known_hosts"
+        services_vm.succeed(
+            f"ssh-keyscan -p 22 -t rsa,ecdsa,ed25519 {gw} > {KNOWN}"
+        )
+        services_vm.succeed(f"grep -q 'ssh-ed25519\\|ecdsa\\|ssh-rsa' {KNOWN}")
+
     # -----------------------------------------------------------------------
     # (b) backrest up: config-init completes, backrest runs
     # -----------------------------------------------------------------------
@@ -457,7 +470,13 @@ pkgs.testers.runNixOSTest {
         # the committed template — so an empty-only gate would let Backrest
         # start doomed and crash-loop on ssh auth with no alert. This leg
         # keeps the grep in config-init.sh non-vacuous.
+        #
+        # rm -rf first: the missing-key `up` above made compose manufacture a
+        # DIRECTORY at the now-single-file bind source (a narrowed mount fails
+        # differently — docker creates missing file sources as dirs), and
+        # printf into a directory would fail here for the wrong reason.
         services_vm.succeed(
+            f"rm -rf {KEY} && "
             f"printf 'changeme_storagebox_ssh_private_key\\n' > {KEY} && "
             f"chmod 600 {KEY}"
         )
