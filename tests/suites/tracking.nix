@@ -529,7 +529,7 @@ pkgs.testers.runNixOSTest {
         # the exact command it runs.
         services_vm.succeed(
             "docker exec bookstack_db sh -c "
-            "'exec mysqldump -u root -p\"$MYSQL_ROOT_PASSWORD\" --all-databases' "
+            "'exec mariadb-dump -u root -p\"$MYSQL_ROOT_PASSWORD\" --all-databases' "
             "> /tmp/bookstack.sql"
         )
         services_vm.succeed("test -s /tmp/bookstack.sql")

@@ -343,6 +343,17 @@ pkgs.testers.runNixOSTest {
         # non-empty set is the real liveness signal. RAILS_JOB_QUEUE_DB is 1,
         # but both databases are checked so a future default change surfaces as
         # a passing test with a different db number rather than a failure.
+        # RETRIED, not sampled once. sidekiq's container healthcheck is
+        # `pgrep -f sidekiq`, which passes the moment the process exists —
+        # before it has connected to Redis and written its first heartbeat. So
+        # `up --wait` returning says nothing about whether the worker is
+        # registered yet, and a single check here raced it.
+        services_vm.wait_until_succeeds(
+            "docker exec dawarich_redis sh -c "
+            "'redis-cli -n 0 SMEMBERS processes; redis-cli -n 1 SMEMBERS processes' "
+            "| grep -q .",
+            timeout=240,
+        )
         found = []
         for db in (0, 1):
             out = services_vm.succeed(
