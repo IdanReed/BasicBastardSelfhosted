@@ -146,6 +146,7 @@ Honest list; do not read a green suite as covering these.
 | The production secret *values* decrypting | Needs the production key. The `sops-declared` lint verifies the real files' key sets (sops-yaml keys are plaintext). |
 | Caddy's cloudflare-dns plugin | The suites force `tls internal`; only routing is covered. |
 | Hetzner Storage Box itself | The backrest suite runs a real in-VM SFTP endpoint instead — key, sftp, restic, snapshots all real; only the endpoint's address is substituted. |
+| **A restore from a snapshot — the loop is never closed** | No suite goes snapshot → restore. `backrest` proves the write half for real (`restic init` over sftp, a triggered backup, a snapshot in the repo) but never reads one back; `restore` proves the read half of the *dump formats* (`pg_dumpall` → destroy → load → canary; `sqlite_backup` → integrity check) but starts from `/mnt/fast/_dumps`, backup-prepare.sh's staging directory — the INPUT to restic. It initialises no repository, takes no snapshot, and never touches `RESTIC_PASSWORD`. So what is proven is "a dump this fleet writes can be loaded" and "a snapshot can be taken", never "the thing on the Storage Box comes back". Closing that gap needs the Storage Box, the production key, and the Proxmox re-image, so the **twice-yearly manual restore ritual in `ServerNotes/designs/core-disaster-recovery.md` remains the only real control** — a green `restore` run does not substitute for it, and does not shorten it. |
 | Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. |
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
 | A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
@@ -1334,10 +1335,15 @@ fleet-convention bind mount that would delete both CPython interpreters is now
 a test failure), **tandoor** (11: `test ! -f db.sqlite3`, because settings.py
 falls back to SQLite with no error and boot.sh does not even wait for
 Postgres), **util** (10: four browser tools plus the unhealthy-container alert
-proven to fire once and recover), **restore** (5: **the first evidence this
-fleet's backups can be restored at all** — dump, destroy the cluster, restore,
-read the canary back, with a negative control proving the destruction
-happened), **docspace** (the wizard seeded headlessly and the three-image
+proven to fire once and recover), **restore** (5: the first evidence the dump
+*formats* this fleet produces are loadable — `pg_dumpall` with
+backup-prepare.sh's literal command, destroy the cluster, restore, read the
+canary back, with a negative control proving the destruction happened; plus
+`sqlite_backup`'s `.backup` against a live WAL database. It is **not** evidence
+that the backup *system* restores: it starts at `/mnt/fast/_dumps`, which is
+backup-prepare.sh's staging directory and therefore the INPUT to restic, not
+its output. No restic repository is initialised, no snapshot is read, and
+`RESTIC_PASSWORD` never appears — see "what it cannot cover"), **docspace** (the wizard seeded headlessly and the three-image
 split held together), **gatus** (small on purpose: the host-network bind
 proven from ANOTHER machine, because a `network_mode: host` service is
 invisible to `loopback-binding` and to the generic port probe; plus an empty

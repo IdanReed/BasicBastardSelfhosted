@@ -1,5 +1,3 @@
-# Flatcar ignition files (generated)
-*.ign
 *.claude
 # Decrypted secrets (generated from .sops.env)
 **/.env
