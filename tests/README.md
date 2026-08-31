@@ -1034,6 +1034,27 @@ absent.
 Both rules together: enumerate the long-lived services **that have
 healthchecks**, and assert everything else by its own evidence.
 
+### 43. A delete that succeeds whether or not there was anything to delete
+
+Windmill's `DELETE /api/users/delete/<email>` returns 2xx regardless of whether
+the account existed. `windmill_init` deleted the published
+`admin@windmill.dev` account unconditionally and logged `CHANGE: deleted...` on
+success — so it printed a change line on **every** run, which is precisely the
+idempotency contract every init container in this repo is held to and precisely
+what the suite's rerun assertion exists to catch.
+
+The fix is to look before deleting: list the users, and claim a change only
+when there was one. Where the listing cannot be read, the script says so
+explicitly rather than guessing — *"delete requested; could not determine
+whether it existed"* — because a wrong CHANGE line is worse than an honest
+unknown when the whole contract is "a second run prints none".
+
+The general shape, and the third time it has appeared in this campaign after
+Homebox's 500 and Karakeep's unique key name: **an API that is idempotent in
+effect is not necessarily idempotent in its response.** Whether the operation
+changed anything is a different question from whether it succeeded, and only
+the first one belongs in a CHANGE line.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -1089,7 +1110,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Forty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty-three** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
