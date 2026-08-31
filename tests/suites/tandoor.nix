@@ -268,8 +268,20 @@ pkgs.testers.runNixOSTest {
         # comment says so). Recorded because it makes two obvious test shapes
         # useless here: "unknown path → 404" always fails, and "path → 200"
         # proves nothing without checking the body.
-        assert status("/openapi/") == 200
-        assert status("/this-path-does-not-exist-" + "x" * 12) == 200
+        assert status("/openapi/") == 200, "the schema view should be AllowAny"
+        # NOT `== 200`. The catch-all hands the request to the Vue frontend,
+        # which for an unauthenticated caller redirects to the login page — so
+        # the observable fact is "never 404", not "always 200". The first
+        # version of this assertion said 200 and failed against a 302, which is
+        # itself the lesson: the point is that Tandoor's router does not 404, so
+        # no assertion of the form "unknown path -> 404" can work here and no
+        # "path -> 200" proves a route exists.
+        code = status("/this-path-does-not-exist-" + "x" * 12)
+        assert code != 404, (
+            f"an unknown path returned {code}; the Vue catch-all appears to be "
+            "gone, which means route assertions in this suite can be tightened"
+        )
+        assert code in (200, 302), f"unexpected status {code} for an unknown path"
 
     with subtest("backup-prepare's pg_dumpall contract holds"):
         services_vm.succeed(
