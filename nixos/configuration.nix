@@ -173,8 +173,15 @@ in
   # by it lingering.
   systemd.services.tailscale-autoconnect = {
     description = "Automatic connection to Headscale";
-    after = [ "network-online.target" "tailscale.service" ];
-    wants = [ "network-online.target" "tailscale.service" ];
+    # tailscaled.service, NOT tailscale.service. `services.tailscale.enable`
+    # defines the daemon as `tailscaled`; there has never been a unit called
+    # `tailscale.service` on this host. systemd silently ignores After=/Wants=
+    # on a unit that does not exist, so this ordering has been a no-op — the
+    # unit could start before the daemon and the only thing hiding it was the
+    # `sleep`/poll below. (Verified: builtins.hasAttr "tailscale.service"
+    # config.systemd.units is false, "tailscaled.service" is true.)
+    after = [ "network-online.target" "tailscaled.service" ];
+    wants = [ "network-online.target" "tailscaled.service" ];
     wantedBy = [ "multi-user.target" ];
 
     # The tailnet going away takes the SSH path to this host with it, so a
@@ -184,13 +191,20 @@ in
     onFailure = [ "notify-failure@%n.service" ];
 
     # Bounds the retry loop below so it can actually reach the `failed` state.
-    # Restart=on-failure with RestartSec=30s and systemd's default limiter
-    # (5 starts per 10s) can NEVER trip — 30s spacing means the window always
-    # resets — so the unit would retry silently forever and OnFailure= would be
-    # dead code. 20 attempts over ~10 minutes is long enough for a VPS that is
-    # still booting, and then it gives up loudly and lets the timer retry.
+    # OnFailure= keys on `failed`, and a unit with Restart=on-failure only gets
+    # there by tripping the start limiter — whose DEFAULT is 5 starts per 10
+    # SECONDS. With RestartSec=30s the window resets before the burst is ever
+    # reached, so this unit retried silently forever, reported `activating`,
+    # and any OnFailure= on it would have been dead code.
+    #
+    # Sized against the worst cycle, not the typical one: a failing attempt is
+    # usually fast (BackendState is already terminal, `tailscale up` errors in
+    # seconds) but if tailscaled itself is dead the poll below burns its full
+    # 60s first, so a cycle can be ~90s. 20 starts is then at most ~30 minutes
+    # — long enough for a VPS that is still booting, comfortably inside a 1h
+    # window, and well short of the 6h timer that retries afterwards.
     unitConfig = {
-      StartLimitIntervalSec = "30min";
+      StartLimitIntervalSec = "1h";
       StartLimitBurst = 20;
     };
 
@@ -205,16 +219,28 @@ in
     script = ''
       set -euo pipefail
 
-      # Wait for tailscaled to be ready
-      sleep 2
-
-      # Check if already authenticated.
+      # WAIT FOR A TERMINAL BackendState — do not sample once after `sleep 2`.
       #
-      # This early exit is what makes the periodic re-run safe: while the node
-      # is up, the timer's job is to do NOTHING. Re-running `tailscale up`
-      # against a healthy connection would reapply preferences and churn the
-      # session for no reason, and (worse) burn a single-use Headscale preauth
-      # key on a node that did not need one.
+      # This decides whether to run `tailscale up --authkey`, and the state
+      # machine passes through NoState and Starting on the way to Running. A
+      # single early sample can therefore read a perfectly healthy node as
+      # "not connected" and re-register it, which on a SINGLE-USE Headscale
+      # preauth key spends the key for nothing and leaves the next real
+      # reconnection with no way in. Poll for up to 60s instead; the states
+      # below are the ones that actually mean something.
+      state=""
+      for _ in $(${pkgs.coreutils}/bin/seq 1 30); do
+        state="$(${pkgs.tailscale}/bin/tailscale status -json 2>/dev/null \
+                 | ${pkgs.jq}/bin/jq -r '.BackendState // empty' || true)"
+        case "$state" in
+          Running | NeedsLogin | NeedsMachineAuth | Stopped) break ;;
+        esac
+        sleep 2
+      done
+      [ -n "$state" ] || state=NoState
+
+      # The early exit is what makes the periodic re-run safe: while the node
+      # is up, the timer's job is to do NOTHING.
       #
       # It is also why the re-run can repair the day-180 case: an expired node
       # key leaves BackendState at NeedsLogin, not Running, so the next tick
@@ -222,8 +248,7 @@ in
       # key is itself spent or expired, that fails — loudly, through OnFailure
       # above, which is the correct outcome: nothing automatic can fix it and a
       # human has to mint a new key on the VPS.
-      status="$(${pkgs.tailscale}/bin/tailscale status -json | ${pkgs.jq}/bin/jq -r .BackendState)"
-      if [ "$status" = "Running" ]; then
+      if [ "$state" = "Running" ]; then
         # Report the node key's expiry on every tick, so the journal answers
         # "how long has this got left" without a trip to the VPS. "none" means
         # Headscale set no expiry for this node. Never allowed to fail the
@@ -234,7 +259,17 @@ in
         echo "Already connected to Headscale (node key expiry: $expiry)"
         exit 0
       fi
-      echo "Not connected (BackendState=$status) - registering against Headscale"
+
+      # Registered, but Headscale has not authorised the node. `tailscale up`
+      # cannot fix this and would spend a single-use preauth key trying, so
+      # fail and say what the human has to do instead.
+      if [ "$state" = "NeedsMachineAuth" ]; then
+        echo "Node is registered but awaiting authorisation on Headscale." >&2
+        echo "Approve it on the VPS (headscale nodes list / register); NOT re-running tailscale up." >&2
+        exit 1
+      fi
+
+      echo "Not connected (BackendState=$state) - registering against Headscale"
 
       # The committed secrets.sops.yaml starts life as the encrypted template,
       # changeme_* values included — a real switch installs those verbatim and
@@ -445,6 +480,17 @@ in
   #
   # This unit never fails itself: a notifier that can fail just produces more
   # failed units and no notification.
+  #
+  # 🚨 BEFORE ADDING OnFailure= TO A UNIT, CHECK ITS Restart=. OnFailure fires
+  # on the `failed` state, and a unit with Restart=on-failure only reaches it
+  # by tripping the start limiter — default 5 starts per 10 SECONDS. Any
+  # RestartSec above about 3s makes that window reset before the burst is
+  # reached, so the unit retries forever in `activating` and the OnFailure= is
+  # dead code that looks like coverage. tailscale-autoconnect is the one unit
+  # here with Restart=, and it carries an explicit StartLimitIntervalSec /
+  # StartLimitBurst for exactly this reason. Everything else in this file is a
+  # plain oneshot with no Restart=, which fails on the first bad exit and needs
+  # no limiter.
   systemd.services."notify-failure@" = {
     description = "Notify Ntfy that %i failed";
     serviceConfig.Type = "oneshot";

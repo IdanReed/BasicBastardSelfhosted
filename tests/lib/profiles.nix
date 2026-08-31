@@ -236,6 +236,10 @@ rec {
   # --login-server and all; only its trigger moves.
   manualTailscaleAutoconnect = {
     systemd.services.tailscale-autoconnect.wantedBy = lib.mkForce [ ];
+    # The unit also has a re-run timer now (day-180 fix). Its 6 h anchors
+    # outlive every suite, so this is intent-documentation more than
+    # necessity: the suites own WHEN autoconnect runs, entirely.
+    systemd.timers.tailscale-autoconnect.wantedBy = lib.mkForce [ ];
   };
 
   # Docker 28.x is marked insecure in nixos-25.11 and makes the whole

@@ -300,10 +300,13 @@ pkgs.testers.runNixOSTest {
         # The literal command backup-prepare.sh runs. MySQL 8.4 still ships
         # mysqldump — finding #35 was MariaDB 11 dropping its mysql* symlinks
         # and does not apply here, which is exactly the sort of thing worth
-        # proving rather than assuming twice.
+        # proving rather than assuming twice. MYSQL_PWD instead of -p on argv
+        # mirrors backup-prepare.sh:192 exactly (the password used to be
+        # host-visible in /proc/<pid>/cmdline).
         services_vm.succeed(
             "docker exec docspace_db sh -c "
-            "'exec mysqldump -u root -p\"$MYSQL_ROOT_PASSWORD\" --all-databases' "
+            "'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\"; export MYSQL_PWD; "
+            "exec mysqldump -u root --all-databases' "
             "> /tmp/docspace.sql"
         )
         out = services_vm.succeed("head -40 /tmp/docspace.sql")

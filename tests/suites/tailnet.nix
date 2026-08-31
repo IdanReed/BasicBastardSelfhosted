@@ -438,7 +438,11 @@ pkgs.testers.runNixOSTest {
               "grep -q 'CREATE ROLE authentik' /mnt/fast/_vps/authentik.sql")
           services_vm.succeed("test -s /mnt/fast/_vps/headscale/db.sqlite")
           services_vm.succeed("test -s /mnt/fast/_vps/headscale/noise_private.key")
-          services_vm.succeed("test -s /mnt/fast/_dumps/.last-success")
+          # The green path stamps BOTH legs — local dumps and the VPS pull are
+          # separate stamps precisely so a tailnet blip cannot mark local
+          # dumps stale (and vice versa). Here everything worked, so both.
+          services_vm.succeed("test -s /mnt/fast/_dumps/.last-success-local")
+          services_vm.succeed("test -s /mnt/fast/_dumps/.last-success-vps")
 
           # The canary that alerts on stale backups must consider THIS fresh.
           services_vm.succeed("systemctl start backup-staleness-check.service")

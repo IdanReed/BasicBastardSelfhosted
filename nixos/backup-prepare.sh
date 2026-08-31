@@ -360,6 +360,21 @@ sqlite_backup ntfy           /mnt/fast/ntfy/lib/auth.db
 # restorable copy.
 sqlite_backup gatus          /mnt/fast/gatus/gatus.db
 
+# Arcane's own state — the GitOps sync definitions, i.e. the thing that knows
+# how every stack on this host is delivered. It lived in the `arcane_data`
+# NAMED volume until 2026-08-31, which put it under /var/lib/docker and
+# therefore inside the Backrest plans' `**/docker/**` exclusion: it was in no
+# backup at all. arcane/compose.yaml now binds /mnt/fast/arcane to /app/data
+# (the image declares VOLUME /app/data and its DATABASE_URL default is
+# `file:data/arcane.db`), so the file is finally reachable — and, being WAL,
+# needs the same `.backup` treatment as forgejo rather than a raw copy.
+#
+# Why it matters more than its size suggests: `syncDirectory` is a per-sync
+# flag that defaults OFF in v1.17.4, so a sync definition recreated by hand
+# after a restore silently reverts to single-file mode and stops delivering
+# the sibling .sops.env — a restore that looks fine and ships no secrets.
+sqlite_backup arcane         /mnt/fast/arcane/arcane.db
+
 # ---------------------------------------------------------------------------
 # VPS state
 # ---------------------------------------------------------------------------
