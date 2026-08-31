@@ -125,9 +125,12 @@ services:
   #
   # container_name and MYSQL_ROOT_PASSWORD are BOTH load-bearing for
   # nixos/backup-prepare.sh, which runs
-  #   docker exec bookstack_db sh -c 'mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases'
+  #   docker exec bookstack_db sh -c \
+  #     'MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; export MYSQL_PWD; exec mariadb-dump -u root --all-databases'
   # — it reads that variable from the container's own environment, so the
   # MYSQL_ spelling is required even though MariaDB also accepts MARIADB_.
+  # (MYSQL_PWD, not -p on argv: the argv form was host-visible in
+  # /proc/<pid>/cmdline.)
   # ---------------------------------------------------------------------------
   bookstack_db:
     # NOT `mariadb:lts` and NOT `mariadb:latest` — both resolve to the same

@@ -55,6 +55,11 @@ let
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
+    # util is `up`'d whole, so ALL FOUR of its services need preloading —
+    # glance and it-tools were missing, and the offline VM surfaced it as a
+    # registry pull attempt (same omission as forward-auth.nix had).
+    images."glanceapp_glance_v0_8_5"
+    images."corentinth_it-tools_2024_10_22-7ca5933"
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
   ];
 
@@ -367,13 +372,27 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_for_open_port(443)
 
         # -k because the cert comes from Caddy's internal CA here; the routing
-        # decision is what is being checked.
+        # decision is what is being checked. ntfy is the probe target because
+        # its route has no forward_auth: arcane's route now imports
+        # (protected), and in this single-host VM the outpost upstream does
+        # not exist, so a protected route can only 502 (the full forward-auth
+        # flow is forward-auth.nix's job).
+        body = services_vm.succeed(
+            "curl -sk --max-time 10 --resolve ntfy.svc.idanreed.com:443:127.0.0.1 "
+            "https://ntfy.svc.idanreed.com/v1/health -o /dev/null -w '%{http_code}'"
+        ).strip()
+        assert body.startswith("2") or body.startswith("3"), \
+            f"ntfy route returned {body}"
+
+        # And arcane's 502 is asserted AS a 502: it proves the (protected)
+        # import is live on that route (a missing route would 404 via the
+        # fallback below; an unprotected one would 2xx straight to arcane).
         body = services_vm.succeed(
             "curl -sk --max-time 10 --resolve arcane.svc.idanreed.com:443:127.0.0.1 "
             "https://arcane.svc.idanreed.com/ -o /dev/null -w '%{http_code}'"
         ).strip()
-        assert body.startswith("2") or body.startswith("3"), \
-            f"arcane route returned {body}"
+        assert body == "502", \
+            f"arcane (protected, no outpost in this VM) returned {body}"
 
         # The explicit fallback. Without it a stray subdomain gets a blank 200
         # from the wildcard site, which looks like a working service.
@@ -501,8 +520,13 @@ pkgs.testers.runNixOSTest {
             "sqlite3 /mnt/fast/_dumps/vaultwarden.sqlite 'select x from t' "
             "| grep -qx 42")
 
-        # No success stamp on a partial run — the staleness canary must stay
-        # red rather than certifying a backup that skipped the VPS.
+        # The stamps are SPLIT: the VPS failure must not suppress the local
+        # stamp (one shared stamp is how a tailnet blip used to mark every
+        # local dump stale — alarm fatigue by construction), and only the
+        # VPS leg may go stale here. The legacy single stamp must be gone,
+        # not merely unwritten, or the old canary logic would keep reading it.
+        services_vm.succeed("test -s /mnt/fast/_dumps/.last-success-local")
+        services_vm.fail("test -e /mnt/fast/_dumps/.last-success-vps")
         services_vm.fail("test -e /mnt/fast/_dumps/.last-success")
 
         # And the failure is not silent.

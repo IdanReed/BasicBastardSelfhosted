@@ -526,10 +526,12 @@ pkgs.testers.runNixOSTest {
             services_vm.succeed(f"test -s /tmp/{name}.sqlite")
         # BookStack is MariaDB, and backup-prepare.sh reads
         # MYSQL_ROOT_PASSWORD out of the container's own environment — so run
-        # the exact command it runs.
+        # the exact command it runs (MYSQL_PWD form, backup-prepare.sh:207;
+        # -p on argv was host-visible in /proc/<pid>/cmdline).
         services_vm.succeed(
             "docker exec bookstack_db sh -c "
-            "'exec mariadb-dump -u root -p\"$MYSQL_ROOT_PASSWORD\" --all-databases' "
+            "'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\"; export MYSQL_PWD; "
+            "exec mariadb-dump -u root --all-databases' "
             "> /tmp/bookstack.sql"
         )
         services_vm.succeed("test -s /tmp/bookstack.sql")
