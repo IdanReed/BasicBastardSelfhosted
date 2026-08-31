@@ -329,6 +329,28 @@
     "d /mnt/fast/ntfy 0755 root root -"
     "d /mnt/fast/ntfy/cache 0755 root root -"
     "d /mnt/fast/ntfy/lib 0755 root root -"
+    # === outline (bind sources in its compose.yaml) ===
+    # 1001:1001 for the app's data directory, and that is VERIFIED rather than
+    # assumed: the image ends on `USER nodejs` and `id` inside the pinned
+    # outlinewiki/outline:1.9.2 reports uid=1001(nodejs) gid=1001(nodejs). Its
+    # entrypoint is the stock node one — it execs the server and chowns NOTHING —
+    # so a root-owned bind source is never repaired. The symptom is not a
+    # crash-loop: Outline starts, serves, and fails the first time someone
+    # attaches a file, because FILE_STORAGE=local makes that directory the whole
+    # object store (finding #14 with the crash-loop replaced by silence).
+    #
+    # Its Postgres starts as root and chowns its own datadir, as everywhere else
+    # here, so /mnt/fast/outline/pgdata is root:root. There is deliberately no
+    # directory for redis: that container has no volume at all (its queue is
+    # reconstructible — see the compose file).
+    "d /mnt/fast/outline 0755 root root -"
+    # 🚨 1001:1001 — the `nodejs` user the image runs as, NOT 1000. Outline is
+    # the only thing in this fleet on that uid, and nothing in the container
+    # repairs it. FILE_STORAGE=local makes this directory the object store for
+    # every attachment and avatar, so a root-owned copy is a wiki that works
+    # until the first upload.
+    "d /mnt/fast/outline/data 0755 1001 1001 -"
+    "d /mnt/fast/outline/pgdata 0755 root root -"
     # === paperless (bind sources in its compose.yaml) ===
     # root:root for all five, and that is VERIFIED rather than assumed: the
     # paperless entrypoint runs as root, maps its `paperless` user onto
@@ -361,6 +383,27 @@
     # 0775 rather than 0755: the group bit is what lets a future second SMB
     # user share the tree without each file being private to whoever wrote it.
     "d /mnt/slow/samba/shared 0775 1000 1000 -"
+    # === silverbullet (bind sources in its compose.yaml) ===
+    # 1000:1000, and here the ownership is not just about write access — it
+    # DECIDES THE UID THE SERVER RUNS AS. The image's entrypoint reads the owner
+    # of $SB_FOLDER and re-execs `su silverbullet` at that uid unless PUID is set
+    # ("Will run SilverBullet with UID 1000, inferred from the owner of /space" —
+    # measured against the pinned 2.9.0). Leave the space root-owned and the wiki
+    # runs as root instead, writing root-owned pages that the git-sync sidecar
+    # (uid 1000, and it must be 1000 to match) then cannot commit. Nothing
+    # crashes; the mirror just stops working.
+    #
+    # 1000 is also the fleet's "content" uid — the same one /srv/stacks and
+    # Forgejo's /data use (finding #10) — so the space, the repo it is pushed to
+    # and the backup all agree on who owns the files.
+    "d /mnt/fast/silverbullet 0755 1000 1000 -"
+    # 🚨 This ownership IS the uid SilverBullet runs as — its entrypoint infers
+    # PUID from the owner of the space (see the stack note above), so changing
+    # this line changes the process, not just the file modes. It is also the git
+    # working tree the sync sidecar (uid 1000) commits from and, being plain
+    # markdown, the one thing in this stack that backrest's fast-volume plan
+    # actually needs to capture.
+    "d /mnt/fast/silverbullet/space 0755 1000 1000 -"
     # === tandoor (bind sources in its compose.yaml) ===
     # Food domain — TWO stacks (stacks/tandoor, stacks/wger), one per app, because
     # both are Django and both read the BARE name SECRET_KEY out of their

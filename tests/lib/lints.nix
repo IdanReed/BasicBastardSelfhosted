@@ -253,6 +253,60 @@ in
                     f"immich: issuerUrl {oauth.get('issuerUrl')!r} does not "
                     f"reference the blueprint's application slug {islug!r}")
 
+        # --- Outline: stacks/outline/compose.yaml <-> outline-oidc.yaml ----
+        # Outline has NO local accounts, so this pair IS the login: a drifted
+        # redirect_uri or client_id does not degrade anything, it makes the
+        # service permanently unenterable — and it fails at login time, with
+        # a HEALTHY container and nothing in any log. The client side is the
+        # compose file's environment (Outline builds its callback as
+        # <URL>/auth/oidc.callback, read out of the image's
+        # plugins/oidc/server/auth/oidcRouter.js).
+        with open("${(repo + "/stacks/outline/compose.yaml")}") as f:
+            ocomp = yaml.safe_load(f)
+        oenv = {}
+        for e in ((ocomp.get("services") or {}).get("outline") or {}).get(
+                "environment") or []:
+            k, _, v = str(e).partition("=")
+            oenv[k] = v
+
+        with open("${(repo + "/headscale-vps/authentik/blueprints/custom/outline-oidc.yaml")}") as f:
+            odoc = yaml.load(f, Loose)
+
+        oprov = next((e for e in odoc["entries"]
+                      if e["model"].endswith("oauth2provider")), None)
+        if oprov is None:
+            errs.append("outline: no oauth2provider entry in outline-oidc.yaml")
+        else:
+            oattrs = oprov["attrs"]
+            if oattrs["client_id"] != oenv.get("OIDC_CLIENT_ID"):
+                errs.append(
+                    f"outline: client_id mismatch: compose has "
+                    f"{oenv.get('OIDC_CLIENT_ID')!r}, blueprint has "
+                    f"{oattrs['client_id']!r}")
+            expected = oenv.get("URL", "").rstrip("/") + "/auth/oidc.callback"
+            ouris = [u["url"] for u in oattrs["redirect_uris"]]
+            if expected not in ouris:
+                errs.append(
+                    f"outline: URL {oenv.get('URL')!r} implies redirect_uri "
+                    f"{expected!r}, blueprint offers {ouris!r} — strict "
+                    f"matching, so this is fatal at login")
+
+        oapp = next((e for e in odoc["entries"]
+                     if e["model"] == "authentik_core.application"), None)
+        if oapp is None:
+            errs.append("outline: no application entry in outline-oidc.yaml")
+        else:
+            oslug = oapp["identifiers"]["slug"]
+            # Authentik's authorize/token/userinfo endpoints are global; only
+            # the per-application ones carry the slug, and the logout URI is
+            # the one the compose file sets. A slug rename that misses it
+            # leaves logout pointing at a 404.
+            if f"/application/o/{oslug}/" not in oenv.get("OIDC_LOGOUT_URI", ""):
+                errs.append(
+                    f"outline: OIDC_LOGOUT_URI "
+                    f"{oenv.get('OIDC_LOGOUT_URI')!r} does not reference the "
+                    f"blueprint's application slug {oslug!r}")
+
         # --- !Env links: blueprint <-> worker env <-> sops template ---------
         # The Loose loader above resolves EVERY unknown tag to None, so the
         # structural checks are blind to !Env — the one tag whose argument is
@@ -1450,6 +1504,18 @@ in
               "\\\\localhost and its absence makes a working server look "
               "dead. tests/suites/samba.nix asserts reachability from a "
               "second machine, since the generic probe cannot.",
+          ("silverbullet", "silverbullet_gitsync"):
+              "host — the git mirror sidecar, and it LISTENS ON NOTHING. It "
+              "is a loop that pushes the SilverBullet space to Forgejo's "
+              "LOOPBACK publish (127.0.0.1:10550), which a bridged container "
+              "cannot reach (the same constraint that makes stacks/gatus "
+              "host-networked). Doing it this way keeps the Forgejo PAT on "
+              "the host, needs no DNS, no wildcard certificate and no Caddy "
+              "hop, and means a tailnet outage cannot stop the mirror. There "
+              "is no inbound surface to bind down: the container has no "
+              "server in it at all, so the invisibility this lint guards "
+              "against costs nothing here. The SilverBullet server itself is "
+              "bridged and published 127.0.0.1:10202 like everything else.",
           ("media", "qbittorrent"):
               "service:gluetun — the kill-switch, and the whole point of the "
               "media stack's design. qbittorrent has no network namespace of "
@@ -1789,6 +1855,14 @@ in
               "config and synced trees are plain files, consistent as a raw "
               "copy; syncthing's index-v2 is excluded from the plan and "
               "rebuilt from the files themselves.",
+          "silverbullet":
+              "No database engine at all: the space is a directory of "
+              "markdown files, which is the entire point of the app, and a "
+              "raw copy of markdown is consistent. The fast-volume plan "
+              "includes /mnt/fast/silverbullet/space with no exclude "
+              "touching it. The git mirror in Forgejo is NOT the backup and "
+              "does not excuse this — it only holds what has been committed "
+              "and pushed, and it lives on the same host.",
           "samba":
               "No database — it is a file share. Its tree is "
               "/mnt/slow/samba/shared, which slow-volume-selective includes "

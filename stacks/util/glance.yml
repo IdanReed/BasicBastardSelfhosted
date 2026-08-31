@@ -163,9 +163,8 @@ pages:
               # Services in flight elsewhere in this campaign are NOT
               # pre-listed — a bookmark to a service that does not exist is a
               # 502 with a friendly name. When they land:
-              #   SilverBullet (10202) and Outline (10203) join this group;
               #   Ghostfolio (10306) and Owl (10307) join "Money and Health";
-              #   Grafana (10456) joins "Infrastructure" on the Admin page.
+              #   Grafana (10455) joins "Infrastructure" on the Admin page.
               - title: Notes and Inventory
                 links:
                   - title: BookStack
@@ -174,6 +173,10 @@ pages:
                     url: https://homebox.svc.idanreed.com
                   - title: Karakeep
                     url: https://karakeep.svc.idanreed.com
+                  - title: Outline
+                    url: https://outline.svc.idanreed.com
+                  - title: SilverBullet
+                    url: https://silverbullet.svc.idanreed.com
 
               # Firefly III is here; its DATA IMPORTER is on Admin. They are
               # separate hostnames with separate Authentik applications

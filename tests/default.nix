@@ -202,6 +202,23 @@ let
   stackChecks = lib.genAttrs [
     "ntfy"
     "util"
+    # Both wikis are generic-suite-shaped: no restart:"no" init containers, and
+    # every service healthchecked. Two things the generic suite CANNOT see
+    # here, recorded so the green is not over-read:
+    #   outline      — it boots and reports healthy with Authentik unreachable
+    #                  (measured), so this proves the stack runs, never that
+    #                  anyone can log in. Outline has no local accounts, so
+    #                  login is the only way in and nothing automated covers it.
+    #   silverbullet — mk-stack-suite creates /mnt bind sources root-owned,
+    #                  while production tmpfiles give the space 1000:1000. The
+    #                  server adapts (it infers PUID from that owner) but the
+    #                  git-sync sidecar, pinned to uid 1000, cannot write and
+    #                  spends the suite alerting instead of mirroring. It stays
+    #                  HEALTHY throughout, which is the designed behaviour —
+    #                  but this suite therefore exercises the failure path, not
+    #                  the sync path.
+    "outline"
+    "silverbullet"
   ] (name: mkStackSuite { stack = name; });
 in
 rec {
