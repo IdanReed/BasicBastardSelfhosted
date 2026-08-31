@@ -290,3 +290,35 @@
     finalImageName = "glanceapp/glance";
     finalImageTag = "v0.8.5";
   };
+  "gotenberg_gotenberg_8_31" = {
+    composeRef = "gotenberg/gotenberg:8.31";
+    imageName = "gotenberg/gotenberg";
+    imageDigest = "sha256:f0d86e8a1dbc7b33a5a65cb251d02bb271a48ffa989da3feb5ed7d954fe4d4b3";
+    hash = "sha256-atlBNyHFkLCx4Eg9zeVkIesDq2SZPJuNiCWEH++MR/g=";
+    finalImageName = "gotenberg/gotenberg";
+    finalImageTag = "8.31";
+  };
+  "jellyfin_jellyfin_10_11_11" = {
+    composeRef = "jellyfin/jellyfin:10.11.11";
+    imageName = "jellyfin/jellyfin";
+    imageDigest = "sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db";
+    hash = "sha256-F9lEzgiYpriAIktSR1TB4D7hkfSCSzqRuYXevc7X9H0=";
+    finalImageName = "jellyfin/jellyfin";
+    finalImageTag = "10.11.11";
+  };
+  "jvmilazz0_kavita_0_9_1" = {
+    composeRef = "jvmilazz0/kavita:0.9.1";
+    imageName = "jvmilazz0/kavita";
+    imageDigest = "sha256:454f2a77ac740b70c58cc7300a11122fc9ce7b7e2161ef5b0d1df8f81067cc85";
+    hash = "sha256-vp4RRSKrG6qCeAlFyT58rbOyWHPzMbtAxP1VigzgxwY=";
+    finalImageName = "jvmilazz0/kavita";
+    finalImageTag = "0.9.1";
+  };
+  "lscr_io_linuxserver_bazarr_1_6_0" = {
+    composeRef = "lscr.io/linuxserver/bazarr:1.6.0";
+    imageName = "lscr.io/linuxserver/bazarr";
+    imageDigest = "sha256:3a820372f19fcb2981ea19fe4b5382934d67414afaba974bce831ddda0a64a02";
+    hash = "sha256-ppbFf06Lj8bCjXfgTMFwffy0LN41Kzcwbbky5i3PEng=";
+    finalImageName = "lscr.io/linuxserver/bazarr";
+    finalImageTag = "1.6.0";
+  };
