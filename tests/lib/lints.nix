@@ -1091,6 +1091,8 @@ in
           ("windmill", "${repo + "/stacks/windmill/compose.yaml"}"),
           ("tandoor", "${repo + "/stacks/tandoor/compose.yaml"}"),
           ("wger", "${repo + "/stacks/wger/compose.yaml"}"),
+          ("docspace", "${repo + "/stacks/docspace/compose.yaml"}"),
+          ("gatus", "${repo + "/stacks/gatus/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
@@ -1321,6 +1323,19 @@ in
               "for every vhost, so it cannot sit behind its own publish. Its "
               "`bind` directive IS the boundary that ports: would otherwise "
               "provide, which is why this one is safe to make invisible.",
+          ("gatus", "gatus"):
+              "host — the prober. Every stack in this fleet publishes on "
+              "127.0.0.1:PORT, and a container on a bridge network CANNOT "
+              "reach a loopback-bound host port (stacks/ntfy's header records "
+              "that the old design's host.docker.internal webhooks failed for "
+              "exactly this reason). The shared `homelab` network is not a "
+              "workaround either: only backrest, ntfy and part of media join "
+              "it. On the host, one prober sees every loopback publish, every "
+              "vhost through Caddy on the tailnet IP, and the VPS across the "
+              "tailnet. It binds itself back down with web.address 127.0.0.1 "
+              "in gatus.yaml, which gives the same exposure a loopback publish "
+              "would — and its suite asserts that from another machine, "
+              "because the generic probe cannot.",
           ("media", "qbittorrent"):
               "service:gluetun — the kill-switch, and the whole point of the "
               "media stack's design. qbittorrent has no network namespace of "

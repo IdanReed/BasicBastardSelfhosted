@@ -25,6 +25,8 @@
 #   ./tests/run.sh restore        # the restore DRILL: dump -> destroy -> restore, both engines
 #   ./tests/run.sh tandoor        # heavy: the silent SQLite fallback, proven absent
 #   ./tests/run.sh wger           # heavy: admin/adminadmin retired + static files really served
+#   ./tests/run.sh gatus          # the host-network bind, proven from another machine
+#   ./tests/run.sh docspace       # heavy: the machine key in play is the one from sops
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
@@ -75,7 +77,7 @@ case "$TARGET" in
     exec nix-build tests -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | gatus | docspace)
     exec nix-build tests -A "checks.$TARGET" --no-out-link
     ;;
 

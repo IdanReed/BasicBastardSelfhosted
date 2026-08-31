@@ -178,6 +178,8 @@ let
     restore = callSuite ./suites/restore.nix { };
     tandoor = callSuite ./suites/tandoor.nix { };
     wger = callSuite ./suites/wger.nix { };
+    gatus = callSuite ./suites/gatus.nix { };
+    docspace = callSuite ./suites/docspace.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting

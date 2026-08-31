@@ -582,6 +582,49 @@
 		}
 	}
 
+	@docspace host docspace.svc.idanreed.com
+	handle @docspace {
+		# NO forward auth. DocSpace has real accounts of its own (the portal
+		# owner that docspace_init creates through the wizard API), and it has
+		# desktop and mobile clients that a 302 would break — the same call as
+		# Immich, Kavita and audiobookshelf.
+		#
+		# ⚠ _overview.md's row said OIDC. DocSpace's SSO is **SAML 2.0**, not
+		# OIDC, and it is FREE self-hosted (SsoHandler gates on
+		# `Standalone || quota.Sso`, and Standalone is true here) — the
+		# "Business plan for SSO" note was cloud pricing. Until the SAML
+		# exchange with Authentik happens it runs on the local owner account.
+		#
+		# Document Server has NO route and must never get one: it is served at
+		# /ds-vpath/ by this container's own nginx, and publishing it would
+		# expose an unauthenticated /healthcheck and a converter on a second
+		# door.
+		reverse_proxy localhost:10404
+	}
+
+	@gatus host gatus.svc.idanreed.com
+	handle @gatus {
+		# Forward auth, and it is the ONLY control. Gatus's own `security`
+		# block does not protect the uptime history: the SPA,
+		# /api/v1/config, every badge and every
+		# /v1/endpoints/:key/uptimes/:duration route are on the UNPROTECTED
+		# router (its api.go marks the boundary with an "ORDER IS IMPORTANT"
+		# comment). So anyone who reaches the port reads everything.
+		#
+		# ⚠ And Gatus's OIDC must never be enabled: it calls
+		# oidc.NewProvider at startup with no retry and PANICS on failure, so
+		# a tailnet blip during a redeploy would restart-loop the monitoring
+		# service — the one thing that must stay up when other things do not.
+		#
+		# ⚠ If external push endpoints are ever used
+		# (POST /api/v1/endpoints/:key/external, a bearer-token route on the
+		# unprotected router), forward auth WILL break them and they need an
+		# Authentik Unauthenticated-URL carve-out. This design does not use
+		# them.
+		import protected
+		reverse_proxy localhost:10450
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {
