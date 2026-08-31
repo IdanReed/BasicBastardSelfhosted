@@ -1265,7 +1265,7 @@ appears in a subtest name.
 
 ## Status
 
-Green as of 2026-08-30, with three exceptions stated below: lints (**20** — the four newest:
+Green as of 2026-08-31, with `samba` re-running as noted below: lints (**20** — the four newest:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
@@ -1355,15 +1355,16 @@ outsider, then 445 opened at runtime for a real off-host round trip and closed
 again), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**`gatus` is green** — the first suite in this campaign to pass on its first
-run. **`docspace` failed on its first run** (finding #47) and is green after
-the fix.
+**`gatus` is green on its FIRST run** — the only suite in this campaign to
+manage that. **`docspace`** is green at 12 subtests after two real failures
+(#47, #48). **`beszel`** is green at 15 subtests after three runs — one of my
+own test bugs and one real upstream behaviour (#49). **`samba`** reached 13 of
+14 on its first run; the fourteenth was finding #50, and it is re-running.
 
-🚨 **Not yet run: `beszel` and `samba`.** Both are written and parse, and both
-stacks were verified against the real images by hand outside the harness — but
-the suites have never executed, because each needs image pins
-`tests/update-images.sh` had not yet resolved. Treat them as unproven until
-`./tests/run.sh <name>` has passed once.
+The pattern across the campaign is worth stating plainly: **fourteen of the
+sixteen stack suites failed the first time they ran, and every one of those
+failures was either a real defect in the stack or a real defect in the test.**
+Nothing that "obviously worked" actually did.
 
 **Fifty** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
