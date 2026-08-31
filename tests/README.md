@@ -1099,15 +1099,29 @@ proxied request, Frigate asserted NOT to be in safe mode, the MQTT round trip
 with auth on plus both consumers proven connected, the sha512-pbkdf2 password
 hash that keeps the file readable by the pinned 2.0.x broker, Frigate's
 unauthenticated port 5000 asserted unpublished, and reboot durability),
-**tracking** (bookstack + its MariaDB, homebox, karakeep + meilisearch +
-chrome: the seeded `admin@admin.com` proven dead, two tRPC/204-no-body
-bootstraps, and Karakeep's version endpoint pinned so an accidental `latest`
-— which self-reports `nightly` — cannot pass), **firefly** (the
-`remote_user_guard` header spelling proven from the database side, the guard's
-total lack of validation pinned deliberately, and the php-fpm-ping healthcheck
-caught lying with the database stopped), **dawarich** (the force_ssl/Sidekiq
-interlock, host authorization asserted with a wrong `Host` as the control, and
-the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
+**tracking** (17 subtests: the seeded `admin@admin.com` proven dead, two
+tRPC/204-no-body bootstraps, and Karakeep's version endpoint pinned so an
+accidental `latest` — which self-reports `nightly` — cannot pass),
+**dawarich** (16: the force_ssl/Sidekiq interlock, host authorization asserted
+with a wrong `Host` as the control, and the seeded `demo@dawarich.app` proven
+dead across a reboot), **notes-sync** (16: the outsider CAN reach 22000 and
+CANNOT reach 10200/10201 — an inverted publish assertion the generic suite
+would pass either way), **firefly** (15: the `remote_user_guard` header
+spelling proven from the database side, the guard's total lack of validation
+pinned deliberately, and the php-fpm-ping healthcheck caught lying with the
+database stopped), **vaultwarden** (14: the ADMIN_TOKEN proven un-mangled AND a
+real `/admin` round trip), **wger** (13: `admin`/`adminadmin` proven dead via
+`check_password`, and a real hashed asset fetched THROUGH the nginx sidecar —
+the only way from outside to tell "serving" from "serving with no CSS"),
+**windmill** (12: the dependency cache proven seeded from the image, so the
+fleet-convention bind mount that would delete both CPython interpreters is now
+a test failure), **tandoor** (11: `test ! -f db.sqlite3`, because settings.py
+falls back to SQLite with no error and boot.sh does not even wait for
+Postgres), **util** (10: four browser tools plus the unhealthy-container alert
+proven to fire once and recover), **restore** (5: **the first evidence this
+fleet's backups can be restored at all** — dump, destroy the cluster, restore,
+read the canary back, with a negative control proving the destruction
+happened), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
 **Forty-three** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
