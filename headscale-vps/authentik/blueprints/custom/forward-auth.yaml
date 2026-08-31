@@ -649,6 +649,34 @@ entries:
       policy_engine_mode: any
       meta_description: "Availability monitoring"
 
+  # Beszel — resource monitoring (stacks/beszel, 10452). Browser surface only:
+  # the agent reaches the hub on http://127.0.0.1:10452 over the host network
+  # and never traverses Caddy, so there is no websocket for the outpost to 302
+  # and no Unauthenticated-URL carve-out is needed. Beszel's own PocketBase
+  # login stays underneath.
+  - model: authentik_providers_proxy.proxyprovider
+    id: beszel-provider
+    state: present
+    identifiers:
+      name: beszel
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://beszel.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: beszel-app
+    state: present
+    identifiers:
+      slug: beszel
+    attrs:
+      name: Beszel
+      provider: !KeyOf beszel-provider
+      policy_engine_mode: any
+      meta_description: "Host and container resource monitoring"
+
   # ===========================================
   # Embedded outpost assignment
   # ===========================================
@@ -699,3 +727,4 @@ entries:
         - !KeyOf windmill-provider
         - !KeyOf wger-provider
         - !KeyOf gatus-provider
+        - !KeyOf beszel-provider

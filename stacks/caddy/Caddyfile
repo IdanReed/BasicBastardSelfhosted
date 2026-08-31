@@ -625,6 +625,37 @@
 		reverse_proxy localhost:10450
 	}
 
+	@beszel host beszel.svc.idanreed.com
+	handle @beszel {
+		# Forward auth, with Beszel's own PocketBase login left underneath —
+		# the Arcane arrangement, so it fails closed either way.
+		#
+		# _overview used to say OIDC for this row. It cannot: Beszel's OAuth2
+		# provider config lives in the users collection's `oauth2` options
+		# INSIDE data.db, with no environment variable for any part of it.
+		# Upstream's own procedure is a browser wizard (settings -> disable
+		# collection edit controls -> edit users -> Options tab), which the
+		# house convention treats as a finding rather than a design.
+		#
+		# 🚨 This vhost is browser-only, and that is what makes forward auth
+		# safe here. The AGENT does not come through this route: it dials
+		# http://127.0.0.1:10452 on the host network. Point it at this
+		# hostname instead and the outpost 302s its websocket upgrade — and
+		# the agent does NOT report an error, it silently falls back to SSH
+		# pull mode, which cannot work in this topology. A red system with no
+		# useful message, the same shape as the Vaultwarden websocket note
+		# above.
+		#
+		# ⚠ Do not "improve" this with TRUSTED_AUTH_HEADER=X-Authentik-Email +
+		# DISABLE_PASSWORD_AUTH. Those are real env vars, re-applied on every
+		# boot — but the header would be trusted on EVERY request, and unlike
+		# Firefly's case the port is genuinely reachable without the proxy
+		# (the agent uses it), so anything on the host could set the header
+		# and be an admin. That is a deliberate posture change, not a default.
+		import protected
+		reverse_proxy localhost:10452
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {

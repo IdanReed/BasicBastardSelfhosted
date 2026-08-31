@@ -1,0 +1,205 @@
+# Beszel — host and container resource monitoring (Monitoring range, 10452).
+# Design: ServerNotes/designs/service-monitoring-stack-research.md §5.
+#
+# WHY THIS EXISTS, when gatus already probes every vhost: gatus answers "is it
+# up". Nothing in the fleet answers "is /mnt/fast about to fill". Every other
+# signal here — healthchecks, notify-failure@, the backup dead-man, the
+# unhealthy-containers timer — fires only once something has already broken.
+# Disk and memory TREND is the one gap with a warning stage, and it is the
+# whole case for this stack.
+#
+# Three services, and the ordering between them is load-bearing:
+#
+#   beszel-init  one-shot. Materialises the hub's ed25519 identity and the
+#                declarative systems list BEFORE the hub starts, because the
+#                hub reads both exactly once, at startup.
+#   beszel       the hub. Bridged, published loopback-only on 10452.
+#   beszel-agent the collector. network_mode: host, outbound-only, no listener.
+#
+# 🚨 A one-shot container means this stack CANNOT use the generic
+# `./tests/run.sh stack beszel` harness — mk-stack-suite asserts every
+# container is `running`, which an exited init never is, and `up --wait`
+# errors on a healthcheck-less service named in its wait list (findings #39
+# and #42). tests/suites/beszel.nix is hand-written for the same reason
+# backrest's is.
+
+services:
+  # ---------------------------------------------------------------------------
+  # beszel-init — everything the hub reads once and never re-reads.
+  #
+  # Two artefacts, and neither can come from sops-nix:
+  #
+  #   id_ed25519  The hub's identity. The hub SIGNS the agent's token with it
+  #               and the agent verifies that signature against its own KEY, so
+  #               the two halves must match or the agent dies with
+  #               `invalid signature - check KEY value` in a restart loop. If
+  #               the file is absent the hub GENERATES one (hub.go GetSSHKey)
+  #               — silently, and differently on every fresh /mnt/fast. It
+  #               writes NO .pub file: the public half lives only in memory, so
+  #               there is no way to recover it from the host afterwards.
+  #               Seeding it is what makes the pair reproducible across a
+  #               re-image and a restore.
+  #   config.yml  The systems list, and it is DECLARATIVE: config.SyncSystems
+  #               runs on every hub start and DELETES every system row not
+  #               present. That is the property this fleet wants — but it also
+  #               means a half-written file silently wipes history, which is
+  #               why it is written here with tmpfile+rename rather than
+  #               streamed into place.
+  #
+  # Why not sops-nix (the storagebox_ed25519 precedent): that path needs an
+  # edit to nixos/secrets.sops.yaml, which needs the age private key, which
+  # lives only at /var/lib/sops-nix on the host. Routing the key through this
+  # stack's own .sops.env instead costs one base64 and keeps the whole stack
+  # deployable by Arcane with no NixOS rebuild — which is the services VM's
+  # entire GitOps model.
+  # ---------------------------------------------------------------------------
+  beszel-init:
+    image: alpine:3.21
+    container_name: beszel-init
+    volumes:
+      - ./beszel-init.sh:/init.sh:ro
+      - /mnt/fast/beszel:/beszel_data
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
+    # sync validation runs where the decrypted .env cannot exist, and the plain
+    # form aborts the whole stack's sync.
+    env_file:
+      - path: .env
+        required: false
+    command: ["/bin/sh", "/init.sh"]
+    # Not `unless-stopped`: this is a one-shot that must exit 0 and stay
+    # exited. `on-failure` would retry a genuine misconfiguration forever.
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # beszel — the hub.
+  #
+  # Bridged and published on 127.0.0.1:10452 like every other stack, NOT
+  # host-networked: only the agent needs the host namespace.
+  # ---------------------------------------------------------------------------
+  beszel:
+    # No `v` prefix. Beszel's GIT tags carry one but its DOCKER tags do not —
+    # the workflow uses type=semver,pattern={{version}}, which strips it — so
+    # `henrygd/beszel:v0.18.8` is a 404 and the release notes disagree with
+    # this line by exactly one character, in the direction that breaks.
+    #
+    # Docker Hub, not GHCR, and that is deliberate: ghcr.io/henrygd/beszel does
+    # not exist (an anonymous token request answers DENIED, which reads like a
+    # private repo and means "no such repository"). The GHCR path is NESTED —
+    # ghcr.io/henrygd/beszel/beszel — which is finding #0.2 of the tracking
+    # annex repeating exactly. ⚠ On GHCR the agent's `latest` is a DIFFERENT
+    # image from 0.18.8 (it lands on the alpine build, later in the matrix).
+    image: henrygd/beszel:0.18.8
+    container_name: beszel
+    depends_on:
+      beszel-init:
+        condition: service_completed_successfully
+    ports:
+      # Loopback only. Caddy is the only path in, and beszel.svc.idanreed.com
+      # is `import protected` — which is safe ONLY because the agent talks to
+      # http://127.0.0.1:10452 directly and never traverses Caddy. Pointed at
+      # the vhost, the agent's websocket upgrade would be 302'd by the outpost
+      # and the agent would NOT report an error: it silently falls back to SSH
+      # pull mode, where a bridged hub cannot reach a host-networked agent.
+      # Red system, no useful message — the same shape as the Vaultwarden
+      # websocket note in the Caddyfile.
+      - "127.0.0.1:10452:8090"
+    volumes:
+      - /mnt/fast/beszel:/beszel_data
+    environment:
+      - TZ=America/Chicago
+      # Notification and email links are built from this.
+      - APP_URL=https://beszel.svc.idanreed.com
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image is FROM scratch, but unusually the binary IS the client:
+      # `/beszel health` short-circuits on os.Args[1] before the app is
+      # constructed, so it costs one 3s GET and never opens the database.
+      # ⚠ It proves the listener and router are up and NOTHING else — not the
+      # database, not migrations, and not whether any agent has ever connected.
+      # The suite asserts the systems row, which is the only honest signal.
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # beszel-agent — the collector.
+  #
+  # 🚨 network_mode: host, and it is NOT optional. Without it /proc/net/dev is
+  # the container's own namespace and network stats come out EMPTY. CPU, memory
+  # and disk I/O are fine either way (/proc/stat, /proc/meminfo and
+  # /proc/diskstats are not namespaced) and there is no HOST_PROC/HOST_SYS
+  # override anywhere in the codebase, so host networking is the only lever.
+  #
+  # ⚠ THIS MAKES IT INVISIBLE to loopback-binding and to mk-stack-suite's port
+  # probe, which build their lists from `ports:` — per host-network-declared's
+  # own error text, such a service "passes them with an empty set rather than
+  # failing". It therefore has a DECLARED entry in tests/lib/lints.nix. Here
+  # the exposure argument is easy: with DISABLE_SSH=true the agent has no
+  # listener at all. It is outbound-only, which is why _overview's port cell
+  # for this row is `--` and 10453 was released.
+  # ---------------------------------------------------------------------------
+  beszel-agent:
+    image: henrygd/beszel-agent:0.18.8
+    container_name: beszel-agent
+    network_mode: host
+    depends_on:
+      beszel:
+        condition: service_healthy
+    volumes:
+      - /mnt/fast/beszel-agent:/var/lib/beszel-agent
+      # Disk TREND for the two data tiers — the reason this stack exists.
+      #
+      # These are deliberately EMPTY marker directories rather than the tiers
+      # themselves. Beszel reports filesystem usage via statfs, which answers
+      # for the whole containing filesystem regardless of which path on it is
+      # asked — so an empty directory on /mnt/fast yields exactly the numbers
+      # `/mnt/fast:/extra-filesystems/fast:ro` would, without handing this
+      # container a readable copy of every service's data. (backrest mounts
+      # the tiers wholesale because it genuinely must read them; this does
+      # not.) The suite asserts both filesystems report a non-zero total, so
+      # if the assumption about statfs is ever wrong it fails loudly here
+      # rather than silently reporting the overlay.
+      - /mnt/fast/beszel-agent/fsprobe:/extra-filesystems/fast:ro
+      - /mnt/slow/beszel-fsprobe:/extra-filesystems/slow:ro
+    environment:
+      - TZ=America/Chicago
+      # Loopback, NOT the vhost. See the hub's `ports:` comment.
+      - HUB_URL=http://127.0.0.1:10452
+      # Removes the SSH pull path entirely, so a broken websocket connect is
+      # LOUD instead of degrading to a mode that cannot work in this topology.
+      # 🚨 This does NOT lift the KEY requirement: loadPublicKeys tries --key,
+      # KEY and KEY_FILE and log.Fatal()s otherwise, regardless of mode.
+      - DISABLE_SSH=true
+      # No Docker socket, on purpose. The socket buys per-container CPU/mem/net
+      # and the UI's log and inspect panes — none of which is why this row
+      # exists — at the price of a SECOND root-equivalent container, when the
+      # fleet's stated design is exactly one (Arcane). `:ro` on a unix socket
+      # is cosmetic: it constrains the inode, not the API. An explicitly empty
+      # DOCKER_HOST is a supported off-switch (newDockerManager returns nil),
+      # not a degradation to work around. A socket PROXY is the honest upgrade
+      # path if container stats are ever wanted — the agent is 100% GET — but
+      # CONTAINERS=1 also exposes /containers/{id}/archive, i.e. filesystem
+      # read of every container, so "read-only" would overstate it.
+      - DOCKER_HOST=
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # 🚨 READ THIS BEFORE TRUSTING IT. `/agent health` stats
+      # /dev/shm/beszel_health and fails only if its mtime is over 91s old —
+      # and the connection manager touches that file every 90s WHETHER OR NOT
+      # it is connected to a hub. So an agent that has never reached the hub,
+      # or that has been silently rejected on a fingerprint mismatch, reports
+      # `healthy` forever. It is kept because it does catch a wedged process,
+      # and it is the reason the suite asserts hub-side instead.
+      test: ["CMD", "/agent", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
