@@ -137,14 +137,40 @@ for pin in "${PINS[@]}"; do
   # they are written into the tarball's manifest, so the output hash depends on
   # them. Computing the hash without them and retagging in Nix yields a
   # fixed-output hash mismatch at build time.
-  if ! meta=$(nix run nixpkgs#nix-prefetch-docker -- \
-    --image-name "$name" --image-tag "$tag" \
-    --final-image-name "$finalName" --final-image-tag "$finalTag" \
-    --quiet 2>/dev/null); then
-    echo "      UNRESOLVED — no such tag in the registry"
+  #
+  # RETRIED, and the stderr is KEPT. This used to be a single attempt with
+  # `2>/dev/null` and the message "no such tag in the registry" — which is a
+  # claim the script had not actually checked. nix-prefetch-docker exits
+  # non-zero for a manifest 404, a registry 5xx, a rate limit, a TLS reset and
+  # a mid-pull disconnect alike, and the big multi-hundred-megabyte images
+  # (immich-machine-learning is the repeat offender) hit the transient ones
+  # often enough that a full run kept coming back with a "deploy-blocking"
+  # finding for a tag that resolved fine on the next attempt. Blaming the
+  # compose file for a network blip is worse than useless: it sends you
+  # looking for a tag-shape bug that does not exist.
+  errfile=$(mktemp)
+  meta=""
+  for attempt in 1 2 3; do
+    if meta=$(nix run nixpkgs#nix-prefetch-docker -- \
+      --image-name "$name" --image-tag "$tag" \
+      --final-image-name "$finalName" --final-image-tag "$finalTag" \
+      --quiet 2>"$errfile"); then
+      break
+    fi
+    meta=""
+    [[ $attempt -lt 3 ]] && { echo "      attempt $attempt failed, retrying"; sleep $((attempt * 10)); }
+  done
+
+  if [[ -z "$meta" ]]; then
+    echo "      UNRESOLVED after 3 attempts. Last error:"
+    sed 's/^/        /' <(tail -n 5 "$errfile")
+    echo "        (verify by hand before editing the compose file — this is"
+    echo "         only a bad tag if the error says the manifest is unknown)"
     UNRESOLVED+=("$composeRef")
+    rm -f "$errfile"
     continue
   fi
+  rm -f "$errfile"
 
   digest=$(sed -nE 's/.*imageDigest = "([^"]+)".*/\1/p' <<<"$meta")
   hash=$(sed -nE 's/.*hash = "([^"]+)".*/\1/p' <<<"$meta")
