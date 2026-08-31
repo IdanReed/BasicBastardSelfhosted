@@ -925,6 +925,36 @@ Two things worth carrying:
   it — is how the first version of that guard came to check for the wrong
   character.
 
+### 39. `up --wait` fails when a one-shot exits, even with exit code 0
+
+Every stack here that provisions itself has an init container with
+`restart: "no"`, and `docker compose up -d --wait` reports:
+
+    container notes_sync_init exited (0)
+
+and returns 1. The exit code is right there in the message and is ignored —
+`--wait` waits for containers to become *running or healthy*, and a container
+that has finished is neither.
+
+It is worse than a plain error because it is intermittent: whether the
+one-shot has exited by the time `--wait` gives up depends on how long the rest
+of the stack took to become healthy, so the same suite passes on a fast run and
+fails on a slow one. Two suites here passed with this bug in them before one
+finally caught it.
+
+The fix is to enumerate the long-lived services in the `up` command and wait
+for the one-shots separately, by exit code — which is the thing that actually
+matters about them:
+
+    up -d --wait --wait-timeout 900 rmfakecloud syncthing
+    ...
+    wait_until_succeeds("docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                        "notes_sync_init | grep -qx exited/0")
+
+The `tracking` suite had done it this way from the start, for exactly this
+reason; the newer suites had drifted to the shorter form because it reads
+better. It reads better and is wrong.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -980,7 +1010,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-eight** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-nine** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

@@ -272,7 +272,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     with subtest("compose up brings every container to a healthy state"):
         try:
-            services_vm.succeed(f"{DAWARICH} up -d --wait --wait-timeout 1800")
+            services_vm.succeed(f"{DAWARICH} up -d --wait --wait-timeout 1800 dawarich dawarich_sidekiq dawarich_db dawarich_redis")
         except Exception:
             diag("compose up failed")
             raise
@@ -475,7 +475,7 @@ pkgs.testers.runNixOSTest {
             "test -s /srv/stacks/dawarich/.env", timeout=180
         )
         services_vm.wait_for_unit("load-test-images.service")
-        services_vm.succeed(f"{DAWARICH} up -d --wait --wait-timeout 1800")
+        services_vm.succeed(f"{DAWARICH} up -d --wait --wait-timeout 1800 dawarich dawarich_sidekiq dawarich_db dawarich_redis")
 
         # The account survived, and — critically — db:seed did NOT recreate the
         # demo user, because `User.none?` is false now.

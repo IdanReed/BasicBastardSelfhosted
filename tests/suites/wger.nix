@@ -201,7 +201,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("compose up brings every container healthy"):
         try:
-            services_vm.succeed(f"{WGER} up -d --wait --wait-timeout 1800")
+            services_vm.succeed(f"{WGER} up -d --wait --wait-timeout 1800 wger wger_nginx wger_db wger_cache")
         except Exception:
             diag("compose up failed")
             raise
@@ -316,7 +316,7 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_until_succeeds("test -s /srv/stacks/wger/.env", timeout=180)
         services_vm.wait_for_unit("load-test-images.service")
-        services_vm.succeed(f"{WGER} up -d --wait --wait-timeout 1800")
+        services_vm.succeed(f"{WGER} up -d --wait --wait-timeout 1800 wger wger_nginx wger_db wger_cache")
         # The password still verifying proves the hash survived; an unset
         # SECRET_KEY would not break THAT, but it is the cheapest post-reboot
         # proof that the app came back on the same database and configuration.
