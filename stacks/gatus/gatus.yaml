@@ -192,6 +192,40 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: "beszel (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://beszel.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # Unlike most service probes this one asserts the BODY, because Beszel gives
+  # us something worth asserting: /api/health is PocketBase's and answers
+  # {"message":"API is healthy.","code":200}. A bare [STATUS] == 200 here would
+  # be satisfied by the SPA shell.
+  #
+  # ⚠ What neither probe can see is whether the AGENT is reporting. The hub
+  # answers /api/health perfectly happily with zero connected systems, and the
+  # agent's own healthcheck stats a file it touches every 90s whether or not it
+  # has ever reached the hub. The systems row is the only honest signal and it
+  # needs an authenticated call, so it is asserted by tests/suites/beszel.nix
+  # instead of here. This is a real monitoring gap, written down rather than
+  # papered over.
+  - name: "beszel (service)"
+    group: "service"
+    url: "http://127.0.0.1:10452/api/health"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].code == 200"
+    alerts:
+      - type: ntfy
+
   - name: "bookstack (path: caddy -> service)"
     group: "path"
     url: "https://bookstack.svc.idanreed.com/"

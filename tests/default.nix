@@ -179,6 +179,7 @@ let
     tandoor = callSuite ./suites/tandoor.nix { };
     wger = callSuite ./suites/wger.nix { };
     gatus = callSuite ./suites/gatus.nix { };
+    beszel = callSuite ./suites/beszel.nix { };
     docspace = callSuite ./suites/docspace.nix { };
   };
 

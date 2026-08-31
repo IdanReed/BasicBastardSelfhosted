@@ -1093,6 +1093,7 @@ in
           ("wger", "${repo + "/stacks/wger/compose.yaml"}"),
           ("docspace", "${repo + "/stacks/docspace/compose.yaml"}"),
           ("gatus", "${repo + "/stacks/gatus/compose.yaml"}"),
+          ("beszel", "${repo + "/stacks/beszel/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
@@ -1336,6 +1337,18 @@ in
               "in gatus.yaml, which gives the same exposure a loopback publish "
               "would — and its suite asserts that from another machine, "
               "because the generic probe cannot.",
+          ("beszel", "beszel-agent"):
+              "host — the collector. Without the host namespace /proc/net/dev "
+              "is the container's own and network stats come out EMPTY; CPU, "
+              "memory and disk I/O are fine either way (/proc/stat, "
+              "/proc/meminfo and /proc/diskstats are not namespaced) and there "
+              "is no HOST_PROC/HOST_SYS override anywhere in the codebase, so "
+              "this is the only lever. The exposure argument is unusually easy "
+              "here: with DISABLE_SSH=true the agent has NO listener at all — "
+              "it is outbound-only, dialling the hub's loopback publish over a "
+              "websocket — which is why _overview's port cell for the agent "
+              "row is `--` and 10453 was released. The hub itself is bridged "
+              "and published 127.0.0.1:10452 like everything else.",
           ("media", "qbittorrent"):
               "service:gluetun — the kill-switch, and the whole point of the "
               "media stack's design. qbittorrent has no network namespace of "

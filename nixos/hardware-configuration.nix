@@ -332,6 +332,24 @@
     # container is on the HOST network and has no ports: entry, which is why it
     # needs a host-network-declared entry in tests/lib/lints.nix.
     "d /mnt/fast/gatus 0755 root root -"
+    # Beszel (stacks/beszel/compose.yaml). The hub's directory holds data.db,
+    # the generated config.yml, and id_ed25519 at 0600 — beszel-init writes the
+    # key mode itself, so this rule only needs to own the parent.
+    "d /mnt/fast/beszel 0755 root root -"
+    # The agent's fingerprint file. It lives on the DATA disk on purpose:
+    # ./rebuild_os_proxmox.sh --build re-images the OS disk, and the fingerprint
+    # is sha256 of the machine-id — a hub that has pinned the old one rejects
+    # the agent outright after a routine re-image, visible only in hub logs.
+    "d /mnt/fast/beszel-agent 0755 root root -"
+    # Two EMPTY marker directories, one per storage tier, bound read-only into
+    # the agent at /extra-filesystems/*. Beszel reports filesystem usage via
+    # statfs, which answers for the whole containing filesystem regardless of
+    # which path on it is asked — verified against v0.18.8, where an empty
+    # directory yielded `d: 3665.96, du: 114.19` for its device. So these give
+    # the same numbers a wholesale /mnt/fast:ro bind would, without handing a
+    # monitoring container a readable copy of every service's data.
+    "d /mnt/fast/beszel-agent/fsprobe 0755 root root -"
+    "d /mnt/slow/beszel-fsprobe 0755 root root -"
   ];
 
   # Swap (optional - can be added if needed)

@@ -178,6 +178,23 @@ sqlite_backup seerr          /mnt/fast/seerr/config/db/db.sqlite3
 # All of the above paths are asserted to exist by the media suite, so a
 # layout change in a future image fails a test instead of silently skipping.
 
+# Beszel's hub is PocketBase, which keeps TWO databases side by side.
+# data.db holds the collections that matter — systems, users, and every
+# system_stats row, i.e. the entire metric history this stack exists to
+# accumulate. auxiliary.db is PocketBase's own request/error log and is
+# deliberately NOT backed up: it is regenerated, it is the larger of the two,
+# and losing it costs nothing.
+#
+# Note both run in WAL mode, and at the moment of writing this data.db was 4 KB
+# with an 853 KB -wal beside it — a plain file copy of data.db would have
+# captured almost nothing. `sqlite3 .backup` is what makes this correct, which
+# is the reason this helper exists rather than a cp.
+#
+# NOT backed up here and deliberately so: id_ed25519 and config.yml in the same
+# directory. Both are regenerated from stacks/beszel/.sops.env by beszel-init
+# on the next deploy, so the encrypted repo is already their backup.
+sqlite_backup beszel         /mnt/fast/beszel/data.db
+
 # ---------------------------------------------------------------------------
 # VPS state
 # ---------------------------------------------------------------------------

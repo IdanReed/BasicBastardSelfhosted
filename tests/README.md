@@ -1055,9 +1055,82 @@ effect is not necessarily idempotent in its response.** Whether the operation
 changed anything is a different question from whether it succeeded, and only
 the first one belongs in a CHANGE line.
 
+### 44. A monitoring agent that reports zero disk instead of an error
+
+Beszel's agent takes a `FILESYSTEM` env var naming the block device to report
+root disk I/O for. Point it at a device that does not exist and it does not
+fail, does not exit, and does not go unhealthy. It logs exactly one line —
+
+```
+WARN Partition details not found filesystem=vda
+```
+
+— connects to the hub normally, reports `healthy`, and then publishes
+`d: 0, du: 0` for the root disk forever. The dashboard shows a 0 GB disk. The
+same agent with the correct value reported `d: 3665.96, du: 114.89`.
+
+This is worse than the usual lying-healthcheck shape (#16 and its five
+successors), because the thing being monitored is *storage capacity* and the
+failure mode is **a monitoring stack that silently says everything is fine
+about the one metric it was installed to watch**. Nothing else in the fleet
+would notice: `/mnt/fast` filling is a fleet-wide outage with no warning stage,
+which is the entire reason the row exists.
+
+`tests/suites/beszel.nix` therefore asserts `stats.d > 0` from the hub's API
+rather than trusting the agent's own health, and `.sops.env.example` carries
+the `findmnt -no SOURCE /` command that produces the right value.
+
+### 45. `docker run --health-cmd` cannot express a healthcheck for a scratch image
+
+Caught in the harness rather than in production, but it would have produced a
+false finding, so it belongs here. Writing the negative control for #44 —
+"prove the agent reports healthy having never reached a hub" — the obvious
+construction is:
+
+```
+docker run -d --health-cmd='/agent health' ... henrygd/beszel-agent:0.18.8
+```
+
+The container went **unhealthy**, which looked like the documented behaviour
+being wrong. It was not. `docker run --health-cmd` is **always CMD-SHELL** —
+docker wraps the string in `/bin/sh -c`, and there is no CLI flag for exec
+form. The image is `FROM scratch`. So the probe failed with
+
+```
+OCI runtime exec failed: exec: "/bin/sh": stat /bin/sh: no such file or directory
+```
+
+for a reason having nothing to do with hub connectivity. Re-run with
+`docker exec <c> /agent health`, which *is* exec form, the probe passes at
+100s — past the 91s staleness window — with zero connections ever made. The
+original claim was right.
+
+Three images in this fleet are `FROM scratch` (gatus, beszel, rmfakecloud), and
+Compose's `test: ["CMD", ...]` list form *is* exec form, so the stacks
+themselves are fine. The trap is specifically the CLI flag, and it fails in the
+direction that manufactures a plausible wrong conclusion.
+
+### 46. A filesystem that vanishes because its device name was already taken
+
+`registerFilesystemStats` in Beszel's agent keys each filesystem by its device
+basename, and on a collision does `return "", nil, false` — the second
+filesystem is dropped. No log line, no error, no entry in the payload.
+
+This nearly made the beszel suite vacuous. Every other stack suite mounts
+`/mnt/fast` and `/mnt/slow` as tmpfs, which is fine when the test only needs a
+writable path — but both are device `tmpfs`, so the two storage tiers would
+have collapsed into one entry and an `len(efs) == 2` assertion would have been
+impossible to satisfy while an `len(efs) >= 1` assertion would have passed
+while proving half of what it claimed. The suite gives the VM two real block
+devices instead, reproducing the host.
+
+On the host it is a live hazard rather than a test artefact: if the tiers ever
+end up on one device, one of them silently disappears from the dashboard —
+and a tier you are not being shown looks exactly like a tier that is fine.
+
 ## Status
 
-Every suite is green as of 2026-08-30: lints (**19** — the three newest:
+Green as of 2026-08-30, with three exceptions stated below: lints (**19** — the three newest:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
@@ -1121,10 +1194,26 @@ Postgres), **util** (10: four browser tools plus the unhealthy-container alert
 proven to fire once and recover), **restore** (5: **the first evidence this
 fleet's backups can be restored at all** — dump, destroy the cluster, restore,
 read the canary back, with a negative control proving the destruction
-happened), **proxmox-boot**
+happened), **docspace** (the wizard seeded headlessly and the three-image
+split held together), **gatus** (small on purpose: the host-network bind
+proven from ANOTHER machine, because a `network_mode: host` service is
+invisible to `loopback-binding` and to the generic port probe; plus an empty
+config directory proven to be a hard startup failure rather than a silent
+no-op), **beszel** (the key/token/signature triangle end to end, real disk
+numbers rather than the agent's own health — see findings 44 and 46 for why
+that distinction is the whole suite — and `config.yml`'s declarative-AND-
+destructive `SyncSystems` pinned deliberately), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Forty-three** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+🚨 **Not yet run: `docspace`, `gatus` and `beszel`.** All three are written
+and parse, and their stacks were verified against the real images by hand
+outside the harness — but the suites themselves have never executed, because
+each needs image pins that `tests/update-images.sh` had not yet resolved. Treat
+them as unproven until `./tests/run.sh <name>` has passed once. Every suite in
+this campaign so far has failed on its first run and found something real; the
+prior probability that these three are correct as written is low.
+
+**Forty-six** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
