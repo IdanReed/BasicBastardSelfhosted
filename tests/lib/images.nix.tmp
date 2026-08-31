@@ -362,3 +362,67 @@
     finalImageName = "lscr.io/linuxserver/radarr";
     finalImageTag = "6.3.0";
   };
+  "lscr_io_linuxserver_sonarr_4_0_19" = {
+    composeRef = "lscr.io/linuxserver/sonarr:4.0.19";
+    imageName = "lscr.io/linuxserver/sonarr";
+    imageDigest = "sha256:c19aa4ecdf03d73e1d5c901da33744cb7eb4d921f89bafed1ca264601d7fa224";
+    hash = "sha256-TbKMUIDefITrsAP9mIdP1T7hb0iCYyXXmAtXoAsQnmI=";
+    finalImageName = "lscr.io/linuxserver/sonarr";
+    finalImageTag = "4.0.19";
+  };
+  "mariadb_11_8_9" = {
+    composeRef = "mariadb:11.8.9";
+    imageName = "mariadb";
+    imageDigest = "sha256:2439dcd7d14010ecd1ff7a4e1c5abe8e208c34fe35290744deeeaac3569043c3";
+    hash = "sha256-RGRQqypV9iJ7mr9LpoOSZ6pud9EO6juZq2UM3190T14=";
+    finalImageName = "mariadb";
+    finalImageTag = "11.8.9";
+  };
+  "mysql_8_4_6" = {
+    composeRef = "mysql:8.4.6";
+    imageName = "mysql";
+    imageDigest = "sha256:869218921e61d6c3c89820955d63cca42971f0e3e6c1e2792247bbd944ebc6e9";
+    hash = "sha256-P0xvP10x/5ebvehT5WsJ690N1pP2jASk7CUFFvNpE6w=";
+    finalImageName = "mysql";
+    finalImageTag = "8.4.6";
+  };
+  "nginx_1_30_4-alpine" = {
+    composeRef = "nginx:1.30.4-alpine";
+    imageName = "nginx";
+    imageDigest = "sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46";
+    hash = "sha256-pznF0twPb4as4Q5ju2alGn/ZCzAHfBh9APsYdo8yw5I=";
+    finalImageName = "nginx";
+    finalImageTag = "1.30.4-alpine";
+  };
+  "onlyoffice_docspace_3_7_2" = {
+    composeRef = "onlyoffice/docspace:3.7.2";
+    imageName = "onlyoffice/docspace";
+    imageDigest = "sha256:0002035c86a568f4798ac46b622769434b9317e2a429a7fa7ce503abc25cfc64";
+    hash = "sha256-ddKtXCbIQvI4Y31mme2/Zy1syonrRy0oUDT51hkOZjY=";
+    finalImageName = "onlyoffice/docspace";
+    finalImageTag = "3.7.2";
+  };
+  "onlyoffice_documentserver_9_4_0" = {
+    composeRef = "onlyoffice/documentserver:9.4.0";
+    imageName = "onlyoffice/documentserver";
+    imageDigest = "sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b";
+    hash = "sha256-9a6jXW5S4eQTKMvYYvzg4k8BNpMnxqP3cyN+QpF6VHs=";
+    finalImageName = "onlyoffice/documentserver";
+    finalImageTag = "9.4.0";
+  };
+  "postgis_postgis_17-3_5-alpine" = {
+    composeRef = "postgis/postgis:17-3.5-alpine";
+    imageName = "postgis/postgis";
+    imageDigest = "sha256:08f4b1e1f4a571008c60272ceb9e0d1f9f8f643792d006b74a35b1bec44c2218";
+    hash = "sha256-iw0miPOAYALtIf9VSRgEqDseqwhXDIzETUY5naEU2eU=";
+    finalImageName = "postgis/postgis";
+    finalImageTag = "17-3.5-alpine";
+  };
+  "postgres_16_13-alpine" = {
+    composeRef = "postgres:16.13-alpine";
+    imageName = "postgres";
+    imageDigest = "sha256:4e6e670bb069649261c9c18031f0aded7bb249a5b6664ddec29c013a89310d50";
+    hash = "sha256-07iy6tVD2L+3eoZM7wzqBr69UVzfr9suCT3uK13NL+o=";
+    finalImageName = "postgres";
+    finalImageTag = "16.13-alpine";
+  };

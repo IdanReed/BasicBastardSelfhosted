@@ -1616,6 +1616,132 @@ in
       PY
     '';
 
+  # ---------------------------------------------------------------------------
+  # Gatus target coverage
+  # ---------------------------------------------------------------------------
+  # Every vhost in the Caddyfile must be probed by Gatus BOTH ways, because
+  # each probe is blind to exactly what the other catches:
+  #
+  #   path probe    https://<host>/ with the real Host: header — proves Caddy,
+  #                 the wildcard cert, DNS, and (for protected routes) the
+  #                 tailnet and the VPS outpost. Blind to the service itself
+  #                 when the route 302s before reaching it.
+  #   service probe http://127.0.0.1:<port>/ — proves the app answers. Blind to
+  #                 Caddy, TLS, host routing and forward auth.
+  #
+  # This exists because adding a vhost is a two-file change that nothing
+  # previously enforced, and the failure mode is silent: the service works and
+  # is simply never watched. A monitoring gap has no symptom until the outage
+  # it would have caught.
+  #
+  # The path-probe half is also the only structural guard on findings #27 and
+  # #15 — Dawarich's host_authorization and qBittorrent's Host-port 401 are
+  # both "healthy container, every browser request fails", which a container
+  # healthcheck is incapable of seeing because it dials loopback with the
+  # wrong Host.
+  gatus-target-coverage =
+    mkLint "gatus-target-coverage" ''
+      ${py} - <<'PY'
+      import re, sys, yaml
+
+      caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
+      gatus = yaml.safe_load(open("${(repo + "/stacks/gatus/gatus.yaml")}"))
+
+      # The same parser as auth-column-parity, deliberately: two lints
+      # disagreeing about what the Caddyfile says would be worse than either
+      # one being wrong.
+      matchers, routes = {}, {}
+      current, current_depth, depth = None, 0, 0
+      for raw in caddyfile.splitlines():
+          line = re.sub(r"#.*$", "", raw)
+          m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
+          if m:
+              matchers[m.group(1)] = m.group(2)
+          h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
+          if h and current is None:
+              current, current_depth = h.group(1), depth
+          if current is not None:
+              p = re.search(r"\breverse_proxy\s+localhost:(\d+)", line)
+              if p:
+                  r = routes.setdefault(current, {"ports": set()})
+                  r["ports"].add(int(p.group(1)))
+                  r["host"] = matchers.get(current)
+          depth += line.count("{") - line.count("}")
+          if current is not None and depth <= current_depth:
+              current = None
+
+      vhosts = {}
+      for r in routes.values():
+          if r.get("host"):
+              vhosts.setdefault(r["host"], set()).update(r["ports"])
+      if "bentopdf.svc.idanreed.com" not in vhosts:
+          sys.exit("gatus-target-coverage found no bentopdf vhost — the "
+                   "Caddyfile parser has rotted; fix it before trusting this "
+                   "lint")
+
+      probed_hosts, probed_ports = set(), set()
+      for e in gatus.get("endpoints") or []:
+          url = e.get("url") or ""
+          m = re.match(r"https://([^/]+)", url)
+          if m:
+              probed_hosts.add(m.group(1))
+          m = re.match(r"http://127\.0\.0\.1:(\d+)", url)
+          if m:
+              probed_ports.add(int(m.group(1)))
+
+      # Named exemptions, port -> reason. A SERVICE probe may be skipped where a
+      # loopback fetch cannot mean anything; the PATH probe is never exempt,
+      # because that is the half catching the host-header class of bug.
+      EXEMPT_SERVICE = {
+          10450: "gatus itself. A service probe here is a tautology — if gatus "
+                 "can run the check, the answer is yes — so it would satisfy "
+                 "this lint while proving nothing. Its PATH probe is not "
+                 "exempt and does real work: it traverses Caddy, so it covers "
+                 "the route, the wildcard cert and the outpost, none of which "
+                 "gatus can see from the inside.",
+      }
+
+      errs = []
+      for host in sorted(vhosts):
+          if host not in probed_hosts:
+              errs.append(
+                  f"{host} is routed by Caddy but has NO gatus path probe. Add "
+                  f"an endpoint for https://{host}/ in stacks/gatus/gatus.yaml "
+                  f"— and if that route imports `protected`, its conditions "
+                  f"must be [STATUS] == 302 with client.ignore-redirect, NOT "
+                  f"200: an unauthenticated request is supposed to redirect, "
+                  f"and accepting 200-399 turns the probe into an Authentik "
+                  f"liveness check wearing the service's name")
+          for port in sorted(vhosts[host]):
+              if port in probed_ports or port in EXEMPT_SERVICE:
+                  continue
+              errs.append(
+                  f"{host} proxies to localhost:{port} but gatus has NO "
+                  f"service probe for it. The path probe alone is blind to the "
+                  f"app whenever a protected route 302s first — it would stay "
+                  f"green with the service dead")
+
+      # An exemption that no longer applies is a silent hole — the same
+      # discipline host-network-declared enforces on its DECLARED dict.
+      routed_ports = {p for ports in vhosts.values() for p in ports}
+      for port in EXEMPT_SERVICE:
+          if port not in routed_ports:
+              errs.append(
+                  f"EXEMPT_SERVICE lists {port}, but no Caddy handle proxies "
+                  f"to it any more. Remove the entry — a stale exemption "
+                  f"quietly excuses whatever takes that port next")
+
+      if errs:
+          print("gatus target coverage problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      n_ports = sum(len(p) for p in vhosts.values())
+      print(f"Gatus target coverage OK ({len(vhosts)} vhosts, {n_ports} "
+            f"upstream ports, all probed both ways)")
+      PY
+    '';
+
   # unresolvable user reference means headscale refuses to load the policy, and
   # the failure mode is "nothing on the tailnet can reach anything".
   headscale-policy =

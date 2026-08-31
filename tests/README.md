@@ -1130,7 +1130,7 @@ and a tier you are not being shown looks exactly like a tier that is fine.
 
 ## Status
 
-Green as of 2026-08-30, with three exceptions stated below: lints (**19** — the three newest:
+Green as of 2026-08-30, with three exceptions stated below: lints (**20** — the four newest:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
 handle that imports `protected` (it caught Arcane, the socket-mounting UI,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
@@ -1149,7 +1149,15 @@ must be listed with its reason, because such a service does not FAIL
 blueprint provider assigned to the embedded outpost; `ssh-pubkey-parity`,
 the three ssh-pubkeys.nix copies stay byte-identical; and
 `fail2ban-journal-contract`, the compose journald tag agrees with both
-journalmatch consumers), vps, services, tailnet,
+journalmatch consumers; and `gatus-target-coverage`, every Caddyfile vhost is
+probed by Gatus BOTH ways — once through Caddy with the real `Host:` and once
+on loopback — because each probe is blind to precisely what the other catches,
+and adding a vhost is a two-file change nothing previously enforced. It found
+two real gaps on its first run: **DocSpace had a Caddy route and no monitoring
+at all**, and **Gatus's own vhost was unwatched** (its config had been
+generated from the Caddyfile before that vhost existed). A monitoring gap has
+no symptom until the outage it would have caught, which is why this is a lint
+and not a checklist), vps, services, tailnet,
 authentik, paperless, backrest, **rotation** (the restartUnits contract),
 **gitops** (the full Arcane push→sync→decrypt→deploy loop, against a REAL
 in-VM Forgejo remote over http — the git-daemon transport substitution is

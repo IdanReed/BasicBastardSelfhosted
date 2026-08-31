@@ -302,6 +302,36 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: "docspace (path: caddy -> service)"
+    group: "path"
+    url: "https://docspace.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # NOT protected — DocSpace has real accounts of its own and desktop/mobile
+  # clients a 302 would break — so this probe expects a real answer, not a
+  # redirect. The Host header is set for the same reason it is on dawarich:
+  # a host-sensitive app 400s or 401s on the wrong one while its container
+  # healthcheck stays green (findings #27 and #15).
+  - name: "docspace (service)"
+    group: "service"
+    url: "http://127.0.0.1:10404/"
+    interval: 1m
+    headers:
+      Host: "docspace.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
   - name: "firefly (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://firefly.svc.idanreed.com/"
@@ -397,6 +427,29 @@ endpoints:
       ignore-redirect: true
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  # Gatus probing its own vhost. This is NOT circular vanity: the path probe
+  # traverses Caddy, so it proves the route, the wildcard cert and the outpost
+  # for this hostname — none of which Gatus can observe from the inside, and
+  # all of which failing would make the dashboard unreachable during exactly
+  # the outage it is reporting. (The alert path does not traverse Caddy, so
+  # ntfy still gets through.)
+  #
+  # There is deliberately NO matching service probe: Gatus fetching
+  # http://127.0.0.1:10450/ is a tautology — if it can run the check, the
+  # answer is yes. gatus-target-coverage carries 10450 in EXEMPT_SERVICE with
+  # this reason rather than letting a meaningless probe satisfy it.
+  - name: "gatus (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://gatus.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
     alerts:
       - type: ntfy
 
