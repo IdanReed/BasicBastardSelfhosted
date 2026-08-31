@@ -1,0 +1,210 @@
+# OnlyOffice DocSpace (Util range, port 10404).
+# Design: ServerNotes/designs/service-onlyoffice-stack-research.md.
+# _overview.md owns the port/auth row.
+#
+# 🚨 THE ROW USED TO SAY `onlyoffice/docspace-ee`. THAT IMAGE DOES NOT EXIST —
+# ghcr and Docker Hub both 404 it. There is ONE image, and the edition is
+# chosen at RUNTIME by whether a licence file is present:
+# `Enterprise = Standalone && licensePath != ""`, `Opensource = Standalone &&
+# licensePath == ""`. Unlicensed runs forever (`State=Paid,
+# DueDate=MaxValue`), licence validation is a local file-signature check with
+# ZERO HTTP, and billing calls are gated on an unset `core:payment:url`. So
+# this is Community, permanently, with no egress and no expiry.
+#
+# THREE containers, one published port. Upstream's community compose has four;
+# OpenSearch is dropped — its 4 GB JVM heap alone exceeds the suite's RAM
+# budget, and full-text search inside documents is not worth that here.
+#
+# Backup contract: `docspace_db` is MySQL 8.4, which unlike MariaDB 11 DOES
+# still ship `mysqldump` (finding #35 was specifically about MariaDB dropping
+# the mysql* symlinks). nixos/backup-prepare.sh needs a second branch in its
+# MySQL section for it.
+
+services:
+  # ---------------------------------------------------------------------------
+  # docspace — the monolith. nginx router, every ASC.* backend under one
+  # supervisord, the SPA, socket.io, ASC.SsoAuth, and the /ds-vpath/ reverse
+  # proxy to Document Server.
+  #
+  # ⚠ `user: root`, following upstream, and NOT the image's own uid 1654. The
+  # entrypoint edits /etc/nginx and files under /app/onlyoffice/config before
+  # dropping into supervisord. Do not "harden" this without testing: the
+  # ExcaliDash lesson is that an image which deliberately stays root in order
+  # to fix permissions crash-loops when you take that away.
+  # ---------------------------------------------------------------------------
+  docspace:
+    image: onlyoffice/docspace:3.7.2
+    container_name: docspace
+    user: root
+    depends_on:
+      docspace_db:
+        condition: service_healthy
+    ports:
+      # ONE port for the whole product. Document Server is served at
+      # /ds-vpath/ by this container's own nginx, so it needs no host port and
+      # no Caddy vhost — and must not get one: publishing it would expose an
+      # unauthenticated /healthcheck and a converter on a second door, and
+      # would force a second overview-sync row.
+      - '127.0.0.1:10404:80'
+    volumes:
+      - /mnt/fast/docspace/app:/app/onlyoffice/data
+      - /mnt/fast/docspace/logs:/var/log/onlyoffice
+    environment:
+      - TZ=America/Chicago
+      # 🚨 MUST STAY LITERALLY `localhost`. `Standalone` is computed as
+      # `Basedomain == "localhost"`, so setting this to the real vhost silently
+      # converts the portal to SaaS mode — which paywalls SSO and changes the
+      # licence branch — with no error and a healthy container.
+      - APP_CORE_BASE_DOMAIN=localhost
+      # 🚨 Defaults to `http://host.docker.internal/`, which does not resolve
+      # on Linux. This is the base Document Server calls BACK on, so left
+      # alone every document opens and every save silently 404s.
+      - APP_URL_PORTAL=http://docspace:80
+      - MYSQL_HOST=docspace_db
+      - MYSQL_DATABASE=docspace
+      - MYSQL_USER=docspace
+      - DOCUMENT_SERVER_URL_PUBLIC=/ds-vpath/
+      - DOCUMENT_SERVER_URL_EXTERNAL=http://docspace_ds:80
+      - DOCUMENT_SERVER_JWT_HEADER=AuthorizationJwt
+      # APP_CORE_MACHINEKEY, SPRING_APPLICATION_ENCRYPTION_SECRET,
+      # DOCUMENT_SERVER_JWT_SECRET, MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD all
+      # arrive from .env.
+      #
+      # 🚨 APP_CORE_MACHINEKEY MUST be set explicitly. `ensure_secret` takes
+      # the env var if non-empty, otherwise reads
+      # /app/onlyoffice/data/.secrets/APP_CORE_MACHINEKEY, otherwise GENERATES
+      # one and writes it there. Upstream's compose sets it to "" on purpose,
+      # which forces generation — a sane default upstream and a bad one here:
+      # the fleet's most consequential secret would exist only inside a bind
+      # mount, invisible to sops, and a restore from anything but a byte-exact
+      # copy would lock every user out permanently. It derives the password
+      # salt, signs every confirm-scheme link, and is exported as
+      # SPRING_APPLICATION_SIGNATURE_SECRET.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # 🚨 The image's baked check is `supervisorctl status | grep -qE
+      # 'FATAL|BACKOFF'` — no HTTP, no database, and `STARTING` counts as
+      # healthy. Finding #16 again. This probes the portal's own API instead.
+      test: ['CMD-SHELL', 'curl -fsS -o /dev/null http://127.0.0.1:80/api/2.0/settings']
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 300s
+    # Co-editing state lives in Document Server's MEMORY since 9.4.0 (see that
+    # container), so a hard kill loses unsaved collaborative edits. Give the
+    # stack time to flush.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # docspace_ds — Document Server 9.4.0 Community.
+  #
+  # 🚨 NO POSTGRES, NO REDIS, NO RABBITMQ. `baseConnector.js` is now
+  # `module.exports = require('./memoryConnector')` — changed exactly at 9.4.0;
+  # 9.3.0 still bundles all three. That is what killed the "OnlyOffice is too
+  # heavy" objection, and it is a DATA-DURABILITY FACT as well as a size win:
+  # co-editing state is in RAM, so a restart loses unsaved collaborative edits
+  # and there is no database here to back up.
+  #
+  # Runs as ROOT and chowns its own mounts to ds:ds on every start. NEVER set
+  # `user:` — that skips the chown branch and breaks on the first write.
+  # ---------------------------------------------------------------------------
+  docspace_ds:
+    image: onlyoffice/documentserver:9.4.0
+    container_name: docspace_ds
+    # NO `ports:`. See the monolith's comment.
+    volumes:
+      - /mnt/fast/docspace/ds-data:/var/www/onlyoffice/Data
+      - /mnt/fast/docspace/ds-lib:/var/lib/onlyoffice
+      - /mnt/fast/docspace/ds-logs:/var/log/onlyoffice
+    environment:
+      - TZ=America/Chicago
+      - JWT_ENABLED=true
+      - JWT_HEADER=AuthorizationJwt
+      - JWT_IN_BODY=true
+      # 🚨 THE JWT IS NOT ONLY AUTHENTICATION HERE. `externalRequest.
+      # directIfIn.jwtToken` defaults true, so URLs carried inside a signed
+      # token bypass the private-IP filter. Disabling JWT therefore breaks
+      # EVERY document download and callback in a private-address fleet — the
+      # opposite of the usual "turn auth off to debug" instinct.
+      #
+      # JWT_SECRET arrives from .env and must equal DOCUMENT_SERVER_JWT_SECRET
+      # on the monolith. Note the header name is AuthorizationJwt and
+      # JWT_IN_BODY is true — neither is this image's default, and both must
+      # match on both sides.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # 🚨 /healthcheck returns HTTP 200 with a BODY of `true` or `false`. A
+      # status-code probe is therefore green on a broken converter — grep the
+      # body or the check means nothing.
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:80/healthcheck | grep -qx true']
+      interval: 30s
+      timeout: 15s
+      retries: 20
+      start_period: 180s
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # docspace_db — MySQL 8.4.
+  #
+  # container_name and MYSQL_USER are load-bearing for backup-prepare.sh, which
+  # needs a second branch in its MySQL section for this. Note MySQL 8.4 DOES
+  # still ship `mysqldump` — finding #35 was specifically about MariaDB 11
+  # dropping the mysql* symlinks, and does not apply here.
+  # ---------------------------------------------------------------------------
+  docspace_db:
+    image: mysql:8.4.6
+    container_name: docspace_db
+    user: mysql
+    # expose, not publish: nothing outside the compose network needs it.
+    expose:
+      - '3306'
+    volumes:
+      - /mnt/fast/docspace/mysqldata:/var/lib/mysql
+    environment:
+      - TZ=America/Chicago
+      - MYSQL_DATABASE=docspace
+      - MYSQL_USER=docspace
+      # MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD arrive from .env.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 --silent']
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # docspace_init — completes the setup wizard headlessly (annex §5).
+  #
+  # DocSpace ships a browser wizard, and behind it a real API. The two things
+  # that would normally make that unusable from a script are both handed out by
+  # the UNAUTHENTICATED `GET /api/2.0/settings`, because the wizard page needs
+  # them before any account exists: the `wizardToken`, and the PBKDF2
+  # parameters the client is expected to hash the password with.
+  #
+  # Idempotent FOR FREE: `wizardToken` is populated only while
+  # `WizardSettings.Completed` is false, so its absence means "already seeded"
+  # and the script exits without changing anything.
+  # ---------------------------------------------------------------------------
+  docspace_init:
+    image: python:3.13-alpine
+    container_name: docspace_init
+    entrypoint: ['/bin/sh', '/init/docspace-init.sh']
+    depends_on:
+      docspace:
+        condition: service_healthy
+    volumes:
+      - ./docspace-init.sh:/init/docspace-init.sh:ro
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"

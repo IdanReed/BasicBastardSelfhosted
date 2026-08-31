@@ -1,0 +1,926 @@
+# Gatus — availability monitoring for the whole fleet.
+# Design: ServerNotes/designs/service-monitoring-stack-research.md.
+#
+# WHY GATUS AND NOT UPTIME KUMA. Kuma has no headless path at all: its v2
+# removed the JSON backup/restore ("backing up the data directory is the only
+# supported method"), its first admin exists only as a socket.io event on an
+# API whose own wiki disclaims stability, and its image healthcheck LOGS the
+# status code and exits 0 regardless — green on a 500, green on the setup
+# wizard. Gatus is a config file. This file IS the deployment.
+#
+# 🚨 TWO PROBES PER SERVICE, MEASURING DIFFERENT THINGS. Monitoring only
+# through Caddy is wrong here, and monitoring only loopback is wrong here, for
+# opposite reasons:
+#
+#   path probe    https://<svc>.svc.idanreed.com/  proves Caddy is up, the
+#                 wildcard cert is valid, DNS resolves, and — for protected
+#                 hosts — that the tailnet hop and the VPS outpost work.
+#                 BLIND to the service, because a protected route 302s before
+#                 reaching it.
+#   service probe http://127.0.0.1:<port>/         proves the app answers.
+#                 BLIND to Caddy, TLS, host routing and forward auth.
+#
+# 🚨 A PATH PROBE AGAINST A PROTECTED VHOST MEASURES AUTHENTIK, NOT THE
+# SERVICE. The (protected) snippet 302s an unauthenticated request, so a
+# default `[STATUS] == 200` marks every forward-auth service DOWN forever — and
+# "fixing" that by accepting 200-399 turns the probe into an Authentik liveness
+# check wearing the service's name. Protected hosts therefore assert `== 302`
+# explicitly and are NAMED as what they measure.
+#
+# 🚨 SERVICE PROBES SEND THE REAL Host HEADER where the app is host-sensitive.
+# Findings #27 and #15: Dawarich's host_authorization explicitly EXCLUDES
+# /api/v1/health, so a wrong APPLICATION_HOSTS is invisible to a health
+# endpoint and fatal to every browser request; qBittorrent 401s when the Host
+# port differs. One line each, and it is the highest-value thing in this file.
+#
+# ⚠ NO `security:` BLOCK. Gatus's OIDC calls oidc.NewProvider at startup with
+# no retry and PANICS on failure, so a tailnet blip during a redeploy would
+# restart-loop the monitoring service. And its own security block does not
+# protect the uptime history anyway — the SPA, /api/v1/config and every
+# /v1/endpoints/:key/uptimes route are on the UNPROTECTED router. Caddy's
+# forward auth plus the loopback bind is the real control.
+#
+# ⚠ Gatus expands $VAR in this YAML, and Compose expands env_file values too
+# (finding #30) — any secret reaching here passes TWO expansion layers. Keep
+# values $-free.
+
+storage:
+  type: sqlite
+  path: /data/gatus.db
+
+web:
+  # Bound to loopback even though the container is on the HOST network, which
+  # is the whole reason this stack needs a host-network-declared entry: it has
+  # no `ports:` for loopback-binding to check. A container on a bridge cannot
+  # reach a 127.0.0.1 publish, and only three stacks join the shared `homelab`
+  # network — so a prober that wants to see the services themselves has to be
+  # here.
+  address: 127.0.0.1
+  port: 10450
+
+alerting:
+  ntfy:
+    url: http://127.0.0.1:10001
+    topic: monitoring
+    priority: 4
+    # NO `token`. Validate() rejects any token not starting with `tk_`, and the
+    # fleet's ntfy sets auth-default-access: read-write, so anonymous publish
+    # works. A placeholder here would reject the whole provider.
+    default-alert:
+      failure-threshold: 3
+      success-threshold: 2
+      send-on-resolved: true
+
+endpoints:
+  - name: "arcane (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://arcane.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "arcane (service)"
+    group: "service"
+    url: "http://127.0.0.1:10000/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "audiobookshelf (path: caddy -> service)"
+    group: "path"
+    url: "https://audiobookshelf.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "audiobookshelf (service)"
+    group: "service"
+    url: "http://127.0.0.1:10152/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "backrest (path: caddy -> service)"
+    group: "path"
+    url: "https://backrest.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "backrest (service)"
+    group: "service"
+    url: "http://127.0.0.1:10002/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "bazarr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://bazarr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "bazarr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10055/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "bentopdf (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://bentopdf.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "bentopdf (service)"
+    group: "service"
+    url: "http://127.0.0.1:10401/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "bookstack (path: caddy -> service)"
+    group: "path"
+    url: "https://bookstack.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "bookstack (service)"
+    group: "service"
+    url: "http://127.0.0.1:10300/"
+    interval: 1m
+    headers:
+      Host: "bookstack.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "cleanuparr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://cleanuparr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "cleanuparr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10058/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "dawarich (path: caddy -> service)"
+    group: "path"
+    url: "https://dawarich.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "dawarich (service)"
+    group: "service"
+    url: "http://127.0.0.1:10304/"
+    interval: 1m
+    headers:
+      Host: "dawarich.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "firefly (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://firefly.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "firefly (service)"
+    group: "service"
+    url: "http://127.0.0.1:10303/"
+    interval: 1m
+    headers:
+      Host: "firefly.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "firefly-importer (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://firefly-importer.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "firefly-importer (service)"
+    group: "service"
+    url: "http://127.0.0.1:10305/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "forgejo (path: caddy -> service)"
+    group: "path"
+    url: "https://forgejo.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "forgejo (service)"
+    group: "service"
+    url: "http://127.0.0.1:10550/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "frigate (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://frigate.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "frigate (service)"
+    group: "service"
+    url: "http://127.0.0.1:10252/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "glance (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://glance.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "glance (service)"
+    group: "service"
+    url: "http://127.0.0.1:10402/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "homeassistant (path: caddy -> service)"
+    group: "path"
+    url: "https://homeassistant.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "homeassistant (service)"
+    group: "service"
+    url: "http://127.0.0.1:10250/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "homebox (path: caddy -> service)"
+    group: "path"
+    url: "https://homebox.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "homebox (service)"
+    group: "service"
+    url: "http://127.0.0.1:10301/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "immich (path: caddy -> service)"
+    group: "path"
+    url: "https://immich.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "immich (service)"
+    group: "service"
+    url: "http://127.0.0.1:10102/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "it-tools (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://it-tools.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "it-tools (service)"
+    group: "service"
+    url: "http://127.0.0.1:10407/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "jellyfin (path: caddy -> service)"
+    group: "path"
+    url: "https://jellyfin.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "jellyfin (service)"
+    group: "service"
+    url: "http://127.0.0.1:10050/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "karakeep (path: caddy -> service)"
+    group: "path"
+    url: "https://karakeep.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "karakeep (service)"
+    group: "service"
+    url: "http://127.0.0.1:10302/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "kavita (path: caddy -> service)"
+    group: "path"
+    url: "https://kavita.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "kavita (service)"
+    group: "service"
+    url: "http://127.0.0.1:10150/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "mazanoke (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://mazanoke.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "mazanoke (service)"
+    group: "service"
+    url: "http://127.0.0.1:10403/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "ntfy (path: caddy -> service)"
+    group: "path"
+    url: "https://ntfy.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "ntfy (service)"
+    group: "service"
+    url: "http://127.0.0.1:10001/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "paperless (path: caddy -> service)"
+    group: "path"
+    url: "https://paperless.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "paperless (service)"
+    group: "service"
+    url: "http://127.0.0.1:10100/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "profilarr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://profilarr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "profilarr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10056/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "prowlarr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://prowlarr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "prowlarr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10053/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "radarr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://radarr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "radarr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10051/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "rmfakecloud (path: caddy -> service)"
+    group: "path"
+    url: "https://rmfakecloud.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "rmfakecloud (service)"
+    group: "service"
+    url: "http://127.0.0.1:10200/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "seerr (path: caddy -> service)"
+    group: "path"
+    url: "https://seerr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "seerr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10054/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "shelfmark (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://shelfmark.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "shelfmark (service)"
+    group: "service"
+    url: "http://127.0.0.1:10151/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "sonarr (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://sonarr.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "sonarr (service)"
+    group: "service"
+    url: "http://127.0.0.1:10052/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "syncthing (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://syncthing.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "syncthing (service)"
+    group: "service"
+    url: "http://127.0.0.1:10201/"
+    interval: 1m
+    headers:
+      Host: "syncthing.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "tandoor (path: caddy -> service)"
+    group: "path"
+    url: "https://tandoor.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "tandoor (service)"
+    group: "service"
+    url: "http://127.0.0.1:10350/"
+    interval: 1m
+    headers:
+      Host: "tandoor.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "vaultwarden (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://vaultwarden.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "vaultwarden (service)"
+    group: "service"
+    url: "http://127.0.0.1:10400/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "wger (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://wger.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "wger (service)"
+    group: "service"
+    url: "http://127.0.0.1:10351/"
+    interval: 1m
+    headers:
+      Host: "wger.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "windmill (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://windmill.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "windmill (service)"
+    group: "service"
+    url: "http://127.0.0.1:10253/"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+

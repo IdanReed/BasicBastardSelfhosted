@@ -1,0 +1,51 @@
+# Gatus — availability monitoring (Monitoring range, port 10450).
+# Design: ServerNotes/designs/service-monitoring-stack-research.md.
+# _overview.md's row said Uptime Kuma; see gatus.yaml's header for why it is
+# not.
+#
+# 🚨 network_mode: host, and it is NOT optional. Every stack in this fleet
+# publishes on 127.0.0.1:PORT, and a container on a bridge network CANNOT
+# REACH a loopback-bound host port — stacks/ntfy's header already records that
+# the old design's host.docker.internal webhooks failed for exactly this
+# reason. The shared `homelab` network is not a workaround either: only
+# backrest, ntfy and part of media join it, so most services have no reachable
+# container name.
+#
+# On the host, one prober sees everything in one place: every 127.0.0.1:PORT
+# publish, every *.svc.idanreed.com vhost through Caddy on the tailnet IP, ntfy
+# at 127.0.0.1:10001, and the VPS across the tailnet.
+#
+# ⚠ THIS MAKES IT INVISIBLE to loopback-binding and to mk-stack-suite's port
+# probe, which build their lists from `ports:` — per host-network-declared's
+# own error text, such a service "passes them with an empty set rather than
+# failing". It therefore MUST have a DECLARED entry in tests/lib/lints.nix, and
+# the suite must assert the loopback bind directly from another machine rather
+# than relying on the generic probe. Gatus binds itself down with
+# web.address: 127.0.0.1 in gatus.yaml, which gives the same exposure a
+# loopback publish would.
+
+services:
+  gatus:
+    # `v` prefix REQUIRED — `ghcr.io/twin/gatus:5.36.0` is a 404.
+    image: ghcr.io/twin/gatus:v5.36.0
+    container_name: gatus
+    network_mode: host
+    volumes:
+      # The config directory, not a single file: Gatus watches it, and a
+      # directory that syncs EMPTY is a hard startup failure
+      # (ErrNoEndpointOrSuiteInConfig) rather than a silent no-op — which is
+      # the right behaviour and something the suite asserts.
+      - ./gatus.yaml:/config/config.yaml:ro
+      - /mnt/fast/gatus:/data
+    environment:
+      - TZ=America/Chicago
+      - GATUS_CONFIG_PATH=/config/config.yaml
+    # NO healthcheck stanza, and none is possible: the image is FROM scratch
+    # with one binary, one embedded config and the CA bundle — no shell, no
+    # curl, no wget, and no `gatus healthcheck` subcommand. This is the
+    # karakeep-chrome situation and it gets the same treatment: declare
+    # nothing rather than something that lies, and never make anything
+    # `depends_on: {condition: service_healthy}` against it. GET /health is
+    # the probe, asserted by the suite and by the host-side
+    # unhealthy-containers timer's sibling checks — not by Docker.
+    restart: unless-stopped

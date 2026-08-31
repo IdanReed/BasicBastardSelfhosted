@@ -67,6 +67,23 @@ done
 # MYSQL_ROOT_PASSWORD as an alias for MARIADB_ROOT_PASSWORD, and
 # stacks/tracking/compose.yaml sets it that way deliberately so this line can
 # read it out of the container's own environment.
+# DocSpace's portal database (stacks/docspace/compose.yaml). MySQL 8.4, which
+# unlike MariaDB 11 DOES still ship `mysqldump` — the rename that broke the
+# BookStack branch above was specifically MariaDB dropping its mysql* symlinks,
+# and it does not apply here.
+if running docspace_db; then
+    log "mysqldump docspace"
+    if docker exec docspace_db sh -c \
+        'exec mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" --all-databases' \
+        > "$DUMPS/docspace.sql.tmp"; then
+        mv -f "$DUMPS/docspace.sql.tmp" "$DUMPS/docspace.sql"
+    else
+        log "FAILED: mysqldump docspace"
+        rm -f "$DUMPS/docspace.sql.tmp"
+        rc=1
+    fi
+fi
+
 if running bookstack_db; then
     log "mariadb-dump bookstack"
     if docker exec bookstack_db sh -c \

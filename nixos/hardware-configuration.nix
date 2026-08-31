@@ -304,6 +304,34 @@
     "d /mnt/fast/wger 0755 root root -"
     "d /mnt/fast/wger/pgdata 0755 root root -"
     "d /mnt/fast/wger/media 0755 1000 1000 -"
+    # OnlyOffice DocSpace (stacks/docspace/compose.yaml). THREE different
+    # conventions in three containers; do not normalise them.
+    #   - Document Server runs as ROOT and chowns its own mounts to ds:ds on
+    #     every start, so root-owned is correct and self-healing. Never set
+    #     `user:` on it — that skips the chown branch.
+    #   - The monolith runs `user: root` following upstream, because its
+    #     entrypoint edits /etc/nginx and its config files before dropping into
+    #     supervisord. The ExcaliDash lesson applies: an image that stays root
+    #     deliberately in order to fix permissions crash-loops when you take
+    #     that away.
+    #   - MySQL chowns its own datadir at first init.
+    #
+    # ⚠ Note the DS and monolith trees are SEPARATE here. Upstream's community
+    # compose mounts the same volume into both (/app/onlyoffice/data and
+    # /var/www/onlyoffice/Data) — two different applications' state sharing one
+    # namespace. Separating them is what makes the Backrest exclude list for
+    # the document cache expressible at all.
+    "d /mnt/fast/docspace 0755 root root -"
+    "d /mnt/fast/docspace/app 0755 root root -"
+    "d /mnt/fast/docspace/logs 0755 root root -"
+    "d /mnt/fast/docspace/ds-data 0755 root root -"
+    "d /mnt/fast/docspace/ds-lib 0755 root root -"
+    "d /mnt/fast/docspace/ds-logs 0755 root root -"
+    "d /mnt/fast/docspace/mysqldata 0755 root root -"
+    # Gatus (stacks/gatus/compose.yaml). Its SQLite history lives here; the
+    # container is on the HOST network and has no ports: entry, which is why it
+    # needs a host-network-declared entry in tests/lib/lints.nix.
+    "d /mnt/fast/gatus 0755 root root -"
   ];
 
   # Swap (optional - can be added if needed)
