@@ -1264,6 +1264,133 @@ redefine what a test means.** tmpfs is the right default for a suite that only
 needs a writable path, and the wrong one the moment the word "survives"
 appears in a subtest name.
 
+### 51. A lint that enumerates from its own list reports the list, not the fleet — FIXED
+
+`tmpfiles-ownership` walked a hand-maintained `COMPOSE_FILES` and its success
+message proudly counted "79 bind sources across 17 stacks" — while the fleet
+had 22. The five stacks never added to the list (backrest, caddy, forgejo,
+ntfy, paperless) contributed 13 bind sources with no tmpfiles rule, and
+nothing could notice: every path the lint checked was fine, and the paths it
+did not check were invisible *by the same omission that created them*. Fixed
+by generating the enumeration (`nixos/generate-stack-dirs.py` globs
+`stacks/*/compose.yaml`; the `stack-dirs-generated` lint re-runs it and
+byte-compares the checked-in output). The general rule: a checker whose
+universe is a hand-list measures the diligence of whoever last edited the
+list. Glob the universe; hand-write only the judgments.
+
+### 52. A raw file copy of a WAL database restores 73 of 131 tables — FIXED
+
+Forgejo's "backup" was its `/mnt/fast` tree inside the restic plan — which
+contains `gitea.db` beside a 4 MB `gitea.db-wal`. Measured against the pinned
+`forgejo:16.0`: `cp` of the live file, then open → **73 tables**; `sqlite3
+.backup` → **131 tables**, `integrity_check ok`. The git server's issue and
+auth tables lived in the WAL. "The file is in the backup set" and "the
+database is in the backup" are different claims for any WAL database, and the
+gap has no symptom until a restore. `backup-prepare.sh` now dumps forgejo,
+ntfy, gatus, and arcane with `.backup`; `backup-coverage`'s reverse legs make
+the next WAL-shaped omission a lint failure instead of a quiet one.
+
+### 53. OnFailure never fires on a unit that retries slower than the start limit — FIXED
+
+systemd only enters `failed` — the state `OnFailure=` keys on — when
+`StartLimitBurst` starts land inside `StartLimitIntervalSec`, and the defaults
+are **5 starts per 10 seconds**. Any unit with `Restart=on-failure` and
+`RestartSec` ≥ ~3 s resets the window every retry: it loops in `activating`
+forever, `systemctl` says nothing is failed, and the OnFailure alert is
+decorative. Both hosts carried this shape. The fix is per-unit
+`startLimitIntervalSec`/`startLimitBurst` sized so the unit can actually give
+up (and a comment at `configuration.nix`'s `notify-failure@` recording the
+interaction). When adding OnFailure to anything with `Restart=`, ask: *can
+this unit ever reach `failed`?* — the answer is in arithmetic, not intent.
+
+### 54. A boot-only oneshot cannot be given a re-run timer without surgery — FIXED
+
+Two silent traps stacked: `OnUnitInactiveSec=` never elapses on a
+`RemainAfterExit=true` oneshot (the unit never goes inactive, and `systemctl
+start` on an active one is a no-op), so the obvious "add a timer" fix does
+nothing; and `tailscale-autoconnect`'s `After=`/`Wants=` named
+`tailscale.service`, which has never existed (`services.tailscale.enable`
+creates `tailscaled.service`) — **systemd silently ignores ordering against a
+nonexistent unit**, so the dependency was decorative for as long as the file
+existed. The working shape: drop `RemainAfterExit`, poll for a *terminal*
+`BackendState` instead of sampling once after `sleep 2` (a transient
+`Starting` misread as down would re-spend a single-use preauth key), and only
+then attach the timer.
+
+### 55. The 180-day expiry only ever applied to half the tailnet
+
+The campaign's premise was "no expiry is set, so headscale's 180 d default
+applies to everything". Verified against headscale 0.27's source: the default
+applied **only to OIDC-enrolled nodes**; preauthkey-registered nodes (both
+hosts here) got NO expiry at all. And headscale 0.28 replaces `oidc.expiry`
+with `node.expiry`, which covers authkey nodes too — an upgrade would have
+*introduced* the day-180 outage this item set out to prevent, silently.
+`headscale.nix` now sets expiry explicitly with a comment carrying the
+version-semantics warning. Defaults that differ by enrollment path, and knobs
+that widen on rename, both defeat "we checked the default once".
+
+### 56. `copy_headers` already deletes what it copies — read the adapted JSON, not the directive
+
+The review claimed client-supplied `X-Authentik-*` reached `remote_user_guard`
+on `skip_path_regex` paths. `caddy adapt` disproved half of it: Caddy expands
+`copy_headers` into an *unconditional* per-header `delete` plus a guarded
+`set` inside the 2xx `handle_response`, so the five copied headers were never
+spoofable. The forgeable ones were `X-authentik-jwt` and `X-authentik-meta-*`
+— headers the outpost can emit but `copy_headers` never listed. The fix (a
+wildcard `request_header -X-Authentik-*`) then hit the second trap:
+**directive order is global** — `request_header` (order 45) sorts *after*
+`forward_auth` (44), so placed in the snippet it deletes the identity the
+outpost just provided. It lives at site level (before `handle`, order 53),
+verified in the adapted JSON as srv0's first route. Both halves of this
+finding are the same lesson: the Caddyfile is a compiler input, and security
+claims about it are claims about its output.
+
+### 57. Narrowing a bind mount to a single file changes how absence fails — FIXED
+
+When backrest's key mount was `/var/lib/backup:ro` (a directory), a missing
+key meant a missing *file* inside a mounted dir, and `[ -s ]` caught it. The
+moment the mount narrowed to the single file, a missing source made compose
+**manufacture a directory** at both ends — which passes `-s`, makes `grep`
+exit nonzero for the wrong reason, and would have waved the missing-key case
+through a gate written for the old failure mode. `config-init.sh` now tests
+`-f` first, and the backrest suite `rm -rf`s the manufactured directory
+before re-seeding the key (a later subtest inherited it and would have failed
+on `printf` into a directory). Every gate is written against one failure
+topology; changing the mount changes the topology.
+
+### 58. A pinned host key makes every stand-in fail — re-point the pin, never relax it
+
+Pinning the Storage Box host key (`StrictHostKeyChecking yes` + committed
+`known_hosts`) immediately failed the backrest suite at the sftp leg — the
+in-VM sshd is not Hetzner. The wrong fix is `accept-new` in the test profile,
+which stops testing that a wrong key is fatal. The right one mirrors what the
+suite already does for the hostname: `ssh-keyscan` the in-VM endpoint into
+the same `known_hosts` the pin reads, so the *mechanism* stays under test and
+only the pinned value moves. Related discovery: Hetzner publishes
+**fingerprints**, not keys — so the committed keys were sourced elsewhere and
+verified by `ssh-keygen -l` against the published hashes, which is a stronger
+provenance than TOFU against any live endpoint.
+
+### 59. Bare `xcaddy build` ignores the base image's version — FIXED
+
+`FROM caddy:2.11.2` + `xcaddy build --with <plugin>` builds **whatever Caddy
+is latest at build time** and copies it over the 2.11.2 binary — the tag and
+the binary are independent. The plugin was the unpinned thing the item named;
+the base was the unpinned thing nobody had noticed. Now `xcaddy build
+v2.11.2 --with github.com/caddy-dns/cloudflare@v0.2.4`. A Dockerfile can be
+fully pinned in every `FROM` and still not build what the pins say.
+
+### 60. A whole-stack `up` needs every image preloaded, and the miss looks unrelated
+
+Two suites (`forward-auth.nix`, `services-vm.nix`) started the util stack but
+preloaded only the two containers their assertions touched. `docker compose
+up` on the whole project then tried to pull glance and it-tools from inside
+the offline sandbox — surfacing as a registry error in suites about forward
+auth and sops, nothing to do with either. Both images were already pinned in
+`images.nix`; only the suites' `stackImages` lists were short. When a suite
+gains a stack (or a stack gains a service), the preload list is part of the
+contract — and the failure mode points everywhere except at the list.
+
 ## Status
 
 Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
