@@ -210,3 +210,27 @@
     finalImageName = "ghcr.io/immich-app/immich-machine-learning";
     finalImageTag = "v3.1.0";
   };
+  "ghcr_io_immich-app_immich-server_v3_1_0" = {
+    composeRef = "ghcr.io/immich-app/immich-server:v3.1.0";
+    imageName = "ghcr.io/immich-app/immich-server";
+    imageDigest = "sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb";
+    hash = "sha256-kQnTcmK0Mn2YaM4HBmT3zpDbPp3n09gtMwki+j1QjwI=";
+    finalImageName = "ghcr.io/immich-app/immich-server";
+    finalImageTag = "v3.1.0";
+  };
+  "ghcr_io_immich-app_postgres_17-vectorchord1_1_1" = {
+    composeRef = "ghcr.io/immich-app/postgres:17-vectorchord1.1.1";
+    imageName = "ghcr.io/immich-app/postgres";
+    imageDigest = "sha256:3ea13db44f1116042032ec638979eae2dbd4f2419c7d2e134fbe308a534cb054";
+    hash = "sha256-x7kt2Ts/NQy0jhed6r5GTQyRI310U22/AeltD3zd2no=";
+    finalImageName = "ghcr.io/immich-app/postgres";
+    finalImageTag = "17-vectorchord1.1.1";
+  };
+  "ghcr_io_karakeep-app_karakeep_0_33_2" = {
+    composeRef = "ghcr.io/karakeep-app/karakeep:0.33.2";
+    imageName = "ghcr.io/karakeep-app/karakeep";
+    imageDigest = "sha256:b069e4307dec06ea06d16989c6861c30a1ff208568be44ed5fb5d422cd3e950c";
+    hash = "sha256-HzE4SHDwIEdB7/4v61MzyjjWhDc5gY7DSd2+WqDLPbo=";
+    finalImageName = "ghcr.io/karakeep-app/karakeep";
+    finalImageTag = "0.33.2";
+  };

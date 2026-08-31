@@ -23,9 +23,19 @@
 #      auth on WITHOUT also setting `server.proxied: true` means the first five
 #      typos lock out everybody at once.
 #
-# ${ENV_VAR} substitution is a HARD STARTUP ERROR on a missing variable, which
-# is the good kind of loud — but it means no placeholder may be spelled that
-# way here.
+# 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML PARSING —
+# SO COMMENTS ARE NOT EXEMPT. A dollar-brace reference anywhere in this file,
+# including in a comment like this one, is resolved, and a missing variable is
+# a hard startup error:
+#     Config has errors: parsing variable: environment variable ENV_VAR not found
+# ...repeated forever, because the container restarts.
+#
+# That is exactly what happened: an earlier version of THIS COMMENT spelled the
+# substitution syntax out literally in order to warn about it, and the warning
+# broke the file. Describe the syntax in words here; never write it.
+#
+# The behaviour itself is the good kind of loud — a typo'd variable name fails
+# at boot rather than rendering an empty string into a widget.
 
 server:
   host: 0.0.0.0
@@ -116,8 +126,6 @@ pages:
                     url: https://mazanoke.svc.idanreed.com
                   - title: IT-Tools
                     url: https://it-tools.svc.idanreed.com
-                  - title: ExcaliDash
-                    url: https://excalidash.svc.idanreed.com
 
               - title: Infrastructure
                 links:
