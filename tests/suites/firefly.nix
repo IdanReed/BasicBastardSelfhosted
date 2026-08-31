@@ -409,9 +409,13 @@ pkgs.testers.runNixOSTest {
     with subtest("backup-prepare's pg_dumpall contract holds"):
         # Exactly how nixos/backup-prepare.sh builds it: container "<svc>_db",
         # `pg_dumpall -U <svc>`.
-        out = services_vm.succeed(
-            "docker exec firefly_db pg_dumpall -U firefly | head -40"
+        # Redirected to a file rather than piped to `head`: pg_dumpall keeps
+        # writing after head closes the pipe, so the pipeline exits 141
+        # (SIGPIPE) and `succeed` treats a perfectly good dump as a failure.
+        services_vm.succeed(
+            "docker exec firefly_db pg_dumpall -U firefly > /tmp/firefly.sql"
         )
+        out = services_vm.succeed("head -40 /tmp/firefly.sql")
         assert "CREATE ROLE" in out or "ROLE firefly" in out, out
 
     # -----------------------------------------------------------------------

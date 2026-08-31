@@ -271,6 +271,20 @@ pkgs.testers.runNixOSTest {
                   "MYSQL_ROOT_PASSWORD", "HBOX_AUTH_API_KEY_PEPPER",
                   "NEXTAUTH_SECRET", "MEILI_MASTER_KEY"]:
             services_vm.succeed(f"grep -q '^{k}=.' /srv/stacks/tracking/.env")
+        # 🚨 APP_KEY must decode to EXACTLY 32 bytes. Laravel uses AES-256-CBC,
+        # and a wrong length is NOT a startup error: BookStack boots, migrates,
+        # serves HTML and runs the admin hook, then throws "Unsupported cipher
+        # or incorrect key length" on the first encrypted operation — during
+        # middleware TERMINATION, after the response has gone out, so nothing
+        # in the container log mentions the key. Caught here rather than left
+        # to the /status probe below, so the failure names its own cause.
+        n = int(services_vm.succeed(
+            "grep '^APP_KEY=' /srv/stacks/tracking/.env | sed 's/^APP_KEY=base64://' "
+            "| tr -d '\n' | base64 -d | wc -c"
+        ).strip())
+        assert n == 32, (
+            f"APP_KEY decodes to {n} bytes, must be exactly 32 for AES-256-CBC"
+        )
         # The three OIDC secrets are asserted PRESENT AND EMPTY — that is the
         # shipping state this suite pins.
         for k in ["BOOKSTACK_OIDC_CLIENT_SECRET", "HOMEBOX_OIDC_CLIENT_SECRET",
@@ -316,6 +330,20 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # BookStack: the in-container admin hook
     # -----------------------------------------------------------------------
+    with subtest("bookstack's /status reports database, cache AND session true"):
+        # The healthcheck already gates `up --wait` on this, so reaching here
+        # implies a 200 — but assert the CONTENT so the failure names itself.
+        # This is the probe that caught a 37-byte APP_KEY: BookStack booted,
+        # migrated, served HTML and ran the admin hook, and only /status
+        # returned 500 ("Unsupported cipher or incorrect key length", thrown
+        # during middleware termination, after the response). A `/` probe would
+        # have shipped that.
+        out = services_vm.succeed(
+            f"curl -sS --max-time 30 {BOOKSTACK}/status"
+        )
+        st = json.loads(out)
+        assert st == {"database": True, "cache": True, "session": True}, st
+
     with subtest("bookstack's seeded admin was replaced, not merely added"):
         hook_log = services_vm.succeed("docker logs bookstack 2>&1")
         assert "[bookstack-admin-init] CHANGE: admin set to" in hook_log, (

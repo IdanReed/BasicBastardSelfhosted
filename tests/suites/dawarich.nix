@@ -418,9 +418,13 @@ pkgs.testers.runNixOSTest {
         # and neither matches what upstream ships, so this is the assertion that
         # keeps a future "normalise the names" edit from silently emptying the
         # backup.
-        out = services_vm.succeed(
-            "docker exec dawarich_db pg_dumpall -U dawarich | head -40"
+        # Redirected to a file rather than piped to `head`: pg_dumpall keeps
+        # writing after head closes the pipe, so the pipeline exits 141
+        # (SIGPIPE) and `succeed` treats a perfectly good dump as a failure.
+        services_vm.succeed(
+            "docker exec dawarich_db pg_dumpall -U dawarich > /tmp/dawarich.sql"
         )
+        out = services_vm.succeed("head -40 /tmp/dawarich.sql")
         assert "CREATE ROLE" in out or "ROLE dawarich" in out, out
 
     with subtest("the PostGIS extension is actually installed"):

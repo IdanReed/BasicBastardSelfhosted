@@ -744,6 +744,42 @@ coverage at all, for exactly the rows most worth covering. A lint whose
 matching heuristic can miss is a lint that reports success on the cases it
 cannot see. It keys on the **port** now, which appears verbatim in both files.
 
+### 33. A Laravel `APP_KEY` that is one byte too long, visible only at /status
+
+BookStack's `APP_KEY` is a Laravel AES-256-CBC key, so `base64:` plus **exactly
+32 raw bytes**. A fixture key decoded to 37. Nothing rejected it.
+
+The container started. Every migration ran — all ~180 of them, printed to the
+log. LSIO's `/custom-cont-init.d` hook ran and reported the admin replaced.
+`[ls.io-init] done.` The site served HTML. The only symptom was
+`GET /status` returning 500, and the reason was in `laravel.log`:
+
+```
+RuntimeException: Unsupported cipher or incorrect key length.
+Supported ciphers are: aes-128-cbc, aes-256-cbc, aes-128-gcm, aes-256-gcm.
+  at Illuminate/Encryption/Encrypter.php:61
+  ... Illuminate/Foundation/Http/Kernel.php(215): terminateMiddleware()
+```
+
+Note where it is thrown: **during middleware termination**, after the response
+has already gone out. So the page renders, the request looks fine, and every
+session cookie and encrypted column is silently broken.
+
+Two things this confirms:
+
+- **The healthcheck choice was load-bearing.** `/status` is one of the few
+  probes in this fleet that is honest by construction — it exercises database,
+  cache and session and returns 500 if any fails. A `/` probe, or the "is the
+  process up" reflex, would have shipped this. That is finding #16 read the
+  other way round: when you pick the probe deliberately, it catches things the
+  application itself never reports.
+- **Length rules on keys need a machine check, every time.** This is the third
+  in the campaign, after Kavita's 512-bit `TokenKey` (#21) and Firefly's
+  exactly-32-character `APP_KEY`. All three fail late, quietly, and in a way
+  that points somewhere other than the key. The tracking and firefly suites now
+  each assert the length directly, so the failure names its own cause instead
+  of arriving as a 500 an hour later.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -794,7 +830,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-three** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

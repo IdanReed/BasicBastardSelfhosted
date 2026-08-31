@@ -306,9 +306,13 @@ pkgs.testers.runNixOSTest {
         # uses POSTGRES_USER=postgres; the rename to `windmill` is what makes
         # the loop work, and this is what keeps a future "normalise it back"
         # from silently emptying the dump.
-        out = services_vm.succeed(
-            "docker exec windmill_db pg_dumpall -U windmill | head -40"
+        # Redirected to a file rather than piped to `head`: pg_dumpall keeps
+        # writing after head closes the pipe, so the pipeline exits 141
+        # (SIGPIPE) and `succeed` treats a perfectly good dump as a failure.
+        services_vm.succeed(
+            "docker exec windmill_db pg_dumpall -U windmill > /tmp/windmill.sql"
         )
+        out = services_vm.succeed("head -40 /tmp/windmill.sql")
         assert "CREATE ROLE" in out or "ROLE windmill" in out, out
 
     with subtest("10253 is loopback-only, with a positive control"):
