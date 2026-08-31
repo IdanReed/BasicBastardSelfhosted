@@ -152,15 +152,50 @@ in
   # --login-server is REQUIRED. Without it `tailscale up --authkey` registers
   # against Tailscale's SaaS control plane, and a Headscale-issued preauth key
   # is not valid there — the node silently fails to join the tailnet.
+  #
+  # 🚨 NOT RemainAfterExit, and that is the whole point of the timer below.
+  # This unit used to be a boot-only `RemainAfterExit = true` oneshot, which
+  # made it a SCHEDULED FAILURE: Headscale's default node expiry is 180 days,
+  # and at day 180 this VM's node key expires, the node drops off the tailnet,
+  # and nothing ever runs `tailscale up` again — the unit is still sitting in
+  # `active (exited)` from the boot six months earlier. Two systemd behaviours
+  # made it unfixable in place, and both are already documented one unit down
+  # on decrypt-sops-envs:
+  #
+  #   - `systemctl start` on an ALREADY-ACTIVE RemainAfterExit oneshot is a
+  #     no-op, so a timer pointed at it would fire and do nothing forever.
+  #   - OnUnitInactiveSec= measures from the last deactivation, and a unit
+  #     that never deactivates never provides one, so the timer would never
+  #     elapse in the first place.
+  #
+  # Dropping RemainAfterExit costs nothing: nothing orders itself After= this
+  # unit, and the boot transaction is satisfied by the oneshot completing, not
+  # by it lingering.
   systemd.services.tailscale-autoconnect = {
     description = "Automatic connection to Headscale";
     after = [ "network-online.target" "tailscale.service" ];
     wants = [ "network-online.target" "tailscale.service" ];
     wantedBy = [ "multi-user.target" ];
 
+    # The tailnet going away takes the SSH path to this host with it, so a
+    # human finds out by trying to log in. Ntfy is loopback-local
+    # (127.0.0.1:10001) and does not ride the tailnet, so this notification
+    # still leaves the box even when the thing that failed is the tailnet.
+    onFailure = [ "notify-failure@%n.service" ];
+
+    # Bounds the retry loop below so it can actually reach the `failed` state.
+    # Restart=on-failure with RestartSec=30s and systemd's default limiter
+    # (5 starts per 10s) can NEVER trip — 30s spacing means the window always
+    # resets — so the unit would retry silently forever and OnFailure= would be
+    # dead code. 20 attempts over ~10 minutes is long enough for a VPS that is
+    # still booting, and then it gives up loudly and lets the timer retry.
+    unitConfig = {
+      StartLimitIntervalSec = "30min";
+      StartLimitBurst = 20;
+    };
+
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = true;
       # The VPS may still be booting or reissuing certificates. Retry rather
       # than sitting off the tailnet until someone reruns this by hand.
       Restart = "on-failure";
@@ -173,12 +208,33 @@ in
       # Wait for tailscaled to be ready
       sleep 2
 
-      # Check if already authenticated
+      # Check if already authenticated.
+      #
+      # This early exit is what makes the periodic re-run safe: while the node
+      # is up, the timer's job is to do NOTHING. Re-running `tailscale up`
+      # against a healthy connection would reapply preferences and churn the
+      # session for no reason, and (worse) burn a single-use Headscale preauth
+      # key on a node that did not need one.
+      #
+      # It is also why the re-run can repair the day-180 case: an expired node
+      # key leaves BackendState at NeedsLogin, not Running, so the next tick
+      # falls through to `tailscale up` and re-registers. If the stored preauth
+      # key is itself spent or expired, that fails — loudly, through OnFailure
+      # above, which is the correct outcome: nothing automatic can fix it and a
+      # human has to mint a new key on the VPS.
       status="$(${pkgs.tailscale}/bin/tailscale status -json | ${pkgs.jq}/bin/jq -r .BackendState)"
       if [ "$status" = "Running" ]; then
-        echo "Already connected to Headscale"
+        # Report the node key's expiry on every tick, so the journal answers
+        # "how long has this got left" without a trip to the VPS. "none" means
+        # Headscale set no expiry for this node. Never allowed to fail the
+        # unit: this is a log line, and `set -e` would otherwise turn a
+        # perfectly healthy connection into a failed unit over a jq hiccup.
+        expiry="$(${pkgs.tailscale}/bin/tailscale status -json \
+          | ${pkgs.jq}/bin/jq -r '.Self.KeyExpiry // "none"' 2>/dev/null || echo unknown)"
+        echo "Already connected to Headscale (node key expiry: $expiry)"
         exit 0
       fi
+      echo "Not connected (BackendState=$status) - registering against Headscale"
 
       # The committed secrets.sops.yaml starts life as the encrypted template,
       # changeme_* values included — a real switch installs those verbatim and
@@ -198,6 +254,37 @@ in
         --hostname=services-vm \
         --accept-routes
     '';
+  };
+
+  # Re-run tailscale-autoconnect periodically. See the 🚨 block on the unit for
+  # why it exists at all; this is the half that makes the day-180 node-key
+  # expiry self-heal instead of being a silent, scheduled disappearance.
+  #
+  # OnUnitInactiveSec, not OnCalendar, on purpose: the interval is measured
+  # from the END of the last run, so a slow or retrying run never stacks up
+  # behind itself. It only works because the unit no longer sets
+  # RemainAfterExit — a unit that never deactivates never gives this timer a
+  # reference point.
+  #
+  # OnBootSec is the fallback anchor for a boot where the unit did not run at
+  # all (the test profiles take it out of multi-user.target, so this is not
+  # hypothetical). Six hours rather than minutes: the failure this exists for
+  # is measured in months, so six hours of downtime against "never reconnects"
+  # is the whole win, and a long first anchor keeps the timer out of the way of
+  # the VM suites, which take the unit out of multi-user.target and then start
+  # it by hand with a real preauth key.
+  systemd.timers.tailscale-autoconnect = {
+    description = "Re-register with Headscale before the node key expires";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "6h";
+      OnUnitInactiveSec = "6h";
+      # Nothing here is time-critical and every services-VM tick is a request
+      # to the VPS; spread them.
+      RandomizedDelaySec = "30min";
+      # No Persistent: a missed tick means nothing, the next one re-checks.
+      Unit = "tailscale-autoconnect.service";
+    };
   };
 
   # Decrypt all .sops.env files to .env (for arcane and stacks).
@@ -328,6 +415,12 @@ in
     requires = [ "docker.service" "srv.mount" "decrypt-sops-envs.service" ];
     wantedBy = [ "multi-user.target" ];
 
+    # This is the deploy plane, and it had no failure path at all. Without it
+    # Arcane is down: no stack can be deployed or updated, and no git sync
+    # delivers anything — while every stack already running keeps running, so
+    # nothing looks wrong until the next change silently does not land.
+    onFailure = [ "notify-failure@%n.service" ];
+
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -394,6 +487,12 @@ in
     serviceConfig = {
       Type = "oneshot";
       ExecStart = "${pkgs.bash}/bin/bash ${./backup-prepare.sh}";
+      # The script fails the run when a stack is deployed but its database
+      # container is not running — a stopped database used to be skipped
+      # silently, which is a backup that is green and stores nothing. For a
+      # stack that is deliberately stopped, name it (or its container) here
+      # rather than letting it page nightly, e.g.
+      #   Environment = "BACKUP_SKIP=docspace bookstack_db";
     };
   };
 
@@ -412,22 +511,54 @@ in
   # A timer that stops firing produces no failure notification by definition,
   # so something has to check for absence. The external dead-man's switch in
   # stacks/backrest covers the case where this whole host is down.
+  #
+  # TWO stamps with TWO windows, because backup-prepare does two unrelated
+  # jobs. It used to write one stamp and skip it on any failure, so a VPS pull
+  # that failed — a tailnet blip, a rebooting VPS — suppressed the stamp that
+  # certifies every LOCAL database dump, and this canary then reported "backups
+  # are stale" about backups that had all worked. That is alarm fatigue by
+  # construction: the same notification for "no dumps at all" and "could not
+  # reach the VPS tonight".
+  #
+  #   local  48h. The timer runs nightly, so this is two missed runs. This is
+  #          the canary proper: if backup-prepare.timer stops firing, nothing
+  #          else notices.
+  #   VPS    7 days, deliberately looser. Each individual VPS-pull failure
+  #          ALREADY pages the same night through backup-prepare's own
+  #          OnFailure, so a 48h window here would only duplicate it. What this
+  #          adds is the thing that notification cannot express: it has been
+  #          broken for a week and nobody acted.
+  #
+  # Both legs report in one run, so a message never hides behind another.
   systemd.services.backup-staleness-check = {
-    description = "Alert if backup preparation has not succeeded in 48h";
+    description = "Alert if backup preparation has not succeeded recently";
     onFailure = [ "notify-failure@%n.service" ];
     serviceConfig.Type = "oneshot";
     script = ''
-      stamp=/mnt/fast/_dumps/.last-success
-      if [ ! -f "$stamp" ]; then
-        echo "No successful backup preparation has ever been recorded."
-        exit 1
-      fi
-      age=$(( $(date -u +%s) - $(cat "$stamp") ))
-      if [ "$age" -gt 172800 ]; then
-        echo "Last successful backup preparation was $(( age / 3600 ))h ago (limit 48h)."
-        exit 1
-      fi
-      echo "Backup preparation last succeeded $(( age / 3600 ))h ago."
+      fail=0
+
+      check() {
+        stamp="$1"; limit="$2"; what="$3"
+        if [ ! -f "$stamp" ]; then
+          echo "$what: no success has ever been recorded ($stamp is missing)."
+          fail=1
+          return
+        fi
+        age=$(( $(date -u +%s) - $(cat "$stamp") ))
+        if [ "$age" -gt "$limit" ]; then
+          echo "$what: last success was $(( age / 3600 ))h ago (limit $(( limit / 3600 ))h)."
+          fail=1
+          return
+        fi
+        echo "$what: last succeeded $(( age / 3600 ))h ago."
+      }
+
+      check /mnt/fast/_dumps/.last-success-local 172800 \
+            "local database dumps"
+      check /mnt/fast/_dumps/.last-success-vps   604800 \
+            "VPS state pull (authentik db + headscale keys)"
+
+      exit "$fail"
     '';
   };
 
@@ -595,6 +726,14 @@ in
     requires = [ "docker.service" ];
     wantedBy = [ "multi-user.target" ];
     before = [ "bootstrap-arcane.service" ];
+
+    # Its failure is the quietest one on the box: the network simply does not
+    # exist, every stack that declares `networks: [homelab]` fails to start
+    # with a compose error nobody is watching, and Backrest's notifications —
+    # which reach Ntfy at http://ntfy/ over exactly this network — are the
+    # first casualty. Alert on it directly rather than waiting to notice the
+    # silence.
+    onFailure = [ "notify-failure@%n.service" ];
 
     serviceConfig = {
       Type = "oneshot";
