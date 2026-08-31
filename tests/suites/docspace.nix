@@ -119,12 +119,17 @@ pkgs.testers.runNixOSTest {
           # its own mounts every start, the monolith runs as root deliberately,
           # and MySQL chowns its datadir at first init.
           "d /mnt/fast/docspace 0755 root root -"
-          "d /mnt/fast/docspace/app 0755 root root -"
-          "d /mnt/fast/docspace/logs 0755 root root -"
+          # 104:107 — the docspace image is USER onlyoffice and starts
+          # already dropped, so it cannot chown these itself.
+          "d /mnt/fast/docspace/app 0755 104 107 -"
+          "d /mnt/fast/docspace/logs 0755 104 107 -"
           "d /mnt/fast/docspace/ds-data 0755 root root -"
           "d /mnt/fast/docspace/ds-lib 0755 root root -"
           "d /mnt/fast/docspace/ds-logs 0755 root root -"
-          "d /mnt/fast/docspace/mysqldata 0755 root root -"
+          # 999:999 — mysql drops to that uid and --initialize refuses a
+          # data directory it cannot write. Kept identical to the production
+          # rule in nixos/hardware-configuration.nix on purpose.
+          "d /mnt/fast/docspace/mysqldata 0755 999 999 -"
         ];
 
         systemd.services.seed-srv = {

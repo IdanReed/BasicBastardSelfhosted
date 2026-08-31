@@ -304,7 +304,13 @@
     "d /mnt/fast/wger 0755 root root -"
     "d /mnt/fast/wger/pgdata 0755 root root -"
     "d /mnt/fast/wger/media 0755 1000 1000 -"
-    # OnlyOffice DocSpace (stacks/docspace/compose.yaml). THREE different
+    # OnlyOffice DocSpace (stacks/docspace/compose.yaml). THREE containers,
+    # THREE DIFFERENT NON-ROOT UIDs, and getting any of them wrong produces
+    # `dependency failed to start` naming a container that is fine:
+    #   docspace       uid 104 gid 107 (USER onlyoffice, starts pre-dropped)
+    #   docspace_db    uid 999 gid 999 (mysql drops before --initialize)
+    #   docspace_ds    root            (documentserver chowns from its entry)
+    # THREE different
     # conventions in three containers; do not normalise them.
     #   - Document Server runs as ROOT and chowns its own mounts to ds:ds on
     #     every start, so root-owned is correct and self-healing. Never set
@@ -322,12 +328,25 @@
     # namespace. Separating them is what makes the Backrest exclude list for
     # the document cache expressible at all.
     "d /mnt/fast/docspace 0755 root root -"
-    "d /mnt/fast/docspace/app 0755 root root -"
-    "d /mnt/fast/docspace/logs 0755 root root -"
+    # 🚨 104:107, NOT root. The docspace image sets `USER onlyoffice` in the
+    # Dockerfile — uid 104, gid 107 — so its entrypoint starts ALREADY
+    # dropped and cannot chown its way out. It does `mkdir -p
+    # /app/onlyoffice/data/.secrets` on first run, which is inside this bind
+    # mount, and a root-owned 0755 parent makes that EACCES.
+    "d /mnt/fast/docspace/app 0755 104 107 -"
+    "d /mnt/fast/docspace/logs 0755 104 107 -"
     "d /mnt/fast/docspace/ds-data 0755 root root -"
     "d /mnt/fast/docspace/ds-lib 0755 root root -"
     "d /mnt/fast/docspace/ds-logs 0755 root root -"
-    "d /mnt/fast/docspace/mysqldata 0755 root root -"
+    # 🚨 999:999, NOT root. The official mysql image drops to uid 999
+    # (`mysql`) and `--initialize` refuses a data directory it cannot write:
+    # "the designated data directory /var/lib/mysql/ is unusable". The
+    # container then restart-loops while every other container in the project
+    # comes up fine, so the visible symptom is `dependency failed to start`
+    # on a service that has nothing wrong with it. This is finding #14
+    # (seerr) in a second image — root-owned bind mounts are the default
+    # docker would have chosen, which is exactly why these rules exist.
+    "d /mnt/fast/docspace/mysqldata 0755 999 999 -"
     # Gatus (stacks/gatus/compose.yaml). Its SQLite history lives here; the
     # container is on the HOST network and has no ports: entry, which is why it
     # needs a host-network-declared entry in tests/lib/lints.nix.
@@ -350,6 +369,21 @@
     # monitoring container a readable copy of every service's data.
     "d /mnt/fast/beszel-agent/fsprobe 0755 root root -"
     "d /mnt/slow/beszel-fsprobe 0755 root root -"
+    # Samba (stacks/samba/compose.yaml). smbd runs as ROOT and must — it needs
+    # to setuid per connection — so /data is root-owned.
+    "d /mnt/fast/samba 0755 root root -"
+    # 🚨 The share tree is 1000:1000, and that is a CONTRACT with
+    # stacks/samba/config.yml's `auth:` entry, which creates the SMB user with
+    # uid 1000 gid 1000 INSIDE the container via `adduser -u`. Nothing
+    # connects the two but these two files agreeing. A mismatch is not a crash
+    # — it is files nothing else in the fleet can read, found much later.
+    # samba-init refuses to start on a mismatch and the suite measures it
+    # (write over SMB, stat on the host).
+    #
+    # 0775 rather than 0755: the group bit is what lets a future second SMB
+    # user share the tree without each file being private to whoever wrote it.
+    "d /mnt/slow/samba 0755 root root -"
+    "d /mnt/slow/samba/shared 0775 1000 1000 -"
   ];
 
   # Swap (optional - can be added if needed)

@@ -1094,6 +1094,7 @@ in
           ("docspace", "${repo + "/stacks/docspace/compose.yaml"}"),
           ("gatus", "${repo + "/stacks/gatus/compose.yaml"}"),
           ("beszel", "${repo + "/stacks/beszel/compose.yaml"}"),
+          ("samba", "${repo + "/stacks/samba/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
@@ -1349,6 +1350,18 @@ in
               "websocket — which is why _overview's port cell for the agent "
               "row is `--` and 10453 was released. The hub itself is bridged "
               "and published 127.0.0.1:10452 like everything else.",
+          ("samba", "samba"):
+              "host — SMB, and unlike everything else in this fleet it is not "
+              "a choice. Clients speak SMB on 445 directly; there is no vhost "
+              "and never will be, because Caddy does not proxy SMB and "
+              "discovery is multicast. Exposure is controlled by the firewall "
+              "(445 is NOT opened, so this is tailnet-only via "
+              "trustedInterfaces) and by smbd's own `interfaces` + `bind "
+              "interfaces only` from SAMBA_INTERFACES — samba-init refuses to "
+              "start if that list omits `lo`, because the healthcheck dials "
+              "\\\\localhost and its absence makes a working server look "
+              "dead. tests/suites/samba.nix asserts reachability from a "
+              "second machine, since the generic probe cannot.",
           ("media", "qbittorrent"):
               "service:gluetun — the kill-switch, and the whole point of the "
               "media stack's design. qbittorrent has no network namespace of "
