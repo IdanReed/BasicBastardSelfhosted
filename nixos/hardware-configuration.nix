@@ -328,11 +328,15 @@
     # namespace. Separating them is what makes the Backrest exclude list for
     # the document cache expressible at all.
     "d /mnt/fast/docspace 0755 root root -"
-    # 🚨 104:107, NOT root. The docspace image sets `USER onlyoffice` in the
-    # Dockerfile — uid 104, gid 107 — so its entrypoint starts ALREADY
-    # dropped and cannot chown its way out. It does `mkdir -p
-    # /app/onlyoffice/data/.secrets` on first run, which is inside this bind
-    # mount, and a root-owned 0755 parent makes that EACCES.
+    # 104:107 = the image's `USER onlyoffice`. NOT load-bearing: the compose
+    # file sets `user: root` following upstream, because the entrypoint edits
+    # /etc/nginx and /app/onlyoffice/config before dropping into supervisord.
+    # These are declared anyway so that dropping `user: root` later degrades
+    # rather than breaking, and so the ownership matches what the app expects
+    # if it ever drops privileges internally. (An earlier version of this
+    # comment claimed root ownership was what broke the first suite run. It
+    # was not — that was mysqldata below. Corrected rather than left to be
+    # believed.)
     "d /mnt/fast/docspace/app 0755 104 107 -"
     "d /mnt/fast/docspace/logs 0755 104 107 -"
     "d /mnt/fast/docspace/ds-data 0755 root root -"
