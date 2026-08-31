@@ -61,11 +61,28 @@ shred -u /tmp/storagebox_ed25519*
 
 Then fill in `uXXXXXX` in `ssh_config`. The key materialises on the host at
 `/var/lib/backup/storagebox_ed25519` (a real file re-copied from
-`/run/secrets` each boot, because backrest bind-mounts the directory and a
-symlink would dangle inside the container). `config-init` refuses to seed —
-and Backrest will not start — while the key is missing **or still the
-`changeme_` placeholder**, rather than coming up and failing every backup on
-ssh auth.
+`/run/secrets` each boot, because both containers bind-mount that exact path
+and a symlink into `/run/secrets` would dangle inside them). `config-init`
+refuses to seed — and Backrest will not start — while the key is missing **or
+still the `changeme_` placeholder**, rather than coming up and failing every
+backup on ssh auth.
+
+Each container gets only what it reads: `config-init` mounts the single key
+file (not `/var/lib/backup`, which also holds `vps_ed25519` — the
+passwordless-sudo identity for the public VPS).
+
+### 2b. The host key is pinned
+
+`ssh_config` sets `StrictHostKeyChecking yes` against the committed
+`known_hosts`, mounted read-only at `/etc/ssh/ssh_known_hosts`. There is no
+trust-on-first-use step to perform and no prompt to answer; a changed host key
+fails the backup loudly.
+
+The three keys are Hetzner's, shared by all Storage Boxes, verified against
+the fingerprints Hetzner publishes at
+<https://docs.hetzner.com/storage/storage-box/general/#ssh-host-keys>. To
+re-check at any time: `ssh-keygen -l -f known_hosts` and compare. **A mismatch
+is not a rotation until that docs page says so** — see the file's header.
 
 ### 3. VPS backup key
 
@@ -91,9 +108,17 @@ bcrypt can never log in. Any value containing `$` (e.g. a generated
 `RESTIC_PASSWORD`) must be single-quoted before encrypting — the
 decrypt-and-source path would otherwise expand it.
 
+`config-init` refuses to seed `config.json` if **any** value it substitutes is
+empty *or still contains `changeme`*. `config.json` is written exactly once
+and Backrest owns it from then on, so a placeholder seeded now is permanent.
+
 ### 5. Dead-man's switch
 
-Set `DEADMAN_URL` to a healthchecks.io check (or equivalent). The hook is
+Set `DEADMAN_URL` to a healthchecks.io check (or equivalent) **before first
+deploy** — `config-init` will not seed a `config.json` containing the
+`hc-ping.com/changeme-uuid` placeholder, because a hook that 404s is
+indistinguishable from a working one (`ON_ERROR_IGNORE`) and this is the only
+external signal in the fleet. The hook is
 `actionHealthchecks`, so delivery is healthchecks-style: success pings the
 URL, failure pings `<URL>/fail` — richer than the old bare POST. This is the only
 thing that catches *absence* — a backup that stopped running produces no

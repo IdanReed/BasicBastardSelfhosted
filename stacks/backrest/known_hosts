@@ -1,0 +1,45 @@
+# Hetzner Storage Box SSH host keys — the PIN behind `StrictHostKeyChecking
+# yes` in the ssh_config beside this file. Mounted read-only at
+# /etc/ssh/ssh_known_hosts inside the Backrest container.
+#
+# WHY THIS FILE EXISTS: before it, ssh_config said `StrictHostKeyChecking
+# accept-new` and the only known_hosts was ~/.ssh/known_hosts in the
+# container's WRITABLE LAYER — which is discarded on every `docker compose up`
+# that recreates the container (an image bump, a compose edit, an Arcane
+# redeploy). So the "trust on first use" happened over and over, and every one
+# of those first uses would accept whatever answered. The peer being trusted
+# holds credentials that can `forget --prune` every backup this fleet has.
+#
+# All Storage Boxes share one set of host keys, so this file is not
+# per-account and needs no edit when uXXXXXX changes.
+#
+# ⚠ VERIFICATION (2026-08-31). The keys below were not taken on trust. Hetzner
+# publishes FINGERPRINTS, not keys, at
+#   https://docs.hetzner.com/storage/storage-box/general/#ssh-host-keys
+# so the keys were obtained separately and then checked against the published
+# fingerprints with `ssh-keygen -l -f known_hosts`, which reproduced all three
+# EXACTLY:
+#
+#   ED25519  SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM
+#   RSA      SHA256:EMlfI8GsRIfpVkoW1H2u0zYVpFGKkIMKHFZIRkf2ioI
+#   ECDSA    SHA256:oDHZqKXnoMtgvPBjjC57pcuFez28roaEuFcfwyg8O5c
+#
+# A fingerprint is a hash of the key, so matching all three is proof of
+# authenticity, not corroboration — provenance of the key text does not matter
+# once the hash agrees with the vendor's published value.
+#
+# TO RE-VERIFY, or after a Hetzner host-key rotation:
+#   ssh-keygen -l -f stacks/backrest/known_hosts        # compare to the docs
+#   ssh-keyscan -p 23 uXXXXXX.your-storagebox.de        # what the box serves
+# and only then edit this file. A MISMATCH IS NOT A ROTATION UNTIL THE DOCS
+# PAGE SAYS SO — that is exactly the alarm this pin exists to raise.
+#
+# Both key forms are listed because ssh looks up the port it dialled:
+# `[host]:23` when Port is 23 (the Storage Box default and what ssh_config
+# sets), bare `host` when it is 22.
+[*.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs
+[*.your-storagebox.de]:23 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==
+[*.your-storagebox.de]:23 ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==
+*.your-storagebox.de ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs
+*.your-storagebox.de ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==
+*.your-storagebox.de ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==

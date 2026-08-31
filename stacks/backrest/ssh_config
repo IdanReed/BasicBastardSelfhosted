@@ -16,5 +16,20 @@ Host storagebox
     User uXXXXXX
     IdentityFile /root/.ssh/id_ed25519
     IdentitiesOnly yes
-    StrictHostKeyChecking accept-new
+    # PINNED, not trust-on-first-use. `accept-new` (what this was until
+    # 2026-08-31) plus a known_hosts in the container's WRITABLE LAYER meant a
+    # fresh TOFU on every container recreate — an image bump, a compose edit,
+    # an Arcane redeploy — and each of those first uses would accept whatever
+    # answered, for a peer holding credentials that can `forget --prune` every
+    # backup. `yes` also closes the accept-new hole where a MITM simply offers
+    # a key TYPE the file has no entry for: all three of Hetzner's are listed.
+    StrictHostKeyChecking yes
+    # The pin itself, mounted read-only from ./known_hosts. GLOBAL rather than
+    # the per-user file precisely because the per-user file is the ephemeral
+    # one; /dev/null for the user file so nothing in the writable layer can
+    # ever widen what is trusted, and UpdateHostKeys off so ssh does not try
+    # to append rotated keys to it.
+    GlobalKnownHostsFile /etc/ssh/ssh_known_hosts
+    UserKnownHostsFile /dev/null
+    UpdateHostKeys no
     ServerAliveInterval 30
