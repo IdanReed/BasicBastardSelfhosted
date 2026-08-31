@@ -103,6 +103,26 @@ pkgs.testers.runNixOSTest {
         systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
+        # 🚨 REAL DISKS for the two tiers, not tmpfs, and the reboot subtest is
+        # why. On the services VM /mnt/fast is a partition that survives a
+        # reboot; as tmpfs it is wiped, which takes /data — and therefore
+        # samba's passdb and /var/lib/samba/private — with it. Restarting the
+        # existing container then fails with
+        #
+        #   directory_create_or_exist: mkdir failed on directory
+        #   /var/lib/samba/private/msg.sock: No such file or directory
+        #
+        # because the image symlinks that path into /data and the entrypoint
+        # does not rebuild the tree for a container it has already
+        # initialised. That is a real behaviour, but it is the behaviour of
+        # LOSING THE DATA DISK — not of rebooting — so asserting it here would
+        # be asserting the wrong thing, and asserting persistence on tmpfs is
+        # impossible. Real disks make the subtest mean what it says.
+        virtualisation.emptyDiskImages = [
+          1024
+          2048
+        ];
+
         virtualisation.fileSystems = {
           "/srv" = {
             device = "tmpfs";
@@ -110,14 +130,14 @@ pkgs.testers.runNixOSTest {
             options = [ "mode=0755" ];
           };
           "/mnt/fast" = {
-            device = "tmpfs";
-            fsType = "tmpfs";
-            options = [ "mode=0755" ];
+            device = "/dev/vdb";
+            fsType = "ext4";
+            autoFormat = true;
           };
           "/mnt/slow" = {
-            device = "tmpfs";
-            fsType = "tmpfs";
-            options = [ "mode=0755" ];
+            device = "/dev/vdc";
+            fsType = "ext4";
+            autoFormat = true;
           };
         };
 
@@ -355,6 +375,9 @@ pkgs.testers.runNixOSTest {
 
         with subtest("the share survives a reboot"):
             # shutdown()+start(), not reboot(): qemu runs with -no-reboot.
+            # /mnt/fast and /mnt/slow are real ext4 disks here (see the node
+            # config), so this asserts persistence rather than re-creation.
+            services_vm.succeed("test -f /mnt/slow/samba/shared/canary.txt")
             services_vm.shutdown()
             services_vm.start()
             services_vm.wait_for_unit("multi-user.target")
@@ -372,6 +395,9 @@ pkgs.testers.runNixOSTest {
                 f"smbclient //127.0.0.1/shared -U '{USER}%{PASSWORD}' -m SMB3 "
                 "-c 'ls' >/dev/null"
             )
+            # And the data is still there, which is the half a login cannot
+            # prove on its own.
+            services_vm.succeed("test -f /mnt/slow/samba/shared/canary.txt")
     except Exception:
         dump_diag()
         raise
