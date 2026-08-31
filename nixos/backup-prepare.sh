@@ -126,7 +126,7 @@ finish_dump() {
 # pg_dumpall against the container's superuser. A logical dump is restorable;
 # a file-level copy of a live pgdata directory generally is not, which is why
 # the Backrest plans exclude **/pgdata/**.
-for svc in paperless immich firefly dawarich tandoor wger windmill; do
+for svc in paperless immich firefly dawarich tandoor wger windmill outline; do
     container="${svc}_db"
     # Every service in this loop is also its own stack directory name.
     require_running "$container" "$svc" || continue

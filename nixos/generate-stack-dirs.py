@@ -259,6 +259,20 @@ COMPOSE_FILES list. It is the single place every failure in the fleet gets
 reported, so it silently failing to start would take the alert path with it;
 tests/suites/backrest.nix and services-vm.nix both pre-create these
 root-owned and have run green throughout.""",
+    "outline": """\
+1001:1001 for the app's data directory, and that is VERIFIED rather than
+assumed: the image ends on `USER nodejs` and `id` inside the pinned
+outlinewiki/outline:1.9.2 reports uid=1001(nodejs) gid=1001(nodejs). Its
+entrypoint is the stock node one — it execs the server and chowns NOTHING —
+so a root-owned bind source is never repaired. The symptom is not a
+crash-loop: Outline starts, serves, and fails the first time someone
+attaches a file, because FILE_STORAGE=local makes that directory the whole
+object store (finding #14 with the crash-loop replaced by silence).
+
+Its Postgres starts as root and chowns its own datadir, as everywhere else
+here, so /mnt/fast/outline/pgdata is root:root. There is deliberately no
+directory for redis: that container has no volume at all (its queue is
+reconstructible — see the compose file).""",
     "paperless": """\
 root:root for all five, and that is VERIFIED rather than assumed: the
 paperless entrypoint runs as root, maps its `paperless` user onto
@@ -272,6 +286,19 @@ generator landed — five bind sources with no rule.""",
     "samba": """\
 smbd runs as ROOT and must — it needs to setuid per connection — so /data is
 root-owned.""",
+    "silverbullet": """\
+1000:1000, and here the ownership is not just about write access — it
+DECIDES THE UID THE SERVER RUNS AS. The image's entrypoint reads the owner
+of $SB_FOLDER and re-execs `su silverbullet` at that uid unless PUID is set
+("Will run SilverBullet with UID 1000, inferred from the owner of /space" —
+measured against the pinned 2.9.0). Leave the space root-owned and the wiki
+runs as root instead, writing root-owned pages that the git-sync sidecar
+(uid 1000, and it must be 1000 to match) then cannot commit. Nothing
+crashes; the mirror just stops working.
+
+1000 is also the fleet's "content" uid — the same one /srv/stacks and
+Forgejo's /data use (finding #10) — so the space, the repo it is pushed to
+and the backup all agree on who owns the files.""",
     "tandoor": """\
 Food domain — TWO stacks (stacks/tandoor, stacks/wger), one per app, because
 both are Django and both read the BARE name SECRET_KEY out of their
@@ -385,12 +412,38 @@ This holds the sidekiq queue: losing it drops in-flight import and
 statistics jobs, which is survivable, but a wrong owner makes redis
 exit at start and takes sidekiq with it.""",
     },
+    # --- outline -------------------------------------------------------
+    "/mnt/fast/outline/data": {
+        "owner": ("1001", "1001"),
+        "note": """\
+🚨 1001:1001 — the `nodejs` user the image runs as, NOT 1000. Outline is
+the only thing in this fleet on that uid, and nothing in the container
+repairs it. FILE_STORAGE=local makes this directory the object store for
+every attachment and avatar, so a root-owned copy is a wiki that works
+until the first upload.""",
+    },
     # --- notes-sync ----------------------------------------------------
     "/mnt/fast/rmfakecloud": {"owner": ("1000", "1000")},
     "/mnt/fast/rmfakecloud/data": {"owner": ("1000", "1000")},
     "/mnt/fast/syncthing": {"owner": ("1000", "1000")},
     "/mnt/fast/syncthing/config": {"owner": ("1000", "1000")},
     "/mnt/fast/vault": {"owner": ("1000", "1000")},
+    # --- silverbullet --------------------------------------------------
+    # Parent declared 1000:1000 too, matching forgejo's pattern: everything
+    # under it belongs to the same content uid, and a root-owned parent with
+    # a 1000-owned child invites exactly the "why can it not write here"
+    # confusion these rules exist to end.
+    "/mnt/fast/silverbullet": {"owner": ("1000", "1000")},
+    "/mnt/fast/silverbullet/space": {
+        "owner": ("1000", "1000"),
+        "note": """\
+🚨 This ownership IS the uid SilverBullet runs as — its entrypoint infers
+PUID from the owner of the space (see the stack note above), so changing
+this line changes the process, not just the file modes. It is also the git
+working tree the sync sidecar (uid 1000) commits from and, being plain
+markdown, the one thing in this stack that backrest's fast-volume plan
+actually needs to capture.""",
+    },
     # --- forgejo -------------------------------------------------------
     "/mnt/fast/forgejo": {"owner": ("1000", "1000")},
     "/mnt/fast/forgejo/data": {"owner": ("1000", "1000")},

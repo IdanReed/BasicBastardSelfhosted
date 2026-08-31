@@ -572,6 +572,53 @@
 		reverse_proxy localhost:10201
 	}
 
+	@silverbullet host silverbullet.svc.idanreed.com
+	handle @silverbullet {
+		# Forward auth, with SilverBullet's own SB_USER login underneath —
+		# two locks, like Syncthing and Windmill. SilverBullet cannot read
+		# X-Authentik-* headers, so this gates access only and the second
+		# login stays permanent.
+		#
+		# NO skip_path_regex on its blueprint provider, and that is a
+		# measured decision rather than an omission. Against the pinned
+		# 2.9.0 with SB_USER set, the only paths that answer without a
+		# session are `/`, `/.ping`, `/.client/*`, `/service_worker.js` and
+		# `/.auth`; `/index.md` and `/.fs/*` 401. Every one of those is a
+		# same-origin browser request that carries the Authentik cookie,
+		# and nothing dials this vhost non-interactively — the git mirror
+		# talks to Forgejo's LOOPBACK publish, not through Caddy. So there
+		# is no API client to carve out (contrast Firefly's ^/api/.*).
+		#
+		# The PWA service worker, which is the part forward auth would
+		# genuinely break, is turned off in the compose file instead of
+		# being exempted here. See the SB_DISABLE_SERVICE_WORKER comment
+		# there for the trade.
+		#
+		# Rollout order as always: blueprint entry + VPS rebuild BEFORE
+		# this route syncs, or the outpost has nothing to match the Host
+		# against and every request 404s.
+		import protected
+		reverse_proxy localhost:10202
+	}
+
+	@outline host outline.svc.idanreed.com
+	handle @outline {
+		# NO forward auth, and this one is not a preference: Outline has no
+		# local accounts at all and drives its own OIDC against Authentik
+		# (OIDC_* in stacks/outline/compose.yaml, provider in
+		# headscale-vps/authentik/blueprints/custom/outline-oidc.yaml).
+		# Putting the outpost in front would 302 the /auth/oidc.callback
+		# leg of its own login flow — the same reason immich, tandoor and
+		# the books stack are unprotected.
+		#
+		# The consequence is that this vhost is open to the tailnet until
+		# the OIDC client secret is real: Outline will render its sign-in
+		# page to anyone who can reach the name. It has nothing to sign
+		# into and creates no session, but do not treat the route as a
+		# lock. The first successful sign-in becomes the workspace OWNER.
+		reverse_proxy localhost:10203
+	}
+
 	# ------------------------------------------------------------------
 	# Food domain (10350-10399). Two stacks, one per app — see
 	# stacks/tandoor/compose.yaml's header for why they cannot share one.

@@ -18,6 +18,14 @@
     finalImageName = "alpine";
     finalImageTag = "3.21";
   };
+  "alpine_git_v2_54_0" = {
+    composeRef = "alpine/git:v2.54.0";
+    imageName = "alpine/git";
+    imageDigest = "sha256:4f9488b7295baec153a9953479690f835ad4699b1d9f11e3897a4485c224fc3e";
+    hash = "sha256-zVQnHeGiBUpRiC2YiKDcbq7ilFv+d5utNfynIpX/qAk=";
+    finalImageName = "alpine/git";
+    finalImageTag = "v2.54.0";
+  };
   "apache_tika_3_3_0_0" = {
     composeRef = "apache/tika:3.3.0.0";
     imageName = "apache/tika";
@@ -266,6 +274,14 @@
     finalImageName = "ghcr.io/seerr-team/seerr";
     finalImageTag = "v3.4.1";
   };
+  "ghcr_io_silverbulletmd_silverbullet_2_9_0" = {
+    composeRef = "ghcr.io/silverbulletmd/silverbullet:2.9.0";
+    imageName = "ghcr.io/silverbulletmd/silverbullet";
+    imageDigest = "sha256:82e76a800920370d83e2f50c6946d3c420954b0bd417dbb96f7911513fa05620";
+    hash = "sha256-iTd2ZQ8W6KsbCcBPPXg3mKpLhKuceji6ol2P2XOUI2s=";
+    finalImageName = "ghcr.io/silverbulletmd/silverbullet";
+    finalImageTag = "2.9.0";
+  };
   "ghcr_io_sysadminsmedia_homebox_0_26_2" = {
     composeRef = "ghcr.io/sysadminsmedia/homebox:0.26.2";
     imageName = "ghcr.io/sysadminsmedia/homebox";
@@ -434,11 +450,19 @@
     finalImageName = "onlyoffice/documentserver";
     finalImageTag = "9.4.0";
   };
+  "outlinewiki_outline_1_9_2" = {
+    composeRef = "outlinewiki/outline:1.9.2";
+    imageName = "outlinewiki/outline";
+    imageDigest = "sha256:32d76719c378931dd65d93945930ca380d8376a0337d98a991fcc12b266f33cf";
+    hash = "sha256-fdvcowN3b9MMsBcp9SEib0Um8aO1GjoRetObQsUe/Ag=";
+    finalImageName = "outlinewiki/outline";
+    finalImageTag = "1.9.2";
+  };
   "postgis_postgis_17-3_5-alpine" = {
     composeRef = "postgis/postgis:17-3.5-alpine";
     imageName = "postgis/postgis";
-    imageDigest = "sha256:08f4b1e1f4a571008c60272ceb9e0d1f9f8f643792d006b74a35b1bec44c2218";
-    hash = "sha256-iw0miPOAYALtIf9VSRgEqDseqwhXDIzETUY5naEU2eU=";
+    imageDigest = "sha256:894f570c0cf0664ed5576a8fd5d5bfb8fb1b19d592885b686c3a88c8bd90c41f";
+    hash = "sha256-maeMcu77S+wRSy5KgwqOzYFNm3giUfKrodxXHxZQBHI=";
     finalImageName = "postgis/postgis";
     finalImageTag = "17-3.5-alpine";
   };
@@ -493,8 +517,8 @@
   "valkey_valkey_9_1-alpine" = {
     composeRef = "valkey/valkey:9.1-alpine";
     imageName = "valkey/valkey";
-    imageDigest = "sha256:de31910896150d5e754a07d57d227cfdde4e258ddd0d1aa4607f2d2f95843715";
-    hash = "sha256-MNqkpCQqn11UE8bvqGeBTsTpkLeIhWV+7UnGT9tfq8M=";
+    imageDigest = "sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9";
+    hash = "sha256-fF88phuBt12Y0dUssOi/QFWSmm4oZPyKwg9R0XKW9Pk=";
     finalImageName = "valkey/valkey";
     finalImageTag = "9.1-alpine";
   };

@@ -693,6 +693,41 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # Outline is UNPROTECTED at the Caddy layer on purpose (it drives its own
+  # OIDC), so the path probe expects a real page, not a 302 to Authentik.
+  - name: "outline (path: caddy -> service)"
+    group: "path"
+    url: "https://outline.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # /_health, not `/`: Outline's FORCE_HTTPS default 301s a plain-http request
+  # to `/` (measured), so a probe of `/` would be satisfied by the redirect
+  # alone. /_health is exempt from that redirect and returns the literal body
+  # OK — which is why the body condition is here and not just a status check.
+  #
+  # ⚠ Still blind to the thing most likely to break: Outline has no local
+  # accounts, so a wrong OIDC client secret leaves this green and nobody able
+  # to log in. Nothing automated can see that.
+  - name: "outline (service)"
+    group: "service"
+    url: "http://127.0.0.1:10203/_health"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == OK"
+    alerts:
+      - type: ntfy
+
   - name: "paperless (path: caddy -> service)"
     group: "path"
     url: "https://paperless.svc.idanreed.com/"
@@ -858,6 +893,37 @@ endpoints:
       ignore-redirect: true
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "silverbullet (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://silverbullet.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # /.ping rather than `/`: it is SilverBullet's own liveness endpoint, served
+  # unauthenticated even with SB_USER set (measured), so this is a 200 and not
+  # a login page that happens to render.
+  #
+  # ⚠ Blind to two things by construction: whether the space is WRITABLE
+  # (SilverBullet answers /.ping happily in read-only mode) and whether the
+  # git mirror is working (the sidecar reports failures through ntfy itself).
+  - name: "silverbullet (service)"
+    group: "service"
+    url: "http://127.0.0.1:10202/.ping"
+    interval: 1m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 200"
     alerts:
       - type: ntfy
 

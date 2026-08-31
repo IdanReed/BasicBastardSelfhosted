@@ -438,6 +438,50 @@ entries:
       meta_description: "File synchronisation (web GUI)"
 
   # ===========================================
+  # SilverBullet (stacks/silverbullet)
+  # ===========================================
+  # A markdown wiki whose own auth is a single SB_USER credential; forward
+  # auth is the primary lock and that credential stays underneath (two
+  # logins, the Windmill/Syncthing posture — SilverBullet does not read
+  # X-Authentik-* headers).
+  #
+  # NO skip_path_regex, measured rather than assumed. Against the pinned
+  # 2.9.0 with SB_USER set, the only paths served without a session are `/`,
+  # `/.ping`, `/.client/*`, `/service_worker.js` and `/.auth` — all
+  # same-origin browser requests that carry the Authentik cookie. Nothing
+  # dials this vhost non-interactively: the space is mirrored to Forgejo by a
+  # sidecar that uses Forgejo's LOOPBACK publish, never Caddy. The one thing
+  # forward auth genuinely breaks is the PWA service worker (a cached 302 for
+  # a JS URL), and that is handled by turning the worker OFF in the compose
+  # file rather than by opening a hole here.
+  #
+  # Outline, the other wiki landing at the same time, is deliberately ABSENT:
+  # it drives its own OIDC (outline-oidc.yaml) and has no local accounts, so
+  # proxy auth in front of it would 302 its own callback.
+  - model: authentik_providers_proxy.proxyprovider
+    id: silverbullet-provider
+    state: present
+    identifiers:
+      name: silverbullet
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://silverbullet.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: silverbullet-app
+    state: present
+    identifiers:
+      slug: silverbullet
+    attrs:
+      name: SilverBullet
+      provider: !KeyOf silverbullet-provider
+      policy_engine_mode: any
+      meta_description: "Markdown wiki, git-mirrored to Forgejo"
+
+  # ===========================================
   # Util stack (stacks/util): glance and it-tools
   # ===========================================
   # BentoPDF is already above as the pilot. ExcaliDash is deliberately ABSENT:
@@ -728,3 +772,4 @@ entries:
         - !KeyOf wger-provider
         - !KeyOf gatus-provider
         - !KeyOf beszel-provider
+        - !KeyOf silverbullet-provider
