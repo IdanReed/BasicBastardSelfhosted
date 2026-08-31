@@ -91,7 +91,11 @@ services:
       # in the content handler and wg.Wait() on every widget goroutine, so with
       # no egress that endpoint stalls until each widget's HTTP client times
       # out. The shell and healthz are unaffected.
-      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:8080/api/healthz']
+      # -O /dev/null, NOT --spider: --spider issues a HEAD, and a route
+      # registered GET-only answers 405, which leaves the container
+      # permanently unhealthy while the app is fine. That is exactly what
+      # happened to Homebox in the tracking stack. A GET costs nothing here.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8080/api/healthz']
       interval: 30s
       timeout: 10s
       retries: 5
@@ -120,7 +124,7 @@ services:
       # No HEALTHCHECK in the Dockerfile (production stage is
       # nginx:stable-alpine with a bare CMD). This is a liveness probe and
       # nothing more — there is nothing else to probe on a static SPA.
-      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:80/']
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
       interval: 60s
       timeout: 10s
       retries: 3
@@ -255,7 +259,7 @@ services:
       # the /api proxy and the socket.io upgrade.
       - BACKEND_URL=excalidash-backend:8000
     healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:80/']
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
       interval: 30s
       timeout: 10s
       retries: 5

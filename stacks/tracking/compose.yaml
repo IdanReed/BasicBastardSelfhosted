@@ -222,7 +222,15 @@ services:
       # this comment somewhere — the probe is a liveness check either way,
       # and no better endpoint exists. The SUITE is what proves the app
       # works, by asserting on /api/v1/status's CONTENT.
-      test: ['CMD', 'wget', '-q', '--spider', '-T', '5', 'http://127.0.0.1:7745/api/v1/status']
+      #
+      # 🚨 `-O /dev/null`, NOT `--spider`. `wget --spider` issues a HEAD, and
+      # Homebox registers /api/v1/status for GET only — so it answers 405 and
+      # the container sits unhealthy FOREVER while the application is
+      # perfectly fine and logging `request finished ... status=405` for every
+      # probe. Verified: this exact probe failed for 152s in the suite against
+      # a Homebox that had finished its migrations and was serving. Do not
+      # "simplify" this back to --spider without checking the route's methods.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:7745/api/v1/status']
       interval: 30s
       timeout: 10s
       retries: 5

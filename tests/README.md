@@ -780,6 +780,31 @@ Two things this confirms:
   each assert the length directly, so the failure names its own cause instead
   of arriving as a 500 an hour later.
 
+### 34. `wget --spider` is a HEAD request, and GET-only routes answer 405
+
+Homebox sat `unhealthy` for 152 seconds in a suite run while its own log showed
+migrations complete, `Server is running on :7745`, and — for every single probe
+— `request finished method=HEAD path=/api/v1/status status=405`.
+
+The probe was `wget -q --spider http://127.0.0.1:7745/api/v1/status`.
+`--spider` means "don't download the body", which wget implements as a **HEAD**.
+Homebox registers that route for GET only, so it returns 405, which wget treats
+as failure. The application was perfectly healthy the whole time; the probe was
+asking a question the router refuses to answer.
+
+This is a different shape from finding #16. There the healthcheck lies by
+passing — it probes the process and reports healthy for a broken app. Here it
+lies by failing, which is less dangerous but wastes a whole suite run and, in
+production, would have `depends_on: service_healthy` hold back everything
+downstream of a service that is fine.
+
+`wget -q -O /dev/null <url>` is a GET and costs nothing extra on a health
+endpoint. Use it unless you have specifically verified the route accepts HEAD.
+The `books` and `media` stacks keep `--spider` because their suites are green
+against those endpoints, which is the proof this rule asks for — the point is
+not that HEAD is wrong, it is that HEAD is an assumption most people do not
+know they are making.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -830,7 +855,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-three** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Thirty-four** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser
