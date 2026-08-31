@@ -161,6 +161,10 @@ let
     # Hand-written for the same reason as immich: kavita-config-init and
     # books-init are restart:"no" oneshots.
     books = callSuite ./suites/books.nix { };
+    # Three restart:"no" oneshots, and a Frigate that reports HEALTHY on a
+    # broken config (safe mode) — the generic suite would pass on a stack
+    # doing nothing at all.
+    automation = callSuite ./suites/automation.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting

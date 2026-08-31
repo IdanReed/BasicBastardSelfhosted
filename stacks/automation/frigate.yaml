@@ -1,0 +1,132 @@
+# Frigate config (annex §3.3). Git-managed, mounted read-only at
+# /config/config.yml.
+#
+# Read this before editing: FrigateBaseModel sets ConfigDict(extra="forbid"),
+# so ONE unknown or stale key is a hard ValidationError — and Frigate does not
+# crash on that, it starts in SAFE MODE with zero cameras and MQTT off, while
+# the container reports healthy. `--validate-config` is checked after that
+# fallback and prints "your config file is valid" regardless, so it cannot be
+# used to check this file. The automation suite asserts
+# `/api/config` -> safe_mode == false; that is the only reliable signal.
+#
+# Keys deleted in recent majors, listed because the previous design doc used
+# one of them: record.retain (-> record.continuous + record.motion, 0.17-0),
+# record.events (-> record.alerts + record.detections, 0.15-0),
+# live.stream_name (-> live.streams, 0.16-0).
+
+# Pinned so the config migrator has nothing to do. Without this Frigate would
+# try to rewrite this file on every boot and log a benign failure, because the
+# mount is read-only.
+version: "0.17-0"
+
+mqtt:
+  # By service name on the compose network — not localhost, because this stack
+  # is on a bridge rather than host networking (see the compose header).
+  host: mosquitto
+  port: 1883
+  user: frigate
+  # SINGLE braces: this is python str.format over the FRIGATE_-prefixed
+  # environment, not shell interpolation. It works on exactly six fields
+  # (mqtt.host/user/password, proxy.auth_secret, camera ffmpeg input paths,
+  # genai.api_key) — which is why this stack needs no config-init container.
+  # A literal { or } anywhere in one of those values raises, and lands you in
+  # safe mode.
+  password: "{FRIGATE_MQTT_PASSWORD}"
+
+detectors:
+  # PRODUCTION VALUE. A missing Coral is a crash LOOP, not a degradation: the
+  # edgetpu delegate re-raises, and Frigate's watchdog notices the dead
+  # detector process within 10s and sends SIGTERM to PID 1. The test suite
+  # therefore overrides this one block with `type: cpu` — the tested config
+  # differs from the deployed config in exactly the block that fails hardest
+  # if it is wrong, which is stated plainly in the annex rather than hidden.
+  coral:
+    type: edgetpu
+    device: usb
+
+# Operator-supplied (annex §8.2). Frigate explicitly supports an empty map —
+# it is the config Frigate writes for itself on first run — so the stack
+# deploys and runs with no cameras rather than refusing to start.
+#
+# Each camera looks like:
+#   front_door:
+#     ffmpeg:
+#       inputs:
+#         - path: "{FRIGATE_CAM_FRONT_DOOR}"     # rtsp://user:pass@ip:554/...
+#           roles: [detect, record]
+#     detect: {width: 1920, height: 1080, fps: 5}
+# Put the RTSP URL (which contains credentials) in .sops.env as
+# FRIGATE_CAM_<NAME>; the substitution above covers camera input paths.
+# Adding cameras means recomputing shm_size — see the compose file.
+cameras: {}
+
+record:
+  # Defaults to FALSE. Easy to miss, because the pre-0.17 schema expressed
+  # retention and enablement in one block.
+  enabled: true
+  motion:
+    days: 30
+  continuous:
+    days: 0
+
+snapshots:
+  enabled: true
+
+objects:
+  track:
+    - person
+    - car
+
+telemetry:
+  # Defaults to TRUE and sits on the SYNCHRONOUS startup path — stats_init()
+  # calls get_latest_version() before the app finishes coming up. Against
+  # blackholed egress that is a ~10s stall on every boot (bounded by a 10s
+  # timeout and swallowed, so never fatal). Off: this stack is designed to
+  # need no egress.
+  version_check: false
+
+go2rtc:
+  webrtc:
+    # Explicitly empty. Left unset, Frigate appends "stun:8555" to the
+    # candidate list and go2rtc resolves the literal host `stun` against
+    # stun.l.google.com — unsolicited egress for a feature nothing here uses.
+    candidates: []
+
+auth:
+  # Frigate's own auth is ON by default. It is turned off here because Caddy's
+  # (protected) snippet is the authenticator: Frigate ships a proxy contract
+  # that fits ours exactly — its nginx strips all inbound headers and
+  # re-injects a whitelist that includes verbatim the five X-authentik-*
+  # headers the snippet already copies.
+  #
+  # The pairing is load-bearing in one direction: this must not be false until
+  # the forward-auth blueprint and the Caddy route are BOTH live, or 8971 is
+  # unauthenticated behind a loopback publish.
+  enabled: false
+
+tls:
+  # Also ON by default — out of the box 8971 serves HTTPS with a self-signed
+  # certificate, which Caddy would have to be told to ignore. Plain HTTP on
+  # loopback, TLS terminated at Caddy, same as every other stack.
+  enabled: false
+
+proxy:
+  header_map:
+    user: x-authentik-username
+    role: x-authentik-groups
+    # role_map is NOT optional here. Without it Frigate takes its direct
+    # path, which grants admin only to a user whose group list literally
+    # contains "admin" — so a deployment without this block is permanently
+    # read-only with no admin route at all, since Frigate's own login is
+    # disabled above. The named group has to exist in Authentik: see the
+    # operator queue.
+    role_map:
+      admin:
+        - frigate-admins
+  # Authentik joins group values with `|`; Frigate's default is `,`. A
+  # mismatch does NOT error — it silently collapses every user to
+  # default_role. Confirm against the real Authentik before relying on the
+  # admin mapping (annex §8.5).
+  separator: "|"
+  # Safe default: an unmapped or unmatched user gets read-only, not admin.
+  default_role: viewer

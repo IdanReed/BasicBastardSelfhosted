@@ -20,6 +20,7 @@ today passes identically next month.
 ./tests/run.sh media        # heavy: full media stack — kill-switch, x265 guard, EICAR
 ./tests/run.sh immich       # heavy: photo stack — config render, v3 API, reboot durability
 ./tests/run.sh books        # heavy: book stack — headless seeding, OPDS, :ro mounts, hook
+./tests/run.sh automation   # heavy: HA storage config, MQTT round trip, frigate safe-mode gate
 ./tests/run.sh all
 
 ./tests/run.sh debug vps    # live VM + Python REPL
@@ -149,6 +150,7 @@ Honest list; do not read a green suite as covering these.
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
 | A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
 | Immich ML inference / live OIDC login | The immich suite runs offline: model download and every inference *result* (smart search hits, faces, duplicates) need egress — the suite pins the degraded-but-healthy state instead (ML answers `/ping`, smart search errors, server stays up). The OIDC browser + `app.immich:///oauth-callback` flow is doubly uncoverable (needs a browser AND v3's secure-OAuth default vs the suite's plain-HTTP loopback); the rendered config contract and the authentik-side provider are asserted instead. |
+| The Coral TPU, real cameras, and the IoT VLAN | The automation suite has no TPU and no RTSP sources. A missing Coral is a **crash loop**, not a degradation (the watchdog SIGTERMs PID 1), so the suite overrides the detector block with `type: cpu` — the tested config differs from the deployed one in exactly the block that fails hardest. What is covered instead: the guarded `/dev/bus/usb` stanza is asserted to exist and Frigate to run without the device, and Frigate is asserted **not to be in safe mode** (an invalid config does not crash it — it starts with `cameras: {}` and MQTT off, reporting healthy). Object detection, recording, snapshots and the IoT-VLAN broker path are untouched. Home Assistant's discovery integrations (mDNS/SSDP/DHCP) are inert on a bridge network by design; the suite cannot tell that from broken, so it asserts neither. |
 | Anna's Archive, and both apps' OIDC logins | The books suite runs offline: every AA search/download and the Cloudflare-bypass browser need egress, as does every metadata/cover provider — so shelfmark is only asserted to come up and stay healthy with zero egress, and the libraries index from the EPUB's own OPF and the audio file's tags alone. Both OIDC integrations ship *off* (their client secrets need the production age key), so what is asserted is the deliberate off-state — Kavita reporting `enabled: false`, audiobookshelf advertising `["local"]` — not a login, and not the ON-state render path. KOReader on the reMarkable is tablet-side entirely; the server half (OPDS feed, sync endpoint, auth key) is covered. |
 
 Where an override costs coverage, `lib/profiles.nix` names the loss and, where
@@ -492,6 +494,50 @@ The genuinely external switches are `allowMetadataMatching` and
 is the reason this design chose Kavita over a Calibre-based stack in the first
 place.
 
+### 23. The `mqtt:` block every Home Assistant guide shows is silently invalid
+
+Home Assistant's MQTT integration is config-flow only, and its YAML schema
+accepts **platform names alone** (`sensor:`, `light:`, …). A `mqtt:` block
+carrying `broker`/`port`/`username`/`password` — which is what essentially
+every guide, forum post and older design doc shows, and what this stack's
+first draft had — comes back as *extra keys not allowed*. There is no
+YAML-to-config-entry import path left.
+
+The failure is the bad kind: HA logs `Invalid config for 'mqtt'`, **starts
+anyway**, serves a healthy `/manifest.json`, and simply never connects to the
+broker. Frigate's events never reach Home Assistant, and every surface a
+deployment check would look at is green.
+
+The broker connection is a config **entry**, so `automation-init` creates it
+through the config-flow REST API (`POST /api/config/config_entries/flow` with
+`{"handler": "mqtt"}`, then the broker step) using the token it already holds
+from onboarding. It is idempotent for free — the integration declares
+`single_config_entry`, so a second run aborts with `single_instance_allowed`.
+
+Caught in review, before it shipped. The suite now asserts the entry exists
+and is `loaded`, and separately that Frigate published `online` to
+`frigate/available` — a topic that only exists if Frigate authenticated to the
+broker, unlike a log grep for "mqtt" which is unfalsifiable.
+
+### 24. A proxy role map that grants nobody anything
+
+Frigate's `proxy.header_map` can read a role out of a forwarded header, and
+the obvious configuration — `role: x-authentik-groups` with a sensible
+`default_role: viewer` — reads like it grants admin to the right people. It
+does not. Without an explicit `role_map`, Frigate takes its *direct* path,
+where the valid role set is exactly `{admin, viewer}` and a user is admin only
+if one of their groups is **literally named `admin`**.
+
+With Frigate's own login disabled in favour of forward auth, that means a
+deployment with no `role_map` is permanently read-only **with no admin route
+at all** — and nothing errors, because collapsing to `default_role` is the
+designed behaviour. The fix is `role_map: {admin: [<group>]}` plus an
+Authentik group that actually exists.
+
+Adjacent, same class: `proxy.separator` defaults to `,` while Authentik joins
+group values with `|`. A mismatch also silently collapses everyone to
+`default_role`.
+
 The `env-file-coverage` lint also warns that `backrest`, `caddy` and `ntfy`
 declare `env_file: .env` but have only `.sops.env.example` — `docker compose up`
 aborts on a missing env file, so those stacks will not start until the real
@@ -524,7 +570,7 @@ post-download hook in both directions including that it still exits 0 when its
 target is down, and reboot durability on a real disk), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Twenty-two** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Twenty-four** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

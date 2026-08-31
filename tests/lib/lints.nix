@@ -1041,6 +1041,7 @@ in
           ("media", "${repo + "/stacks/media/compose.yaml"}"),
           ("immich", "${repo + "/stacks/immich/compose.yaml"}"),
           ("books", "${repo + "/stacks/books/compose.yaml"}"),
+          ("automation", "${repo + "/stacks/automation/compose.yaml"}"),
       ]
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}

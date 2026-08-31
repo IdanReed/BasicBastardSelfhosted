@@ -50,6 +50,14 @@
     finalImageName = "codeberg.org/forgejo/forgejo";
     finalImageTag = "16.0";
   };
+  "eclipse-mosquitto_2_0_22" = {
+    composeRef = "eclipse-mosquitto:2.0.22";
+    imageName = "eclipse-mosquitto";
+    imageDigest = "sha256:212f89e1eaeb2c322d6441b64396e3346026674db8fa9c27beac293405c32b3c";
+    hash = "sha256-4Us5YbEUax2PoMoSM37TKTRjmqJqHO24yUKYiPK3+is=";
+    finalImageName = "eclipse-mosquitto";
+    finalImageTag = "2.0.22";
+  };
   "garethgeorge_backrest_v1_9_1" = {
     composeRef = "garethgeorge/backrest:v1.9.1";
     imageName = "garethgeorge/backrest";
@@ -73,6 +81,14 @@
     hash = "sha256-XC2oqDa8p50Ck1u92JqHX/Pm//94OOJmiTEdOWHEAU4=";
     finalImageName = "ghcr.io/alam00000/bentopdf";
     finalImageTag = "1.16.1";
+  };
+  "ghcr_io_blakeblackshear_frigate_0_17_2" = {
+    composeRef = "ghcr.io/blakeblackshear/frigate:0.17.2";
+    imageName = "ghcr.io/blakeblackshear/frigate";
+    imageDigest = "sha256:d4351369984d4a9e2a49ac59736f6490856a7ea11f7790040746d21496967010";
+    hash = "sha256-VnjWSg6Ym0hBCQn9o9ujaDyXJrMN1Y6AaFj/xVUsvw4=";
+    finalImageName = "ghcr.io/blakeblackshear/frigate";
+    finalImageTag = "0.17.2";
   };
   "ghcr_io_calibrain_shelfmark_1_3_13" = {
     composeRef = "ghcr.io/calibrain/shelfmark:1.3.13";
@@ -121,6 +137,14 @@
     hash = "sha256-58hlqmnlLLaIz5S1EBHayHUOSoiQmULhe76jnAiNl/k=";
     finalImageName = "ghcr.io/goauthentik/server";
     finalImageTag = "2026.5.6";
+  };
+  "ghcr_io_home-assistant_home-assistant_2026_8_3" = {
+    composeRef = "ghcr.io/home-assistant/home-assistant:2026.8.3";
+    imageName = "ghcr.io/home-assistant/home-assistant";
+    imageDigest = "sha256:14931c6b13756317849f46da1d01b45937a1150db66c081cfe529d48215943fe";
+    hash = "sha256-/+233TaTLpk1T7vu8Nkug4xkaMa81bwnu5j93ORfZgg=";
+    finalImageName = "ghcr.io/home-assistant/home-assistant";
+    finalImageTag = "2026.8.3";
   };
   "ghcr_io_idanreed_caddy-cloudflare_2_11_2" = {
     composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2";

@@ -175,6 +175,31 @@
     "d /mnt/slow/books 0755 1000 1000 -"
     "d /mnt/slow/books/library 0755 1000 1000 -"
     "d /mnt/slow/books/audiobooks 0755 1000 1000 -"
+    # Automation stack bind-mount roots (stacks/automation/compose.yaml).
+    #
+    # Ownership, VERIFIED per image (annex §2.3):
+    #   - home assistant runs as ROOT and has no PUID/PGID mechanism at all.
+    #     Its /config must also be WRITABLE: .HA_VERSION is rewritten on every
+    #     version change and that write is not wrapped in a try/except, so a
+    #     read-only config dir kills startup.
+    #   - mosquitto starts as root and DROPS to uid 1883, and its 2.x
+    #     entrypoint chowns only some of its tree (2.1 narrowed it to
+    #     /mosquitto/data alone) — so both directories are declared 1883
+    #     rather than relying on the image to heal them. This is the seerr
+    #     crash-loop class (finding #14) and the one place in this stack it
+    #     could still bite.
+    #   - frigate runs as root.
+    "d /mnt/fast/homeassistant 0755 root root -"
+    "d /mnt/fast/mosquitto 0755 root root -"
+    "d /mnt/fast/mosquitto/config 0755 1883 1883 -"
+    "d /mnt/fast/mosquitto/data 0755 1883 1883 -"
+    "d /mnt/fast/frigate 0755 root root -"
+    "d /mnt/fast/frigate/config 0755 root root -"
+    # Recordings, clips and exports. Deliberately NOT in backrest's
+    # slow-volume include list — it is an explicit allowlist and this path is
+    # not on it, which is how many GB of re-recordable video stays out of the
+    # backups. Do not add it.
+    "d /mnt/slow/frigate 0755 root root -"
   ];
 
   # Swap (optional - can be added if needed)
