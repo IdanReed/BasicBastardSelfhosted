@@ -158,24 +158,6 @@
 		reverse_proxy localhost:10407
 	}
 
-	@excalidash host excalidash.svc.idanreed.com
-	handle @excalidash {
-		# NO forward auth: ExcaliDash drives its own OIDC against
-		# Authentik, and AUTH_MODE=oidc_enforced means it is CLOSED even
-		# with the client secret still blank — it simply cannot be logged
-		# into yet. Stacking (protected) on top would add a second login
-		# once OIDC works and buys nothing before then.
-		#
-		# _overview.md's Auth column said FwdAuth and has been corrected
-		# to OIDC to match.
-		#
-		# socket.io rides /api; Caddy upgrades websockets with no extra
-		# configuration. The backend is NOT published — the frontend
-		# proxies to it over the compose network, and a second door to
-		# that API is exactly what publishing it would be.
-		reverse_proxy localhost:10406
-	}
-
 	@forgejo host forgejo.svc.idanreed.com
 	handle @forgejo {
 		# Web UI AND git-over-https (the v1 access mode — ssh is deferred, see

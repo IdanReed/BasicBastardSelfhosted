@@ -955,6 +955,43 @@ The `tracking` suite had done it this way from the start, for exactly this
 reason; the newer suites had drifted to the shorter form because it reads
 better. It reads better and is wrong.
 
+### 40. A container that downloads its own database driver at every start
+
+ExcaliDash's entrypoint runs `npx prisma generate` unconditionally on boot, and
+its `prisma/schema.prisma` hardcodes:
+
+```
+binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x",
+                 "linux-musl-openssl-3.0.x"]
+```
+
+The image bakes only the engines for its own architecture, so `generate` always
+reaches for the other one:
+
+```
+Error: request to https://binaries.prisma.sh/.../
+  linux-musl-arm64-openssl-3.0.x/libquery_engine.so.node.gz.sha256
+  failed, reason: getaddrinfo EAI_AGAIN binaries.prisma.sh
+```
+
+On amd64 it needs the arm64 engine; on arm64 it would need the other. There is
+no skip flag in the entrypoint. So this is not "degraded without egress" — it
+is a **crash loop** on a tailnet-only host, and the service is deferred.
+
+This is finding #4 (a container that fetches from the network to become
+functional) in its sharpest form yet, and worth recording because of *when* it
+was caught. The compose file parsed, the pins resolved, all nineteen lints
+passed, and the image's healthcheck and env vars were all correct. Nothing
+short of booting it offline could have found this — which is the argument for
+suites that run with no network rather than suites that mock one.
+
+The same run also caught that the secrets had been named
+`EXCALIDASH_JWT_SECRET` and `EXCALIDASH_CSRF_SECRET` while the application
+reads the **bare** `JWT_SECRET` and `CSRF_SECRET`. That is finding #25
+recurring in a file whose own comments warn about it: the container had been
+quietly auto-generating both into its volume, which is exactly the state the
+`.sops.env.example` said to avoid.
+
 ## Status
 
 Every suite is green as of 2026-08-30: lints (**19** — the three newest:
@@ -1010,7 +1047,7 @@ interlock, host authorization asserted with a wrong `Host` as the control, and
 the seeded `demo@dawarich.app` proven dead across a reboot), **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
 stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
-**Thirty-nine** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty** production findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

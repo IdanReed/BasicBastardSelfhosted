@@ -275,15 +275,6 @@
     "d /mnt/fast/syncthing 0755 1000 1000 -"
     "d /mnt/fast/syncthing/config 0755 1000 1000 -"
     "d /mnt/fast/vault 0755 1000 1000 -"
-    # ExcaliDash's SQLite store (stacks/util/compose.yaml). 1001:1001 is not a
-    # typo and not this fleet's usual convention: the backend's Dockerfile
-    # deliberately omits USER so its entrypoint can run as root, then
-    # `chown -R nodejs:nodejs` (uid 1001) this directory on EVERY start before
-    # su-exec'ing down. Declaring it 1001:1001 just means the container has
-    # nothing to do; declaring it 1000:1000 would be silently overwritten on
-    # the next boot. backup-prepare.sh reads it as root, so the dump is
-    # unaffected either way.
-    "d /mnt/fast/excalidash 0755 1001 1001 -"
     # Windmill's Postgres (stacks/windmill/compose.yaml). Only the pgdata root
     # — the DEPENDENCY CACHE is deliberately a named docker volume and must
     # never get a rule here: the image bakes CPython 3.11 and 3.12 into

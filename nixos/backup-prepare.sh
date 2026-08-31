@@ -110,13 +110,6 @@ sqlite_backup vaultwarden    /mnt/fast/vaultwarden/db.sqlite3
 sqlite_backup karakeep       /mnt/fast/karakeep/data/db.db
 sqlite_backup karakeep-queue /mnt/fast/karakeep/data/queue.db
 sqlite_backup homebox        /mnt/fast/homebox/homebox.db
-# ExcaliDash (stacks/util/compose.yaml). The filename really is dev.db —
-# an unfortunate upstream default that its own production compose ships
-# (DATABASE_URL=file:/app/prisma/dev.db), and diverging from it would mean
-# diverging from every upstream doc. Prisma writes -journal/-wal siblings,
-# so this dump is the restorable copy. The util suite asserts the path
-# exists, because sqlite_backup returns 0 for a missing source.
-sqlite_backup excalidash     /mnt/fast/excalidash/dev.db
 # NO uptimekuma LINE. It used to be here, for a stack that has never been
 # built — a permanently-silent no-op, since sqlite_backup returns 0 for a
 # missing source. Removed rather than left "ready": a speculative backup

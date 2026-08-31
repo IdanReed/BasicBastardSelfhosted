@@ -186,3 +186,27 @@
     finalImageName = "ghcr.io/goauthentik/server";
     finalImageTag = "2026.5.6";
   };
+  "ghcr_io_home-assistant_home-assistant_2026_8_3" = {
+    composeRef = "ghcr.io/home-assistant/home-assistant:2026.8.3";
+    imageName = "ghcr.io/home-assistant/home-assistant";
+    imageDigest = "sha256:14931c6b13756317849f46da1d01b45937a1150db66c081cfe529d48215943fe";
+    hash = "sha256-/+233TaTLpk1T7vu8Nkug4xkaMa81bwnu5j93ORfZgg=";
+    finalImageName = "ghcr.io/home-assistant/home-assistant";
+    finalImageTag = "2026.8.3";
+  };
+  "ghcr_io_idanreed_caddy-cloudflare_2_11_2" = {
+    composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2";
+    imageName = "caddy";
+    imageDigest = "sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562";
+    hash = "sha256-HPpccoluk3umDZjfwDBUlceC2UebrefbbttUtP3QuR8=";
+    finalImageName = "ghcr.io/idanreed/caddy-cloudflare";
+    finalImageTag = "2.11.2";
+  };
+  "ghcr_io_immich-app_immich-machine-learning_v3_1_0" = {
+    composeRef = "ghcr.io/immich-app/immich-machine-learning:v3.1.0";
+    imageName = "ghcr.io/immich-app/immich-machine-learning";
+    imageDigest = "sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e";
+    hash = "sha256-sidStRBLUqvW7KNqgr08e3uNXNpghY33vL5bTBb+8UI=";
+    finalImageName = "ghcr.io/immich-app/immich-machine-learning";
+    finalImageTag = "v3.1.0";
+  };

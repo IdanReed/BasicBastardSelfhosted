@@ -22,14 +22,13 @@
 #     servers, and collaboration needs their y-webrtc and PeerJS signalling.
 #     A self-hosted TeXlyre with no egress is an editor that cannot compile.
 #
-# Backup contract: ExcaliDash is the only service here with state, and it needs
-# a NEW `sqlite_backup excalidash /mnt/fast/excalidash/dev.db` line in
-# nixos/backup-prepare.sh. The filename really is `dev.db` — an unfortunate
-# upstream default that its production compose ships. The suite asserts the
-# file exists, because sqlite_backup returns 0 for a MISSING source and would
-# otherwise back up nothing forever (finding #25's class). Glance, IT-Tools,
-# BentoPDF and Mazanoke hold NO state and must never acquire a backup line: a
-# speculative one would be a permanently-silent no-op.
+# Backup contract: NOTHING. Every service here is stateless — Glance's config
+# is a read-only file, and the other three are static SPAs. None must ever
+# acquire a `sqlite_backup` line: that helper returns 0 for a MISSING source,
+# so a speculative entry is a permanently-silent no-op that looks exactly like
+# a working backup (finding #25's class, and what the uptimekuma line turned
+# out to be). ExcaliDash would have been the one stateful service here; it is
+# deferred, see below.
 services:
   bentopdf:
     image: ghcr.io/alam00000/bentopdf:1.16.1
@@ -132,136 +131,28 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # excalidash-backend — the API and SQLite store behind the whiteboard.
+  # 🚨 ExcaliDash (10406) is DEFERRED, and it is not a configuration problem.
   #
-  # 🚨 NO `ports:` STANZA, and it must stay that way. The frontend proxies to it
-  # over the compose network; a published backend port would be a second,
-  # unauthenticated door to the same API — and overview-sync would then demand
-  # an inventory row for it.
+  # Its entrypoint runs `npx prisma generate` UNCONDITIONALLY at container
+  # start, and prisma/schema.prisma hardcodes
+  #     binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x",
+  #                      "linux-musl-openssl-3.0.x"]
+  # The image bakes only the targets for its OWN architecture, so `generate`
+  # always reaches for the other one and dies:
+  #     Error: request to https://binaries.prisma.sh/.../
+  #       linux-musl-arm64-openssl-3.0.x/libquery_engine.so.node.gz.sha256
+  #       failed, reason: getaddrinfo EAI_AGAIN binaries.prisma.sh
+  # On an amd64 host it needs the arm64 engine; on arm64 it would need the
+  # other. There is no skip flag in the entrypoint.
   #
-  # 🚨 AUTH_MODE=oidc_enforced FROM DAY ONE, which means this service is
-  # UNUSABLE until the Authentik client secret lands. That is deliberate. The
-  # alternative (`AUTH_MODE=local`) gates registration behind a one-time admin
-  # setup code PRINTED ONLY TO STDOUT — a browser-plus-log-scrape wizard this
-  # fleet does not accept — and the documented escape,
-  # DISABLE_ONBOARDING_GATE=true, leaves open registration on a service the
-  # whole tailnet can reach. Unusable-and-closed beats usable-and-open.
+  # So it cannot start on a tailnet-only host at all — this is not "slow
+  # without egress", it is a crash loop. Same category as TeXlyre above:
+  # deferred until upstream stops downloading at runtime, or until someone
+  # builds an image with both engines baked in.
   #
-  # ⚠ config.ts THROWS AT STARTUP (crash loop, not degradation) if the mode
-  # enables auth and any of OIDC_ISSUER_URL, OIDC_CLIENT_ID or
-  # OIDC_REDIRECT_URI is empty. OIDC_CLIENT_SECRET is NOT in that set — a
-  # public client is allowed — which is exactly what makes this posture work:
-  # the three non-secret values are real production strings, the secret is a
-  # placeholder, and the container boots and fails only at /auth/oidc/start.
+  # Found by tests/suites/util.nix on its first run. The same run also caught
+  # that the secrets had been named EXCALIDASH_JWT_SECRET and
+  # EXCALIDASH_CSRF_SECRET while the app reads the BARE names — finding #25
+  # recurring, and the container had been quietly auto-generating both into
+  # its volume. Worth knowing if this is ever revived.
   # ---------------------------------------------------------------------------
-  excalidash-backend:
-    # No `v` prefix. 0.6.1/0.6.2 exist but are prerelease `-dev` builds.
-    image: zimengxiong/excalidash-backend:0.6.0
-    container_name: excalidash_backend
-    # Reaps zombies AND forwards SIGTERM so prisma.$disconnect actually runs.
-    init: true
-    volumes:
-      # ⚠ The container `chown -R`s this host directory to 1001:1001 on EVERY
-      # start — its Dockerfile deliberately omits USER so the entrypoint can
-      # fix permissions, then su-execs to uid 1001. That differs from this
-      # fleet's usual 1000:1000 and root conventions; plan for it rather than
-      # being surprised. backup-prepare.sh runs as root, so reading it is
-      # unaffected.
-      - /mnt/fast/excalidash:/app/prisma
-    environment:
-      - TZ=America/Chicago
-      - NODE_ENV=production
-      - DATABASE_URL=file:/app/prisma/dev.db
-      - AUTH_MODE=oidc_enforced
-      # ⚠ TRAILING SLASH REQUIRED on the issuer — Authentik's discovery
-      # document is served at .../application/o/<slug>/ and the client builds
-      # the well-known path by appending.
-      - OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/excalidash/
-      - OIDC_CLIENT_ID=excalidash
-      # Upstream: "must be exact".
-      - OIDC_REDIRECT_URI=https://excalidash.svc.idanreed.com/api/auth/oidc/callback
-      # Promotes AND DEMOTES on every authenticated request, so removing
-      # someone from the group takes effect immediately rather than at next
-      # login. The group must exist in Authentik or nobody is an admin.
-      - OIDC_ADMIN_GROUPS=excalidash-admins
-      # If Authentik does not emit email_verified=true, sign-in throws. Either
-      # map the claim there or set OIDC_REQUIRE_EMAIL_VERIFIED=false here.
-      #
-      # 🚨 ENFORCE_HTTPS_REDIRECT DEFAULTS TRUE and the middleware arms
-      # whenever NODE_ENV=production and any FRONTEND_URL origin is https —
-      # which is exactly this configuration. The healthcheck then dials
-      # http://127.0.0.1:8000/health with no X-Forwarded-Proto, the policy
-      # misses the loopback host, falls back to the canonical https host and
-      # returns a 302. `statusCode === 200` is false, so the container is
-      # PERMANENTLY unhealthy, `up --wait` never returns, and the frontend's
-      # dependency never releases. TRUST_PROXY does not save it — the check is
-      # on a header loopback never sends. This is the fourth instance in the
-      # campaign of an app-level HTTPS enforcement its own loopback probe
-      # cannot satisfy (Dawarich's APPLICATION_PROTOCOL was the third).
-      - ENFORCE_HTTPS_REDIRECT=false
-      # The backend's CORS allow-list. Exact, no trailing slash.
-      - FRONTEND_URL=https://excalidash.svc.idanreed.com
-      # ONE hop: the hop this backend sees is nginx inside the frontend
-      # container, not Caddy.
-      - TRUST_PROXY=1
-      # BACKUP_SCHEDULE is deliberately UNSET. ExcaliDash has its own backup
-      # cron; enabling it would write into /mnt/fast a second copy of data
-      # Backrest already snapshots, under a retention policy nobody watches.
-      #
-      # EXCALIDASH_JWT_SECRET, EXCALIDASH_CSRF_SECRET and
-      # EXCALIDASH_OIDC_CLIENT_SECRET arrive from .env — see .sops.env.example
-      # for why the first two must be set explicitly rather than left to
-      # upstream's auto-generation.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the host-side
-    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
-    # sync of the WHOLE stack — which here would take bentopdf and mazanoke
-    # down with it, since they currently sync fine only because this stack had
-    # no env_file at all.
-    env_file:
-      - path: .env
-        required: false
-    healthcheck:
-      # Declared in upstream's docker-compose.prod.yml, not baked into the
-      # image — and it is honest: the handler runs `SELECT 1` through Prisma
-      # and returns 503 with {"database":"unavailable"} when that fails. It is
-      # only usable because ENFORCE_HTTPS_REDIRECT is off above.
-      test:
-        - CMD
-        - node
-        - -e
-        - "require('http').get('http://127.0.0.1:8000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 45s
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # excalidash-frontend — nginx serving the SPA and proxying /api + socket.io
-  # to the backend.
-  # ---------------------------------------------------------------------------
-  excalidash-frontend:
-    image: zimengxiong/excalidash-frontend:0.6.0
-    container_name: excalidash_frontend
-    depends_on:
-      # service_healthy, not upstream's bare `depends_on: [backend]`. The
-      # frontend's own healthcheck probes NGINX, so it reports healthy while
-      # the API is down — that probe must not be allowed to stand in for a
-      # backend check.
-      excalidash-backend:
-        condition: service_healthy
-    ports:
-      - '127.0.0.1:10406:80'
-    environment:
-      - TZ=America/Chicago
-      # Substituted into nginx.conf.template by the image's entrypoint; drives
-      # the /api proxy and the socket.io upgrade.
-      - BACKEND_URL=excalidash-backend:8000
-    healthcheck:
-      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 15s
-    restart: unless-stopped
