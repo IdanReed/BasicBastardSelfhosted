@@ -1198,6 +1198,40 @@ Found by building a **local** repro — the same compose with the bind paths
 rewritten and mysql on a named volume — after two 15-minute VM iterations. For
 a stack this slow the local loop is worth the ten minutes it costs to set up.
 
+### 49. A storage tier deleted for being the same size as another one
+
+The beszel suite's second run reached the hub, registered both tiers, and then
+shipped a payload with no extra filesystems in it at all. The agent's log:
+
+```
+Detected disk name=vdb device=/dev/vdb mount=/extra-filesystems/fast io=vdb root=true
+Detected disk name=vdc device=/dev/vdc mount=/extra-filesystems/slow io=vdc root=false
+Ignoring duplicate FS name=vdc mount=/extra-filesystems/slow
+```
+
+`pruneDuplicateRootExtraFilesystems` (added for upstream #1428) deletes any
+extra filesystem whose **total and used bytes** match root's within a 16 MB
+tolerance. The two test disks were both 1024 MB and both freshly formatted, so
+the slow tier was indistinguishable from the fast one and got pruned.
+
+In the suite that was an artifact, fixed by making the disks different sizes —
+which is also more faithful, since real tiers are not the same size. But the
+mechanism is a live hazard and belongs next to #46: **a tier can vanish because
+of what it looks like, not because anything is wrong with it.** Two same-sized
+disks at similar fill levels is not an exotic configuration, and the only
+evidence is one INFO line in a container log nobody reads. The suite now
+asserts that line is absent.
+
+This is the second distinct way beszel silently drops a filesystem — #46 is a
+device-key collision at registration, this is a size heuristic after it. Both
+end the same way: the dashboard shows fewer tiers than exist, and a tier you
+are not shown looks exactly like a tier that is fine.
+
+One smaller thing from the same run: `du > 0` is not a safe assertion on a
+freshly formatted filesystem. 1 GB of empty ext4 rounds to 0.00 GB used, and
+"no data yet" is not a defect. `d` (total) is the field a wrong `FILESYSTEM`
+zeroes, and it is the one worth asserting.
+
 ## Status
 
 Green as of 2026-08-30, with three exceptions stated below: lints (**20** — the four newest:
@@ -1300,7 +1334,7 @@ the suites have never executed, because each needs image pins
 `tests/update-images.sh` had not yet resolved. Treat them as unproven until
 `./tests/run.sh <name>` has passed once.
 
-**Forty-eight** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Forty-nine** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

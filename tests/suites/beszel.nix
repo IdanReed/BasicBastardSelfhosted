@@ -123,9 +123,16 @@ pkgs.testers.runNixOSTest {
         # entry and the suite would "pass" while asserting half of what it
         # claims to. Real block devices reproduce the host, where the tiers are
         # genuinely separate disks.
+        # 🚨 DIFFERENT SIZES, and that is not cosmetic. The agent runs
+        # pruneDuplicateRootExtraFilesystems (upstream #1428), which DELETES
+        # any extra filesystem whose total AND used bytes match root's within
+        # a 16 MB tolerance. Two freshly-formatted 1024 MB disks are
+        # byte-identical, so the slow tier was silently pruned and the payload
+        # arrived with no `efs` at all — see finding #49. Real tiers differ in
+        # size, and so do these.
         virtualisation.emptyDiskImages = [
           1024
-          1024
+          2048
         ];
 
         virtualisation.fileSystems = {
@@ -337,7 +344,9 @@ pkgs.testers.runNixOSTest {
             )["items"][0]
             stats = rec["stats"]
             assert stats["d"] > 0, stats
-            assert stats["du"] > 0, stats
+            # NOT `du > 0`: a freshly formatted ext4 rounds to 0.00 GB used,
+            # and "no data yet" is not a defect. `d` is the assertion that
+            # matters — it is the one a wrong FILESYSTEM zeroes.
 
             # The empty-marker-directory design: statfs answers for the whole
             # containing filesystem, so an empty dir on each tier reports the
@@ -368,6 +377,16 @@ pkgs.testers.runNixOSTest {
             # observed by name, and a dropped one never appears — so this, not
             # a count of the payload, is the honest assertion.
             logs = services_vm.succeed("docker logs beszel-agent 2>&1")
+            # 🚨 The second way a tier disappears, and the one that actually
+            # fired here (finding #49): pruneDuplicateRootExtraFilesystems
+            # deletes any extra filesystem whose total AND used bytes match
+            # root's within 16 MB. It is a heuristic on SIZE, not on identity,
+            # so two same-sized tiers at similar fill levels lose one of them.
+            assert "Ignoring duplicate FS" not in logs, (
+                "a storage tier was pruned as a duplicate of root — it looks "
+                "identical by size and usage, and a tier you are not shown "
+                "looks exactly like a tier that is fine.\n" + logs
+            )
             for mount in ["/extra-filesystems/fast", "/extra-filesystems/slow"]:
                 assert f"mount={mount}" in logs, (
                     f"{mount} was never registered. If both tiers share a "
