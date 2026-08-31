@@ -585,8 +585,48 @@ in
 
       routed = set(re.findall(r"reverse_proxy\s+localhost:(\d+)", caddyfile))
 
+      # 🚨 A `network_mode: host` service has NO ports: entry, so it is absent
+      # from `published` and its route looks like a phantom 502 — the same
+      # blind spot host-network-declared exists for, arriving through a third
+      # door (loopback-binding and mk-stack-suite's probe were the first two).
+      # It cannot be inferred from the compose file: where such a service binds
+      # is decided by its OWN config (gatus.yaml's web.address/web.port), which
+      # this lint does not read.
+      #
+      # So it is declared, port -> (stack, reason) — and the declaration is
+      # checked against reality below rather than taken on trust.
+      HOST_NETWORK_ROUTED = {
+          "10450": ("gatus",
+                    "network_mode: host with no ports: entry. It binds itself "
+                    "down with web.address 127.0.0.1 / web.port 10450 in "
+                    "gatus.yaml, which gives the same exposure a loopback "
+                    "publish would — and tests/suites/gatus.nix proves that "
+                    "from another machine, because no static check can."),
+      }
+
       errs = []
-      for port in sorted(routed - set(published)):
+
+      # A declaration is only honoured if that stack really does have a
+      # host-networked service. Otherwise this table becomes a way to excuse an
+      # ordinary missing publish, which is exactly the failure it exists to
+      # report.
+      host_net_stacks = set()
+      for c in manifest:
+          for line in open(c["path"]):
+              if re.match(r"\s*network_mode:\s*host\s*$", line):
+                  host_net_stacks.add(c["stack"])
+      for port, (stack, _reason) in HOST_NETWORK_ROUTED.items():
+          if stack not in host_net_stacks:
+              errs.append(f"HOST_NETWORK_ROUTED claims {port} belongs to "
+                          f"host-networked stack {stack!r}, but no service in "
+                          f"that stack sets network_mode: host any more. "
+                          f"Remove the entry — a stale one silently excuses "
+                          f"whatever takes that port next")
+          elif port not in routed:
+              errs.append(f"HOST_NETWORK_ROUTED lists {port}, which the "
+                          f"Caddyfile no longer routes. Remove the entry")
+
+      for port in sorted(routed - set(published) - set(HOST_NETWORK_ROUTED)):
           errs.append(f"Caddyfile reverse_proxies localhost:{port}, which no "
                       f"compose file publishes -> 502")
 
@@ -600,7 +640,8 @@ in
           for e in errs:
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
-      print(f"Caddy routes OK ({len(routed)} routes)")
+      print(f"Caddy routes OK ({len(routed)} routes, "
+            f"{len(HOST_NETWORK_ROUTED)} host-networked)")
       PY
     '';
 
