@@ -80,6 +80,7 @@
           ./modules/nixos/nvidia.nix
           ./modules/nixos/tailscale.nix
           ./modules/nixos/ssh-identities.nix
+          ./modules/nixos/work-vpn.nix
           ./modules/nixos/containers.nix
           ./modules/nixos/handy.nix
         ];
@@ -109,6 +110,7 @@
           ./modules/home/handy.nix
           ./modules/home/excalidraw.nix
           ./modules/home/ssh-identities.nix
+          ./modules/home/work-vpn.nix
         ];
       };
     };
