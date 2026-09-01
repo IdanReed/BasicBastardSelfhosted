@@ -492,8 +492,15 @@ pkgs.testers.runNixOSTest {
         # would have manufactured a DIRECTORY at the bind-mount source (the
         # exact failure mode the compose header documents for /config).
         services_vm.succeed(f"rm -rf {KEY} && mv {KEY}.hidden {KEY}")
+        # --force-recreate: the failed key-absent `up` above left config_init
+        # with a DIRECTORY mountpoint baked into its rootfs (docker manufactures
+        # one for a missing single-file bind source); restarting that container
+        # onto the now-restored FILE fails "not a directory". A clean redeploy
+        # rebuilds it — which is what any real recovery does.
         try:
-            services_vm.succeed(BACKREST + " up -d --wait --wait-timeout 180")
+            services_vm.succeed(
+                BACKREST + " up -d --force-recreate --wait --wait-timeout 180"
+            )
         except Exception:
             stack_diag("backrest up after key restore")
             raise
