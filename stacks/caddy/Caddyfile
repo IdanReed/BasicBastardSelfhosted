@@ -489,6 +489,80 @@
 		reverse_proxy localhost:10304
 	}
 
+	@ghostfolio host ghostfolio.svc.idanreed.com
+	handle @ghostfolio {
+		# NO forward auth, deliberately, and this is the books/tracking
+		# posture rather than an omission: Ghostfolio has authentication of
+		# its own and it is not a password — accounts are identified by a
+		# "security token" whose hash is salted with ACCESS_TOKEN_SALT. So
+		# this route is authenticated, just not by Authentik.
+		#
+		# It also has native OIDC, which is where this should end up, but
+		# upstream still labels that EXPERIMENTAL and turning it on needs an
+		# Authentik client secret that does not exist yet. Shipping
+		# OIDC-ready/OIDC-off on local accounts is the same call made for
+		# bookstack, homebox and karakeep one block up.
+		#
+		# ⚠ If forward auth is ever added here, it cannot be a bare `import
+		# protected`: Ghostfolio's public API under /api/v1/* authenticates
+		# with its own bearer token, so it would need the skip_path_regex
+		# treatment Firefly's provider has.
+		reverse_proxy localhost:10306
+	}
+
+	@owl host owl.svc.idanreed.com
+	handle @owl {
+		# 🚨 THIS IMPORT IS THE ENTIRE ACCESS CONTROL FOR THIS SERVICE. Owl
+		# is a Streamlit app with NO authentication of any kind — no login,
+		# no users, no session isolation. Removing this line does not
+		# "disable SSO", it publishes somebody's retirement plan to every
+		# tailnet user. Same category as firefly-importer.
+		#
+		# 🚨 DO NOT ADD AN EXCLUSION FOR /_stcore/*, here or in the
+		# provider's skip_path_regex. Streamlit's websocket at
+		# /_stcore/stream is not a side channel — it IS the application;
+		# every interaction and every result rides it, and `/` without it is
+		# an empty shell. Exempting it would leave this handle protecting a
+		# login page in front of a wide-open app. (Dawarich, two blocks up,
+		# is the same reasoning reaching the opposite conclusion: there the
+		# data plane CANNOT be covered, so forward auth is refused outright
+		# rather than faked.)
+		#
+		# Caddy needs nothing extra for the websocket itself, and the chain
+		# was traced through both codebases rather than hoped at:
+		#   - forward_auth is sugar for reverse_proxy + handle_response. Its
+		#     `header_up Host auth.idanreed.com` in the (protected) snippet
+		#     rewrites only the AUTH SUBREQUEST's copy; the following
+		#     reverse_proxy makes its own copy of the ORIGINAL request. That
+		#     matters here specifically: Streamlit's handshake check compares
+		#     Origin against Host, so a rewritten Host reaching the app would
+		#     fail the socket. It does not reach the app.
+		#   - browsers cannot attach an Authorization header to a websocket
+		#     handshake, but they DO attach cookies, and the handshake is an
+		#     ordinary same-origin GET — so the authentik_proxy_* session
+		#     cookie is in the subrequest like on any other request.
+		#   - authentik's forwardHandleCaddy is a plain http.HandlerFunc that
+		#     never touches an upgrader, so it cannot answer 101. That is what
+		#     keeps this safe: an auth upstream that DID answer 101 to the
+		#     forwarded Upgrade header would make forward_auth hang forever
+		#     with nothing surfaced to the browser. If that ever happens here,
+		#     the one-line fix is `header_up -Connection` — still not an
+		#     exclusion.
+		#
+		# ⚠ NOT VERIFIED END TO END, because it cannot be from here: no suite
+		# has a live outpost. `./tests/run.sh stack owl` proves the container
+		# serves the socket and nothing more. Check by hand on first deploy —
+		# load the page and change a widget.
+		#
+		# ⚠ Known rough edge to expect rather than debug: when the Authentik
+		# session expires (access_token_validity hours=24) with the tab still
+		# open, the socket's reconnect gets a 302, and browsers do not follow
+		# redirects on a handshake — so the UI silently stops updating until
+		# the page is reloaded. Reload is the fix; it is not a Caddy bug.
+		import protected
+		reverse_proxy localhost:10307
+	}
+
 	@windmill host windmill.svc.idanreed.com
 	handle @windmill {
 		# Forward auth is the ONLY SSO Windmill can have: OIDC/OAuth login

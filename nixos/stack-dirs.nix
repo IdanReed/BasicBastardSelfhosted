@@ -104,11 +104,13 @@
     #     entrypoint recursively chowns /config and repairs /tmp/shelfmark, so
     #     these would self-heal — declaring them 1000:1000 anyway just means it
     #     has nothing to do.
-    #   - The two /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes
-    #     the ebook tree, and the audiobook tree keeps the same ownership for
-    #     whatever ends up filling it (shelfmark's Direct Download source is
-    #     ebook-only, so audiobooks arrive by other means for now). Kavita and
-    #     audiobookshelf mount their tree :ro as root and only read.
+    #   - The /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes the
+    #     ebook tree, and the audiobook tree and the drop dir keep the same
+    #     ownership for whatever ends up filling them (shelfmark's Direct
+    #     Download source is ebook-only, so audiobooks arrive from the MEDIA
+    #     stack — see the /mnt/slow/books/drop note; it is the one directory
+    #     here a container in another stack writes). Kavita and audiobookshelf
+    #     mount their trees :ro as root and only read.
     "d /mnt/fast/audiobookshelf 0755 root root -"
     "d /mnt/fast/audiobookshelf/config 0755 root root -"
     "d /mnt/fast/audiobookshelf/metadata 0755 root root -"
@@ -122,6 +124,26 @@
     # up without touching its config.
     "d /mnt/slow/books 0755 1000 1000 -"
     "d /mnt/slow/books/audiobooks 0755 1000 1000 -"
+    # 🚨 The one directory TWO stacks share, and the whole of the coupling
+    # between them (ServerNotes/designs/audiobook-acquisition.md, Option C).
+    #
+    # WRITER: stacks/media's clamav-scanner, which runs as ROOT (the pinned
+    # clamav image sets no USER and this service overrides the entrypoint), so
+    # the ownership here does not constrain it. It moves a completed
+    # `audiobooks` download in — a rename within /mnt/slow, so the entry keeps
+    # the ownership qBittorrent gave it, which is 1000:1000 — and only after a
+    # clean ClamAV verdict on every file in it.
+    #
+    # READER: stacks/books' audiobookshelf, which mounts it :ro as a second
+    # folder of its Audiobooks library. It runs as root and only reads, so the
+    # 1000:1000 here is for the third party: a human (or shelfmark, uid 1000)
+    # reorganising a promoted book into /mnt/slow/books/audiobooks, which a
+    # root-owned drop dir would make a sudo job.
+    #
+    # Under /mnt/slow/books deliberately, like the two library trees: backrest's
+    # slow-volume-selective plan includes that path, so a promoted audiobook is
+    # backed up from the moment it lands and needs no backrest change.
+    "d /mnt/slow/books/drop 0755 1000 1000 -"
     "d /mnt/slow/books/library 0755 1000 1000 -"
     # === caddy (bind sources in its compose.yaml) ===
     # root:root. The official caddy image runs as root (it binds 80/443 and here
@@ -231,6 +253,21 @@
     # no ports: entry, which is why it needs a host-network-declared entry in
     # tests/lib/lints.nix.
     "d /mnt/fast/gatus 0755 root root -"
+    # === ghostfolio (bind sources in its compose.yaml) ===
+    # One directory, root:root, and that is VERIFIED rather than inherited: the
+    # only /mnt mount in this stack is the Postgres datadir, and the
+    # postgres:17.9-alpine image starts as root and chowns /var/lib/postgresql/data
+    # to uid 999 itself before `initdb` drops privileges — the same reasoning that
+    # makes paperless, wger, windmill, tandoor and firefly's pgdata roots
+    # root:root here.
+    #
+    # The app container has NO /mnt mount at all (all its state is in Postgres),
+    # and its Redis deliberately has no volume either — it is a cache plus a
+    # re-enqueueable Bull job queue, following the wger_cache precedent. So this
+    # stack contributes exactly one leaf directory plus its parent, and the whole
+    # of its backup story is the pg_dumpall of ghostfolio_db.
+    "d /mnt/fast/ghostfolio 0755 root root -"
+    "d /mnt/fast/ghostfolio/pgdata 0755 root root -"
     # === immich (bind sources in its compose.yaml) ===
     # root:root everywhere ON PURPOSE: the immich images have no PUID/PGID
     # mechanism and run as root by default (the FAQ's non-root mode is deliberately
@@ -267,6 +304,12 @@
     # starting clamd. /mnt/slow/data is 1000:1000: every media container
     # works there as uid 1000 and media-init creates the skeleton with that
     # owner.
+    #
+    # This stack also bind-mounts /mnt/slow/books/drop, which BELONGS TO THE
+    # BOOKS STACK (its rule and its reasoning are under books, where the
+    # directory lives). That is the entire audiobook hand-off: clamav-scanner
+    # moves a clean `audiobooks` download into it and audiobookshelf reads it
+    # :ro. Nothing else crosses.
     "d /mnt/fast/bazarr 0755 root root -"
     "d /mnt/fast/bazarr/config 0755 root root -"
     "d /mnt/fast/clamav 0755 root root -"

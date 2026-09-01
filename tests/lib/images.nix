@@ -314,6 +314,14 @@
     finalImageName = "ghcr.io/windmill-labs/windmill";
     finalImageTag = "1.798.1";
   };
+  "ghostfolio_ghostfolio_3_65_0" = {
+    composeRef = "ghostfolio/ghostfolio:3.65.0";
+    imageName = "ghostfolio/ghostfolio";
+    imageDigest = "sha256:5762d47097bb30f6e8c51a1a0ebd9a39798631b512d8a78223bcfe68202e5286";
+    hash = "sha256-jY8ToVl2xU/7IA11O3Gp/dMc+QWKAj0BZ0tUDHYrsu0=";
+    finalImageName = "ghostfolio/ghostfolio";
+    finalImageTag = "3.65.0";
+  };
   "glanceapp_glance_v0_8_5" = {
     composeRef = "glanceapp/glance:v0.8.5";
     imageName = "glanceapp/glance";
@@ -373,8 +381,8 @@
   "lscr_io_linuxserver_bookstack_version-v26_05_4" = {
     composeRef = "lscr.io/linuxserver/bookstack:version-v26.05.4";
     imageName = "lscr.io/linuxserver/bookstack";
-    imageDigest = "sha256:3e1aea5d8dd3bb3a5cf16fa7e3b847e2889eedd8516b2825ac379d365b07ba6f";
-    hash = "sha256-pnE02aYPSJUdMDy3WOz9Q4okFOEtyvRJR5tvlExDpl0=";
+    imageDigest = "sha256:90a3df3108fe4471a9ed89625020cc321c5354255900c34309727320f2e65367";
+    hash = "sha256-DTZuYhZA8YTADxIP+9AenU+IZdqgLjIIGGvMWJjjyxw=";
     finalImageName = "lscr.io/linuxserver/bookstack";
     finalImageTag = "version-v26.05.4";
   };
@@ -457,6 +465,14 @@
     hash = "sha256-fdvcowN3b9MMsBcp9SEib0Um8aO1GjoRetObQsUe/Ag=";
     finalImageName = "outlinewiki/outline";
     finalImageTag = "1.9.2";
+  };
+  "owlplanner_owldocker_2026_8_29" = {
+    composeRef = "owlplanner/owldocker:2026.8.29";
+    imageName = "owlplanner/owldocker";
+    imageDigest = "sha256:ea7088e91fcd4a25b3a8edecb9c90bfa500d02640bb2ebfc7fc527168d9c5702";
+    hash = "sha256-VqviYs9sswL8e/01/ARv0cxs00232qy5A71x0fw3UZo=";
+    finalImageName = "owlplanner/owldocker";
+    finalImageTag = "2026.8.29";
   };
   "postgis_postgis_17-3_5-alpine" = {
     composeRef = "postgis/postgis:17-3.5-alpine";

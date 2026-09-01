@@ -353,12 +353,93 @@ entries:
       policy_engine_mode: any
       meta_description: "CSV / SimpleFIN import for Firefly III"
 
-  # Tracking and dawarich stacks are deliberately ABSENT: bookstack, homebox,
-  # karakeep and dawarich all drive their own native OIDC (their own -oidc
-  # blueprints, once the client secrets exist). Dawarich in particular must
-  # NEVER be added here — its tracker clients pass an API key in the query
+  # The tracking and dawarich stacks are deliberately ABSENT: bookstack,
+  # homebox, karakeep and dawarich all drive their own native OIDC (their own
+  # -oidc blueprints, once the client secrets exist). Dawarich in particular
+  # must NEVER be added here — its tracker clients pass an API key in the query
   # string and cannot follow a redirect, so the exclusion list would be its
   # entire data plane.
+  #
+  # Ghostfolio (stacks/ghostfolio, 10306) is absent for the first reason: it
+  # authenticates with its own security token today and has native OIDC waiting
+  # for a client secret. Owl (stacks/owl, 10307) is the exact opposite and is
+  # RIGHT BELOW.
+
+  # ===========================================
+  # Owl (stacks/owl): the whole application
+  # ===========================================
+  # 🚨 Owl has NO AUTHENTICATION WHATSOEVER. Not a default password, not an open
+  # registration — a Streamlit app with no login, no users and no session
+  # isolation. Verified by reading the image: neither Dockerfile ships a
+  # .streamlit/secrets.toml, nothing in ui/ or src/ references st.login, st.user
+  # or any authenticator, and upstream documents it as a local calculator.
+  #
+  # So this entry is the ONLY thing standing between a tailnet user and
+  # somebody else's retirement plan, in the same category as firefly-importer
+  # rather than as the media *arrs. It must exist BEFORE stacks/caddy/Caddyfile
+  # grows the `import protected` line, or the outpost matches nothing and every
+  # request 404s (the forward-auth-coverage lint enforces the pairing; the
+  # ORDER is on whoever deploys).
+  #
+  # 🚨 NO skip_path_regex, AND ADDING ONE FOR /_stcore/* WOULD MAKE THIS ENTRY
+  # DECORATIVE. That is the trap worth writing down, because "exempt the
+  # websocket" is the reflex when a Streamlit app misbehaves behind a proxy:
+  # Streamlit's websocket at /_stcore/stream is not a side channel, it IS the
+  # application — every widget interaction, every script rerun and every result
+  # travels over it, and the HTML served at `/` is an empty shell without it.
+  # An exclusion there would leave the login page protected and the entire app
+  # open to anyone who opens a socket. This is the dawarich reasoning run
+  # backwards: dawarich cannot be proxied BECAUSE excluding its data plane
+  # would be vacuous; here the data plane is exactly what must stay covered.
+  #
+  # Why no exclusion is needed, traced through the outpost source rather than
+  # assumed: forwardHandleCaddy (internal/outpost/proxyv2/application/
+  # mode_forward.go) reconstructs the request URL from X-Forwarded-Proto/Host/
+  # Uri, calls checkAuth, and on success simply RETURNS — Go writes an implicit
+  # 200, which is the `@good status 2xx` case Caddy then passes through. There
+  # is nothing websocket-aware in it, so /_stcore/stream is decided by the same
+  # session cookie as `/`. Browsers cannot attach an Authorization header to a
+  # handshake but do attach cookies, so authentik_proxy_<hash> is present.
+  #
+  # It also means this handler can NEVER answer 101, which is what makes the
+  # arrangement safe: Caddy forwards the Upgrade/Connection headers to the auth
+  # upstream, and an upstream naive enough to upgrade on them would leave
+  # forward_auth hanging with nothing surfaced to the browser.
+  #
+  # ⚠ WHAT IS NOT VERIFIED, stated plainly: the chain has NOT been exercised end
+  # to end. It cannot be from here — it needs the live VPS outpost, a real
+  # Authentik session and a real browser, none of which the offline suites have.
+  # `./tests/run.sh stack owl` proves the container serves the websocket; it
+  # proves nothing about the outpost in front of it. FIRST DEPLOY MUST BE
+  # CHECKED BY HAND: load the page, change a widget, confirm it updates. If it
+  # hangs, the fix is `header_up -Connection` on the Caddy route — it is NOT an
+  # exclusion for /_stcore/*.
+  #
+  # ⚠ Expected, not a bug: when this provider's 24h session expires with the tab
+  # still open, the socket's reconnect gets a 302 and browsers do not follow
+  # redirects on a handshake, so the UI quietly stops updating until reload.
+  - model: authentik_providers_proxy.proxyprovider
+    id: owl-provider
+    state: present
+    identifiers:
+      name: owl
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://owl.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: owl-app
+    state: present
+    identifiers:
+      slug: owl
+    attrs:
+      name: Owl
+      provider: !KeyOf owl-provider
+      policy_engine_mode: any
+      meta_description: "Retirement planner (Streamlit; no login of its own)"
 
   # ===========================================
   # Vaultwarden (stacks/vaultwarden): /admin ONLY
@@ -762,6 +843,7 @@ entries:
         - !KeyOf frigate-provider
         - !KeyOf firefly-provider
         - !KeyOf firefly-importer-provider
+        - !KeyOf owl-provider
         - !KeyOf vaultwarden-provider
         - !KeyOf syncthing-provider
         - !KeyOf glance-provider
