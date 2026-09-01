@@ -60,6 +60,22 @@ case "$TARGET" in
   lints)
     # Pure contract checks. No VM, no images. If these fail, no VM suite is
     # worth starting.
+    #
+    # One check lives HERE and not in lints.nix: the nix derivations see a
+    # copied source tree with no .git, so only this script can ask what is
+    # TRACKED. Build artifacts have been committed twice (images.nix.tmp
+    # three times in campaign 1, two __pycache__/*.pyc from locally-executed
+    # init scripts in campaign 2) — a silent gap of exactly the shape the
+    # lint set exists to close.
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      tracked_artifacts=$(git ls-files | grep -E '__pycache__|\.pyc$|\.tmp$|^result' || true)
+      if [ -n "$tracked_artifacts" ]; then
+        echo "FAIL tracked-artifacts: build artifacts are committed:" >&2
+        echo "$tracked_artifacts" | sed 's/^/    /' >&2
+        echo "  fix: git rm -r --cached <path>  (and check .gitignore covers it)" >&2
+        exit 1
+      fi
+    fi
     exec nix-build tests -A checks.lints --no-out-link
     ;;
 
