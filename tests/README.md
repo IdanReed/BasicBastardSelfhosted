@@ -1411,6 +1411,119 @@ dead after one use. The `.sops.env.example` comments now carry the whole
 story; the general lesson is to ask, for every new secret, *who invalidates
 this and when* — not just where it is stored.
 
+### 62. An env var that is presence-tested, not value-tested
+
+SilverBullet's `SB_READ_ONLY=false` turns read-only mode **on** — the code
+checks that the variable exists, not what it says. The habit of "documenting
+the default by setting it explicitly" silently disables every write while the
+app reports healthy; only a start-up log line says so. Before setting any
+boolean env var to its supposed default, check whether the app parses the
+value or merely the presence.
+
+### 63. A container that executes a file from its own data volume at boot
+
+SilverBullet's entrypoint runs `/space/CONTAINER_BOOT.md` as bash on every
+start. The space is fed from a git remote, so push access to the wiki repo is
+code execution in the container at next restart. The stack's git-sync sidecar
+alerts if that file ever appears (and deliberately does not delete it —
+evidence). When a volume is writable by a second system, everything the
+entrypoint does with that volume is part of the attack surface.
+
+### 64. A version bump can delete your only evidence a mitigation is active
+
+SilverBullet 2.9.0 logs the shell-backend state at start — the one observable
+proving `SB_SHELL_BACKEND=off` took effect. 2.10.0 removes that log line
+along with the announcement. The stack stays on 2.9.0 for that reason, with
+the bump checklist in the compose comment. "Newer" can mean "same behaviour,
+less proof".
+
+### 65. "Will not start without X" usually means "will not function without X"
+
+Research said Outline refuses to boot without a live OIDC provider. Measured:
+1.9.2 boots, migrates, serves, and reports healthy with no IdP and no OIDC
+variables — what fails is *logging in*. The suite is honestly green with no
+stub issuer; the thing most likely to break (a wrong client secret) is
+invisible to every automated check, and the gatus entry says so. Distrust
+boot-time claims about runtime dependencies in both directions.
+
+### 66. `git rebase -X ours` is remote-wins, and `-X` resolves without reporting
+
+During a rebase, `ours` is the branch being rebased ONTO — the inversion is
+silent if got backwards, and a "successful" `-X` rebase can discard a local
+edit with no conflict marker and no nonzero exit. The silverbullet git-sync
+therefore saves the superseded local commit on a named branch and alerts,
+because detection cannot come from git's exit code. Tested against a real
+bare repo in four scenarios before shipping.
+
+### 67. `npx <cmd>` at container start is safe or fatal depending on one `ls`
+
+Ghostfolio runs `npx prisma migrate deploy` at start and works offline;
+ExcaliDash (finding #40) ran nearly identical text and died. The
+discriminator is the layer, not the entrypoint: Ghostfolio bakes
+`node_modules/.bin/prisma` plus a schema engine whose binaryTarget matches
+the base, and its queries go through a WASM compiler — no query engine
+download possible or needed. Read the image contents, not the command.
+
+### 68. An image's HTTP client is a property of its base, not its language
+
+`node:22-slim` ships `curl` and purges `wget`; `python:3.14-alpine` has
+busybox `wget` and no `curl`. A healthcheck probe using the wrong one is a
+permanently-unhealthy container serving perfectly (finding #34's symptom via
+a missing binary). Check with `docker run --rm <image> which curl wget`
+before writing the healthcheck.
+
+### 69. One project, two tags, opposite runtime contracts
+
+`owlplanner/owldocker:edge` git-clones and `uv sync`s from its entrypoint on
+every start — cannot boot offline, different code every restart. The dated
+tag bakes both at build. Nothing in the tag names says so; only the two
+sibling Dockerfiles do. When a project publishes multiple tags, diff the
+Dockerfiles, not the descriptions.
+
+### 70. A backup-lint exemption you must NOT add
+
+The brief predicted Owl would need a `STACKS_WITHOUT_DUMPS` entry. The
+allowlist is keyed on stacks with `/mnt` bind sources; Owl has none, never
+enters the enumeration, and an entry would trip the stale-exemption check.
+Allowlists with staleness legs cut both ways — adding an unnecessary
+exemption is as much a failure as missing a necessary one. That is the
+design working.
+
+### 71. A fail-fast flock starves under N agents
+
+`update-images.sh`'s `flock -w 0` guard is right for one developer: fail
+loudly rather than interleave. With several worktrees queuing real work, each
+retry is a fresh race against a 20-minute holder — and the lock file being
+unlinked at exit means a waiter can acquire a *recreated* file while the old
+holder still runs (the classic unlink/recreate flock hole; observed:
+two runs concurrently, harmless only because worktrees have separate tmp
+paths). Queue with a blocking `flock` on a never-deleted lock file.
+
+### 72. `mv` into quarantine is a rename, and a rename does not touch the inode — FIXED
+
+The media stack quarantined with `mv -f` into `.quarantine/`. `/mnt/slow` is
+deliberately one filesystem so *arr imports are hardlinks — which means the
+`mv` moved one directory entry and every already-imported hardlink in the
+library kept resolving to the malware, while the log said `INFECTED ->
+quarantine` and ntfy fired. Reachable in normal operation, not just in a
+contrived test: the scanner polls every 60 s, the *arrs import on
+qBittorrent's completion signal, and nothing sequences the two — anything
+imported inside that window was in this state. Fixed by making quarantine an
+inode operation (`find -xdev -inum` with the quarantine dir pruned, unlink
+every other path, keep the sample); the EICAR subtest changed *shape*, not
+strictness — it now hardlinks EICAR into the library first and asserts the
+library path is gone, because "the quarantine directory gained a file"
+passed the whole time. For any "we moved the bad file away" step, ask what
+else points at the same inode.
+
+### 73. qBittorrent's login cookie is not called SID
+
+5.2.3 answers `/api/v2/auth/login` with 204 No Content, an empty body, and a
+cookie named `QBT_SID_<port>`. Every snippet in circulation checks for body
+`"Ok."` and cookie `SID`; both fail on a login that *succeeded*, surfacing
+one call later as a bare 403. Accept 204-or-Ok and take whatever cookie the
+server issues.
+
 ## Status
 
 Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
