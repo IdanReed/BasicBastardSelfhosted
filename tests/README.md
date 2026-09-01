@@ -1524,6 +1524,58 @@ cookie named `QBT_SID_<port>`. Every snippet in circulation checks for body
 one call later as a bare 403. Accept 204-or-Ok and take whatever cookie the
 server issues.
 
+### 74. journald's rate limit silently truncates `docker logs` — FIXED
+
+With the fleet on the journald log driver, every container's output is
+submitted as `docker.service` — one shared rate bucket. At the systemd
+default (10000 per 30 s): 30,000 lines emitted, **9,994 readable, 20,006
+gone — with no "Suppressed N messages" note anywhere**, and the loss shows
+in `docker logs` too, because the driver reads back what journald kept.
+Fleet-wide flakiness with no attribution. `rateLimitBurst = 0` in the same
+commit as the driver switch (verified 30,000/30,000). Any log pipeline that
+funnels many producers through one unit inherits one bucket.
+
+### 75. `loki.source.journal`'s `labels` is silently overridden by `relabel_rules`
+
+Set both and the static `job = "systemd-journal"` label vanishes — streams
+land as `job="loki.source.journal.host"`, no error, and the standard query
+`{job="systemd-journal"}` returns empty from a perfectly working pipeline.
+The label must be applied as a relabel rule itself. A healthy collector and
+an empty query result can both be true; test with the query you will
+actually run.
+
+### 76. Journal-reading containers: either identity anchor works, but neither is loud
+
+Measured matrix for alloy reading the host journal (path override × host
+machine-id mount): path+mid 4,495 lines, path-only 4,560, mid-only 4,618,
+**neither → 0 — healthy and silent**. Either half suffices; both are kept as
+redundancy. Also: no gid 62 needed when the image runs uid 0 (journal files
+are root:systemd-journal 0640), and do NOT mount `/run/log/journal` under
+`Storage=persistent` — docker would manufacture a directory journald's flush
+logic reads.
+
+### 77. The generic stack harness hardcoded the exact default the ownership table exists to override — FIXED
+
+`mk-stack-suite.nix` created every `/mnt` bind source as `d <path> 0755 root
+root` — so no privilege-dropping image could ever pass the generic suite
+(loki uid 10001 and grafana uid 472 both restart-loop on it), and it passed
+for months because the only stacks it covered ran as root. It now reads the
+generated `stack-dirs.nix` table and throws at eval on a missing rule. A
+harness that re-implements production defaults instead of consuming
+production's source of truth will reproduce production's bugs selectively —
+in whichever suites happen not to trigger them.
+
+### 78. A pinned tag is not a pinned image: upstreams re-push
+
+`lscr.io/linuxserver/bookstack:version-v26.05.4` changed digest between two
+`update-images.sh` runs hours apart — same tag, rebuilt upstream (linuxserver
+rebuilds and re-pushes on base-image updates; valkey and postgis alpine did
+the same within the campaign). This is exactly the drift `image-pins`
+exists to catch, and the strongest argument for the Renovate CI leg: tags
+name intentions, digests name bits, and only the digest is a pin. When
+`image-pins` goes red with no compose change, this is what happened —
+re-run `update-images.sh` and read the diff before assuming a mistake.
+
 ## Status
 
 Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
