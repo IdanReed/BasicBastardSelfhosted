@@ -235,6 +235,23 @@ sqlite_backup() {
 }
 
 sqlite_backup vaultwarden    /mnt/fast/vaultwarden/db.sqlite3
+# Mealie (stacks/mealie) is SQLITE ON PURPOSE — the compose header carries the
+# reasoning (its engine switch treats anything but the literal `postgres` as
+# sqlite, silently, so deliberate sqlite makes the fallback state and the
+# intended state the same backed-up file). This is the whole of its dump
+# story: recipes, users and images all live under /mnt/fast/mealie, and the
+# database is the one live-writer file in it. The mealie suite runs this
+# exact `.backup` against the live writer and asserts the copy holds the
+# admin row.
+sqlite_backup mealie         /mnt/fast/mealie/mealie.db
+# Wealthfolio (stacks/wealthfolio, evaluation): WAL-mode with a live writer,
+# so the raw file inside the fast plan's include set is a torn snapshot and
+# this is the restorable copy. secrets.json next to it is covered as a file —
+# but it is only useful together with WF_SECRET_KEY from .sops.env (in git).
+# The wealthfolio suite pins the db's real path, because sqlite_backup
+# returns 0 for a missing source (finding #25) and an upstream path move
+# would otherwise no-op this line forever.
+sqlite_backup wealthfolio    /mnt/fast/wealthfolio/wealthfolio.db
 # Karakeep keeps TWO sqlite databases under DATA_DIR: the app database and a
 # separate job queue (liteque). This path used to read
 # /mnt/fast/karakeep/data.db, which the app never creates — and since
