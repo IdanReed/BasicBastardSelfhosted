@@ -106,14 +106,14 @@ services:
   # accounts, no state, no config, and no auth possible. (protected) in Caddy
   # is the only lock it can ever have, exactly like bentopdf.
   #
-  # ⚠ This pin is UPSTREAM, which last published in October 2024. A maintained
-  # fork exists at ghcr.io/sharevb/it-tools (note: its `latest` and `stable`
-  # are DIFFERENT digests). Switching is an operator decision — _overview.md
-  # names this repo — and is queued rather than taken here.
+  # Fork of dead upstream: corentinth last released 2024-10-22. Adopted by the
+  # bake-off (designs/service-bakeoff.md); sharevb is a strict superset.
   # ---------------------------------------------------------------------------
   it-tools:
-    # No `v` on Docker Hub, though the git tag carries one.
-    image: corentinth/it-tools:2024.10.22-7ca5933
+    # Tag trap: dated tags ONLY. `latest` and `stable` are two different
+    # moving digests, and the parallel `-baseurl-it-tools` axis 404s assets
+    # under a root-path vhost like ours.
+    image: ghcr.io/sharevb/it-tools:2026.7.11
     container_name: it-tools
     ports:
       - '127.0.0.1:10407:80'
@@ -155,4 +155,8 @@ services:
   # EXCALIDASH_CSRF_SECRET while the app reads the BARE names — finding #25
   # recurring, and the container had been quietly auto-generating both into
   # its volume. Worth knowing if this is ever revived.
+  #
+  # Slot unwound: the 10406 row is DELETED from _overview.md (bake-off
+  # 2026-09-01) — no whiteboarding service is planned; 10406 is free. The
+  # findings above are kept because tests/ and the README still cite them.
   # ---------------------------------------------------------------------------

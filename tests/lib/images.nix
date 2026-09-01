@@ -4,6 +4,11 @@
 # dockerTools.pullImage can fetch offline. `composeRef` is the string as it
 # appears in the compose file; the suites key off it so the drift lint can
 # compare the two.
+#
+# Substitutions in effect:
+#   ghcr.io/idanreed/caddy-cloudflare:2.11.2 -> caddy:2.11.2 (fork image is 
+#     built by .github/workflows/build-caddy.yml and is not published yet; the 
+#     DNS-01 plugin it adds is unused in the suites, which force 'tls internal')
 {
   "alpine_3_21" = {
     composeRef = "alpine:3.21";
@@ -52,14 +57,6 @@
     hash = "sha256-hXuu9eeWYGfUba1aFChZcrtyw8Kpz3drDKnXv3Okp8Q=";
     finalImageName = "codeberg.org/forgejo/forgejo";
     finalImageTag = "16.0";
-  };
-  "corentinth_it-tools_2024_10_22-7ca5933" = {
-    composeRef = "corentinth/it-tools:2024.10.22-7ca5933";
-    imageName = "corentinth/it-tools";
-    imageDigest = "sha256:8b8128748339583ca951af03dfe02a9a4d7363f61a216226fc28030731a5a61f";
-    hash = "sha256-+XnDXJcbgU9VoakkAGEui2Sv/vnejRVdg/qaFWHDejk=";
-    finalImageName = "corentinth/it-tools";
-    finalImageTag = "2024.10.22-7ca5933";
   };
   "crazymax_samba_4_23_8" = {
     composeRef = "crazymax/samba:4.23.8";
@@ -207,9 +204,9 @@
   };
   "ghcr_io_idanreed_caddy-cloudflare_2_11_2" = {
     composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2";
-    imageName = "ghcr.io/idanreed/caddy-cloudflare";
-    imageDigest = "sha256:a96289a08e6a1ba5dccc650a00b86083c0629329e75a30d6e439f508e551c200";
-    hash = "sha256-MNqdZ3e3iV/TytmLVtJ33Aa+RoPDNLTwj1zgF276Gac=";
+    imageName = "caddy";
+    imageDigest = "sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562";
+    hash = "sha256-HPpccoluk3umDZjfwDBUlceC2UebrefbbttUtP3QuR8=";
     finalImageName = "ghcr.io/idanreed/caddy-cloudflare";
     finalImageTag = "2.11.2";
   };
@@ -232,8 +229,8 @@
   "ghcr_io_immich-app_postgres_17-vectorchord1_1_1" = {
     composeRef = "ghcr.io/immich-app/postgres:17-vectorchord1.1.1";
     imageName = "ghcr.io/immich-app/postgres";
-    imageDigest = "sha256:3ea13db44f1116042032ec638979eae2dbd4f2419c7d2e134fbe308a534cb054";
-    hash = "sha256-x7kt2Ts/NQy0jhed6r5GTQyRI310U22/AeltD3zd2no=";
+    imageDigest = "sha256:d1cb29ccf8f34460e5837fc050c8e210ee86864c8489d6ec52103f67c87b5159";
+    hash = "sha256-pxJhndWklrqawqde7fmVfOUiY2ORAMCdKBG/IO5x5g4=";
     finalImageName = "ghcr.io/immich-app/postgres";
     finalImageTag = "17-vectorchord1.1.1";
   };
@@ -268,6 +265,14 @@
     hash = "sha256-ey9wDtv/m/y1+EbGk/RmgZhjlt4VLpLDbm6AGcSg60Y=";
     finalImageName = "ghcr.io/seerr-team/seerr";
     finalImageTag = "v3.4.1";
+  };
+  "ghcr_io_sharevb_it-tools_2026_7_11" = {
+    composeRef = "ghcr.io/sharevb/it-tools:2026.7.11";
+    imageName = "ghcr.io/sharevb/it-tools";
+    imageDigest = "sha256:5d79e8c7fbf39d6473c282b9c4f86ff85c4900ec22ef766ae3c6f0f9ca8dbb37";
+    hash = "sha256-mNp8ThErx8MzFg1esPiDeujd7tRriWfnCc0wEQP5rQM=";
+    finalImageName = "ghcr.io/sharevb/it-tools";
+    finalImageTag = "2026.7.11";
   };
   "ghcr_io_silverbulletmd_silverbullet_2_9_0" = {
     composeRef = "ghcr.io/silverbulletmd/silverbullet:2.9.0";
@@ -520,8 +525,8 @@
   "python_3_13-alpine" = {
     composeRef = "python:3.13-alpine";
     imageName = "python";
-    imageDigest = "sha256:540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d";
-    hash = "sha256-VezYqm4Tbx9aFHtkIb7RI/cx5uRz0iVQTHEmv7GO3NY=";
+    imageDigest = "sha256:62e80a1ff2a4af41c6fe72a629e5729463a4fd05ae89ecc9c812a6c1457f2cc7";
+    hash = "sha256-pwnSc3NmB+lvUPvFkAleug+eY2di2E3iD0nPolMgf3c=";
     finalImageName = "python";
     finalImageTag = "3.13-alpine";
   };
@@ -552,8 +557,8 @@
   "valkey_valkey_9_1-alpine" = {
     composeRef = "valkey/valkey:9.1-alpine";
     imageName = "valkey/valkey";
-    imageDigest = "sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9";
-    hash = "sha256-fF88phuBt12Y0dUssOi/QFWSmm4oZPyKwg9R0XKW9Pk=";
+    imageDigest = "sha256:a174b894902bd3367e330d47cc2054367dc4917701776aaf336f41d83b65ec7a";
+    hash = "sha256-q9ZnoQd5p6pyHkLaEeLwcknWS9mZgltDxDysWFRMPFs=";
     finalImageName = "valkey/valkey";
     finalImageTag = "9.1-alpine";
   };
