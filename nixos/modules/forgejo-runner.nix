@@ -111,8 +111,8 @@ in
       # moves to the desktop (placement option (b) above, which is still
       # open); and the runner is the one component whose whole job is to talk
       # to the forge the way a client does. Consequence: this host must be ON
-      # the tailnet before registration can succeed. tailscale-autoconnect
-      # orders itself earlier, and a failed registration retries.
+      # the tailnet before registration can succeed — the after= on the unit
+      # override below waits for tailscale-autoconnect's boot-time run.
       url = "https://forgejo.svc.idanreed.com";
 
       inherit labels tokenFile;
@@ -175,6 +175,16 @@ in
   };
 
   systemd.services.gitea-runner-forgejo = {
+    # Boot-time registration resolves the url above over the tailnet, so wait
+    # for tailscale-autoconnect's run to complete first. Ordering only, no
+    # wants=: autoconnect is a non-RemainAfterExit oneshot in
+    # multi-user.target's transaction, so After= waits for its boot run, and
+    # the test profiles that pull it out of the target make this edge a no-op
+    # rather than dragging the unit back in. Without it, a slow tailnet at
+    # boot trips the start limiter in ~10s (see the onFailure note below) and
+    # the runner sits `failed` until a manual start.
+    after = [ "tailscale-autoconnect.service" ];
+
     # SKIPPED, not failed, until the registration token exists. Without this
     # the unit would loop: Restart=on-failure with RestartSec=2 trips the
     # default start limiter in ~10s, lands in `failed`, and fires the

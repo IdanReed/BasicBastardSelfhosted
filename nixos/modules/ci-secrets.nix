@@ -97,8 +97,11 @@ in
     description = "Decrypt Forgejo CI credentials (Renovate PAT, runner token)";
     wantedBy = [ "multi-user.target" ];
 
-    # local-fs.target: the age key lives on the state filesystem
-    # (/var/lib/sops-nix), which is a separate mount on this host.
+    # local-fs.target as a conservative anchor only: the age key
+    # (/var/lib/sops-nix) is a tmpfiles dir on the ROOT filesystem — the
+    # separate state mount on this host is /srv, which this unit never reads.
+    # Do not "tighten" this to srv.mount on the strength of where the key
+    # lives; it does not live there.
     after = [ "local-fs.target" ];
 
     # Ordering only, not Requires=: a consumer must be SKIPPED (condition) when

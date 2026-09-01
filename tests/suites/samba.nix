@@ -71,6 +71,31 @@ let
     rm -f $out/stacks/samba/.sops.env.example $out/stacks/samba/.sops.env
     cp ${fixture} $out/stacks/samba/.sops.env
   '';
+
+  # /mnt tmpfiles rules, read from the SAME generated file the real host
+  # imports (nixos/stack-dirs.nix) rather than hand-copied. The 1000:1000 on
+  # .../shared IS the thing the uid subtest measures, so a drifted copy would
+  # make the suite assert its own fixture — the class ledger #77 fixed in
+  # mk-stack-suite; this hand-written suite now derives instead of copying
+  # too. Only the test-only /srv and sops-nix rules stay literal below.
+  stackMntRoots = [
+    "/mnt/fast/samba"
+    "/mnt/slow/samba"
+  ];
+  stackDirRules = (import ../../nixos/stack-dirs.nix).systemd.tmpfiles.rules;
+  rulePath = r: lib.elemAt (lib.splitString " " r) 1;
+  missingRoots = lib.filter (root: !(lib.any (r: rulePath r == root) stackDirRules)) stackMntRoots;
+  mntRules =
+    if missingRoots == [ ] then
+      lib.filter (
+        r: lib.any (root: root == rulePath r || lib.hasPrefix (root + "/") (rulePath r)) stackMntRoots
+      ) stackDirRules
+    else
+      throw (
+        "samba suite: nixos/stack-dirs.nix has no rule for "
+        + lib.concatStringsSep ", " missingRoots
+        + " — re-run nixos/generate-stack-dirs.sh or fix stackMntRoots"
+      );
 in
 pkgs.testers.runNixOSTest {
   name = "samba";
@@ -141,16 +166,13 @@ pkgs.testers.runNixOSTest {
           };
         };
 
+        # The /mnt rules come from generated nixos/stack-dirs.nix (see the
+        # let-binding above); only the test-only rules are literal here.
         systemd.tmpfiles.rules = [
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
-          "d /mnt/fast/samba 0755 root root -"
-          # Kept byte-identical to the production rule in
-          # nixos/hardware-configuration.nix: the uid here IS the thing under
-          # test, so a divergence would make the suite assert its own fixture.
-          "d /mnt/slow/samba 0755 root root -"
-          "d /mnt/slow/samba/shared 0775 1000 1000 -"
-        ];
+        ]
+        ++ mntRules;
 
         systemd.services.seed-srv = {
           description = "Seed /srv with the samba stack (test only)";

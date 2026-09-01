@@ -1434,10 +1434,6 @@ in
     '';
 
   # ---------------------------------------------------------------------------
-  # Headscale ACL policy
-  # ---------------------------------------------------------------------------
-  # policy.hujson switches the tailnet to default-deny. A syntax error or an
-  # ---------------------------------------------------------------------------
   # network_mode must be declared, because it makes a service INVISIBLE
   # ---------------------------------------------------------------------------
   # `loopback-binding` and `mk-stack-suite`'s probe list are both built from
@@ -1626,6 +1622,9 @@ in
       TIER_MOUNTS = {"/mnt", "/mnt/fast", "/mnt/slow"}
       mounts = set()
       containers = {}   # container_name -> {stack, env, mounts, image}
+      nameless = []     # services WITHOUT container_name — invisible to
+                        # every container-keyed leg below, so leg 3 checks
+                        # them separately
       for c in manifest:
           with open(c["path"]) as f:
               compose = yaml.safe_load(f)
@@ -1654,6 +1653,12 @@ in
                       "mounts": svc_mounts,
                       "image": svc.get("image") or "",
                   }
+              else:
+                  nameless.append({
+                      "stack": c["stack"],
+                      "service": name,
+                      "image": svc.get("image") or "",
+                  })
 
       errs, warns = [], []
 
@@ -1914,6 +1919,20 @@ in
               f"file-level copy of a live datadir does not reliably restore, "
               f"and the plans exclude **/pgdata/** precisely because of that "
               f"— so this database is currently in no backup at all.")
+      # A service without container_name never enters `containers`, so the
+      # loop above cannot see it — and backup-prepare.sh execs FIXED names, so
+      # a compose-generated one can never be dumped at all. For an engine the
+      # missing name is therefore itself the defect (and legs 1/2 do not
+      # catch it: a whole-tier raw copy satisfies leg 1 and any other dump in
+      # the stack satisfies leg 2 — the Forgejo shape again).
+      for info in sorted(nameless, key=lambda i: (i["stack"], i["service"])):
+          if not ENGINE_RE.search(info["image"]):
+              continue
+          errs.append(
+              f"{info['stack']}: service {info['service']!r} runs a database "
+              f"engine ({info['image']}) but sets no container_name, so "
+              f"backup-prepare.sh cannot exec it and the database can never "
+              f"be dumped. Give it a container_name and wire a dump.")
 
       for w in warns:
           print("  WARN " + w, file=sys.stderr)
@@ -2164,6 +2183,10 @@ in
       PY
     '';
 
+  # ---------------------------------------------------------------------------
+  # Headscale ACL policy
+  # ---------------------------------------------------------------------------
+  # policy.hujson switches the tailnet to default-deny. A syntax error or an
   # unresolvable user reference means headscale refuses to load the policy, and
   # the failure mode is "nothing on the tailnet can reach anything".
   headscale-policy =
