@@ -490,8 +490,10 @@ in
       # Per-file failures accumulate instead of aborting the walk, so one bad
       # .sops.env cannot stop every healthy stack from decrypting — and, at
       # boot, cannot leave bootstrap-arcane's Requires= forever unsatisfied
-      # over a single broken stack.
+      # over a single broken stack. $failing collects WHICH files failed
+      # (glob order, so deterministic) for the change-detection stamp below.
       fail=0
+      failing=""
 
       decrypt() {
         src="$1"
@@ -512,6 +514,7 @@ in
             rm -f "$out.tmp"
             echo "FAILED to decrypt $src" >&2
             fail=1
+            failing="$failing $src"
           fi
         fi
         # OUTSIDE the freshness guard on purpose: enforced on every tick, not
@@ -534,17 +537,22 @@ in
 
       # Alert on state CHANGE, not on every tick. This unit runs minutely with
       # OnFailure wired to ntfy, so exiting nonzero for as long as a stack is
-      # broken would be a phone push every 60s forever. The stamp survives
-      # between ticks (cleared by reboot with the rest of /run): first failure
-      # exits 1 and notifies, repeats stay in the journal only, and recovery
-      # is logged when the stamp is removed.
+      # broken would be a phone push every 60s forever. The stamp holds the
+      # failing SET and survives between ticks (cleared by reboot with the
+      # rest of /run): a changed set exits 1 and notifies, an unchanged one
+      # stays in the journal only, and recovery is logged when the stamp is
+      # removed.
       stamp=/run/decrypt-sops-envs.failed
       if [ "$fail" -ne 0 ]; then
-        if [ -e "$stamp" ]; then
+        # Suppress only while the SET of failing files is unchanged: a
+        # different stack breaking during an open incident must page again,
+        # which a bare existence check would swallow until the first one
+        # recovered. $(cat) strips the trailing newline, matching $failing.
+        if [ -e "$stamp" ] && [ "$failing" = "$(cat "$stamp")" ]; then
           echo "decryption still failing (already notified; see journal above)" >&2
           exit 0
         fi
-        touch "$stamp"
+        printf '%s\n' "$failing" > "$stamp"
         exit 1
       fi
       if [ -e "$stamp" ]; then
@@ -791,7 +799,12 @@ in
       if [ -n "$bad" ]; then
         echo "Unhealthy containers:"
         echo "$bad"
-        if [ -e "$stamp" ]; then
+        # Suppress only while the SET is unchanged. A second container going
+        # unhealthy during an open incident is a new page, not a repeat of the
+        # old one — a bare existence check would swallow it until the first
+        # container recovered. $(cat) strips the trailing newline, matching
+        # the command-substituted $bad.
+        if [ -e "$stamp" ] && [ "$bad" = "$(cat "$stamp")" ]; then
           echo "(already notified; see the journal above)"
           exit 0
         fi

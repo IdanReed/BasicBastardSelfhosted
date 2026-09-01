@@ -173,6 +173,19 @@ pkgs.testers.runNixOSTest {
             f"docker run --name flood {IMG} sh -c "
             "'i=1; while [ $i -le 30000 ]; do echo line-$i; i=$((i+1)); done'"
         )
+        # docker run returns at container exit, but journald ingests dockerd's
+        # writes asynchronously — under exactly this burst load `docker logs`
+        # can briefly read back fewer lines. Poll until the count settles so a
+        # timing flake cannot masquerade as a rateLimitBurst regression; a
+        # count that PLATEAUS short still falls through to the assert below
+        # with the config-regression message.
+        try:
+            services_vm.wait_until_succeeds(
+                "[ $(docker logs flood 2>&1 | grep -c '^line-') -eq 30000 ]",
+                timeout=60,
+            )
+        except Exception:
+            pass  # the assert below reports the real count and the real cause
         n = int(services_vm.succeed(
             "docker logs flood 2>&1 | grep -c '^line-'"
         ).strip())

@@ -211,7 +211,7 @@ in
     # start before the daemon it talks to. Harmless before, because the script
     # slept 2s and had one shot; now that it re-runs on a timer it matters,
     # and the settle loop below is the belt to this braces.
-    # (nixos/configuration.nix:176-177 still has the typo, on the twin unit.)
+    # (The twin unit in nixos/configuration.nix carries the same fix.)
     after = [ "network-online.target" "tailscaled.service" "headscale.service" "caddy.service" ];
     wants = [ "network-online.target" "tailscaled.service" ];
     wantedBy = [ "multi-user.target" ];
