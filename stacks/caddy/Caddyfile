@@ -563,6 +563,38 @@
 		reverse_proxy localhost:10307
 	}
 
+	@actual host actual.svc.idanreed.com
+	handle @actual {
+		# Native login (server password today, native OIDC once the
+		# Authentik secret lands) — NO forward auth: every Actual client,
+		# including the @actual-app/api library, authenticates by POSTing
+		# the password for a session token and cannot follow an IdP
+		# redirect. The loopback publish of :10308 is the other half of
+		# this decision.
+		reverse_proxy localhost:10308
+	}
+
+	@wealthfolio host wealthfolio.svc.idanreed.com
+	handle @wealthfolio {
+		# NO forward auth, deliberately — the ghostfolio posture, applied
+		# to its bake-off rival: Wealthfolio ships with its own password
+		# login armed (WF_AUTH_PASSWORD_HASH, Argon2id) and native OIDC
+		# ready-but-OFF (discovery is BOOT-FATAL with no override; read
+		# the compose file before ever turning it on).
+		# Two Wealthfolio-specifics of this route:
+		#   - WF_COOKIE_SECURE=auto keys the session cookie's Secure
+		#     flag on X-Forwarded-Proto, which reverse_proxy sends — do
+		#     not strip it.
+		#   - WF_CORS_ALLOW_ORIGINS is pinned to EXACTLY
+		#     https://wealthfolio.svc.idanreed.com. Renaming this vhost
+		#     without changing that env leaves every curl probe green
+		#     and every browser login broken on CORS.
+		# ⚠ If forward auth is ever added, pair it with
+		# WF_AUTH_REQUIRED=false (upstream's documented edge-auth mode)
+		# or it is two logins.
+		reverse_proxy localhost:10309
+	}
+
 	@windmill host windmill.svc.idanreed.com
 	handle @windmill {
 		# Forward auth is the ONLY SSO Windmill can have: OIDC/OAuth login
@@ -724,6 +756,16 @@
 		# JS — plausible-looking and completely broken.
 		import protected
 		reverse_proxy localhost:10351
+	}
+
+	@mealie host mealie.svc.idanreed.com
+	handle @mealie {
+		# NO forward auth: Mealie drives its own OIDC against Authentik
+		# (plain OIDC_* env vars; discovery is lazy, so configuring it is
+		# not boot-fatal) and ships OIDC-ready and OIDC-off, running on the
+		# local admin that mealie_init creates until the client secret
+		# lands. Same posture as tandoor next door.
+		reverse_proxy localhost:10352
 	}
 
 	# ------------------------------------------------------------------
