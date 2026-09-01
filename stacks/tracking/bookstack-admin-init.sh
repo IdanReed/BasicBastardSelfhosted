@@ -57,6 +57,13 @@ cd /app/www || { log "FATAL: /app/www missing — image layout changed"; exit 0;
 # picks it up. Deliberately not retried in a loop: s6 init blocking on a
 # database is how a container never starts.
 #
+# ACCEPTED argv exposure: --password= is visible in /proc/<pid>/cmdline, which
+# is world-readable in the host PID namespace, for as long as this runs on each
+# boot. bookstack:create-admin takes the password only as a CLI option — no env
+# var, no file — and its fallback prompt needs a TTY that s6 init does not
+# give it, so there is nothing to move the secret into.
+# ServerNotes/issues/code-review-2026-08-31.md, "Accepted".
+#
 # Captured rather than piped through sed in the `if`: without pipefail the
 # pipeline's status is sed's (always 0), which logged CHANGE on every boot
 # and made the exit-2 branch unreachable. Capturing also lets exit 2 be told

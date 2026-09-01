@@ -441,14 +441,58 @@ else
     # Headscale keeps db.sqlite plus noise_private.key and
     # derp_server_private.key here. The keys are the control-plane identity:
     # lose them and every client must re-authenticate.
+    #
+    # The database gets the SAME `.backup` treatment as every local sqlite above
+    # (see the forgejo note: a raw copy of a live WAL database measured 73 tables
+    # against 131). headscale runs WAL-mode — headscale-vps/modules/headscale.nix
+    # sets only type/path, and write_ahead_log defaults to true — so an rsync of
+    # the live file is the torn-copy pattern this script exists to avoid. Snapshot
+    # first, on the VPS, then pull the snapshot and exclude the live files.
+    # sqlite3 is provisioned for this in headscale-vps/configuration.nix.
+    log "headscale sqlite snapshot (via $VPS_HOST)"
+    snapshot_ok=1
+    if ! ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+        'sudo sqlite3 /var/lib/headscale/db.sqlite ".backup /var/lib/headscale/db-backup.sqlite"'; then
+        log "FAILED: headscale sqlite snapshot"
+        snapshot_ok=0
+        rc_vps=1
+    fi
+
+    # The live db.sqlite and its -wal/-shm are EXCLUDED, and the exclusion also
+    # protects them from --delete on the receiver — which is what keeps the
+    # previous good snapshot in place when tonight's fails, exactly as
+    # finish_dump does for every local dump.
     log "headscale state pull"
     if ! rsync -a --delete \
+        --exclude='db.sqlite' --exclude='db.sqlite-*' --exclude='db-backup.sqlite' \
         --rsync-path='sudo rsync' \
         -e "ssh ${ssh_opts[*]}" \
         "$VPS_USER@$VPS_HOST:/var/lib/headscale/" "$VPSDIR/headscale/"; then
         log "FAILED: headscale state pull"
         rc_vps=1
     fi
+
+    # The snapshot lands under the name the live file used to have: the DR path
+    # (and the tailnet suite) expects _vps/headscale/db.sqlite, and this way that
+    # path holds a consistent database instead of a torn one. Pulled separately
+    # so it goes through finish_dump's zero-byte guard and atomic rename.
+    if [ "$snapshot_ok" -eq 1 ]; then
+        if rsync -a --rsync-path='sudo rsync' -e "ssh ${ssh_opts[*]}" \
+            "$VPS_USER@$VPS_HOST:/var/lib/headscale/db-backup.sqlite" \
+            "$VPSDIR/headscale/db.sqlite.tmp"; then
+            finish_dump "$VPSDIR/headscale/db.sqlite.tmp" \
+                "$VPSDIR/headscale/db.sqlite" "headscale db snapshot" || rc_vps=1
+        else
+            log "FAILED: headscale db snapshot pull"
+            rm -f "$VPSDIR/headscale/db.sqlite.tmp"
+            rc_vps=1
+        fi
+    fi
+
+    # Sidecars left by the pre-snapshot raw pulls. A stale -wal beside a fresh
+    # snapshot is worse than no wal at all, and the exclusions above mean rsync
+    # will never clear them.
+    rm -f "$VPSDIR/headscale/db.sqlite-wal" "$VPSDIR/headscale/db.sqlite-shm"
 fi
 
 # ---------------------------------------------------------------------------

@@ -100,6 +100,58 @@ in
       enable = true;
       dates = "weekly";
     };
+
+    # Cap json-file growth. The driver stays json-file here — do NOT switch the
+    # default to journald the way nixos/configuration.nix does: fail2ban's
+    # authentik jail pins CONTAINER_TAG=authentik-server, and the
+    # fail2ban-journal-contract lint reads that tag out of authentik/compose.yaml,
+    # where the server container sets the driver PER SERVICE. A daemon default is
+    # invisible to that YAML parser.
+    #
+    # Uncapped json-file was the fleet-wide bug the services VM fixed; on this
+    # host only `server` has a logging: block, so worker/postgresql/redis were
+    # growing without bound on the single root partition (disk-config.nix). These
+    # options are the defaults for the DEFAULT driver only, so the server
+    # container's journald logging is untouched by them.
+    daemon.settings = {
+      log-opts = {
+        max-size = "10m";
+        max-file = "3";
+      };
+    };
+  };
+
+  # ---------------------------------------------------------------------------
+  # journald
+  # ---------------------------------------------------------------------------
+  # 🚨 rateLimitBurst = 0 IS BAN EVIDENCE, not tidiness. fail2ban's authentik
+  # jail (below) is backend=systemd: it reads login_failed lines out of the
+  # journal. journald rate-limits PER SENDING UNIT and docker's journald driver
+  # submits every container line from dockerd itself, so the authentik server
+  # container shares ONE bucket with anything else that driver carries. At the
+  # systemd default (10000 messages / 30 s) a public request flood to
+  # auth.idanreed.com — authentik logs at least one info line per request, so
+  # ~333 rps is enough — exhausts the window, and interleaved brute-force
+  # login_failed lines never reach fail2ban at all. Measured on the services VM
+  # at the default burst: 20006 of 30000 lines gone, with no "Suppressed N
+  # messages" note to say so. Setting burst or interval to 0 disables rate
+  # limiting entirely (journald.conf(5)).
+  services.journald = {
+    rateLimitBurst = 0;
+
+    # Explicit, not defaulted: with the rate limit off, the byte cap is the only
+    # bound left, and a silent upstream default change would remove it.
+    storage = "persistent";
+
+    extraConfig = ''
+      # The trade the line above buys: a flood now rotates journal history
+      # faster instead of dropping lines silently. Sized for that. This is a
+      # single-partition host (disk-config.nix: one ext4 root filling the disk),
+      # so both caps protect the filesystem the control plane lives on.
+      SystemMaxUse=512M
+      SystemKeepFree=2G
+      SystemMaxFileSize=64M
+    '';
   };
 
   # Tailscale (joins its own network)
@@ -115,6 +167,10 @@ in
     dig
     sops
     age
+    # Consumed by the services VM's backup-prepare.sh over ssh: it snapshots
+    # headscale's live WAL-mode db.sqlite with `sqlite3 ... ".backup"` before
+    # pulling it. A raw rsync of a live WAL database can land a torn copy.
+    sqlite
   ];
 
   # SOPS configuration.
