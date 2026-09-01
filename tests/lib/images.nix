@@ -4,11 +4,6 @@
 # dockerTools.pullImage can fetch offline. `composeRef` is the string as it
 # appears in the compose file; the suites key off it so the drift lint can
 # compare the two.
-#
-# Substitutions in effect:
-#   ghcr.io/idanreed/caddy-cloudflare:2.11.2 -> caddy:2.11.2 (fork image is 
-#     built by .github/workflows/build-caddy.yml and is not published yet; the 
-#     DNS-01 plugin it adds is unused in the suites, which force 'tls internal')
 {
   "alpine_3_21" = {
     composeRef = "alpine:3.21";
@@ -212,9 +207,9 @@
   };
   "ghcr_io_idanreed_caddy-cloudflare_2_11_2" = {
     composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2";
-    imageName = "caddy";
-    imageDigest = "sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562";
-    hash = "sha256-HPpccoluk3umDZjfwDBUlceC2UebrefbbttUtP3QuR8=";
+    imageName = "ghcr.io/idanreed/caddy-cloudflare";
+    imageDigest = "sha256:a96289a08e6a1ba5dccc650a00b86083c0629329e75a30d6e439f508e551c200";
+    hash = "sha256-MNqdZ3e3iV/TytmLVtJ33Aa+RoPDNLTwj1zgF276Gac=";
     finalImageName = "ghcr.io/idanreed/caddy-cloudflare";
     finalImageTag = "2.11.2";
   };

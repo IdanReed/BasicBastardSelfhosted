@@ -51,6 +51,13 @@ in
   };
 
   # Allow passwordless sudo for wheel group
+  # Deliberate trade (security review 2026-08-30, lower-priority item):
+  # passwordless wheel is what makes `nixos-rebuild switch --target-host
+  # ... --use-remote-sudo` and the backup pull's `sudo docker` work
+  # non-interactively. The cost is stated plainly: compromise of an
+  # authorized SSH key IS instant root on this host. The mitigations are
+  # upstream of sudo — key-only auth, KbdInteractive off, fail2ban, and
+  # the keys themselves living sops-encrypted rather than loose.
   security.sudo.wheelNeedsPassword = false;
 
   # SSH server

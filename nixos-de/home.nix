@@ -207,6 +207,7 @@
     gh # GitHub CLI — PRs, Actions runs, releases
     sops
     age
+    openssl # `openssl rand -base64 N` for secret material; installs the bin output
     tree
     mpv
     losslesscut-bin
