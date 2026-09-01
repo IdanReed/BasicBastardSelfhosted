@@ -84,6 +84,51 @@ let
   mntPaths = lib.unique (matchAll "[[:space:]]*-[[:space:]]*[\"']?(/mnt/[^:\"']+):.*" 0);
 
   # -------------------------------------------------------------------------
+  # Volume-root OWNERSHIP, from the generated table — not from root:root
+  # -------------------------------------------------------------------------
+  # This used to be `map (p: "d ${p} 0755 root root -") mntPaths`, which is
+  # the one ownership this fleet has been bitten by four times: root:root is
+  # ALSO docker's create-on-mount default, so a suite that hardcodes it is not
+  # neutral — it silently reproduces the bug that nixos/stack-dirs.nix exists
+  # to prevent, and then reports the stack healthy because the two images
+  # already in `stackChecks` happen to run as root.
+  #
+  # Any stack whose image drops privileges (loki 10001, grafana 472,
+  # mosquitto 1883, docspace 104:107, mysql 999 ...) therefore could not pass
+  # this harness at all — measured, not inferred: with root-owned volume roots
+  # loki and grafana both restart-loop within seconds. Reading the SAME
+  # generated file the real host imports fixes that and costs nothing: it is a
+  # plain attrset of rule strings, and `stack-dirs-generated` already
+  # byte-compares it against a fresh run of the generator.
+  #
+  # Parents come along because the generator emits a rule for each one (a
+  # parent tmpfiles creates implicitly gets the DEFAULT ownership, not the
+  # rule's), so `/mnt/slow/books/library` also brings `/mnt/slow/books`.
+  #
+  # Zero behaviour change for the stacks already here: ntfy's three rules are
+  # root:root and util has no /mnt binds at all.
+  stackDirRules = (import ../../nixos/stack-dirs.nix).systemd.tmpfiles.rules;
+  rulePath = r: lib.elemAt (lib.splitString " " r) 1;
+  # Is `dir` this path or an ancestor of it?
+  covers = dir: p: p == dir || lib.hasPrefix (dir + "/") p;
+  mntRules = lib.filter (r: lib.any (covers (rulePath r)) mntPaths) stackDirRules;
+
+  # A bind source with no rule of its own would fall back to whatever tmpfiles
+  # gives an undeclared path — the silent case again. The generator refuses to
+  # emit without a STACK_NOTES entry, so this can only fire if the two parsers
+  # disagree about a path, and then it should fire loudly at eval.
+  unruled = lib.filter (p: !(lib.any (r: rulePath r == p) stackDirRules)) mntPaths;
+  checkedMntRules =
+    if unruled == [ ] then
+      mntRules
+    else
+      throw (
+        "stackChecks.${stack}: compose.yaml bind-mounts ${lib.concatStringsSep ", " unruled} "
+        + "but nixos/stack-dirs.nix has no rule for it. Add the STACK_NOTES/DIR_NOTES "
+        + "entry and re-run nixos/generate-stack-dirs.sh."
+      );
+
+  # -------------------------------------------------------------------------
   # Image pins
   # -------------------------------------------------------------------------
   # Every compose ref must have a content-addressed pin in images.nix — the
@@ -195,10 +240,13 @@ pkgs.testers.runNixOSTest {
         systemd.tmpfiles.rules = [
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
-          # Volume roots parsed from the compose file — generic on purpose,
-          # so a new stack works without touching the harness.
+          # Volume roots for this stack, with the REAL ownership from
+          # nixos/stack-dirs.nix (see the derivation above). Generic on
+          # purpose, so a new stack works without touching the harness — and
+          # correct on purpose, so a stack whose image is not root is tested
+          # against the ownership it will actually get.
         ]
-        ++ map (p: "d ${p} 0755 root root -") mntPaths;
+        ++ checkedMntRules;
 
         # Populate /srv before decrypt-sops-envs reads it; on the real host
         # Arcane's git sync plays this role.

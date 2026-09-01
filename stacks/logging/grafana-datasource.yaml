@@ -1,0 +1,42 @@
+# Grafana datasource provisioning — the Loki connection, declared.
+#
+# Mounted at /etc/grafana/provisioning/datasources/loki.yaml (read-only).
+# Grafana reads this directory at every start and reconciles, so the datasource
+# exists before anyone logs in and re-asserts itself on every redeploy. A
+# hand-clicked datasource would live only in grafana.db, i.e. only in the
+# nightly sqlite dump — "zero-UI deployment" is a stated principle of this
+# fleet and this is what it means in practice.
+#
+# ⚠ `apiVersion: 1` is Grafana's provisioning schema version, not a Grafana
+# version. It is still 1 in 13.x; do not "update" it.
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    # The service name on the compose project's own bridge network. NOT
+    # 127.0.0.1:10456 (a bridged container cannot reach a loopback-bound host
+    # publish) and NOT the Caddy vhost (there is none, and forward auth would
+    # 302 every query).
+    url: http://loki:3100
+    access: proxy
+
+    # The only datasource, so it is the default: Explore opens on it with no
+    # selection step.
+    isDefault: true
+
+    # Reconcile on every start. Without this, a change here is ignored once
+    # the datasource exists in grafana.db — the provisioning file becomes
+    # documentation of what the datasource used to be.
+    editable: false
+
+    jsonData:
+      # Must not exceed limits_config.retention_period in loki.yaml (720h).
+      # Grafana uses it to bound the time picker and to reject queries that
+      # can only ever return nothing.
+      maxLines: 5000
+
+    # No `secureJsonData`: auth_enabled is false in loki.yaml (single tenant,
+    # reachable only from inside this compose project), so there is no
+    # credential to provision and nothing here belongs in .sops.env.

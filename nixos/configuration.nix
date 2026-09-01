@@ -79,6 +79,110 @@ in
       enable = true;
       dates = "weekly";
     };
+
+    # -------------------------------------------------------------------------
+    # Log driver: journald, fleet-wide, SERVICES VM ONLY
+    # -------------------------------------------------------------------------
+    # stacks/logging (Loki + Alloy + Grafana) reads the HOST JOURNAL. Alloy
+    # gets two read-only bind mounts (/var/log/journal, /etc/machine-id) and NO
+    # docker socket — that is the whole point of routing container stdout
+    # through journald rather than running a log collector with root-equivalent
+    # access to the daemon.
+    #
+    # 🚨 `docker logs` KEEPS WORKING, and that is a contract, not a hope: 131
+    # call sites across tests/ read it, and every one uses the plain
+    # `docker logs <name> 2>&1` form. Measured against docker 29.4.3 (the same
+    # major as pkgs.docker_29) with the driver switched:
+    #   - 202 emitted lines, 202 readable;
+    #   - stdout and stderr stay on separate streams (`2>/dev/null` yields
+    #     only stdout, `1>/dev/null` only stderr);
+    #   - `--tail N` and `--timestamps` behave identically;
+    #   - the merged ordering of `2>&1` is BYTE-IDENTICAL to json-file's —
+    #     stdout groups ahead of stderr under both drivers, because that is
+    #     the CLI's own pipe buffering, not a driver property.
+    # The one behaviour that genuinely changes is covered by services.journald
+    # below; read that comment before touching either of these.
+    #
+    # ⚠ SERVICES VM ONLY. Do NOT copy this to headscale-vps/configuration.nix.
+    # The VPS's authentik container sets `logging: {driver: journald, options:
+    # {tag: authentik-server}}` PER SERVICE in its compose file, and fail2ban's
+    # jail and filter both pin `CONTAINER_TAG=authentik-server`. The
+    # fail2ban-journal-contract lint reads that tag out of the compose YAML and
+    # requires both consumers to match it — a daemon default is invisible to a
+    # YAML parser, so it can neither satisfy nor break that lint. There is no
+    # fail2ban on this host at all (`grep -rn fail2ban nixos/` is empty).
+    #
+    # tag={{.Name}} is what makes the journal legible. With no tag, docker sets
+    # CONTAINER_TAG (and SYSLOG_IDENTIFIER) to the TRUNCATED CONTAINER ID —
+    # verified: a container run without the option logged CONTAINER_TAG
+    # "931e9b6a5ce8". Every Loki stream label and every future journalmatch
+    # would then be a value that changes on each `docker compose up`.
+    # Per-service `logging:` blocks in a compose file override this default,
+    # which is exactly how the VPS keeps its own pinned tag.
+    #
+    # Bonus fix, not a side effect worth hiding: json-file had NO max-size or
+    # max-file anywhere in this fleet, so container logs grew unbounded on
+    # /mnt/fast/docker. journald is bounded by SystemMaxUse below.
+    daemon.settings = {
+      log-driver = "journald";
+      log-opts = {
+        tag = "{{.Name}}";
+      };
+    };
+  };
+
+  # ---------------------------------------------------------------------------
+  # journald — the buffer every container now logs into
+  # ---------------------------------------------------------------------------
+  # 🚨 rateLimitBurst = 0 IS LOAD-BEARING AND MUST STAY IN LOCKSTEP WITH THE
+  # LOG DRIVER ABOVE. journald rate-limits PER SENDING UNIT, and docker's
+  # journald driver submits from dockerd itself — verified, every container
+  # line lands with _SYSTEMD_UNIT=docker.service. So the entire fleet shares
+  # ONE bucket, which at the systemd default (10000 messages / 30 s) is a few
+  # chatty containers wide.
+  #
+  # And a rate-limited line is not merely missing from Loki; it never reaches
+  # the journal, so `docker logs` cannot show it either. Measured on the same
+  # 29.4.3 host at the default burst: a container emitting 30000 lines was
+  # readable as 9994 — 20006 lines gone, and journald printed no "Suppressed N
+  # messages" note about it. A suite that greps `docker logs` for a line
+  # another container's chatter pushed out of the bucket fails intermittently
+  # and blames the wrong stack. Setting either the burst or the interval to 0
+  # disables rate limiting entirely (journald.conf(5)).
+  #
+  # The bound moves from a message rate to a byte cap, which is the honest
+  # place for it — see SystemMaxUse.
+  services.journald = {
+    rateLimitBurst = 0;
+
+    # Explicit, not defaulted (the house rule for anything load-bearing).
+    # "persistent" is also NixOS's default, but the logging stack's whole
+    # premise is that a reboot does not erase what Alloy has not shipped yet,
+    # and a silent upstream default change would break that quietly.
+    storage = "persistent";
+
+    extraConfig = ''
+      # SIZING. The journal is a BUFFER, not the archive — Loki holds 30 days
+      # (stacks/logging/loki.yaml), Alloy ships continuously, and the journal
+      # only has to cover the window in which Alloy is down. 2 GB of it is
+      # days at this fleet's volume.
+      #
+      # It lives on `/` (the OS disk), NOT on /mnt/fast — the tier that sizes
+      # /mnt/fast is Loki's chunk store on /mnt/slow, and this cap exists so
+      # the log fleet can never fill the root filesystem and take the host
+      # down with it. That is also why SystemKeepFree is set ABOVE systemd's
+      # 15% default rather than left alone: the test VMs get an 8 GB disk
+      # (tests/lib/mk-stack-suite.nix), where 15% is 1.2 GB and a 2 GB journal
+      # would be a quarter of the disk. journald honours whichever of the two
+      # binds first, so the pair is safe on both the 8 GB test VM and the real
+      # host.
+      SystemMaxUse=2G
+      SystemKeepFree=2G
+
+      # Bound one rotation step so vacuuming is incremental rather than a
+      # single large delete that takes a chunk of history with it.
+      SystemMaxFileSize=128M
+    '';
   };
 
   # System packages
@@ -708,6 +812,96 @@ in
       OnBootSec = "3min";
       Persistent = false;
       Unit = "unhealthy-containers.service";
+    };
+  };
+
+  # ---------------------------------------------------------------------------
+  # Loki disk budget
+  # ---------------------------------------------------------------------------
+  # 🚨 LOKI HAS NO SIZE-BASED RETENTION, AND THIS IS THE SUBSTITUTE. There is
+  # no `retention_size` knob, no `max_disk_usage`, and no upstream plan for
+  # one: the only retention control is TIME
+  # (limits_config.retention_period = 720h in stacks/logging/loki.yaml,
+  # enforced by the compactor). So the 100 GB budget in _overview.md cannot be
+  # a setting anywhere, and pretending otherwise is how a log store silently
+  # eats a volume.
+  #
+  # The honest arrangement is: retention bounds the window, an ingestion rate
+  # limit bounds a runaway container, and THIS unit measures the actual number
+  # and pages a human when the estimate was wrong. The response is to lower
+  # retention_period in loki.yaml — which is a decision, not something this
+  # unit should make. Automatically shortening retention is exactly how a log
+  # store becomes useless without anyone noticing.
+  #
+  # Why not gatus: gatus probes HTTP endpoints and has no notion of a
+  # filesystem. Why not beszel: its agent reports the whole /mnt/slow
+  # filesystem via statfs on the fsprobe marker directory, which is genuinely
+  # useful for the tier but says nothing about which directory grew — and
+  # /mnt/slow is 80 TB, so Loki could be 40x over budget without moving that
+  # gauge perceptibly. A per-directory number needs a per-directory check.
+  #
+  # ⚠ The threshold is 80 GiB, not the full budget: an alarm that fires AT the
+  # budget fires after the decision window has closed. 80 leaves room to think.
+  systemd.services.loki-retention-check = {
+    description = "Alert when Loki's chunk store approaches its disk budget";
+    onFailure = [ "notify-failure@%n.service" ];
+    path = with pkgs; [ coreutils ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      store=/mnt/slow/loki
+      # 80 GiB, against the 100 GB budget in _overview.md. In bytes so there
+      # is no rounding argument about which "GB" is meant.
+      limit=85899345920
+
+      # Not deployed is not a failure — the same distinction backup-prepare's
+      # require_running makes. A missing directory means the logging stack has
+      # not been synced onto this host yet, which the dump list and this check
+      # are both allowed to run ahead of.
+      if [ ! -d "$store" ]; then
+        echo "skip: $store does not exist (logging stack not deployed here)"
+        exit 0
+      fi
+
+      used=$(du -sb "$store" | cut -f1)
+      echo "loki store: $(( used / 1024 / 1024 / 1024 )) GiB used at $store"
+
+      # Alert on state CHANGE, not on every tick — the same pattern
+      # unhealthy-containers and decrypt-sops-envs use, and for the same
+      # reason: this runs on a timer with OnFailure wired to ntfy, so exiting
+      # nonzero for as long as the store is oversized would be a daily phone
+      # push forever. The stamp lives in /run and is cleared by a reboot.
+      stamp=/run/loki-retention.over
+
+      if [ "$used" -gt "$limit" ]; then
+        echo "OVER BUDGET: $(( used / 1024 / 1024 / 1024 )) GiB exceeds the 80 GiB alarm threshold (100 GB budget)."
+        echo "Lower limits_config.retention_period in stacks/logging/loki.yaml and redeploy;"
+        echo "the compactor deletes on its next compaction_interval (10m)."
+        if [ -e "$stamp" ]; then
+          echo "(already notified; see the journal above)"
+          exit 0
+        fi
+        printf '%s\n' "$used" > "$stamp"
+        exit 1
+      fi
+
+      if [ -e "$stamp" ]; then
+        echo "recovered: back under the threshold"
+        rm -f "$stamp"
+      fi
+    '';
+  };
+
+  systemd.timers.loki-retention-check = {
+    description = "Timer for the Loki disk-budget check";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      # Daily, and deliberately not more often: `du` over a 100 GB tree is
+      # cheap but not free, and the quantity it measures moves over days.
+      # 04:30 is after the backup window (02:45 prepare, 03:00 fast plan) so
+      # the two never contend for the disk.
+      OnCalendar = "*-*-* 04:30:00";
+      Persistent = true;
+      Unit = "loki-retention-check.service";
     };
   };
 

@@ -29,6 +29,7 @@
 #   ./tests/run.sh beszel         # heavy: the key/token triangle, and real disk numbers
 #   ./tests/run.sh samba          # heavy: an authenticated SMB round trip, and a refused one
 #   ./tests/run.sh docspace       # heavy: the machine key in play is the one from sops
+#   ./tests/run.sh journald-logging # the log driver + the `docker logs` contract
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
@@ -95,7 +96,7 @@ case "$TARGET" in
     exec nix-build tests -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | gatus | docspace | beszel | samba)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | gatus | docspace | beszel | samba | journald-logging)
     exec nix-build tests -A "checks.$TARGET" --no-out-link
     ;;
 

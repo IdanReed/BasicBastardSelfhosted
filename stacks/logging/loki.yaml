@@ -1,0 +1,125 @@
+# Loki 3.7 — single-binary, filesystem-backed log store for the fleet.
+# Design: this file plus stacks/logging/compose.yaml and config.alloy are the
+# whole of it; there is no object store, no ring beyond `inmemory`, and no
+# multi-tenancy.
+#
+# 🚨 LOKI HAS NO SIZE-BASED RETENTION. There is no `max_disk_usage`, no
+# `retention_size`, and no upstream plan for one — the only retention knob is
+# TIME (`limits_config.retention_period`), enforced by the compactor. So the
+# 100 GB budget in _overview.md cannot be a setting; it is a time window plus
+# an alarm, and the two have to be reasoned about together:
+#
+#   retention_period 720h (30 days) is the cap that actually deletes.
+#   ingestion_rate_mb 8 bounds the WORST case, and the worst case is far over
+#     budget on purpose: 8 MB/s sustained for 30 days is ~20 TB. A rate limit
+#     low enough to guarantee 100 GB would be ~40 KB/s, which would silently
+#     drop lines during any real incident — exactly when logs matter. The
+#     limit is here to stop a single runaway container from writing the disk
+#     full in an afternoon, not to enforce the budget.
+#   The budget is enforced by MEASUREMENT: nixos/configuration.nix runs
+#     `loki-retention-check` daily, which du's /mnt/slow/loki and pages ntfy
+#     at 80 GB. The response is to lower retention_period here, and there is
+#     no automatic one, deliberately — silently shortening retention is how a
+#     log store becomes useless without anyone noticing.
+#
+# Honest statement of what that means: if ingestion outruns the estimate, the
+# alarm fires BEFORE the budget is blown and a human shortens the window.
+# Nothing here makes 100 GB a hard ceiling, and no Loki configuration can.
+#
+# ⚠ Retention only happens because `compactor.retention_enabled: true`. With
+# the compactor's retention off (the default), `limits_config.retention_period`
+# is inert — Loki accepts the setting, reports nothing, and keeps every chunk
+# forever. That is the single most common way a Loki install quietly outgrows
+# its disk.
+
+auth_enabled: false
+
+server:
+  # 0.0.0.0 inside the container's own network namespace. The stack's compose
+  # network is the only thing that can reach it, plus the loopback publish on
+  # 127.0.0.1:10456 that gatus's service probe uses.
+  http_listen_address: 0.0.0.0
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    # v13 + tsdb is the only schema worth starting on in 3.x; the older
+    # boltdb-shipper schemas exist for upgrades, not for new installs.
+    # `from` is the date this schema becomes active and must be in the past.
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+
+compactor:
+  working_directory: /loki/compactor
+  # 🚨 Without these three, retention_period below does nothing at all.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+  # A grace window between "marked for deletion" and the chunk actually going
+  # away, so a mistaken retention change is recoverable for two hours.
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+limits_config:
+  # 30 days. See the header for why this, and not a size, is the cap.
+  retention_period: 720h
+
+  # The journal is a buffer (SystemMaxUse=2G on the host), so Alloy can be
+  # hours behind after an outage and still be shipping real history. 168h of
+  # tolerance keeps that from being rejected; anything older than a week
+  # arriving is a clock problem worth failing loudly on.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+  # Runaway-container guard, NOT the budget. See the header.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+
+  # One host, one Alloy, a handful of relabelled journal fields. 5000 is
+  # enormous headroom; the point of the limit is that a relabel rule which
+  # accidentally promotes a high-cardinality field (a container ID, a request
+  # ID) fails loudly instead of turning the index into a cardinality bomb.
+  max_streams_per_user: 5000
+
+  # Powers the "Log volume" panel in Grafana's Explore view.
+  volume_enabled: true
+
+# 🚨 OFF. Loki reports usage statistics to stats.grafana.org by default. This
+# fleet has no egress expectations for a container that only ever receives
+# pushes from a sibling, and the test VMs run fully offline — a service that
+# dials out on start is a startup delay looking for a place to happen.
+analytics:
+  reporting_enabled: false
+
+# No ruler targets: alerting for this fleet is ntfy, driven by gatus probes
+# and host-side systemd units, not by Loki rules. Declared empty rather than
+# omitted so the intent is visible.
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules

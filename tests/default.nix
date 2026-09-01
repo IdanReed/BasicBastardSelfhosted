@@ -182,6 +182,11 @@ let
     beszel = callSuite ./suites/beszel.nix { };
     samba = callSuite ./suites/samba.nix { };
     docspace = callSuite ./suites/docspace.nix { };
+    # Not a stack suite: it guards the daemon-level journald log driver that
+    # stacks/logging depends on, and with it the `docker logs` contract that
+    # 131 call sites across tests/ rely on. Cheap (~20 s of test script) and
+    # the only place rateLimitBurst = 0 is actually proven to take effect.
+    journald-logging = callSuite ./suites/journald-logging.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting
@@ -208,6 +213,16 @@ let
     # or a prisma engine downloaded at runtime, fails here rather than on the
     # host.
     "ghostfolio"
+    # logging fits the generic harness exactly: no `restart: "no"` one-shot
+    # (finding #39), and although loki carries no healthcheck at all, a
+    # project-wide `up -d --wait` tolerates that and waits for `running` —
+    # it is only NAMING a healthcheck-less service that errors (finding #42),
+    # and this harness names none. What the generic suite then buys is real:
+    # the fixture .sops.env really decrypts, both loopback publishes really
+    # answer and are refused from the outsider node, and alloy and grafana
+    # really reach `healthy` — against the same nixos/configuration.nix that
+    # carries the journald log driver, so it also exercises the switch.
+    "logging"
     "ntfy"
     # Also an evaluation stack, and the generic suite is a genuinely good fit:
     # one container, no secrets, no volume, no init oneshot. What it proves
