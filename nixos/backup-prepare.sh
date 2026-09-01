@@ -375,6 +375,27 @@ sqlite_backup gatus          /mnt/fast/gatus/gatus.db
 # the sibling .sops.env — a restore that looks fine and ships no secrets.
 sqlite_backup arcane         /mnt/fast/arcane/arcane.db
 
+# Grafana's own state (stacks/logging). Its default database is sqlite at
+# /var/lib/grafana/grafana.db over the /mnt/fast/grafana bind, and it is
+# WAL-mode with a live writer — the same raw-copy trap as forgejo and arcane
+# above.
+#
+# What is genuinely only here is small but not reproducible: dashboards, saved
+# Explore queries, users, API keys and preferences. Everything else that makes
+# this stack work is declared in git and re-applied on every deploy — the Loki
+# datasource comes from stacks/logging/grafana-datasource.yaml (provisioned
+# read-only, `editable: false`) and the admin credential from
+# stacks/logging/.sops.env — so a restore that lost this file would come back
+# working, just empty of anything a human made.
+#
+# 🚨 LOKI'S CHUNK STORE IS DELIBERATELY NOT DUMPED AND NOT BACKED UP AT ALL.
+# /mnt/slow/loki is on no Backrest plan and has a NOT_BACKED_UP entry in
+# tests/lib/lints.nix carrying the reasoning: it is up to 100 GB of
+# observations about a fleet whose actual state lives elsewhere, and a restore
+# that replays 30 days of old logs into a rebuilt host would be actively
+# misleading. This line is the whole of the logging stack's backup, on purpose.
+sqlite_backup grafana        /mnt/fast/grafana/grafana.db
+
 # ---------------------------------------------------------------------------
 # VPS state
 # ---------------------------------------------------------------------------

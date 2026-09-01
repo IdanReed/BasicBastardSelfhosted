@@ -1797,6 +1797,19 @@ in
               "reindexing it.",
           "/mnt/fast/docspace/logs":
               "Log output from the monolith's supervisord children.",
+          "/mnt/slow/loki":
+              "Loki's entire store — chunks, tsdb index, WAL and compactor "
+              "state — capped at 100 GB by a 720h retention_period plus the "
+              "loki-retention-check alarm. Not backed up on purpose, and the "
+              "reason is stronger than 'it is big': these are OBSERVATIONS "
+              "ABOUT a fleet whose real state is backed up elsewhere. A "
+              "restore replaying 30 days of logs from a host that no longer "
+              "exists is not neutral, it is misleading — every dashboard "
+              "would show a period the rebuilt system did not live through. "
+              "The slow-volume plan is an explicit include list and this is "
+              "deliberately not on it; grafana.db (the dashboards and saved "
+              "queries that give the logs meaning) IS dumped, so a restore "
+              "comes back with the tooling and an honest empty window.",
       }
       uncovered = []
       for src in sorted(enum["sources"]):

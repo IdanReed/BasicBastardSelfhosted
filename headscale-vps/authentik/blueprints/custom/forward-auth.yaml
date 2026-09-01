@@ -802,6 +802,47 @@ entries:
       policy_engine_mode: any
       meta_description: "Host and container resource monitoring"
 
+  # Grafana — log search over Loki (stacks/logging, 10455). Browser surface
+  # only, and unusually clean for it: the INGESTION path never touches Caddy
+  # at all (Alloy pushes to loki:3100 on the stack's own compose network, and
+  # Grafana queries the same address), so there is no API caller for the
+  # outpost to 302 and no Unauthenticated-URL carve-out is needed. There is
+  # deliberately NO provider for Loki or Alloy — neither has a Caddy route,
+  # and Alloy's UI is bound to its container's loopback and never published.
+  #
+  # ⚠ The one carve-out this WOULD need is /api/live/* (Grafana Live
+  # websockets, which the outpost 302s). It is not here because Live is
+  # disabled in stacks/logging/compose.yaml — turning it on means adding the
+  # carve-out here first, not just flipping the env var.
+  #
+  # Grafana's own admin login stays underneath, from stacks/logging/.sops.env:
+  # two logins, on purpose. Grafana's auth.proxy header mode would trust
+  # X-Authentik-* from anything that can reach the loopback publish, and this
+  # is the service you most want working when the VPS running this outpost is
+  # itself the thing that broke.
+  - model: authentik_providers_proxy.proxyprovider
+    id: grafana-provider
+    state: present
+    identifiers:
+      name: grafana
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://grafana.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: grafana-app
+    state: present
+    identifiers:
+      slug: grafana
+    attrs:
+      name: Grafana
+      provider: !KeyOf grafana-provider
+      policy_engine_mode: any
+      meta_description: "Fleet log search over Loki"
+
   # ===========================================
   # Embedded outpost assignment
   # ===========================================
@@ -855,3 +896,4 @@ entries:
         - !KeyOf gatus-provider
         - !KeyOf beszel-provider
         - !KeyOf silverbullet-provider
+        - !KeyOf grafana-provider

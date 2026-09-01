@@ -845,6 +845,35 @@
 		reverse_proxy localhost:10452
 	}
 
+	@grafana host grafana.svc.idanreed.com
+	handle @grafana {
+		# Forward auth, with Grafana's own admin login left underneath — the
+		# Arcane/Beszel arrangement, so it fails closed either way. Two logins
+		# is the deliberate cost: see stacks/logging/.sops.env.example for why
+		# Grafana's auth.proxy header mode is NOT used (it would trust
+		# X-Authentik-* from anything that reaches 127.0.0.1:10455, and this
+		# is the service you want working when the VPS that runs the outpost
+		# is the thing that broke).
+		#
+		# 🚨 This vhost is browser-only, and that is what makes forward auth
+		# safe here. NOTHING in the fleet talks to Grafana programmatically,
+		# and — the part worth stating because it is the beszel trap in a new
+		# shape — the log INGESTION path does not come through here at all:
+		# Alloy pushes to loki:3100 over the stack's own compose network, and
+		# Grafana queries the same address. There is no Caddy route to Loki
+		# and there must not be one; a forward-auth 302 on the push endpoint
+		# would be silently dropped telemetry.
+		#
+		# ⚠ Grafana Live (websockets on /api/live/ws) is the one feature the
+		# outpost will break — it 302s the upgrade. It is turned OFF in
+		# compose.yaml (GF_LIVE_MAX_CONNECTIONS=0) rather than left to fail
+		# confusingly; log search does not use it. Turning it on means an
+		# Authentik Unauthenticated-URL carve-out for /api/live/*, not just
+		# flipping the env var.
+		import protected
+		reverse_proxy localhost:10455
+	}
+
 	# Anything not matched above. Without this a stray subdomain would get a
 	# blank 200 from the wildcard site.
 	handle {

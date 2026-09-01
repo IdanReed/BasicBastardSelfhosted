@@ -1,0 +1,258 @@
+# Logging — Loki + Alloy + Grafana (Monitoring range, 10455 and 10456).
+# Design: ServerNotes/designs/service-monitoring-stack-research.md; the
+# retention arithmetic lives in loki.yaml's header and the journald half of it
+# in nixos/configuration.nix.
+#
+# WHY THIS EXISTS, when gatus probes every vhost and beszel trends every
+# resource: both of those answer "is it up". Neither can answer "why did it
+# stop", and the fleet's only tool for that today is `docker logs` on a
+# guessed container name — which shows one container, only while it still
+# exists, with no search and no history across a restart. Grafana over Loki
+# turns the whole fleet's output into one queryable, 30-day window.
+#
+# 🚨 JOURNALD, NOT THE DOCKER SOCKET. This is the load-bearing decision of the
+# whole stack and it is Idan's hard rule. The obvious design — Alloy with
+# discovery.docker + loki.source.docker, or a "read-only" socket proxy —
+# requires mounting /var/run/docker.sock into a networked container, and that
+# socket is root on this host. Instead nixos/configuration.nix sets docker's
+# DAEMON-LEVEL log driver to journald with `tag={{.Name}}`, so every container's
+# stdout lands in the host journal, and Alloy reads the journal through two
+# READ-ONLY bind mounts with no privilege whatsoever. See config.alloy.
+#
+#   ⚠ That switch is fleet-wide and it changes `docker logs`, which 131 call
+#   sites in tests/ depend on. It was measured, not assumed: under the journald
+#   driver `docker logs` returns every line, keeps stdout and stderr on
+#   separate streams, and orders `2>&1` byte-identically to json-file. The one
+#   thing that genuinely changes is journald's rate limit, which silently drops
+#   lines from `docker logs` too — hence services.journald.rateLimitBurst = 0
+#   in the SAME commit. Never move one without the other.
+#
+# Three services:
+#
+#   loki     the store. uid 10001 (from the image), chunks on /mnt/slow.
+#            NO healthcheck is possible — see its block.
+#   alloy    the collector. Runs as ROOT (the image sets no USER), which is
+#            what lets it read root:systemd-journal 0640 journal files.
+#            No published port, no socket, no vhost.
+#   grafana  the UI. uid 472, published loopback-only, behind Caddy with
+#            `import protected`.
+#
+# Everything talks over the compose project's own default bridge network, by
+# SERVICE NAME. Nothing here joins `homelab`: the only cross-container traffic
+# is alloy -> loki and grafana -> loki, and both are inside this project.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Loki — the log store
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.7.7
+    container_name: loki
+    restart: unless-stopped
+
+    # The image's own default is -config.file=/etc/loki/local-config.yaml,
+    # which is a demo config with no retention and a different data layout.
+    # Naming ours explicitly is the difference between 30-day retention and
+    # keeping every chunk forever.
+    command: -config.file=/etc/loki/config.yaml
+
+    volumes:
+      - ./loki.yaml:/etc/loki/config.yaml:ro
+      # 🚨 /mnt/slow, not /mnt/fast. Log chunks are append-mostly and
+      # query-rarely, which is exactly what _overview.md's hardware section
+      # says belongs on the 80 TB HDD tier; 100 GB of it is 0.125% of that
+      # volume, against ~1.25% of the SSD. The tsdb index and the WAL live
+      # under here too rather than being split onto the fast tier — one
+      # directory is one thing to reason about for retention, for the disk
+      # alarm and for `NOT_BACKED_UP`, and this fleet's query rate does not
+      # make index seeks the bottleneck.
+      - /mnt/slow/loki:/loki
+
+    ports:
+      # Loopback only. Nothing routes to it through Caddy — Grafana is the UI
+      # and Alloy pushes over the compose network — so this publish exists for
+      # exactly one consumer: gatus's service probe. That matters more here
+      # than for most stacks, because Loki cannot have a healthcheck (below),
+      # so without this publish its liveness would be observed by nothing at
+      # all. The `caddy-routes` lint prints a NOTE about the unrouted publish;
+      # that NOTE is correct and this comment is the answer to it.
+      - "127.0.0.1:10456:3100"
+
+    # NO healthcheck stanza, and none is possible: the image ships exactly one
+    # file under /usr/bin — the `loki` binary — with no shell, no wget, no
+    # curl, and no client subcommand (`loki -version` is all there is;
+    # verified by exporting the image filesystem). This is the gatus and
+    # karakeep-chrome situation and it gets the same treatment: declare
+    # nothing rather than something that lies, and NEVER make anything
+    # `depends_on: {condition: service_healthy}` against it — compose errors
+    # outright (finding #42). GET /ready is the probe, asserted by gatus and
+    # by the stack suite, not by Docker.
+    #
+    # For sizing expectations: measured cold start to HTTP 200 on /ready with
+    # this config and an empty /loki was 17 s.
+
+  # ---------------------------------------------------------------------------
+  # Alloy — the collector
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.19.2
+    container_name: alloy
+    restart: unless-stopped
+
+    # ⚠ Note the `v`. grafana/alloy tags carry one and grafana/loki and
+    # grafana/grafana do not — three images from the same vendor, two
+    # conventions. Run ./tests/update-images.sh after any change here; the
+    # image-pins lint is what stops a tag that does not exist from shipping.
+
+    # No `user:` — and that is deliberate, not an omission. The image sets no
+    # USER, so this runs as uid 0, which is what makes the journal readable:
+    # journal files are root:systemd-journal 0640 and the directories are
+    # 2755, so a reader is either root (owner-read) or in gid 62. Adding
+    # `user:` here without also granting group 62 turns this container into a
+    # healthy process that collects nothing.
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # 🚨 THE TWO READ-ONLY MOUNTS THAT REPLACE THE DOCKER SOCKET.
+      #   /var/log/journal  the persistent journal (services.journald.storage
+      #                     is pinned to "persistent" for this reason).
+      #   /etc/machine-id   the host's id, so the reader can find the
+      #                     per-machine journal directory by name.
+      # Together with config.alloy's `path = "/var/log/journal"` these are
+      # belt AND braces: measured, EITHER the path or the machine-id mount is
+      # enough on its own, and losing BOTH gives a healthy container that
+      # forwards zero entries forever. The matrix is in config.alloy.
+      # /run/log/journal is deliberately absent — see config.alloy.
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      # Positions file + the write-ahead log that survives a Loki restart.
+      - /mnt/fast/alloy:/var/lib/alloy/data
+
+    # Spelled out rather than inherited from the image's CMD so the listen
+    # address is visible: Alloy's UI/metrics server is bound to the
+    # container's own loopback and is NOT published, has no Caddy route and no
+    # Authentik application. It would otherwise be a second, unauthenticated
+    # window onto the same data Grafana guards.
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=127.0.0.1:12345
+
+    healthcheck:
+      # The image has bash but NO curl, wget or nc (verified by exporting its
+      # filesystem), so this speaks HTTP over bash's /dev/tcp. Measured
+      # working inside the pinned image — /-/ready answers "HTTP/1.1 200 OK".
+      #
+      # ⚠ What it proves: the config parsed and the HTTP server is serving.
+      # What it does NOT prove — and this is the failure mode that matters —
+      # is that a single journal entry has been read or shipped. A wrong
+      # `path`, a lost bind mount or a `user:` added to this service all leave
+      # this container green and forwarding nothing.
+      #
+      # 🚨 NO SUITE COVERS THAT TODAY. `run.sh stack logging` is the generic
+      # harness: it asserts health, decryption and loopback publishing, not
+      # ingest. The signals that would catch it are Loki's
+      # `{job="systemd-journal"}` stream (verified by hand against these exact
+      # images: a marker line reached Loki 2 s after the container wrote it)
+      # and Alloy's loki_source_journal_target_lines_total metric. Stated as a
+      # gap rather than implied to be covered.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/12345 && printf "GET /-/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 "'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    depends_on:
+      # Ordering only, NOT service_healthy — Loki has no healthcheck and
+      # naming it in a health condition is a hard compose error. Alloy
+      # tolerates an absent Loki anyway: its WAL buffers and it retries.
+      - loki
+
+  # ---------------------------------------------------------------------------
+  # Grafana — the UI
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:13.2.0
+    container_name: grafana
+    restart: unless-stopped
+
+    ports:
+      # Loopback only. Caddy is the only path in, and
+      # grafana.svc.idanreed.com is `import protected`.
+      - "127.0.0.1:10455:3000"
+
+    volumes:
+      - /mnt/fast/grafana:/var/lib/grafana
+      # Provisioned datasource — the Loki connection exists before anyone logs
+      # in, and re-asserts itself on every deploy. Zero-UI deployment is a
+      # stated principle of this fleet (_overview.md), and a hand-clicked
+      # datasource lives only in grafana.db, i.e. only in the backup.
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/loki.yaml:ro
+
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
+    # sync validation runs where the decrypted .env cannot exist, and the plain
+    # form aborts the whole stack's sync.
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      - TZ=America/Chicago
+
+      # Grafana builds every absolute link (OAuth redirects, share URLs, alert
+      # links) from this. Without it they point at localhost:3000.
+      - GF_SERVER_ROOT_URL=https://grafana.svc.idanreed.com
+
+      # 🚨 NO SIGN-UP, NO ANONYMOUS ACCESS. Forward auth is the outer gate but
+      # Grafana's own login is the inner one, and its defaults are permissive
+      # enough to matter if the outer gate is ever misconfigured.
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+
+      # 🚨 EGRESS OFF. Grafana phones home on a timer by default: usage
+      # analytics, a version check against grafana.com, and a plugin-update
+      # check, plus a news feed fetched when the home dashboard renders. The
+      # test VMs run fully offline and this host has no reason to dial out;
+      # each of these is a slow spinner or a stalled panel when it cannot.
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+
+      # ⚠ Grafana Live (websockets at /api/live/ws) is the one feature forward
+      # auth will interfere with; the outpost answers the upgrade request with
+      # a 302 and the socket never establishes. Nothing here needs it —
+      # streaming panels are a real-time-dashboard feature and this is a log
+      # search UI — so it is turned OFF explicitly rather than left to fail
+      # confusingly. Turning it back on means carving /api/live/* out in
+      # Authentik, not just flipping this.
+      - GF_LIVE_MAX_CONNECTIONS=0
+
+      # GF_SECURITY_ADMIN_USER and GF_SECURITY_ADMIN_PASSWORD come from .env
+      # (see .sops.env.example). They are read ONLY on first start, when
+      # grafana.db is created; changing them later needs `grafana-cli admin
+      # reset-admin-password` or a wiped database.
+
+    healthcheck:
+      # -O /dev/null, NOT --spider: --spider issues a HEAD, and a route
+      # registered GET-only answers 405, which leaves the container
+      # permanently unhealthy while the app is fine.
+      #
+      # /api/health is honest here in a way most images' are not — it returns
+      # {"database":"ok",...} and the `ok` is a real query against grafana.db,
+      # so this catches an unwritable /mnt/fast/grafana rather than just
+      # proving a socket is open. Measured cold start to healthy: 17 s.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:3000/api/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    depends_on:
+      # Ordering only; Grafana starts fine against an absent datasource and
+      # the panel simply errors. Loki has no healthcheck to condition on.
+      - loki

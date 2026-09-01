@@ -285,6 +285,78 @@
     # The photo originals tree (UPLOAD_LOCATION). Slow tier per the overview's
     # volume column: bulk, sequential.
     "d /mnt/slow/photos 0755 root root -"
+    # === logging (bind sources in its compose.yaml) ===
+    # THREE CONTAINERS, THREE DIFFERENT ANSWERS, and each one was read out of the
+    # pinned image rather than assumed (`docker inspect --format '{{.Config.User}}'`
+    # on the exact tags in stacks/logging/compose.yaml):
+    #
+    #   loki     uid 10001  the image sets USER 10001. /mnt/slow/loki is its whole
+    #                       world — chunks, the tsdb index, the WAL and the
+    #                       compactor's working directory — and it is written
+    #                       continuously. Root-owned it does not degrade: Loki exits
+    #                       at startup unable to create its path_prefix, which
+    #                       presents as the collector's pushes failing and is
+    #                       diagnosed three containers away. This is finding #14
+    #                       (seerr) in a fourth image.
+    #   grafana  uid 472    the image sets USER 472, with gid 0 — the OpenShift
+    #                       convention. 472:472 is right anyway: owner-write is what
+    #                       /var/lib/grafana needs, and grafana.db is created there
+    #                       on first start. A root-owned directory here means an
+    #                       unhealthy container rather than a silent one, because
+    #                       /api/health reports the database.
+    #   alloy    ROOT       and that is not a default anyone declined to change: the
+    #                       grafana/alloy image sets NO USER, and root is exactly
+    #                       what lets it read the journal. Journal files are
+    #                       root:systemd-journal 0640 under 2755 directories, so a
+    #                       reader is either uid 0 (owner-read) or in gid 62.
+    #                       /mnt/fast/alloy holds only the positions file and the
+    #                       write-ahead log, so root:root is both correct and the
+    #                       default — but adding a `user:` to that container without
+    #                       also granting gid 62 would turn it into a healthy
+    #                       process that collects nothing, which is why this is
+    #                       written down here rather than left implicit.
+    #
+    # The read-only journal mounts (/var/log/journal, /etc/machine-id) are NOT in
+    # this table and must never be: they are system paths owned by systemd, not
+    # per-stack bind sources, and a `d` rule over /var/log/journal would fight
+    # journald for its own directory.
+    # root:root, and DELIBERATELY so rather than by default. grafana/alloy
+    # sets no USER, so the collector runs as uid 0 — which is the mechanism
+    # that lets it read the host journal at all (root:systemd-journal 0640).
+    # This directory holds only the journal positions file and the write-ahead
+    # log that buffers pushes across a Loki restart; both are regenerable, and
+    # both are written as root.
+    #
+    # ⚠ If anyone ever adds `user:` to the alloy service, this rule and the
+    # journal mounts both stop working, silently — the container stays healthy
+    # and forwards nothing. Change the container and this note together.
+    "d /mnt/fast/alloy 0755 root root -"
+    # 🚨 472:472, NOT root — grafana/grafana:13.2.0 sets USER 472 (gid 0, the
+    # OpenShift convention; owner-write is what matters here). grafana.db is
+    # created in this directory on first start and is the only per-install
+    # state the stack has: the datasource is provisioned from a read-only file
+    # and the admin credential comes from .sops.env, so what is genuinely only
+    # here is dashboards, users and history. It is dumped by
+    # nixos/backup-prepare.sh with `sqlite3 .backup` because it is WAL-mode.
+    #
+    # Root-owned this fails visibly rather than silently, unusually for this
+    # table: Grafana's /api/health reports {"database":"ok"} from a real query,
+    # so an unwritable directory shows up as an unhealthy container.
+    "d /mnt/fast/grafana 0755 472 472 -"
+    # 🚨 10001:10001, NOT root — grafana/loki:3.7.7 sets USER 10001 in the
+    # image. This one directory is the whole store: chunks/, tsdb-index/,
+    # tsdb-cache/, wal/, compactor/ and rules/ are all created under it on
+    # first start (verified by booting the pinned image against
+    # stacks/logging/loki.yaml). Root-owned, Loki cannot create any of them
+    # and exits during startup — and because Loki has no healthcheck the
+    # first visible symptom is Alloy's pushes failing, one container away.
+    #
+    # On /mnt/slow rather than /mnt/fast because log chunks are append-mostly
+    # and query-rarely, which is what _overview.md's hardware section says
+    # belongs on the 80 TB tier. It is also the reason this path needs a
+    # NOT_BACKED_UP entry in tests/lib/lints.nix: the slow-volume plan is an
+    # explicit include list and this is deliberately not on it.
+    "d /mnt/slow/loki 0755 10001 10001 -"
     # === media (bind sources in its compose.yaml) ===
     # Declared here rather than left to docker's create-on-mount because docker
     # always creates missing bind sources root-owned at container start — exactly

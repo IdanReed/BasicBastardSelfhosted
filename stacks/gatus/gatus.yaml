@@ -512,6 +512,32 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: "grafana (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://grafana.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # Asserts the BODY, because Grafana gives us something worth asserting:
+  # /api/health returns {"database":"ok","version":...} and the "ok" is a real
+  # query against grafana.db, not a static string. A bare [STATUS] == 200 here
+  # would be satisfied by a Grafana whose database is unwritable.
+  - name: "grafana (service)"
+    group: "service"
+    url: "http://127.0.0.1:10455/api/health"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].database == ok"
+    alerts:
+      - type: ntfy
+
   - name: "homeassistant (path: caddy -> service)"
     group: "path"
     url: "https://homeassistant.svc.idanreed.com/"
@@ -677,6 +703,38 @@ endpoints:
       ignore-redirect: true
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  # 🚨 THE ONLY LIVENESS SIGNAL LOKI HAS. Its image is a single binary with no
+  # shell, so the container carries no healthcheck at all (see
+  # stacks/logging/compose.yaml) and the host-side unhealthy-containers timer
+  # is therefore blind to it. Nothing routes to Loki through Caddy either — no
+  # vhost, so no path probe and none possible. This one endpoint is the whole
+  # of Loki's monitoring.
+  #
+  # /ready, not /metrics or /: it reports 503 with a body naming what is not
+  # ready until the ingester has joined the ring and replayed its WAL — which
+  # is exactly the window in which pushes are being rejected. That makes the
+  # status code alone meaningful here, unlike the `< 400` probes elsewhere in
+  # this file, so no body condition is needed.
+  #
+  # ⚠ What it cannot see is whether anything is ARRIVING, and NOTHING ELSE
+  # CURRENTLY DOES EITHER. A Loki with a broken Alloy — wrong journal path,
+  # lost bind mount, a `user:` added to the alloy service — answers /ready
+  # perfectly, and Alloy's own healthcheck only proves its config parsed. The
+  # generic `run.sh stack logging` suite asserts health and publishes, not
+  # ingest. The honest signal is a Grafana query returning recent lines, and
+  # the honest statement is that it is a human check today. Written down
+  # rather than papered over; the fix is a probe that asserts a non-empty
+  # {job="systemd-journal"} result over the last few minutes, which needs a
+  # LogQL-aware prober gatus is not.
+  - name: "loki (service)"
+    group: "service"
+    url: "http://127.0.0.1:10456/ready"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
     alerts:
       - type: ntfy
 
