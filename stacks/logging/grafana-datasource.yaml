@@ -32,9 +32,9 @@ datasources:
     editable: false
 
     jsonData:
-      # Must not exceed limits_config.retention_period in loki.yaml (720h).
-      # Grafana uses it to bound the time picker and to reject queries that
-      # can only ever return nothing.
+      # Caps the number of log lines a single query returns (Grafana's
+      # default is 1000); raised to 5000 for incident scrollback. Nothing to
+      # do with retention — that coupling lives in loki.yaml.
       maxLines: 5000
 
     # No `secureJsonData`: auth_enabled is false in loki.yaml (single tenant,

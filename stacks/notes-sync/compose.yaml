@@ -102,7 +102,8 @@ services:
       # was chosen because the realistic failure here is a bind-mount ownership
       # or path mistake — the uid decision above makes that a live risk — and
       # this catches exactly that. The HTTP side is covered by the suite and,
-      # in production, by Uptime Kuma.
+      # in production, by Gatus (stacks/gatus/gatus.yaml probes the Caddy
+      # vhost and the loopback publish; Kuma was rejected, never built).
       test: ['CMD', '/rmfakecloud-docker', 'listusers']
       interval: 30s
       timeout: 10s

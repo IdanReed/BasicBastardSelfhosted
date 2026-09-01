@@ -46,10 +46,11 @@
 #      let a service fall off the list because it felt too internal: an
 #      unlisted service is one nobody remembers exists at 2am.
 #
-#      As of this writing stacks/caddy/Caddyfile defines 38 `*.svc` hosts and
-#      37 of them are linked below; the single omission is `glance` itself
-#      (you are here). Any future omission gets a line in this comment saying
-#      why. Nothing verifies this mechanically — no lint parses this file —
+#      The invariant: every `*.svc` host in stacks/caddy/Caddyfile is linked
+#      below except `glance` itself (you are here) — no literal counts here,
+#      because a hand-maintained number was five services stale within months.
+#      Any future omission gets a line in this comment saying why. Nothing
+#      verifies this mechanically — no lint parses this file —
 #      so `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the
 #      URLs below is the check, and it is worth doing when adding a stack.
 #      `headscale.idanreed.com` is NOT a Caddy route on this host at all — it

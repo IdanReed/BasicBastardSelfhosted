@@ -106,7 +106,9 @@ services:
       # What this does NOT cover: a Postgres that dies AFTER start. boot.sh's
       # pg_isready loop kills the container loudly if the database is dead at
       # start; a later failure leaves this green. The honest mitigation is
-      # Uptime Kuma on a real page, not a cleverer probe.
+      # Gatus on a real page (stacks/gatus/gatus.yaml probes both the Caddy
+      # vhost and loopback with the real Host:), not a cleverer probe. Kuma
+      # was rejected and never built.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '10', 'http://127.0.0.1:80/openapi/']
       interval: 30s
       timeout: 15s
