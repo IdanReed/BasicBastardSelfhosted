@@ -1,0 +1,117 @@
+# Wealthfolio — wealth / portfolio tracker (Tracking range, port 10309).
+#
+# ⚠ THIS IS AN EVALUATION STACK — the other half of the portfolio bake-off
+# (ServerNotes/designs/service-bakeoff.md): same job as stacks/ghostfolio
+# (10306), radically different shape — ONE container and ONE SQLite file vs
+# app+Postgres+Redis. Deliberately LEAN like its rival: no SimpleFIN, no
+# Firefly linkage, no OIDC, nothing wired to the rest of the fleet. If it
+# wins, integration is a separate decision; if it loses, deleting this
+# directory is the whole rollback.
+#
+# Server ("web") mode is real and current, not a community hack: upstream
+# moved the image to the `wealthfolio` Docker Hub org at v3.4.0 (2026-05-15,
+# the breaking self-host release: non-root uid 1000, default port 8088) and
+# added native OIDC at v3.6.0 (2026-07-05). The binary is Rust/Axum with
+# EMBEDDED migrations that run before the listener binds — no prisma, no npx,
+# nothing fetched at boot (the ExcaliDash class does not apply; the suite
+# still boots it with no route to the internet to keep that true).
+#
+# Backup contract: everything is under /mnt/fast/wealthfolio (a bind of
+# /data): wealthfolio.db (SQLite, WAL mode) plus secrets.json (market-data
+# provider API keys, encrypted with WF_SECRET_KEY). backup-prepare.sh needs
+# exactly ONE line next to the vaultwarden one:
+#   sqlite_backup wealthfolio /mnt/fast/wealthfolio/wealthfolio.db
+# sqlite_backup returns 0 for a MISSING source (finding #25, the Karakeep
+# failure), so the suite pins the db's real path. Note a dump alone is not a
+# full restore: secrets.json is only useful together with WF_SECRET_KEY,
+# which lives in .sops.env — in git, which is the point.
+
+services:
+  wealthfolio:
+    # Docker Hub `wealthfolio/` org — NOT `afadil/wealthfolio`, which is the
+    # pre-v3.4.0 name kept publishing only for backward compatibility. The
+    # tag is BARE (3.7.0, 3.7, 3.6.3 …); no `v`-prefixed tag exists. A ghcr
+    # mirror exists (ghcr.io/wealthfolio/wealthfolio) but Docker Hub is the
+    # documented primary.
+    image: wealthfolio/wealthfolio:3.7.0
+    container_name: wealthfolio
+    ports:
+      # Loopback only: the way in is Caddy at wealthfolio.svc.idanreed.com.
+      - '127.0.0.1:10309:8088'
+    volumes:
+      # The WHOLE stack state. 🚨 Must be owned 1000:1000: the Dockerfile
+      # ends on USER 1000:1000 with no root entrypoint and no chown, so a
+      # root-owned bind is not healed — the first write fails and the
+      # container exits (upstream's own upgrade doc says chown by hand).
+      # nixos/stack-dirs.nix owns the rule.
+      - /mnt/fast/wealthfolio:/data
+    environment:
+      - TZ=America/Chicago
+      # In-container bind. Explicit for two reasons: the published port above
+      # is a separate decision from the image's default, and config.rs
+      # REFUSES to start on a non-loopback listen without auth — so this line
+      # and WF_AUTH_PASSWORD_HASH arriving from .env are a pair. (Under the
+      # finding-#11 decrypt race the missing WF_SECRET_KEY aborts boot first:
+      # this stack fails CLOSED and loud, the opposite of tandoor's silent
+      # SQLite fallback.)
+      - WF_LISTEN_ADDR=0.0.0.0:8088
+      # Image default already; explicit because backup-prepare.sh's
+      # sqlite_backup line hardcodes the host-side twin of this path, and a
+      # silent upstream move would turn that backup into a permanent no-op
+      # (finding #25).
+      - WF_DB_PATH=/data/wealthfolio.db
+      # 🚨 REQUIRED, and it must be EXACT (scheme, host, port). Two failure
+      # modes, one loud, one quiet:
+      #   - unset while auth is enabled = the default "*" and config.rs
+      #     PANICS at boot (good — loud);
+      #   - set to the wrong origin = every curl probe stays green while
+      #     every BROWSER login fails on CORS. Renaming the vhost means
+      #     changing this line in the same commit.
+      - WF_CORS_ALLOW_ORIGINS=https://wealthfolio.svc.idanreed.com
+      # Default, pinned: `auto` sets the session cookie's Secure flag iff
+      # X-Forwarded-Proto is https — which Caddy sends, so production cookies
+      # are Secure and the suite's plain-http loopback login still works.
+      - WF_COOKIE_SECURE=auto
+      # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from .env — the
+      # rotation rules and the 🚨 $-quoting trap on the hash (finding #30
+      # class, verified for vaultwarden's identical Argon2 PHC shape) are
+      # documented in .sops.env.example.
+      #
+      # ---- OIDC ships OFF, and OFF is load-bearing ----
+      # Native OIDC exists (v3.6.0+, allowlists, Authentik-tested upstream).
+      # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server —
+      # Ghostfolio's boot-fatal trap, but WORSE: Ghostfolio skips discovery
+      # when all three OIDC_*_URL overrides are set, Wealthfolio has NO
+      # escape hatch. Turning it on makes every `docker compose up` depend
+      # on a cross-tailnet call to the Hetzner VPS. When that trade is taken
+      # knowingly: WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret via
+      # .env) + WF_OIDC_REDIRECT_URL
+      # (https://wealthfolio.svc.idanreed.com/api/v1/auth/oidc/callback) +
+      # WF_OIDC_ALLOWED_EMAILS — the allowlist is FAIL-CLOSED: empty without
+      # an explicit WF_OIDC_ALLOW_ANY=true refuses to boot.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the decrypted
+    # .env cannot exist yet.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image ships NO healthcheck, so this one is ours, and it is
+      # honest only if read precisely. /api/v1/healthz is a STATIC "ok" —
+      # no DB query, no auth check — but the Axum server only binds AFTER
+      # its embedded migrations, so a 200 does mean a live listener over a
+      # migrated schema (app and DB are one process; there is no companion
+      # to be separately down). What it canNOT see: a mangled password hash
+      # (login 404s while this stays green — the suite covers it) and a
+      # locked SQLite after start. /api/v1/readyz is byte-identical to
+      # healthz — never probe it expecting readiness semantics.
+      #
+      # ⚠ busybox `wget`, not curl: the final stage is bare alpine:3.19 and
+      # curl was never installed (a curl probe would fail forever while the
+      # app serves fine — finding #34's failure mode).
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8088/api/v1/healthz']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
