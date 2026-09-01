@@ -30,10 +30,23 @@
 #
 # Layout (hardlink requirement — ONE filesystem, /mnt/slow):
 #   /mnt/slow/data/downloads/{movies,tv}   qBittorrent categories
+#   /mnt/slow/data/downloads/audiobooks    qBittorrent category, NOT arr-imported
 #   /mnt/slow/data/downloads/.incomplete   qBittorrent temp path
 #   /mnt/slow/data/downloads/.quarantine   ClamAV quarantine (scan-downloads.sh)
 #   /mnt/slow/data/media/{movies,tv}       Radarr/Sonarr roots, Jellyfin libraries
+#   /mnt/slow/books/drop                   audiobook hand-off to the books stack
 # media-init creates this skeleton (owned 1000:1000) on first run.
+#
+# AUDIOBOOKS (Option C — ServerNotes/designs/audiobook-acquisition.md). The
+# books stack has no way to acquire an audiobook (Shelfmark's source is
+# ebook-only), and the answer is deliberately NOT to let it reach in here:
+# acquisition happens on this side, in qBittorrent, under the `audiobooks`
+# category, and scan-downloads.sh MOVES a clean entry into
+# /mnt/slow/books/drop once it has a verdict. What that buys is that the
+# books stack needs no network path to qBittorrent and no mount of this
+# download tree; what it costs, accepted explicitly, is that audiobooks are
+# requested from here rather than from Shelfmark's UI, and that a promoted
+# entry stops seeding because it leaves the download tree.
 #
 # Wiring (headless, no UI clicks — nixflix pattern): all API keys are
 # pre-determined secrets pushed DOWN via the Servarr {APP}__AUTH__APIKEY env
@@ -483,10 +496,29 @@ services:
     environment:
       - NTFY_URL=http://ntfy/media
       - SCAN_INTERVAL_SECONDS=60
+      - AUDIOBOOK_DROP_DIR=/drop
     volumes:
       - ./scan-downloads.sh:/scan/scan-downloads.sh:ro
-      # Read-write: quarantining is a rename into .quarantine/.
-      - /mnt/slow/data/downloads:/data/downloads
+      # The WHOLE /data tree, read-write, and BOTH halves of that are
+      # load-bearing:
+      #   - write, because quarantining is not a rename. /mnt/slow is one
+      #     filesystem on purpose (hardlink imports, see the layout header),
+      #     so `mv` into .quarantine moves a directory entry and leaves the
+      #     inode — and every hardlink an *arr already made into
+      #     /data/media still resolved to the infected content. The scanner
+      #     unlinks those links itself.
+      #   - /data rather than /data/downloads, because those links live in
+      #     /data/media and a container cannot unlink what it cannot see.
+      # clamd's own mount stays narrow and read-only (see the clamav
+      # service): it is handed paths under /data/downloads and nothing else.
+      - /mnt/slow/data:/data
+      # The books stack's drop directory — the ONE thing the two stacks
+      # share (Option C, ServerNotes/designs/audiobook-acquisition.md). A
+      # clean `audiobooks` download is moved in here after its scan verdict;
+      # audiobookshelf has it read-only as a folder of its Audiobooks
+      # library. No network path between the stacks, and the books stack
+      # never sees the download tree.
+      - /mnt/slow/books/drop:/drop
       - /mnt/fast/clamav/scanner:/state
     networks:
       # default for clamd, homelab for ntfy (containers cannot reach the
@@ -509,6 +541,7 @@ services:
   # ---------------------------------------------------------------------------
   # media-init — idempotent oneshot reconciler (nixflix pattern, annex §6):
   # /data skeleton, root folders, qbit download client (host gluetun:8080),
+  # the `audiobooks` qbit category (nothing *arr-shaped owns that one),
   # TRaSH naming (codec tokens kept — the on-disk x265 audit trail), Prowlarr
   # -> arr application push-sync, Dictionarry link into Profilarr, and the
   # x265 scoring guard. Safe under Arcane redeploys: second run logs zero
