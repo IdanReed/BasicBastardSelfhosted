@@ -80,36 +80,58 @@ scan_one() {
 # Quarantine ONE file, inode-effectively. See the header.
 quarantine_file() {
   qf=$1
+  # Read the inode identity BEFORE the move. .quarantine lives in the same
+  # tree today, so `mv` is a rename and the inode survives it — but if it
+  # ever lands on another filesystem the mv silently becomes copy+unlink,
+  # $qdest carries a NEW inode, and a post-mv stat would send the walk below
+  # hunting an inode that nothing infected has left. Reading first is
+  # correct either way.
+  qino=$(stat -c %i "$qf" 2>/dev/null || echo "")
+  qlinks=$(stat -c %h "$qf" 2>/dev/null || echo "")
+
   qdest="$QUARANTINE/$(basename "$qf").$(date +%s)"
   if ! mv -f "$qf" "$qdest"; then
     echo "scan: ERROR: could not quarantine $qf" >&2
     return 1
   fi
   echo "scan: INFECTED $qf -> $qdest"
-
-  # Nothing else can point at it when the moved file is the only link — the
-  # overwhelmingly common case, and worth not walking the tree for.
-  qlinks=$(stat -c %h "$qdest" 2>/dev/null || echo 1)
-  if [ "$qlinks" -gt 1 ] 2>/dev/null; then
-    qino=$(stat -c %i "$qdest" 2>/dev/null || echo "")
-    if [ -n "$qino" ]; then
-      # -xdev: hardlinks cannot cross a filesystem, so nothing outside this
-      # one can share the inode. The quarantined copy is excluded by the
-      # -path prune, which is what makes it the surviving evidence link.
-      find "$DATA" -xdev -path "$QUARANTINE" -prune -o \
-        -type f -inum "$qino" -print 2>/dev/null | while IFS= read -r ql; do
-        if rm -f "$ql"; then
-          echo "scan: UNLINKED $ql (hardlink to quarantined inode $qino)"
-          notify "ClamAV unlinked a hardlink to a quarantined file: $ql"
-        else
-          echo "scan: ERROR: could not unlink $ql (inode $qino) — INFECTED CONTENT IS STILL REACHABLE THERE" >&2
-        fi
-      done
-    else
-      echo "scan: ERROR: could not stat $qdest for its inode — other hardlinks (if any) NOT purged" >&2
-    fi
-  fi
   notify "ClamAV quarantined: $qf"
+
+  if [ -z "$qino" ]; then
+    echo "scan: ERROR: could not read the inode of $qf — other hardlinks (if any) NOT purged" >&2
+    return 0
+  fi
+  # One link: the move WAS the whole quarantine. Overwhelmingly the common
+  # case, and worth not walking the tree for.
+  [ "${qlinks:-1}" -gt 1 ] 2>/dev/null || return 0
+
+  # -xdev: a hardlink cannot cross a filesystem, so nothing outside this one
+  # can share the inode. The prune on the quarantine dir is what makes the
+  # evidence copy the SURVIVING link rather than a lucky one.
+  #
+  # Status checked and stderr NOT suppressed, both on purpose: a find that
+  # cannot run this expression (a busybox built without -inum, an unreadable
+  # subtree) prints nothing and unlinks nothing, which is indistinguishable
+  # from "there were no other links" — the silent failure the header calls
+  # the worst property a scanner can have.
+  if ! others=$(find "$DATA" -xdev -path "$QUARANTINE" -prune -o \
+    -type f -inum "$qino" -print); then
+    echo "scan: ERROR: hardlink walk for inode $qino failed — INFECTED CONTENT MAY STILL BE REACHABLE" >&2
+    notify "ClamAV could not purge the hardlinks of $qf — check the library"
+    return 0
+  fi
+
+  printf '%s\n' "$others" | while IFS= read -r ql; do
+    [ -n "$ql" ] || continue
+    # Belt and braces over the prune: never unlink the evidence.
+    case "$ql" in "$QUARANTINE"/*) continue ;; esac
+    if rm -f "$ql"; then
+      echo "scan: UNLINKED $ql (hardlink to quarantined inode $qino)"
+      notify "ClamAV unlinked a hardlink to a quarantined file: $ql"
+    else
+      echo "scan: ERROR: could not unlink $ql (inode $qino) — INFECTED CONTENT IS STILL REACHABLE THERE" >&2
+    fi
+  done
   return 0
 }
 

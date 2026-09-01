@@ -36,11 +36,38 @@
 #     produces a healthy-looking server that has logged out every client and
 #     will re-prompt 2FA. Pinned here so the runbook's claim is verified rather
 #     than asserted.
+#   - **The restic loop itself, closed.** The drill used to stop at the dump
+#     FORMATS: it began at `/mnt/fast/_dumps`, which is backup-prepare.sh's
+#     staging directory and therefore the INPUT to restic. Everything after it
+#     — repository, snapshot, restore — was assertion, not evidence. It now
+#     runs the second half for real: `restic init` on a local repository whose
+#     password is the fixture `RESTIC_PASSWORD` taken through the production
+#     decrypt-and-source path, a snapshot of the dumps plus one identity file,
+#     the sources DESTROYED, `restic restore`, and bytes AND metadata compared
+#     against a manifest taken before the destruction. Then Vaultwarden is
+#     started back onto the restored `rsa_key.pem` — byte-identity is
+#     necessary, a service that accepts the file is the actual property.
+#   - **Two negative controls, because a restore test that cannot fail proves
+#     nothing.** The wrong password must fail LOUDLY (nonzero, and saying so)
+#     rather than return an empty snapshot list; and a single flipped byte in a
+#     pack file must fail `restic check --read-data` — the same command
+#     `checkPolicy` runs monthly against the Storage Box. The tamper runs on a
+#     COPY that is checked clean first, so "the check always fails" cannot
+#     masquerade as corruption detection.
 #
 # Documented gaps:
-#   - **Restic and the Storage Box.** No network, no Hetzner. The drill starts
-#     from the dumps, not from a snapshot.
+#   - **The Storage Box.** The repository here is a local path. What is
+#     unproven is the Hetzner leg — the sftp backend, the sub-account scoping,
+#     the console-side snapshots. `backrest` covers sftp + init + snapshot for
+#     real against an in-VM endpoint; between the two suites the only unreal
+#     element left is Hetzner itself. Note also that the drill restores a
+#     repository this same VM wrote minutes earlier: it cannot speak to
+#     forward compatibility, nor to a repository that has been pruned.
 #   - **The Proxmox rebuild and the age key.** Untestable here by construction.
+#     With them goes the thing that actually matters on the day — the
+#     production `RESTIC_PASSWORD` is recoverable at all. A drill that reads
+#     the password out of the fixture cannot prove the operator can read the
+#     real one out of a burning building; that stays §0 of the runbook.
 #   - **MariaDB.** backup-prepare.sh's mysqldump branch is not exercised;
 #     bookstack's suite covers the dump side only.
 
@@ -59,13 +86,53 @@ let
     images."vaultwarden_server_1_37_2"
   ];
 
+  # backrest is seeded for exactly ONE value: its fixture RESTIC_PASSWORD,
+  # reached through the real decrypt-sops-envs -> .env -> source path rather
+  # than written into this file. A drill whose repository password is a
+  # constant in the test proves the test can talk to itself; this one fails if
+  # the path the operator would actually use is broken. Nothing deploys the
+  # stack — no backrest image is loaded here.
+  seededStacks = [
+    "vaultwarden"
+    "backrest"
+  ];
+
   seedSrv = pkgs.runCommand "srv-seed-restore" { } ''
-    mkdir -p $out/stacks/vaultwarden
-    cp -r ${../../stacks/vaultwarden}/. $out/stacks/vaultwarden/
-    chmod -R u+w $out/stacks/vaultwarden
-    rm -f $out/stacks/vaultwarden/.env
-    rm -f $out/stacks/vaultwarden/.sops.env.example
-    cp ${../fixtures/vaultwarden.sops.env} $out/stacks/vaultwarden/.sops.env
+    mkdir -p $out/stacks
+    ${lib.concatMapStringsSep "\n" (s: ''
+      mkdir -p $out/stacks/${s}
+      cp -r ${../../stacks + "/${s}"}/. $out/stacks/${s}/
+      chmod -R u+w $out/stacks/${s}
+      # The working-tree cp -r can capture a developer's locally-decrypted
+      # plaintext .env (gitignored on purpose) in the world-readable store.
+      rm -f $out/stacks/${s}/.env
+      rm -f $out/stacks/${s}/.sops.env.example
+      cp ${../fixtures + "/${s}.sops.env"} $out/stacks/${s}/.sops.env
+    '') seededStacks}
+  '';
+
+  # The corruption negative control's teeth: flip one byte in the largest pack
+  # file of a restic repository.
+  #
+  # Fiddlier than it looks, for three reasons worth recording rather than
+  # rediscovering. Repository files are mode 0444, so the write needs a chmod.
+  # The replacement byte is a fixed printable one chosen to differ from the
+  # original, never `orig + 1`: that can land on NUL, and a NUL cannot survive
+  # sh command substitution — the tamper would silently write nothing and the
+  # control would pass while proving the opposite. And the flip is at the
+  # MIDDLE of the file, so it lands in pack payload rather than in the
+  # trailing header, which is the case `--read-data` exists for.
+  tamperPack = pkgs.writeShellScript "tamper-restic-pack" ''
+    set -eu
+    repo="$1"
+    pack=$(find "$repo/data" -type f -printf '%s %p\n' | sort -rn | head -n1 | cut -d' ' -f2-)
+    [ -n "$pack" ] || { echo "no pack files under $repo/data" >&2; exit 1; }
+    off=$(( $(stat -c %s "$pack") / 2 ))
+    orig=$(dd if="$pack" bs=1 skip="$off" count=1 2>/dev/null | od -An -tu1 | tr -d ' \n')
+    if [ "$orig" -eq 65 ]; then new=B; else new=A; fi
+    chmod u+w "$pack"
+    printf '%s' "$new" | dd of="$pack" bs=1 seek="$off" count=1 conv=notrunc 2>/dev/null
+    echo "tampered $pack at byte $off ($orig -> $new)"
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -142,15 +209,43 @@ pkgs.testers.runNixOSTest {
         '';
       };
 
-      environment.systemPackages = with pkgs; [ docker-compose jq sqlite ];
+      environment.systemPackages = with pkgs; [
+        docker-compose
+        jq
+        sqlite
+        # The restic half of the drill. From pkgs, not from the backrest
+        # image: the point is a repository this host can init, read and check
+        # without the orchestrator, which is also the position an operator is
+        # in on restore day.
+        restic
+      ];
     };
 
   testScript = ''
+    import json
     import shlex
 
     VW = "docker compose -f /srv/stacks/vaultwarden/compose.yaml -p vaultwarden"
     DATA = "/mnt/fast/vaultwarden"
     ADMIN_PASS = "test_vaultwarden_admin_token_not_secret"
+
+    # The restic half. The repository is a LOCAL PATH and lives outside
+    # /mnt/fast on purpose — a repository inside the tree it backs up is a
+    # trap, and here it would also be destroyed by the destroy step.
+    REPO = "/var/lib/restic-drill/repo"
+    BAD_REPO = "/var/lib/restic-drill/repo-tampered"
+    PW = "/root/.restic-drill-pass"
+    WRONG_PW = "/root/.restic-drill-wrong-pass"
+    CACHE = "env RESTIC_CACHE_DIR=/var/cache/restic"
+    # The identity file that carries the whole point of §0.2 of the runbook,
+    # used here as the canary: bytes that are NOT a database dump, whose loss
+    # is invisible until every client is logged out.
+    CANARY = f"{DATA}/rsa_key.pem"
+
+    def restic(repo, pw):
+        return f"{CACHE} restic -r {repo} -p {pw}"
+
+    R = restic(REPO, PW)
 
     # A standalone Postgres standing in for any of the services in
     # backup-prepare.sh's loop. Using the loop's own naming convention
@@ -328,5 +423,146 @@ pkgs.testers.runNixOSTest {
             f"-d {shlex.quote('token=' + ADMIN_PASS)} http://127.0.0.1:10400/admin"
         )
         assert "VW_ADMIN" in out, out[:800]
+
+    # -----------------------------------------------------------------------
+    # Restic: init -> snapshot -> DESTROY -> restore -> verify
+    # -----------------------------------------------------------------------
+    # Everything above this line starts from /mnt/fast/_dumps, which is the
+    # INPUT to restic. This is the other half.
+
+    with subtest("the repository password comes from sops, not from this file"):
+        services_vm.wait_until_succeeds(
+            "test -s /srv/stacks/backrest/.env", timeout=150
+        )
+        # Decrypt -> source is the production path (config-init.sh does exactly
+        # this), and it is the path with the hazard: a '$'-laden value that was
+        # not single-quoted in the plaintext gets expanded to nothing here, and
+        # the repository ends up protected by a password nobody can reproduce.
+        sh(
+            "umask 077; sh -c "
+            "'. /srv/stacks/backrest/.env; printf %s \"$RESTIC_PASSWORD\"' "
+            f"> {PW}"
+        )
+        sh(f"grep -qxF 'te$t_re$tic_pa$$word' {PW}")
+        sh(f"umask 077; printf %s 'not-the-repository-password' > {WRONG_PW}")
+
+    with subtest("a real repository is initialised and takes a real snapshot"):
+        sh(f"{R} init")
+        sh(f"test -s {REPO}/config")
+
+        # The manifest is taken BEFORE the destruction and kept on /root, which
+        # the destroy step does not touch. Metadata as well as bytes: a restore
+        # that widens 0700 on a directory full of database dumps hands them to
+        # every account on the box, and sha256 alone would call that a success.
+        sh(f"sha256sum /mnt/fast/_dumps/* {CANARY} > /root/drill.sha256")
+        dumps_meta = sh("stat -c '%a %u:%g' /mnt/fast/_dumps").strip()
+        canary_meta = sh(f"stat -c '%a %u:%g' {CANARY}").strip()
+        assert dumps_meta.startswith("700 "), (
+            f"/mnt/fast/_dumps is {dumps_meta} before the backup — "
+            "backup-prepare.sh's `install -d -m 0700` is what makes the "
+            "post-restore comparison below meaningful"
+        )
+
+        sh(f"{R} backup --tag drill /mnt/fast/_dumps {CANARY}")
+
+        # 2>/dev/null throughout the JSON reads: restic's progress and
+        # informational lines go to stderr, which the driver merges into the
+        # same stream, and json.loads would choke on them.
+        snaps = json.loads(sh(f"{R} snapshots --json 2>/dev/null"))
+        assert len(snaps) == 1, f"expected exactly one snapshot, got {snaps}"
+        paths = snaps[0]["paths"]
+        assert "/mnt/fast/_dumps" in paths and CANARY in paths, paths
+
+        # "A snapshot exists" is not "the snapshot has the files in it" — an
+        # excluded path or an empty staging directory would still snapshot.
+        listing = sh(f"{R} ls latest 2>/dev/null")
+        for f in ["/mnt/fast/_dumps/drill.sql", "/mnt/fast/_dumps/vw.sqlite", CANARY]:
+            assert f in listing, f"{f} is not in the snapshot:\n{listing}"
+
+    with subtest("the sources are DESTROYED and come back from the snapshot"):
+        # Vaultwarden has to be down first. It regenerates rsa_key.pem within
+        # seconds of noticing it gone (pinned in the subtest above), so a
+        # running container would restore the canary for us and the comparison
+        # afterwards would pass without restic having done anything.
+        sh(f"{VW} down")
+        sh("rm -rf /mnt/fast/_dumps")
+        sh(f"rm -f {CANARY}")
+        services_vm.fail("test -e /mnt/fast/_dumps")
+        services_vm.fail(f"test -e {CANARY}")
+
+        sh(f"{R} restore latest --target /")
+
+        sh("sha256sum -c /root/drill.sha256")
+        after_dumps = sh("stat -c '%a %u:%g' /mnt/fast/_dumps").strip()
+        after_canary = sh(f"stat -c '%a %u:%g' {CANARY}").strip()
+        assert after_dumps == dumps_meta, (
+            f"/mnt/fast/_dumps came back as {after_dumps}, was {dumps_meta}"
+        )
+        assert after_canary == canary_meta, (
+            f"{CANARY} came back as {after_canary}, was {canary_meta}"
+        )
+
+        # Deliberately NOT re-loading the restored drill.sql into Postgres:
+        # the earlier subtest already proved that exact file loads and yields
+        # the canary row, and sha256 equality carries the proof across. A
+        # second cluster boot would cost a minute to re-prove it.
+
+    with subtest("the service starts on the RESTORED identity file"):
+        # Byte-identity is necessary, not sufficient: restic restores mode and
+        # ownership too, and a key the container cannot read produces exactly
+        # the silent regeneration §0.2 warns about. The test is whether
+        # Vaultwarden comes up on this file and leaves it alone.
+        restored = sh(f"sha256sum {CANARY} | cut -d' ' -f1").strip()
+        sh(f"{VW} up -d --wait --wait-timeout 600")
+        health = sh(
+            "docker inspect --format '{{.State.Health.Status}}' vaultwarden"
+        ).strip()
+        assert health == "healthy", f"vaultwarden is {health} after the restore"
+        now = sh(f"sha256sum {CANARY} | cut -d' ' -f1").strip()
+        assert now == restored, (
+            "vaultwarden REPLACED the restored rsa_key.pem instead of using "
+            "it — the restore looked healthy and logged out every client"
+        )
+
+    with subtest("the pristine repository passes `restic check --read-data`"):
+        # The same command checkPolicy runs monthly against the Storage Box,
+        # here against the whole repository rather than a 5% subset because it
+        # is a few megabytes.
+        sh(f"{R} check --read-data")
+
+    # -----------------------------------------------------------------------
+    # Negative controls — a restore drill that cannot fail proves nothing
+    # -----------------------------------------------------------------------
+    with subtest("🚨 the WRONG password fails loudly, not silently"):
+        # The failure mode being excluded: a wrong or empty password that
+        # returns an empty snapshot list and exit 0. That reads, to a script
+        # and to a tired operator, exactly like "the backups are gone".
+        rc, out = services_vm.execute(
+            f"{restic(REPO, WRONG_PW)} snapshots --no-cache 2>&1"
+        )
+        assert rc != 0, f"restic exited 0 with the WRONG password:\n{out}"
+        assert "wrong password" in out.lower() or "no key found" in out.lower(), (
+            f"the failure did not say why:\n{out}"
+        )
+        assert "/mnt/fast/_dumps" not in out, f"it listed the snapshot anyway:\n{out}"
+
+    with subtest("🚨 a single flipped byte fails `restic check --read-data`"):
+        # On a COPY, so the repository the rest of this suite depends on stays
+        # intact and the tamper can be isolated.
+        sh(f"cp -a {REPO} {BAD_REPO}")
+        BR = restic(BAD_REPO, PW)
+
+        # Control for the control: the copy passes BEFORE the byte is flipped.
+        # Without this, a check failing for any unrelated reason — a bad copy,
+        # a stale lock — would be read as corruption detection.
+        sh(f"{BR} check --read-data --no-cache")
+
+        print(sh("${tamperPack} " + BAD_REPO))
+
+        # --no-cache on both runs: the copy shares the original's repository
+        # ID, so a warm cache could answer from unmodified metadata.
+        rc, out = services_vm.execute(f"{BR} check --read-data --no-cache 2>&1")
+        assert rc != 0, f"a corrupted pack file PASSED check --read-data:\n{out}"
+        assert "error" in out.lower(), f"the failure was not reported:\n{out}"
   '';
 }

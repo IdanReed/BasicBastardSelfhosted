@@ -38,9 +38,11 @@
 #     /data/media BEFORE the scan — the state an *arr import leaves, and it
 #     imports on qBittorrent's completion signal while the scanner polls, so
 #     nothing sequences them — must be GONE FROM THE LIBRARY afterwards, not
-#     merely renamed into .quarantine. The old assertions passed while the
-#     malware was still in the library; this one is what makes hardlink
-#     import safe for any consumer.
+#     merely renamed into .quarantine. Asserted as REACHABILITY: after the
+#     verdict no path anywhere on /mnt/slow outside .quarantine resolves to
+#     that inode, over two library links so a walk stopping at its first hit
+#     fails. The old assertions passed while the malware was still in the
+#     library; this one is what makes hardlink import safe for any consumer.
 #   - the audiobook hand-off (Option C): a clean entry under the `audiobooks`
 #     category is promoted whole into /mnt/slow/books/drop with its ownership
 #     intact, an entry containing EICAR reaches the drop dir in no form (not
@@ -899,23 +901,44 @@ pkgs.testers.runNixOSTest {
         # verdict" is then true by construction rather than by timing.
         lib_dir = "/mnt/slow/data/media/movies/Race Test (2026)"
         lib_file = f"{lib_dir}/race.mkv"
+        # A SECOND library link, in a second directory. An *arr leaves more
+        # than one often enough (re-import, a kept manual copy), and a walk
+        # that stopped at its first hit would pass with only one to find.
+        lib_dir2 = "/mnt/slow/data/media/movies/Race Test Copy (2026)"
+        lib_file2 = f"{lib_dir2}/race.mkv"
         dl_file = "/mnt/slow/data/downloads/movies/race.mkv"
-        services_vm.succeed("mkdir -p " + shlex.quote(lib_dir))
+        services_vm.succeed(
+            "mkdir -p " + shlex.quote(lib_dir) + " " + shlex.quote(lib_dir2)
+        )
         services_vm.succeed(
             f"printf '%s' {shlex.quote(e1 + e2)} > {shlex.quote(lib_file)}"
         )
         services_vm.succeed(
+            f"ln {shlex.quote(lib_file)} {shlex.quote(lib_file2)}"
+        )
+        services_vm.succeed(
             f"ln {shlex.quote(lib_file)} {shlex.quote(dl_file)}"
         )
-        # Two names, one inode: the state an *arr import leaves behind. If
+        # Owned like production. Unlinking needs write on the DIRECTORY, and
+        # the arrs create these as uid 1000 — leaving them root-owned would
+        # let a scanner that stopped running as root still pass this test.
+        services_vm.succeed(
+            "chown -R 1000:1000 " + shlex.quote(lib_dir) + " "
+            + shlex.quote(lib_dir2)
+        )
+        # Three names, one inode: the state an *arr import leaves behind. If
         # this is ever 1, the test is not modelling the race any more.
         links = services_vm.succeed(
             f"stat -c %h {shlex.quote(dl_file)}"
         ).strip()
-        assert links == "2", (
+        assert links == "3", (
             f"the fixture is not hardlinked (nlink={links}) — /mnt/slow must "
             "be one filesystem for this test to model an *arr import"
         )
+        # The inode itself, so the assertion below can ask the question the
+        # defect was actually about — reachability — instead of asking about
+        # the two paths this test happens to know.
+        ino = services_vm.succeed(f"stat -c %i {shlex.quote(dl_file)}").strip()
         try:
             services_vm.wait_until_succeeds(
                 "ls /mnt/slow/data/downloads/.quarantine/ "
@@ -923,14 +946,31 @@ pkgs.testers.runNixOSTest {
                 timeout=420,
             )
             # THE assertion. Not "quarantine gained a file" — "the library
-            # link is gone". A rename-only quarantine fails exactly here.
+            # links are gone". A rename-only quarantine fails exactly here
+            # while .quarantine looks perfectly correct.
             services_vm.wait_until_fails(
                 f"test -e {shlex.quote(lib_file)}", timeout=120
+            )
+            services_vm.wait_until_fails(
+                f"test -e {shlex.quote(lib_file2)}", timeout=120
             )
         except Exception:
             diag("eicar hardlink race")
             raise
         services_vm.fail(f"test -e {shlex.quote(dl_file)}")
+
+        # And the general form: NO path anywhere on /mnt/slow, outside the
+        # quarantine dir, still resolves to that inode. This is the one that
+        # would catch a walk scoped to a subtree the test did not think of.
+        reachable = services_vm.succeed(
+            "find /mnt/slow -xdev "
+            "-path /mnt/slow/data/downloads/.quarantine -prune -o "
+            f"-type f -inum {ino} -print"
+        ).strip()
+        assert reachable == "", (
+            "the infected inode is still reachable outside .quarantine:\n"
+            + reachable
+        )
 
         # The evidence sample survives, and it is the ONLY link left: the
         # quarantine directory is what the unlink walk prunes, which is what
@@ -944,13 +984,20 @@ pkgs.testers.runNixOSTest {
             f"the quarantined sample still has {qlinks} links — something "
             "else still reaches the infected inode"
         )
+        # Both removals are REPORTED. A quarantine that purges links without
+        # saying which is unauditable after the fact.
         logs = services_vm.succeed("docker logs clamav_scanner 2>&1")
-        assert "scan: UNLINKED" in logs, (
-            f"the scanner quarantined without reporting the hardlink it "
-            f"unlinked:\n{logs}"
-        )
-        # Nothing else in the library was touched by the walk.
+        unlinked = [l for l in logs.splitlines() if "scan: UNLINKED" in l]
+        for d in [lib_dir, lib_dir2]:
+            assert any(d in l for l in unlinked), (
+                f"the scanner unlinked nothing under {d!r} — UNLINKED lines: "
+                f"{unlinked!r}"
+            )
+        # Nothing else in the library was touched by the walk: the emptied
+        # directories are still there (removing them is the arr's job).
         services_vm.succeed("test -d " + shlex.quote(lib_dir))
+        services_vm.succeed("test -d " + shlex.quote(lib_dir2))
+        services_vm.succeed("test -f /mnt/slow/data/downloads/movies/clean.txt")
 
     # -----------------------------------------------------------------------
     # (e2) the audiobook hand-off: downloads/audiobooks -> the books drop dir
