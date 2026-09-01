@@ -338,6 +338,30 @@
     finalImageName = "gotenberg/gotenberg";
     finalImageTag = "8.31";
   };
+  "grafana_alloy_v1_19_2" = {
+    composeRef = "grafana/alloy:v1.19.2";
+    imageName = "grafana/alloy";
+    imageDigest = "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839";
+    hash = "sha256-4H7bR6t4jSPuV4LNLBOwA8XCPMr2x281caZLbFnMJRI=";
+    finalImageName = "grafana/alloy";
+    finalImageTag = "v1.19.2";
+  };
+  "grafana_grafana_13_2_0" = {
+    composeRef = "grafana/grafana:13.2.0";
+    imageName = "grafana/grafana";
+    imageDigest = "sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b";
+    hash = "sha256-2qQydw2ShBZxEZjXXeeq1SaS8+MSHnHWTCxDNQZ95i8=";
+    finalImageName = "grafana/grafana";
+    finalImageTag = "13.2.0";
+  };
+  "grafana_loki_3_7_7" = {
+    composeRef = "grafana/loki:3.7.7";
+    imageName = "grafana/loki";
+    imageDigest = "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500";
+    hash = "sha256-6t3JDDRrvT/6RQ/m+eoHdOxWr3LZ6JlsKKPDPGPD128=";
+    finalImageName = "grafana/loki";
+    finalImageTag = "3.7.7";
+  };
   "henrygd_beszel_0_18_8" = {
     composeRef = "henrygd/beszel:0.18.8";
     imageName = "henrygd/beszel";
