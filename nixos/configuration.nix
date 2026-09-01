@@ -326,19 +326,33 @@ in
     # reached, so this unit retried silently forever, reported `activating`,
     # and any OnFailure= on it would have been dead code.
     #
-    # Sized against the worst cycle, not the typical one: a failing attempt is
-    # usually fast (BackendState is already terminal, `tailscale up` errors in
-    # seconds) but if tailscaled itself is dead the poll below burns its full
-    # 60s first, so a cycle can be ~90s. 20 starts is then at most ~30 minutes
-    # — long enough for a VPS that is still booting, comfortably inside a 1h
-    # window, and well short of the 6h timer that retries afterwards.
+    # Sized against a TIMED-OUT cycle, not a fast one. `tailscale up` blocks
+    # indefinitely when the control plane is unreachable — the exact scenario
+    # above — and Type=oneshot defaults TimeoutStartSec to infinity, so without
+    # the cap below the unit sits in `activating` forever: the limiter never
+    # trips, OnFailure never fires, and OnUnitInactiveSec=6h never gets the
+    # deactivation it measures from. Same trio as the VPS twin
+    # (headscale-vps/configuration.nix), for the same reason.
+    #
+    # The three numbers are sized against each other:
+    #   - 8min bounds an attempt without cutting a legitimate one short (the
+    #     script's own bounded wait is 60s, and a real `tailscale up` against a
+    #     slow-booting VPS is well inside that);
+    #   - a timed-out cycle is then 8min + RestartSec 30s = 8.5min, so 3 starts
+    #     span ~17min and the 4th lands at ~25.5min — inside the 30min window,
+    #     so the limit is genuinely reached and the unit really enters `failed`.
+    #     The old 20/1h could not: 20 timed-out cycles need ~2.8h, so the unit
+    #     would have retried forever without ever notifying.
+    #   - 30min is well under the 6h timer below, which retries afterwards, so
+    #     giving up is never permanent.
     unitConfig = {
-      StartLimitIntervalSec = "1h";
-      StartLimitBurst = 20;
+      StartLimitIntervalSec = "30min";
+      StartLimitBurst = 3;
     };
 
     serviceConfig = {
       Type = "oneshot";
+      TimeoutStartSec = "8min";
       # The VPS may still be booting or reissuing certificates. Retry rather
       # than sitting off the tailnet until someone reruns this by hand.
       Restart = "on-failure";
@@ -978,7 +992,18 @@ in
       # The loopback publish, not the Caddy vhost: this route takes no
       # authentication (the token is the credential), so going through Caddy
       # would only add the forward-auth outpost as a dependency of a cron job.
-      curl -fsS --max-time 120 "http://127.0.0.1:10303/api/v1/cron/$token"
+      #
+      # URL on stdin (`--config -`), NOT in argv: the token IS the credential
+      # and /proc/<pid>/cmdline is world-readable on this host, where the PID
+      # namespace is a superset of every container's and CI workflows run as a
+      # DynamicUser (modules/forgejo-runner.nix). Same narrowing backup-prepare.sh
+      # makes with MYSQL_PWD.
+      #
+      # Accepted, not fixed: Firefly puts the token in the URL PATH, so its own
+      # access log line (`GET /api/v1/cron/<token>`) still reaches the journal
+      # and Loki's 30-day retention. That is inherent to upstream's design.
+      printf 'url = "http://127.0.0.1:10303/api/v1/cron/%s"\n' "$token" \
+        | curl -fsS --max-time 120 --config -
     '';
   };
 

@@ -32,6 +32,11 @@
 # forever. That is the single most common way a Loki install quietly outgrows
 # its disk.
 
+# ACCEPTED unauthenticated: any local uid that can reach the 127.0.0.1:10456
+# publish (the host's CI DynamicUsers included) can query 30 days of fleet
+# logs, which is wider than the journal's own 0640 root:systemd-journal.
+# Reasoning and what would actually close it:
+# ServerNotes/issues/code-review-2026-08-31.md, "Accepted".
 auth_enabled: false
 
 server:
