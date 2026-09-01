@@ -170,6 +170,10 @@ services:
       - -ec
       # $$ everywhere: compose would otherwise interpolate at parse time.
       - |
+        # Tmpfile is born 0600 rather than chmodded after content lands —
+        # /mnt/fast/immich/config is 0755, so a umask-default write would
+        # expose the secret for the write-to-chmod window.
+        umask 077
         tmpl=/template/immich.json.template
         out=/config/immich.json
         # Hard error on unset/empty, like backrest's config-init: an empty

@@ -32,6 +32,12 @@ services:
       - PAPERLESS_TIKA_ENDPOINT=http://tika:9998
       - PAPERLESS_TIME_ZONE=America/Chicago
       - PAPERLESS_OCR_LANGUAGE=eng
+      # Feeds CSRF_TRUSTED_ORIGINS / ALLOWED_HOSTS / CORS. Without it Django
+      # 403s every POST arriving through the https vhost — the login form
+      # included, and there is no forward auth on this host so that login IS
+      # the auth. The suite can't see the break: it probes loopback, where
+      # the Origin header matches.
+      - PAPERLESS_URL=https://paperless.svc.idanreed.com
       - USERMAP_UID=1000
       - USERMAP_GID=1000
     # Long form with required:false ON PURPOSE (finding #11): Arcane's

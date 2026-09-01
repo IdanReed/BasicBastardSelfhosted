@@ -1131,14 +1131,31 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # Vaultwarden is the one split vhost: Caddy wraps only /admin* in
+  # (protected); the bare `/` serves the web vault directly (its own login is
+  # the auth). So the outpost probe must hit /admin — `== 302` on `/` would
+  # be permanently DOWN against the vault's 200.
   - name: "vaultwarden (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://vaultwarden.svc.idanreed.com/admin"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  - name: "vaultwarden web vault (path: caddy -> service)"
     group: "path"
     url: "https://vaultwarden.svc.idanreed.com/"
     interval: 2m
     client:
       ignore-redirect: true
     conditions:
-      - "[STATUS] == 302"
+      - "[STATUS] < 400"
       - "[CERTIFICATE_EXPIRATION] > 240h"
 
     alerts:

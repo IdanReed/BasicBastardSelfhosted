@@ -16,11 +16,13 @@ today passes identically next month.
 ./tests/run.sh vps          # VPS: caddy + headscale + a real tailnet
 ./tests/run.sh services     # services VM: sops -> arcane -> stacks
 ./tests/run.sh tailnet      # both hosts on one tailnet, end to end
+./tests/run.sh stack <name> # one stack alone — the fast loop for stack work
+./tests/run.sh <suite>      # one named suite — 28 exist, authentik through
+                            # journald-logging; run.sh's own header is the
+                            # authoritative list (it sits next to the case
+                            # statement it documents, so it cannot drift far)
 ./tests/run.sh disko        # disk-config.nix formats, mounts, and boots
-./tests/run.sh media        # heavy: full media stack — kill-switch, x265 guard, EICAR
-./tests/run.sh immich       # heavy: photo stack — config render, v3 API, reboot durability
-./tests/run.sh books        # heavy: book stack — headless seeding, OPDS, :ro mounts, hook
-./tests/run.sh automation   # heavy: HA storage config, MQTT round trip, frigate safe-mode gate
+./tests/run.sh proxmox-boot # boots the image: cloud-init key -> sops decrypt
 ./tests/run.sh all
 
 ./tests/run.sh debug vps    # live VM + Python REPL
@@ -1677,9 +1679,15 @@ a silently-failed user creation into guest access that every positive test
 built on anonymous auth would pass; plus the exposure decision proved from both
 sides: smbd IS bound to the LAN nic and the FIREWALL is what stops the
 outsider, then 445 opened at runtime for a real off-host round trip and closed
-again), **proxmox-boot**
+again), **journald-logging** (5/5: the fleet-wide journald log driver proven
+in-VM — `docker logs` positively asserted under the driver, and the systemd
+rate limit measured: ~10k of a 30k-line burst survived the default with NO
+"Suppressed" note, 30k/30k with `rateLimitBurst=0` — see findings 74–76),
+**proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
-stackChecks, and the proxmox image build gate (`run.sh all` covers the lot).
+stackChecks (which alone cover the four newest stacks — silverbullet,
+outline, ghostfolio, owl — no dedicated suites yet), and the proxmox image
+build gate (`run.sh all` covers the lot).
 **`gatus` is green on its FIRST run** — the only suite in this campaign to
 manage that. **`docspace`** is green at 12 subtests after two real failures
 (#47, #48). **`beszel`** is green at 15 subtests after three runs — one of my
@@ -1691,7 +1699,7 @@ sixteen stack suites failed the first time they ran, and every one of those
 failures was either a real defect in the stack or a real defect in the test.**
 Nothing that "obviously worked" actually did.
 
-**Fifty** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Seventy-eight** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

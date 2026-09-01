@@ -127,6 +127,10 @@ services:
         [ -n "$${QBIT_WEBUI_USER:-}" ] || { echo "qbit-init: FATAL: QBIT_WEBUI_USER unset (decrypt race? finding #11)" >&2; exit 1; }
         [ -n "$${QBIT_WEBUI_PASSWORD_PBKDF2:-}" ] || { echo "qbit-init: FATAL: QBIT_WEBUI_PASSWORD_PBKDF2 unset" >&2; exit 1; }
         mkdir -p "$$conf_dir"
+        # Tmpfile+rename, not a direct write: the -f guard above is
+        # touch-once, so a crash mid-write would otherwise leave a partial
+        # conf no later run repairs (qBittorrent then runs on a random temp
+        # password until someone deletes the file by hand).
         {
           printf '%s\n' '[AutoRun]'
           printf '%s\n' 'enabled=false'
@@ -153,7 +157,8 @@ services:
           # post the listen port without credentials (same netns = localhost).
           printf '%s\n' 'WebUI\LocalHostAuth=false'
           printf '%s\n' 'WebUI\Port=8080'
-        } > "$$conf"
+        } > "$$conf.tmp"
+        mv "$$conf.tmp" "$$conf"
         chown -R 1000:1000 /config
         echo "qbit-init: seeded $$conf"
     volumes:
