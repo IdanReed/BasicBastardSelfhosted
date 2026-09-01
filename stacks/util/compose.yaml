@@ -113,17 +113,18 @@ services:
     # Tag trap: dated tags ONLY. `latest` and `stable` are two different
     # moving digests, and the parallel `-baseurl-it-tools` axis 404s assets
     # under a root-path vhost like ours.
+    # sharevb fork serves on 8080 (upstream corentinth was 80)
     image: ghcr.io/sharevb/it-tools:2026.7.11
     container_name: it-tools
     ports:
-      - '127.0.0.1:10407:80'
+      - '127.0.0.1:10407:8080'
     environment:
       - TZ=America/Chicago
     healthcheck:
       # No HEALTHCHECK in the Dockerfile (production stage is
       # nginx:stable-alpine with a bare CMD). This is a liveness probe and
       # nothing more — there is nothing else to probe on a static SPA.
-      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8080/']
       interval: 30s
       timeout: 10s
       retries: 5

@@ -404,13 +404,15 @@ pkgs.testers.runNixOSTest {
           # *.svc.idanreed.com is a public A record pointing at the tailnet IP
           # on the real network. /etc/hosts is a read-only store symlink on
           # NixOS, so --resolve stands in for that record per request.
-          code = client.wait_until_succeeds(
-              f"curl -sk --max-time 10 "
+          # retry until 2xx/3xx: a cold embedded outpost 503s the first
+          # protected requests while it loads applications, and the bare
+          # http_code curl "succeeds" on a 503, so poll on the code itself.
+          client.wait_until_succeeds(
+              f"test $(curl -sk --max-time 10 "
               f"--resolve arcane.svc.idanreed.com:443:{svc_ip} "
               "https://arcane.svc.idanreed.com/ "
-              "-o /dev/null -w '%{http_code}'", timeout=120
-          ).strip()
-          assert code.startswith(("2", "3")), f"arcane returned {code}"
+              "-o /dev/null -w '%{http_code}') -lt 400", timeout=180
+          )
 
       with subtest("unknown subdomains 404 rather than returning a blank 200"):
           out = client.succeed(
