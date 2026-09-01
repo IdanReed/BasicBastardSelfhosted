@@ -38,9 +38,13 @@
         install_url = "https://addons.mozilla.org/firefox/downloads/latest/sponsorblock/latest.xpi";
         installation_mode = "force_installed";
       };
+      # ClearURLs mangles OAuth params on accounts.google.com and breaks
+      # "Sign in with Google" (upstream ClearURLs/Addon#272, #329, both open,
+      # no domain whitelist). normal_installed instead of force_installed so it
+      # stays toggleable from about:addons when a login flow needs it off.
       "{74145f27-f039-47ce-a470-a662b129930a}" = {
         install_url = "https://addons.mozilla.org/firefox/downloads/latest/clearurls/latest.xpi";
-        installation_mode = "force_installed";
+        installation_mode = "normal_installed";
       };
       "addon@darkreader.org" = {
         install_url = "https://addons.mozilla.org/firefox/downloads/latest/darkreader/latest.xpi";

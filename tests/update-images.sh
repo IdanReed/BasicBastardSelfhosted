@@ -148,6 +148,15 @@ for pin in "${PINS[@]}"; do
   # finding for a tag that resolved fine on the next attempt. Blaming the
   # compose file for a network blip is worse than useless: it sends you
   # looking for a tag-shape bug that does not exist.
+  #
+  # Independently confirmed by the operator on main, whose own fix noted TWO
+  # consecutive full runs each producing exactly ONE phantom "missing" image
+  # (prowlarr, then immich-ml) that skopeo found present moments later. That
+  # version kept `2>/dev/null` and the "no such tag in the registry" wording,
+  # so it still asserted a cause it had discarded the evidence for; this one
+  # keeps the stderr and says only what it can support. Backoff is 10s/20s
+  # rather than 5s/10s for the same reason — the failures are transient and
+  # worth waiting out.
   errfile=$(mktemp)
   meta=""
   for attempt in 1 2 3; do
