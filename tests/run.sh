@@ -11,6 +11,8 @@
 #   ./tests/run.sh backrest       # heavy: config seeding + the key gate
 #   ./tests/run.sh rotation       # heavy: secret rotation restarts both consumers
 #   ./tests/run.sh gitops         # arcane: push -> sync -> deploy -> update
+#   ./tests/run.sh forwardauth    # heavy: forward-auth pilot (bentopdf) end to end
+#   ./tests/run.sh forgejo        # heavy: healthz, admin seed, API repo, push/clone
 #   ./tests/run.sh media          # heavy: gluetun kill-switch, x265 guard, EICAR chain
 #   ./tests/run.sh immich         # heavy: config render, v3 API, thumbs sans ML, reboot
 #   ./tests/run.sh books          # heavy: kavita/abs seeding, OPDS, :ro mounts, hook
@@ -31,6 +33,8 @@
 #   ./tests/run.sh docspace       # heavy: the machine key in play is the one from sops
 #   ./tests/run.sh journald-logging # the log driver + the `docker logs` contract
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
+#   ./tests/run.sh proxmox        # image build gate (also part of all)
+#   ./tests/run.sh proxmox-boot   # boots the image: cloud-init key -> sops decrypt
 #   ./tests/run.sh stack <name>   # one stack, fast — for iterating on it
 #   ./tests/run.sh all            # everything above
 #   ./tests/run.sh debug vps      # interactive driver: a live VM and a REPL

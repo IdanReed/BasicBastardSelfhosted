@@ -9,6 +9,12 @@
 # every `$` in the YAML unless doubled — a standing trap for future edits.
 set -eu
 
+# 0600 from birth: config.json carries RESTIC_PASSWORD and the admin bcrypt
+# hash, and with the default umask 022 the rendered file would sit
+# world-readable between the write and the chmod below. With 077 every file
+# created here is 0600 from the start.
+umask 077
+
 # Fail loudly BEFORE Backrest starts if the storage box key is absent OR
 # still the sops changeme_ placeholder — the placeholder is the DEFAULT state
 # of a fresh deploy (sops-nix + the tmpfiles C+ rule always materialise a
@@ -31,6 +37,18 @@ if [ ! -f /keys/storagebox_ed25519 ] || [ ! -s /keys/storagebox_ed25519 ] \
   echo "  The key is sops-managed: put the real private key in"
   echo "  BACKUP_STORAGEBOX_SSH_KEY via: sops nixos/secrets.sops.yaml"
   echo "  (see stacks/backrest/README.md section 2 and CLAUDE.md 'SSH identities')"
+  exit 1
+fi
+
+# Same class of gate as the key check above, for the OTHER half of the
+# storage-box identity: ssh_config is committed with a uXXXXXX username
+# placeholder, and nothing else validates it — the key can be real while the
+# hostname it dials is literally uXXXXXX.your-storagebox.de. That failure is
+# DNS at backup time, hours after deploy, with Backrest already green.
+if [ ! -f /template/ssh_config ] || grep -q 'uXXXXXX' /template/ssh_config; then
+  echo "ERROR: stacks/backrest/ssh_config is missing or still carries the uXXXXXX placeholder."
+  echo "  Fill in the real Storage Box username (u******) in ssh_config —"
+  echo "  see stacks/backrest/README.md section 2."
   exit 1
 fi
 
@@ -90,12 +108,31 @@ for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.jso
       echo "  (see .sops.env.example for how to generate each one)."
       fail=1
       ;;
+    # Values go into JSON verbatim (the awk below does no escaping): a double
+    # quote breaks the parse, and a backslash parses as a JSON escape — restic
+    # would then encrypt the repo with a password DIFFERENT from the
+    # sops-recorded value, found only at disaster recovery. Same gate
+    # immich-config-init carries for exactly this class.
+    *'"'*|*'\'*)
+      echo "ERROR: $v contains a double quote or backslash - inserted verbatim"
+      echo "  into JSON it would corrupt config.json (or silently change the"
+      echo "  value restic actually uses). Pick a value without either"
+      echo "  character in stacks/backrest/.sops.env."
+      fail=1
+      ;;
   esac
 done
 [ "$fail" -eq 0 ]
 
 # Left-to-right single pass, no rescan of substituted output — a value that
 # itself contains '${' is inserted literally, matching envsubst.
+#
+# Rendered to a tmpfile and renamed into place: the seed-once guard up top
+# trusts any existing config.json forever, so a crash mid-write (ENOSPC,
+# OOM-kill) landing directly on the final path would leave truncated JSON
+# that `-f` then protects until a human deletes it. The chmod is a no-op
+# under the umask above, kept because the 0600 contract (asserted by the
+# suite) deserves to be visible where the file is made.
 awk '{
   out = ""
   rest = $0
@@ -105,6 +142,7 @@ awk '{
     rest = substr(rest, RSTART + RLENGTH)
   }
   print out rest
-}' /template/config.template.json > /config/config.json
-chmod 600 /config/config.json
+}' /template/config.template.json > /config/.config.json.tmp
+chmod 600 /config/.config.json.tmp
+mv /config/.config.json.tmp /config/config.json
 echo "seeded config.json"

@@ -9,6 +9,13 @@
 # Busybox sh in alpine:3.21 — no bashisms, no `local`, no arrays.
 set -eu
 
+# 0600 from birth: both tmpfiles below carry secrets (the decoded hub key,
+# TOKEN in config.yml) and land in /mnt/fast/beszel, which is 0755 root:root
+# (nixos/stack-dirs.nix) — under the default umask 022 the content would be
+# world-readable between the write and the later chmod. With 077 the files
+# are created 0600 and the explicit chmods become belt-and-braces.
+umask 077
+
 log() { echo "beszel-init: $*"; }
 die() { echo "beszel-init: FATAL: $*" >&2; exit 1; }
 
@@ -119,9 +126,12 @@ EOF
 
 # 0600 like the key beside it: config.yml carries TOKEN in cleartext, and
 # TOKEN is the credential the agent presents to the hub — the same class of
-# secret as id_ed25519, so it gets the same mode. Set on the tmpfile so the
-# token is never briefly world-readable under $DATA_DIR, and again after the
-# rename for the same reason the key does it.
+# secret as id_ed25519, so it gets the same mode. What actually keeps the
+# token from ever being briefly world-readable under $DATA_DIR is the
+# `umask 077` up top — the file is BORN 0600, before any content lands; a
+# chmod after the write (which is when this one runs) would be too late.
+# Kept, and repeated after the rename like the key does, so the mode
+# contract stays visible where the file is handled.
 chmod 600 "$tmp_cfg"
 if [ -f "$CFG_PATH" ] && cmp -s "$tmp_cfg" "$CFG_PATH"; then
   rm -f "$tmp_cfg"

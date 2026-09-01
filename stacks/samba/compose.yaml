@@ -107,8 +107,9 @@ services:
       # Shares live on the SLOW tier: they are bulk files, and /mnt/slow is
       # already in Backrest's include set, so this needs no backup-prepare
       # change. The uid/gid on these directories is a real contract with
-      # config.yml's `auth:` entry — see the tmpfiles rules in
-      # nixos/hardware-configuration.nix.
+      # config.yml's `auth:` entry — see the tmpfiles rule generated into
+      # nixos/stack-dirs.nix from the DIR_NOTES entry in
+      # nixos/generate-stack-dirs.py.
       - /mnt/slow/samba/shared:/mnt/slow/samba/shared
     environment:
       - TZ=America/Chicago

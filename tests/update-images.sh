@@ -19,6 +19,11 @@
 #
 set -euo pipefail
 
+# Resolved BEFORE the cd: the lock guard below re-execs this script, and a
+# relative $0 (cd tests; ./update-images.sh) no longer resolves once the
+# working directory is the repo root.
+SELF=$(readlink -f "$0")
+
 cd "$(dirname "$0")/.."
 OUT="tests/lib/images.nix"
 TIER="${1:-all}"
@@ -44,7 +49,7 @@ TIER="${1:-all}"
 LOCKFILE="${TMPDIR:-/tmp}/basicbastard-update-images.lock"
 if [ "${UPDATE_IMAGES_LOCKED:-}" != "1" ]; then
   rc=0
-  UPDATE_IMAGES_LOCKED=1 flock -E 99 -w 0 "$LOCKFILE" "$0" "$@" || rc=$?
+  UPDATE_IMAGES_LOCKED=1 flock -E 99 -w 0 "$LOCKFILE" "$SELF" "$@" || rc=$?
   if [ "$rc" -eq 99 ]; then
     echo "!! another update-images.sh already holds $LOCKFILE — refusing to" >&2
     echo "   run concurrently (they would interleave into one images.nix.tmp)." >&2

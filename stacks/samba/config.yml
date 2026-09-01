@@ -6,9 +6,11 @@
 #
 #   - An UNSET variable becomes "" SILENTLY. For a password that produces a
 #     user whose `smbpasswd -a -s` fails, a container that stays HEALTHY (the
-#     probe is anonymous), and a share nobody can log into. compose.yaml's
-#     `${SAMBA_IDAN_PASSWORD:?...}` turns that into a refusal to start; do not
-#     remove it.
+#     probe is anonymous), and a share nobody can log into. samba-init.sh's
+#     non-empty/changeme_ gate is what turns that into a refusal to start —
+#     NOT a `${SAMBA_IDAN_PASSWORD:?}` in compose.yaml, which compose.yaml
+#     explains is WRONG there (it would abort Arcane's staged sync,
+#     finding #11); do not add one.
 #   - A password containing `$` must be SINGLE-QUOTED in the plaintext .env
 #     before encryption, or the decrypt-and-source path expands it (CLAUDE.md,
 #     and finding #30 for the Compose half).
@@ -27,9 +29,11 @@ auth:
     # 🚨 These numbers are a CONTRACT with the host, and nothing enforces it.
     # adduser -u creates them INSIDE the container; the files land on
     # /mnt/slow/samba/shared, whose ownership comes from a tmpfiles rule in
-    # nixos/hardware-configuration.nix. A mismatch is not a crash — it is
-    # files nothing else in the fleet can read. The suite measures it (write
-    # over SMB, stat on the host) rather than reasoning about it.
+    # the generated nixos/stack-dirs.nix (edit the DIR_NOTES entry in
+    # nixos/generate-stack-dirs.py, then rerun the generator). A mismatch is
+    # not a crash — it is files nothing else in the fleet can read. The suite
+    # measures it (write over SMB, stat on the host) rather than reasoning
+    # about it.
     #
     # If a second SMB user is ever added, give it a DISTINCT uid and a shared
     # group. Reusing 1000 makes per-user ownership a fiction.

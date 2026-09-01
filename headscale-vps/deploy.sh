@@ -99,8 +99,11 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# Run nixos-anywhere
-nix run github:nix-community/nixos-anywhere -- \
+# Run nixos-anywhere. Pinned to a release tag: this tool runs locally with
+# the age master key staged in $EXTRA_FILES_DIR and as root on the target,
+# so a floating ref would hand upstream's default branch both. Every image
+# in the fleet is pinned for the same reason. Bump deliberately.
+nix run github:nix-community/nixos-anywhere/1.13.0 -- \
     --flake ".#headscale-vps" \
     --extra-files "$EXTRA_FILES_DIR" \
     "root@$VPS_IP"
