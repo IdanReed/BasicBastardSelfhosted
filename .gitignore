@@ -16,3 +16,9 @@ nixos/result
 # is killed (or a `git add -A` while one is in flight) leaves the tmp behind —
 # and it got committed three times before this line existed.
 tests/lib/images.nix.tmp
+
+# Running a stack's init script locally compiles it, and two .pyc files got
+# committed before these lines existed (run.sh's tracked-artifacts check now
+# guards the whole class).
+__pycache__/
+*.pyc
