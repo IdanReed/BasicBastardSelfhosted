@@ -48,6 +48,14 @@ let
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
   ];
 
+  # caddy needs /var/lib/test-ca in-container for the trust_pool line above
+  caddyTestOverride = pkgs.writeText "caddy-test-override.yaml" ''
+    services:
+      caddy:
+        volumes:
+          - /var/lib/test-ca:/var/lib/test-ca:ro
+  '';
+
   testCaddyfile =
     pkgs.runCommand "Caddyfile.test" { nativeBuildInputs = [ pkgs.python3 ]; }
       ''
@@ -58,6 +66,19 @@ let
         out, n = pattern.subn("\n\ttls internal\n", src)
         if n != 1:
             print(f"expected one DNS-01 tls block, found {n}", file=sys.stderr)
+            sys.exit(1)
+
+        # trust_pool: verify the VPS's pebble cert on the forward_auth hop
+        # (same injection as forward-auth.nix; arcane is `import protected`)
+        fa = re.compile(
+            r"(\n\t\ttransport http \{\n"
+            r"\t\t\ttls_server_name auth\.idanreed\.com\n)")
+        out, n = fa.subn(
+            r"\1\t\t\ttls_trust_pool file /var/lib/test-ca/bundle.pem\n",
+            out,
+        )
+        if n != 1:
+            print(f"expected one (protected) transport block, found {n}", file=sys.stderr)
             sys.exit(1)
         open(os.environ["out"], "w").write(out)
         PY
@@ -358,7 +379,8 @@ pkgs.testers.runNixOSTest {
               f"sed -i 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
           )
           services_vm.succeed(
-              "docker compose -f /srv/stacks/caddy/compose.yaml -p caddy "
+              "docker compose -f /srv/stacks/caddy/compose.yaml "
+              "-f ${caddyTestOverride} -p caddy "
               "up -d --wait --wait-timeout 180"
           )
           services_vm.wait_for_open_port(443, addr=svc_ip)
