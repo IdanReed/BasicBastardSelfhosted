@@ -312,13 +312,66 @@ if not token:
     sys.exit("books-init: FATAL: audiobookshelf login returned no accessToken")
 abs_auth = {"Authorization": f"Bearer {token}"}
 
+# TWO folders, and the second one is the whole of the audiobook acquisition
+# path (ServerNotes/designs/audiobook-acquisition.md, Option C):
+#   /audiobooks  the curated tree, filled by hand/Samba
+#   /drop        the media stack's hand-off. qBittorrent downloads under its
+#                `audiobooks` category and stacks/media/scan-downloads.sh
+#                moves an entry in here ONLY after a clean ClamAV verdict on
+#                every file in it. Registering it as a library FOLDER rather
+#                than a staging area is deliberate: both mounts are read-only,
+#                so audiobookshelf could not move an item out of a staging
+#                area anyway, and a book that lands here is immediately
+#                playable where it lies. Organising it into /audiobooks later
+#                is optional and happens outside these containers.
+ABS_FOLDERS = ["/audiobooks", "/drop"]
+
+# Nothing WATCHES the drop directory: disableWatcher is on (below) and the
+# post-download hook that triggers Kavita's and audiobookshelf's scans is
+# shelfmark's, and shelfmark has no part in this path. So the library carries
+# a scan cron instead — hourly, which is the latency between a clean
+# audiobook landing in the drop dir and appearing in the library. A watcher
+# would be immediate but takes one inotify watch per directory across BOTH
+# folders, including the whole curated tree.
+ABS_SCAN_CRON = os.environ.get("ABS_AUTOSCAN_CRON", "0 * * * *")
+
 # POST /api/libraries is NOT idempotent — it happily creates a second library
 # with the same name — so the list read is the guard.
 _, libs = call(f"{ABS}/api/libraries", "GET", None, abs_auth)
 existing = [lib for lib in (libs or {}).get("libraries", [])
             if lib.get("name") == "Audiobooks"]
 if existing:
-    log("audiobookshelf library 'Audiobooks' already exists - no change")
+    # The library predates this folder list on any deployment that was seeded
+    # before the drop directory existed, so RECONCILE rather than assume. The
+    # PATCH must carry the folders that already exist WITH their ids —
+    # audiobookshelf treats a folder missing from the payload as a removal,
+    # and removing a folder deletes its library items.
+    lib = existing[0]
+    lib_id = lib.get("id")
+    have = {f.get("fullPath"): f for f in (lib.get("folders") or [])}
+    missing = [p for p in ABS_FOLDERS if p not in have]
+    cron_now = ((lib.get("settings") or {}).get("autoScanCronExpression"))
+    payload = {}
+    if missing:
+        payload["folders"] = (
+            [{"id": f["id"], "fullPath": p} for p, f in have.items()]
+            + [{"fullPath": p} for p in missing]
+        )
+    if cron_now != ABS_SCAN_CRON:
+        payload["settings"] = dict(lib.get("settings") or {},
+                                   autoScanCronExpression=ABS_SCAN_CRON)
+    if not payload:
+        log("audiobookshelf library 'Audiobooks' already exists - no change")
+    else:
+        call(f"{ABS}/api/libraries/{lib_id}", "PATCH", payload, abs_auth)
+        if missing:
+            change(f"audiobookshelf library 'Audiobooks' gained folder(s) "
+                   f"{', '.join(missing)}")
+            call(f"{ABS}/api/libraries/{lib_id}/scan", "POST", None, abs_auth)
+            change("audiobookshelf scan triggered for the new folder(s)")
+        if "settings" in payload:
+            change(f"audiobookshelf library 'Audiobooks' auto-scan cron set to "
+                   f"{ABS_SCAN_CRON!r}")
 else:
     # fs.ensureDir() runs on every folder here, which makes this the
     # bind-mount permission canary: a nonexistent path under the read-only
@@ -331,8 +384,9 @@ else:
         "name": "Audiobooks",
         "mediaType": "book",
         "provider": "audible",
-        "folders": [{"fullPath": "/audiobooks"}],
-        "settings": {"disableWatcher": True, "autoScanCronExpression": None},
+        "folders": [{"fullPath": p} for p in ABS_FOLDERS],
+        "settings": {"disableWatcher": True,
+                     "autoScanCronExpression": ABS_SCAN_CRON},
     }, abs_auth)
     change("audiobookshelf library 'Audiobooks' created")
     lib_id = (created or {}).get("id")

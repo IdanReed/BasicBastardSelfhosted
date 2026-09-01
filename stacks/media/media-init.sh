@@ -35,7 +35,7 @@
 #     runs without egress.
 set -eu
 exec python3 -u - <<'PY'
-import json, os, re, sys, time, urllib.error, urllib.request
+import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 
 CHANGES = 0
 
@@ -117,6 +117,12 @@ QBIT_PASS = env["QBIT_WEBUI_PASSWORD"]
 SKELETON = [
     "media/movies", "media/tv",
     "downloads/movies", "downloads/tv",
+    # The audiobook category directory. Nothing *arr-shaped imports from it —
+    # scan-downloads.sh promotes clean entries into the books stack's drop
+    # directory (Option C, ServerNotes/designs/audiobook-acquisition.md) — but
+    # it is created here with the rest so qBittorrent's category save path
+    # exists before the first torrent lands.
+    "downloads/audiobooks",
     "downloads/.incomplete", "downloads/.quarantine",
 ]
 for rel in SKELETON:
@@ -238,6 +244,94 @@ for name, a in ARRS.items():
     else:
         req("PUT", f"{base}{api}/config/naming/{cur['id']}", key, merged)
         change(f"{name}: naming config set (TRaSH tokens incl. MediaInfo VideoCodec)")
+
+# ---------------------------------------------------------------------------
+# qBittorrent: the `audiobooks` category (Option C acquisition path)
+# ---------------------------------------------------------------------------
+# Radarr and Sonarr create their own categories as a side effect of the
+# download-client config above. Nothing creates this one — audiobooks have no
+# *arr — so it is declared here, with an explicit save path, and that path is
+# what scan-downloads.sh promotes clean entries OUT of. Doing it over the API
+# rather than in qBittorrent.conf is deliberate: qbit-init only writes that
+# file when it does not exist yet (qBittorrent owns it afterwards and rewrites
+# it on shutdown), so a category added there would never reach an existing
+# deployment.
+#
+# Best-effort like the download-client POST: qBittorrent shares gluetun's
+# netns, so anything that keeps qbit from starting also makes this
+# unreachable, and that must be a WARN the next run reconciles, never a
+# failure that blocks the rest of the reconciliation.
+QBIT = "http://gluetun:8080"
+AUDIOBOOK_CATEGORY = "audiobooks"
+AUDIOBOOK_SAVE_PATH = "/data/downloads/audiobooks"
+
+
+def qbit(sid, path, form=None):
+    data = urllib.parse.urlencode(form).encode() if form is not None else None
+    headers = {}
+    if sid:
+        headers["Cookie"] = sid
+    if data is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        # qBittorrent treats a MISMATCHED Origin/Referer as cross-site and
+        # 403s it; an absent one is fine, but sending the right one costs
+        # nothing and survives a future tightening.
+        headers["Referer"] = QBIT
+    r = urllib.request.Request(
+        QBIT + path, data=data, headers=headers,
+        method="POST" if data is not None else "GET")
+    with urllib.request.urlopen(r, timeout=30) as resp:
+        return resp.status, resp.headers, resp.read().decode(errors="replace")
+
+
+try:
+    status, hdrs, body = qbit(None, "/api/v2/auth/login",
+                              {"username": QBIT_USER, "password": QBIT_PASS})
+    # SUCCESS IS NOT ONE SHAPE. The pinned qBittorrent 5.2.3 answers
+    # 204 No Content with an EMPTY body (the media suite's own login subtest
+    # pins exactly that); older builds answer 200 with the body "Ok.". A
+    # wrong password is a 401, which urlopen raises. So: accept 204, accept
+    # 200/"Ok.", reject anything else — and do NOT require a non-empty body,
+    # which is what made the first cut of this log a permanent WARN with the
+    # login actually succeeding.
+    if not (status == 204 or (status == 200 and body.strip() == "Ok.")):
+        raise RuntimeError(f"login refused: HTTP {status} {body.strip()[:80]!r}")
+    # 🚨 THE COOKIE IS NOT CALLED "SID". qBittorrent 5.2.3 names the session
+    # cookie QBT_SID_<WebUI port> — QBT_SID_8080 here — so a check for a
+    # cookie named SID (which is what every qBittorrent API snippet on the
+    # internet still says) finds nothing, sends no cookie, and gets a 403 on
+    # the very next call. Take whatever name=value the server issued.
+    sid = (hdrs.get("Set-Cookie") or "").split(";")[0].strip()
+    if "=" not in sid:
+        # No cookie at all: qBittorrent skips the session when auth is not
+        # needed for this caller (WebUI\LocalHostAuth=false, local source).
+        # Carry on without one; the next call 403s loudly if it was needed.
+        sid = ""
+
+    _, _, raw = qbit(sid, "/api/v2/torrents/categories")
+    cats = json.loads(raw or "{}")
+    cur = cats.get(AUDIOBOOK_CATEGORY)
+    if cur is None:
+        qbit(sid, "/api/v2/torrents/createCategory",
+             {"category": AUDIOBOOK_CATEGORY, "savePath": AUDIOBOOK_SAVE_PATH})
+        change(f"qbittorrent: created category {AUDIOBOOK_CATEGORY!r} "
+               f"-> {AUDIOBOOK_SAVE_PATH}")
+    # rstrip("/") on both sides: qBittorrent normalises the paths it stores
+    # and a returned trailing separator would make every run "differ" — an
+    # editCategory per run, i.e. a CHANGE line per run, which is the
+    # idempotence contract the media suite asserts.
+    elif (cur.get("savePath") or "").rstrip("/") != AUDIOBOOK_SAVE_PATH.rstrip("/"):
+        qbit(sid, "/api/v2/torrents/editCategory",
+             {"category": AUDIOBOOK_CATEGORY, "savePath": AUDIOBOOK_SAVE_PATH})
+        change(f"qbittorrent: repointed category {AUDIOBOOK_CATEGORY!r} "
+               f"from {cur.get('savePath')!r} to {AUDIOBOOK_SAVE_PATH}")
+    else:
+        log("OK", f"qbittorrent: category {AUDIOBOOK_CATEGORY!r} already "
+                  f"saves to {AUDIOBOOK_SAVE_PATH}")
+except Exception as e:  # noqa: BLE001
+    log("WARN", f"qbittorrent: could not reconcile the {AUDIOBOOK_CATEGORY!r} "
+                f"category ({e}) — audiobook downloads must be assigned it by "
+                f"hand until the next media-init run succeeds")
 
 # ---------------------------------------------------------------------------
 # x265 scoring guard, both-sided (see header contract)

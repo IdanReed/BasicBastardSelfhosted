@@ -37,6 +37,15 @@
 #   - the :ro library mounts really being sufficient — the tree is byte-identical
 #     after both apps have scanned it (the difference between a :ro and a :rw
 #     line in the compose file, so it gets measured rather than reasoned)
+#   - the audiobook hand-off, books half (Option C,
+#     ServerNotes/designs/audiobook-acquisition.md): /mnt/slow/books/drop is a
+#     SECOND FOLDER of the Audiobooks library, an audiobook that appears there
+#     becomes a library item, the library carries the scan cron that is the
+#     only thing watching it, and this stack still has no QBITTORRENT_*
+#     variable and no mount of the media stack's trees. What the media side
+#     does before the file lands there — the ClamAV verdict and the move — is
+#     tests/suites/media.nix's job; here the writer is stood in for by the
+#     seed unit.
 #   - shelfmark's post-download hook, both directions: it triggers the right
 #     app's scan, and it STILL EXITS 0 when the target is unreachable — a
 #     non-zero exit would mark a perfectly good download as Error in the UI
@@ -271,6 +280,10 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/books 0755 1000 1000 -"
           "d /mnt/slow/books/library 0755 1000 1000 -"
           "d /mnt/slow/books/audiobooks 0755 1000 1000 -"
+          # The media stack's audiobook hand-off (Option C). Written by
+          # stacks/media's clamav-scanner, read :ro here as a second folder
+          # of the Audiobooks library — this suite stands in for the writer.
+          "d /mnt/slow/books/drop 0755 1000 1000 -"
         ];
 
         # Populate /srv before anything reads it — the stand-in for Arcane's
@@ -317,11 +330,18 @@ pkgs.testers.runNixOSTest {
             install -d -o 1000 -g 1000 -m 0755 \
               "/mnt/slow/books/library/Test Author" \
               "/mnt/slow/books/audiobooks/Test Author" \
-              "/mnt/slow/books/audiobooks/Test Author/Offline Test Audiobook"
+              "/mnt/slow/books/audiobooks/Test Author/Offline Test Audiobook" \
+              "/mnt/slow/books/drop/Dropped Test Audiobook"
             install -o 1000 -g 1000 -m 0644 ${testEpub} \
               "/mnt/slow/books/library/Test Author/Test Author - Offline Test Book.epub"
             install -o 1000 -g 1000 -m 0644 ${testAudio} \
               "/mnt/slow/books/audiobooks/Test Author/Offline Test Audiobook/Offline Test Audiobook.flac"
+            # Stands in for stacks/media's clamav-scanner having promoted a
+            # clean audiobook: same ownership a rename out of the download
+            # tree would preserve (qBittorrent's PUID), a whole entry
+            # directory, no coordination with this stack beyond the path.
+            install -o 1000 -g 1000 -m 0644 ${testAudio} \
+              "/mnt/slow/books/drop/Dropped Test Audiobook/Dropped Test Audiobook.flac"
           '';
         };
 
@@ -361,6 +381,7 @@ pkgs.testers.runNixOSTest {
     CONF = "/mnt/fast/kavita/config/appsettings.json"
     LIBRARY = "/mnt/slow/books/library"
     AUDIOBOOKS = "/mnt/slow/books/audiobooks"
+    DROP = "/mnt/slow/books/drop"
 
     def diag(label):
         # A --wait failure minutes into first-boot migrations is useless
@@ -617,8 +638,9 @@ pkgs.testers.runNixOSTest {
     with subtest("audiobookshelf indexes the seeded audiobook"):
         try:
             libs = curl(ABS, "/api/libraries", "GET", None, abs_auth)
-            lib_id = next(lib["id"] for lib in libs["libraries"]
-                          if lib["name"] == "Audiobooks")
+            abs_lib = next(lib for lib in libs["libraries"]
+                           if lib["name"] == "Audiobooks")
+            lib_id = abs_lib["id"]
             services_vm.wait_until_succeeds(
                 f"curl -sf --max-time 30 -H {shlex.quote('Authorization: Bearer ' + abs_token)} "
                 f"{ABS}/api/libraries/{lib_id}/items "
@@ -628,6 +650,115 @@ pkgs.testers.runNixOSTest {
         except Exception:
             diag("audiobookshelf scan")
             raise
+
+    with subtest("the media stack's drop directory is a folder of that library"):
+        # The books half of Option C
+        # (ServerNotes/designs/audiobook-acquisition.md). Everything the
+        # media stack needs from this stack is right here: a path, declared
+        # as a library folder. No network path, no download tree mounted, no
+        # QBITTORRENT_* variable anywhere in the stack — asserted below.
+        folders = sorted(f.get("fullPath") for f in abs_lib.get("folders") or [])
+        assert folders == ["/audiobooks", "/drop"], (
+            f"the Audiobooks library's folders are {folders!r}, expected the "
+            "curated tree and the media stack's drop directory"
+        )
+        # Nothing watches the drop dir (disableWatcher is on, and the only
+        # precise scan trigger in this stack is shelfmark's post-download
+        # hook, which has no part in this path), so the library carries a
+        # scan cron instead. Read back rather than assumed: an
+        # audiobookshelf that silently dropped the field would mean an
+        # audiobook lands in the drop dir and is never noticed.
+        cron = (abs_lib.get("settings") or {}).get("autoScanCronExpression")
+        assert cron == "0 * * * *", (
+            f"the Audiobooks library's autoScanCronExpression is {cron!r} — "
+            "without it nothing ever notices a promoted audiobook"
+        )
+
+    with subtest("an audiobook in the drop directory reaches the library"):
+        # The cron is hourly, so the scan is triggered explicitly here: what
+        # is under test is that the FOLDER wiring and the :ro mount let a
+        # file that appeared in the drop dir become a library item — the
+        # cron's own value is asserted above.
+        curl(ABS, f"/api/libraries/{lib_id}/scan", "POST", None, abs_auth)
+        try:
+            services_vm.wait_until_succeeds(
+                f"curl -sf --max-time 30 -H {shlex.quote('Authorization: Bearer ' + abs_token)} "
+                f"{ABS}/api/libraries/{lib_id}/items "
+                "| grep -q 'Dropped Test Audiobook'",
+                timeout=300,
+            )
+        except Exception:
+            diag("audiobookshelf drop-dir scan")
+            raise
+
+    with subtest("books-init ADDS the drop folder to a library that predates it"):
+        # The branch every existing deployment takes. The library above was
+        # created with both folders, which is the fresh-install path; a host
+        # seeded before the drop directory existed has a one-folder library,
+        # and books-init has to reconcile it — carrying the surviving
+        # folder's id, because audiobookshelf treats a folder missing from
+        # the payload as a removal and removing one deletes its items.
+        # Reproduced by doing exactly that removal.
+        def abs_library():
+            # Read through the LIST endpoint, the shape this suite already
+            # relies on — GET /api/libraries/:id changes body shape with its
+            # ?include= parameter.
+            got = curl(ABS, "/api/libraries", "GET", None, abs_auth)
+            return next(l for l in got["libraries"] if l["name"] == "Audiobooks")
+
+        keep = next(f for f in abs_lib["folders"] if f["fullPath"] == "/audiobooks")
+        curl(ABS, f"/api/libraries/{lib_id}", "PATCH",
+             {"folders": [{"id": keep["id"], "fullPath": "/audiobooks"}]},
+             abs_auth)
+        after = abs_library()
+        assert sorted(f["fullPath"] for f in after["folders"]) == ["/audiobooks"], (
+            f"could not stage the pre-drop-dir state: {after['folders']!r}"
+        )
+
+        out = services_vm.succeed("docker start -a books_init 2>&1")
+        assert "gained folder(s) /drop" in out, (
+            f"books-init did not re-add the drop folder:\n{out}"
+        )
+        readd = abs_library()
+        assert sorted(f["fullPath"] for f in readd["folders"]) == [
+            "/audiobooks", "/drop"
+        ], f"folders after reconcile: {readd['folders']!r}"
+        # And the curated folder kept its identity rather than being
+        # removed and recreated — the id is what the library items hang off.
+        kept = next(f for f in readd["folders"] if f["fullPath"] == "/audiobooks")
+        assert kept["id"] == keep["id"], (
+            f"the /audiobooks folder was replaced ({keep['id']} -> "
+            f"{kept['id']}) — its library items would have gone with it"
+        )
+
+        # ... and the run after that is a no-op, which is the CHANGE:
+        # contract every Arcane redeploy depends on.
+        out = services_vm.succeed("docker start -a books_init 2>&1")
+        assert "CHANGE:" not in out, (
+            f"a books-init run against a reconciled library was not a no-op:\n{out}"
+        )
+
+    with subtest("the books stack cannot reach the media stack's download client"):
+        # The decision, asserted rather than commented: Option C was chosen
+        # over Shelfmark-drives-qBittorrent, so a QBITTORRENT_* variable or a
+        # mount of the media download tree appearing in this stack is a
+        # reversal of it and must fail here.
+        compose = services_vm.succeed("cat /srv/stacks/books/compose.yaml")
+        # Comments are stripped first, and that is not a loophole: the
+        # decision is DOCUMENTED in this file by naming qBittorrent and the
+        # media stack, so a plain substring search over the whole file
+        # matches the prose that records the rule and fails on the very
+        # thing it is meant to protect.
+        body = "\n".join(
+            l for l in compose.splitlines() if not l.strip().startswith("#")
+        )
+        assert "QBITTORRENT_" not in body.upper(), (
+            "the books stack declares a QBITTORRENT_* variable — Option C is "
+            "'no cross-stack path to the download client'"
+        )
+        assert "/mnt/slow/data" not in body, (
+            "the books stack mounts the media stack's download/library tree"
+        )
 
     # -----------------------------------------------------------------------
     # §6.8/§6.9 OPDS end to end + the KOReader auth leg
@@ -703,7 +834,10 @@ pkgs.testers.runNixOSTest {
         # is validated by a recursive delete). Those are not reachable from a
         # scan, and :ro is what makes them safe — this subtest pins the half
         # that a routine deploy exercises.
-        for tree in [LIBRARY, AUDIOBOOKS]:
+        # DROP is in this list for a second reason: it is written by another
+        # STACK, so audiobookshelf writing there would be a container in one
+        # stack mutating another's directory.
+        for tree in [LIBRARY, AUDIOBOOKS, DROP]:
             listing = tree_state(tree)
             files = [line for line in listing.splitlines() if line.strip()]
             assert len(files) == 1, (
