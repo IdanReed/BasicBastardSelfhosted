@@ -45,7 +45,7 @@ fi
 # placeholder, and nothing else validates it — the key can be real while the
 # hostname it dials is literally uXXXXXX.your-storagebox.de. That failure is
 # DNS at backup time, hours after deploy, with Backrest already green.
-if [ ! -f /template/ssh_config ] || grep -q 'uXXXXXX' /template/ssh_config; then
+if [ ! -f /template/ssh_config ] || grep -q '^[^#]*uXXXXXX' /template/ssh_config; then
   echo "ERROR: stacks/backrest/ssh_config is missing or still carries the uXXXXXX placeholder."
   echo "  Fill in the real Storage Box username (u******) in ssh_config —"
   echo "  see stacks/backrest/README.md section 2."

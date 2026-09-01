@@ -124,10 +124,11 @@ services:
       # nginx:stable-alpine with a bare CMD). This is a liveness probe and
       # nothing more — there is nothing else to probe on a static SPA.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
-      interval: 60s
+      interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      # cold multi-stack boot needs longer (forwardauth suite red at 10s)
+      start_period: 60s
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------

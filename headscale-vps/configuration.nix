@@ -101,24 +101,8 @@ in
       dates = "weekly";
     };
 
-    # Cap json-file growth. The driver stays json-file here — do NOT switch the
-    # default to journald the way nixos/configuration.nix does: fail2ban's
-    # authentik jail pins CONTAINER_TAG=authentik-server, and the
-    # fail2ban-journal-contract lint reads that tag out of authentik/compose.yaml,
-    # where the server container sets the driver PER SERVICE. A daemon default is
-    # invisible to that YAML parser.
-    #
-    # Uncapped json-file was the fleet-wide bug the services VM fixed; on this
-    # host only `server` has a logging: block, so worker/postgresql/redis were
-    # growing without bound on the single root partition (disk-config.nix). These
-    # options are the defaults for the DEFAULT driver only, so the server
-    # container's journald logging is untouched by them.
-    daemon.settings = {
-      log-opts = {
-        max-size = "10m";
-        max-file = "3";
-      };
-    };
+    # journald driver (NixOS logDriver default) owns rotation; json-file opts
+    # here are FATAL to dockerd ("unknown log opt 'max-file'", sweep-caught).
   };
 
   # ---------------------------------------------------------------------------
