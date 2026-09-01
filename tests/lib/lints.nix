@@ -22,6 +22,10 @@
   # cross-checking against headscale-vps/flake.nix (module-list-parity).
   vpsModuleFiles,
   images,
+  # The ServerNotes checkout (a sibling repo, so not reachable through `repo`).
+  # Passed in rather than hardcoded so a linked git worktree can point at the
+  # main checkout instead of failing to evaluate — see tests/default.nix.
+  serverNotes,
 }:
 
 let
@@ -30,6 +34,11 @@ let
   py = "${pkgs.python3.withPackages (p: [ p.pyyaml ])}/bin/python3";
 
   repo = ../..;
+
+  # The authoritative service inventory. `+` keeps this a path so only the one
+  # file is copied to the store, and so a string argument cannot smuggle an
+  # out-of-store path into a lint.
+  overviewMd = serverNotes + "/designs/_overview.md";
 
   # Stack directories, discovered rather than listed, so a new stack is covered
   # the moment it exists.
@@ -118,6 +127,22 @@ let
   # need rules of their own (tmpfiles creates a missing parent with default
   # ownership, not the rule's).
   stackDirsJson = "${py} ${stackDirsGenerator} --manifest ${stackDirsManifest} --json";
+
+  # ---------------------------------------------------------------------------
+  # Trailing comments vs the end-anchored compose regexes
+  # ---------------------------------------------------------------------------
+  # Every lint that reads `ports:` matches a whole line and anchors on `$`, so
+  # `- "10100:8000"  # todo` — valid YAML that publishes on 0.0.0.0 — simply
+  # stops matching and the entry becomes invisible: a silent PASS in
+  # loopback-binding, caddy-routes and overview-sync at once. Stripping the
+  # comment before the match is the fix; doing it here rather than in three
+  # regexes keeps the anchors (and the long-form `published:` hard error) as
+  # they are.
+  pyNoComment = ''
+    def nocomment(line):
+        # YAML: '#' opens a comment at line start or after whitespace.
+        return re.sub(r"(?:(?<=\s)|^)#.*$", "", line)
+  '';
 
   mkLint =
     name: script:
@@ -641,6 +666,7 @@ in
       ${py} - <<'PY'
       import json, re, sys
 
+      ${pyNoComment}
       manifest = json.load(open("${manifest}"))
       caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
       # Strip comments. The file documents a not-yet-enabled forward-auth
@@ -653,7 +679,7 @@ in
       for c in manifest:
           if c["stack"] == "authentik":
               continue  # VPS host, fronted by its own Caddy
-          for line in open(c["path"]):
+          for line in map(nocomment, open(c["path"])):
               # Optional /tcp|/udp suffix (mirrors lib/mk-stack-suite.nix):
               # without it a suffixed publish — Phase-4 media will use UDP —
               # silently drops out of `published` and its route reports as a
@@ -693,7 +719,7 @@ in
       # report.
       host_net_stacks = set()
       for c in manifest:
-          for line in open(c["path"]):
+          for line in map(nocomment, open(c["path"])):
               if re.match(r"\s*network_mode:\s*host\s*$", line):
                   host_net_stacks.add(c["stack"])
       for port, (stack, _reason) in HOST_NETWORK_ROUTED.items():
@@ -846,7 +872,7 @@ in
                   f"like a missing entry")
 
       # --- Warn-only: overview FwdAuth rows not yet behind protected -------
-      overview = open("${../../../ServerNotes/designs/_overview.md}").read()
+      overview = open("${overviewMd}").read()
       norm = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())
       protected_labels = {norm(h.split(".")[0]) for h in caddy_hosts}
       for line in overview.splitlines():
@@ -880,6 +906,7 @@ in
       ${py} - <<'PY'
       import json, re, sys
 
+      ${pyNoComment}
       manifest = json.load(open("${manifest}"))
       errs = []
 
@@ -915,7 +942,8 @@ in
       used = set()
 
       for c in manifest:
-          for n, line in enumerate(open(c["path"]), 1):
+          for n, raw in enumerate(open(c["path"]), 1):
+              line = nocomment(raw)
               # Long-form ports entries put host_ip on a DIFFERENT line, so a
               # line-oriented scan cannot check the binding. Skipping silently
               # would let a long-form 0.0.0.0 publish onto the tailnet with a
@@ -980,8 +1008,9 @@ in
       ${py} - <<'PY'
       import json, re, sys
 
+      ${pyNoComment}
       manifest = json.load(open("${manifest}"))
-      overview = open("${../../../ServerNotes/designs/_overview.md}").read()
+      overview = open("${overviewMd}").read()
 
       # Inventory rows: | Name | Volume | Port | Auth | Image | ...
       rows = []
@@ -1008,12 +1037,16 @@ in
           if c["stack"] == "authentik":
               continue  # VPS host: inventoried under its own section semantics
           text = open(c["path"]).read()
+          # Comments stripped for the PORT scan only: the tag check below
+          # searches the raw text on purpose, so a pin that appears solely in a
+          # comment still counts rather than turning into inventory drift.
+          ports_text = "\n".join(map(nocomment, text.splitlines()))
           # Optional /tcp|/udp suffix (mirrors lib/mk-stack-suite.nix): a
           # suffixed publish — Phase-4 media will use UDP — must still demand
           # an inventory row rather than silently skipping the check.
           for m in re.finditer(
               r"^\s*-\s*['\"]?(?:127\.0\.0\.1:)?(\d{4,5}):\d+(?:/(?:tcp|udp))?['\"]?\s*$",
-              text, re.M):
+              ports_text, re.M):
               port = m.group(1)
               hits = inv_ports.get(port)
               if not hits:
@@ -1973,7 +2006,7 @@ in
       ${py} - <<'PY'
       import re, sys
 
-      overview = open("${../../../ServerNotes/designs/_overview.md}").read()
+      overview = open("${overviewMd}").read()
       caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
 
       # --- Caddyfile: upstream PORT -> (host, does its handle import protected?)

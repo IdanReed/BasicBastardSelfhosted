@@ -59,7 +59,7 @@ let
     # glance and it-tools were missing, and the offline VM surfaced it as a
     # registry pull attempt (same omission as forward-auth.nix had).
     images."glanceapp_glance_v0_8_5"
-    images."corentinth_it-tools_2024_10_22-7ca5933"
+    images."ghcr_io_sharevb_it-tools_2026_7_11"
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
   ];
 

@@ -54,7 +54,7 @@ let
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
     images."glanceapp_glance_v0_8_5"
-    images."corentinth_it-tools_2024_10_22-7ca5933"
+    images."ghcr_io_sharevb_it-tools_2026_7_11"
   ];
 
   seedSrv = pkgs.runCommand "srv-seed-util" { } ''
@@ -234,7 +234,7 @@ pkgs.testers.runNixOSTest {
             "docker run -d --name bkg-sick "
             "--health-cmd 'exit 1' --health-interval 2s --health-retries 1 "
             "--health-start-period 0s "
-            "corentinth/it-tools:2024.10.22-7ca5933 sleep 600"
+            "ghcr.io/sharevb/it-tools:2026.7.11 sleep 600"
         )
         services_vm.wait_until_succeeds(
             "docker inspect -f '{{.State.Health.Status}}' bkg-sick "
@@ -273,7 +273,7 @@ pkgs.testers.runNixOSTest {
             "docker run -d --name bkg-slow "
             "--health-cmd 'exit 1' --health-interval 2s --health-retries 30 "
             "--health-start-period 300s "
-            "corentinth/it-tools:2024.10.22-7ca5933 sleep 600"
+            "ghcr.io/sharevb/it-tools:2026.7.11 sleep 600"
         )
         services_vm.wait_until_succeeds(
             "docker inspect -f '{{.State.Health.Status}}' bkg-slow "

@@ -24,7 +24,7 @@
 #   ./tests/run.sh notes-sync     # heavy: rmfakecloud create-once window + the bare 22000 publish
 #   ./tests/run.sh util           # glance/it-tools/excalidash: the https-redirect healthcheck trap
 #   ./tests/run.sh windmill       # heavy: the seeded dependency cache + admin@windmill.dev retired
-#   ./tests/run.sh restore        # the restore DRILL: dump -> destroy -> restore, both engines
+#   ./tests/run.sh restore        # the restore DRILL: dumps + a real restic repo round trip
 #   ./tests/run.sh tandoor        # heavy: the silent SQLite fallback, proven absent
 #   ./tests/run.sh wger           # heavy: admin/adminadmin retired + static files really served
 #   ./tests/run.sh gatus          # the host-network bind, proven from another machine
@@ -44,6 +44,15 @@ cd "$(dirname "$0")/.."
 
 TARGET="${1:-lints}"
 
+# ServerNotes is a sibling repo, so ../ServerNotes does not exist inside a
+# linked git worktree and the lints that read _overview.md cannot evaluate
+# there. Point at the main checkout instead:
+#   SERVER_NOTES=~/local/projects/server-bkg-stacks/ServerNotes ./tests/run.sh
+NIX_ARGS=()
+if [ -n "${SERVER_NOTES:-}" ]; then
+  NIX_ARGS+=(--arg serverNotes "$SERVER_NOTES")
+fi
+
 case "$TARGET" in
   debug)
     SUITE="${2:?usage: run.sh debug <vps|services|tailnet|authentik|paperless|backrest>}"
@@ -52,7 +61,7 @@ case "$TARGET" in
     # root shell inside the guest. This is the only sane way to work out why an
     # assertion failed six minutes into a boot sequence.
     echo "==> Building interactive driver for '$SUITE'"
-    nix-build tests -A "driver.$SUITE" -o "result-driver-$SUITE"
+    nix-build tests "${NIX_ARGS[@]}" -A "driver.$SUITE" -o "result-driver-$SUITE"
     echo
     echo "    Starting the driver. Useful first commands:"
     echo "      start_all()"
@@ -81,27 +90,27 @@ case "$TARGET" in
         exit 1
       fi
     fi
-    exec nix-build tests -A checks.lints --no-out-link
+    exec nix-build tests "${NIX_ARGS[@]}" -A checks.lints --no-out-link
     ;;
 
   stack)
     NAME="${2:?usage: run.sh stack <name>   (see stackChecks in tests/default.nix)}"
-    exec nix-build tests -A "stackChecks.$NAME" --no-out-link
+    exec nix-build tests "${NIX_ARGS[@]}" -A "stackChecks.$NAME" --no-out-link
     ;;
 
   disko)
-    exec nix-build tests -A diskoTest --no-out-link
+    exec nix-build tests "${NIX_ARGS[@]}" -A diskoTest --no-out-link
     ;;
 
   proxmox-boot)
     # Boots the image recipe with a NoCloud seed and asserts the age key +
     # sops decryption via the guest agent. `proxmox` (below) is the build-only
     # gate for the real VMA artifact.
-    exec nix-build tests -A proxmoxBoot --no-out-link
+    exec nix-build tests "${NIX_ARGS[@]}" -A proxmoxBoot --no-out-link
     ;;
 
   vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | gatus | docspace | beszel | samba | journald-logging)
-    exec nix-build tests -A "checks.$TARGET" --no-out-link
+    exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 
   proxmox)
@@ -114,7 +123,7 @@ case "$TARGET" in
     ;;
 
   all)
-    nix-build tests -A all --no-out-link
+    nix-build tests "${NIX_ARGS[@]}" -A all --no-out-link
     # The image build gate rides along: "all" should mean all.
     exec nix build ./nixos#proxmox-image --no-link
     ;;

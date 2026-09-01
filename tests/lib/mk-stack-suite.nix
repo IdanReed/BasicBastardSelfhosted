@@ -70,7 +70,8 @@ let
   # joins a tailnet.
   hostPorts = map lib.toInt (
     lib.unique (
-      matchAll "[[:space:]]*-[[:space:]]*[\"']?(127\\.0\\.0\\.1:)?([0-9]+):([0-9]+)(/tcp|/udp)?[\"']?[[:space:]]*" 1
+      # trailing comment tolerated (POSIX ERE: plain group, not (?:...))
+      matchAll "[[:space:]]*-[[:space:]]*[\"']?(127\\.0\\.0\\.1:)?([0-9]+):([0-9]+)(/tcp|/udp)?[\"']?[[:space:]]*(#.*)?" 1
     )
   );
 
