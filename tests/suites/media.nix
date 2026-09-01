@@ -34,6 +34,18 @@
 #   - the ClamAV chain: EICAR dropped into the downloads tree is quarantined
 #     by scan-downloads.sh within a poll interval, a clean file is untouched,
 #     and clamd publishes no host port
+#   - QUARANTINE IS AN INODE OPERATION: an EICAR file hardlinked into
+#     /data/media BEFORE the scan — the state an *arr import leaves, and it
+#     imports on qBittorrent's completion signal while the scanner polls, so
+#     nothing sequences them — must be GONE FROM THE LIBRARY afterwards, not
+#     merely renamed into .quarantine. The old assertions passed while the
+#     malware was still in the library; this one is what makes hardlink
+#     import safe for any consumer.
+#   - the audiobook hand-off (Option C): a clean entry under the `audiobooks`
+#     category is promoted whole into /mnt/slow/books/drop with its ownership
+#     intact, an entry containing EICAR reaches the drop dir in no form (not
+#     even its clean sibling track), and media-init has declared the category
+#     in qBittorrent with the save path the promotion reads
 #   - loopback-only publishing for every port 10050-10058, from another host
 #
 # Documented gaps (do not read a green run as covering these):
@@ -229,6 +241,14 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/data 0755 1000 1000 -"
           "d /mnt/slow/data/downloads 0755 1000 1000 -"
           "d /mnt/slow/data/media 0755 1000 1000 -"
+          # The books stack's drop directory. It belongs to stacks/books
+          # (that is where the generator's rule for it lives) but the media
+          # stack is its WRITER — clamav-scanner moves clean `audiobooks`
+          # downloads into it — so this suite has to declare it too, or
+          # docker would create it root-owned at container start and the
+          # ownership assertions below would be measuring docker's default.
+          "d /mnt/slow/books 0755 1000 1000 -"
+          "d /mnt/slow/books/drop 0755 1000 1000 -"
         ];
 
         # Populate /srv before anything reads it — the stand-in for Arcane's
@@ -316,6 +336,16 @@ pkgs.testers.runNixOSTest {
             "docker logs seerr 2>&1 | tail -30",
             "docker logs clamav 2>&1 | tail -40",
             "docker logs clamav_scanner 2>&1 | tail -30",
+            # The scanner's OWN view of the tree it polls. A quarantine that
+            # never happens is either "the loop never saw the file" or "clamd
+            # said clean", and only the container can tell you which: the
+            # host's ls proves nothing about what is visible through the
+            # bind mounts.
+            "docker exec clamav_scanner sh -c "
+            "'date; ls -la /data /data/downloads /data/downloads/movies "
+            "/data/downloads/audiobooks /state /drop 2>&1; "
+            "echo ---newer---; find /data/downloads -newer /state/last-scan "
+            "2>&1 | head -20' 2>&1",
             "ls -la /srv/stacks/media /mnt/fast /mnt/slow/data 2>&1",
             "df -h /var/lib/docker /mnt/fast /mnt/slow; free -m",
         ]:
@@ -849,6 +879,188 @@ pkgs.testers.runNixOSTest {
             "ls /mnt/slow/data/downloads/.quarantine/ | grep -q clean"
         )
 
+    with subtest("quarantine follows the INODE: a pre-scan hardlink dies too"):
+        # 🚨 THE regression test for the ClamAV-quarantine/import race
+        # (ServerNotes/designs/audiobook-acquisition.md, finding 4).
+        #
+        # *arr imports are HARDLINKS by design — /mnt/slow is one filesystem
+        # precisely so they are (compose.yaml's layout header) — and they
+        # fire on qBittorrent's completion signal while this scanner polls
+        # every 60s. Nothing sequences the two. Quarantine used to be a bare
+        # `mv` within that one filesystem, i.e. a RENAME: it moved a
+        # directory entry and left the inode, so the library link kept
+        # resolving to the infected content. The subtest above would have
+        # stayed green through all of it — it asserts that .quarantine gained
+        # a file, which is exactly what still happened.
+        #
+        # Written LINK-FIRST on purpose: the EICAR bytes are created at the
+        # LIBRARY path, which the scanner never walks, and only then
+        # hardlinked into the download tree. "The link existed before the
+        # verdict" is then true by construction rather than by timing.
+        lib_dir = "/mnt/slow/data/media/movies/Race Test (2026)"
+        lib_file = f"{lib_dir}/race.mkv"
+        dl_file = "/mnt/slow/data/downloads/movies/race.mkv"
+        services_vm.succeed("mkdir -p " + shlex.quote(lib_dir))
+        services_vm.succeed(
+            f"printf '%s' {shlex.quote(e1 + e2)} > {shlex.quote(lib_file)}"
+        )
+        services_vm.succeed(
+            f"ln {shlex.quote(lib_file)} {shlex.quote(dl_file)}"
+        )
+        # Two names, one inode: the state an *arr import leaves behind. If
+        # this is ever 1, the test is not modelling the race any more.
+        links = services_vm.succeed(
+            f"stat -c %h {shlex.quote(dl_file)}"
+        ).strip()
+        assert links == "2", (
+            f"the fixture is not hardlinked (nlink={links}) — /mnt/slow must "
+            "be one filesystem for this test to model an *arr import"
+        )
+        try:
+            services_vm.wait_until_succeeds(
+                "ls /mnt/slow/data/downloads/.quarantine/ "
+                "| grep -q '^race\\.mkv\\.'",
+                timeout=420,
+            )
+            # THE assertion. Not "quarantine gained a file" — "the library
+            # link is gone". A rename-only quarantine fails exactly here.
+            services_vm.wait_until_fails(
+                f"test -e {shlex.quote(lib_file)}", timeout=120
+            )
+        except Exception:
+            diag("eicar hardlink race")
+            raise
+        services_vm.fail(f"test -e {shlex.quote(dl_file)}")
+
+        # The evidence sample survives, and it is the ONLY link left: the
+        # quarantine directory is what the unlink walk prunes, which is what
+        # makes it the survivor rather than a lucky one.
+        q = services_vm.succeed(
+            "ls -1 /mnt/slow/data/downloads/.quarantine/race.mkv.*"
+        ).strip().splitlines()[0]
+        services_vm.succeed(f"grep -q EICAR {shlex.quote(q)}")
+        qlinks = services_vm.succeed(f"stat -c %h {shlex.quote(q)}").strip()
+        assert qlinks == "1", (
+            f"the quarantined sample still has {qlinks} links — something "
+            "else still reaches the infected inode"
+        )
+        logs = services_vm.succeed("docker logs clamav_scanner 2>&1")
+        assert "scan: UNLINKED" in logs, (
+            f"the scanner quarantined without reporting the hardlink it "
+            f"unlinked:\n{logs}"
+        )
+        # Nothing else in the library was touched by the walk.
+        services_vm.succeed("test -d " + shlex.quote(lib_dir))
+
+    # -----------------------------------------------------------------------
+    # (e2) the audiobook hand-off: downloads/audiobooks -> the books drop dir
+    # -----------------------------------------------------------------------
+    with subtest("audiobooks: a clean entry is promoted, an infected one never is"):
+        # Option C (ServerNotes/designs/audiobook-acquisition.md): the media
+        # stack acquires audiobooks and MOVES a completed entry into the
+        # books stack's drop directory — but only on a clean verdict, and
+        # per ENTRY, because an audiobook is a folder of tracks with one
+        # verdict. The two directions are asserted together so they share the
+        # scanner's settle passes.
+        ab = "/mnt/slow/data/downloads/audiobooks"
+        drop = "/mnt/slow/books/drop"
+        services_vm.succeed(
+            f"mkdir -p '{ab}/Clean Book' '{ab}/Infected Book'"
+        )
+        services_vm.succeed(
+            f"printf '%s' 'clean audiobook fixture' > '{ab}/Clean Book/01.mp3'"
+        )
+        # The infected entry gets a CLEAN track too: quarantining only the
+        # infected file would leave this one looking promotable, and that
+        # partial promotion is the failure this pins.
+        services_vm.succeed(
+            f"printf '%s' 'clean track' > '{ab}/Infected Book/01.mp3'"
+        )
+        services_vm.succeed(
+            f"printf '%s' {shlex.quote(e1 + e2)} > '{ab}/Infected Book/02.mp3'"
+        )
+        # qBittorrent writes as uid 1000; the promotion is a rename, so the
+        # ownership must ride along into the drop dir (which is what lets a
+        # human reorganise a promoted book without sudo).
+        services_vm.succeed(f"chown -R 1000:1000 '{ab}'")
+        try:
+            # Two passes to settle (identical `du -s`), one to scan and move.
+            services_vm.wait_until_succeeds(
+                f"test -f '{drop}/Clean Book/01.mp3'", timeout=600
+            )
+            services_vm.wait_until_succeeds(
+                "ls /mnt/slow/data/downloads/.quarantine/ "
+                "| grep -q '^Infected Book\\.'",
+                timeout=600,
+            )
+        except Exception:
+            diag("audiobook promotion")
+            raise
+        services_vm.fail(f"test -e '{ab}/Clean Book'")
+        services_vm.fail(f"test -e '{ab}/Infected Book'")
+        # The infected entry reached the drop dir in NO form — not the entry,
+        # not its clean sibling track.
+        services_vm.fail(f"test -e '{drop}/Infected Book'")
+        listing = sorted(
+            l for l in services_vm.succeed(f"ls -1 '{drop}'").splitlines()
+            if l.strip()
+        )
+        assert listing == ["Clean Book"], (
+            f"the drop dir holds {listing!r}, expected only the clean entry"
+        )
+        owner = services_vm.succeed(
+            f"stat -c '%u:%g' '{drop}/Clean Book/01.mp3'"
+        ).strip()
+        assert owner == "1000:1000", (
+            f"the promoted audiobook is owned {owner}, expected 1000:1000 — "
+            "the books stack reads it as that uid"
+        )
+        logs = services_vm.succeed("docker logs clamav_scanner 2>&1")
+        assert "PROMOTED clean audiobook 'Clean Book'" in logs, (
+            f"scanner did not log the promotion:\n{logs}"
+        )
+        assert "INFECTED audiobook 'Infected Book'" in logs, (
+            f"scanner did not log the infected entry's quarantine:\n{logs}"
+        )
+
+    with subtest("media-init declared the audiobooks category in qBittorrent"):
+        # Nothing *arr-shaped owns this category, so media-init creates it —
+        # and its save path is what scan-downloads.sh promotes out of. The
+        # tunnel is down for the whole suite and this still has to work: the
+        # WebUI answers on the shared netns regardless (FIREWALL_INPUT_PORTS).
+        #
+        # Read from INSIDE the container, against the shared netns' own
+        # loopback: qbit-init sets WebUI\LocalHostAuth=false (it is what lets
+        # gluetun's port-forward hook post without credentials), so a local
+        # caller needs no session at all. That keeps this assertion about the
+        # category rather than about qBittorrent's login shape — which is
+        # exactly the thing that bit media-init here: 5.2.3 answers 204 with
+        # an empty body on success, so both a body check and a Set-Cookie
+        # check are wrong ways to ask "am I logged in".
+        cats = json.loads(services_vm.succeed(
+            "docker exec qbittorrent curl -sf --max-time 10 "
+            "http://localhost:8080/api/v2/torrents/categories"
+        ))
+        assert "audiobooks" in cats, (
+            f"qbittorrent has no audiobooks category: {sorted(cats)!r}"
+        )
+        # rstrip("/"): qBittorrent normalises stored paths, and a returned
+        # trailing separator is a formatting difference, not a wrong path —
+        # media-init compares the same way, so that it does not "reconcile"
+        # a difference that is not one on every run.
+        save = (cats["audiobooks"].get("savePath") or "").rstrip("/")
+        assert save == "/data/downloads/audiobooks", (
+            f"audiobooks category saves to {save!r}"
+        )
+        services_vm.succeed("test -d /mnt/slow/data/downloads/audiobooks")
+        # And media-init said it did this, on the FIRST run — a category that
+        # exists with no CHANGE line behind it would mean something else
+        # created it.
+        first = services_vm.succeed("docker logs media_init 2>&1")
+        assert "CHANGE: qbittorrent: created category 'audiobooks'" in first, (
+            f"media-init did not report creating the category:\n{first}"
+        )
+
     with subtest("clamd publishes no host port"):
         ports = services_vm.succeed("docker port clamav").strip()
         assert ports == "", f"clamav publishes ports: {ports!r}"
@@ -896,6 +1108,26 @@ pkgs.testers.runNixOSTest {
         # OnCalendar moment; their failure paths are the services suite's
         # coverage, so a coincidence must not flake this one.
         allowed = {"backup-prepare.service", "backup-staleness-check.service"}
+
+        # unhealthy-containers is the third, and it is EXPECTED here rather
+        # than tolerated: gluetun is deliberately unhealthy for this suite's
+        # whole duration (the fixture points it at TEST-NET-1), so any tick
+        # of its 15-minute timer that lands inside the run alerts — the unit
+        # working, not a regression. It became reachable when this suite grew
+        # past a quarter-hour.
+        #
+        # Allowed NARROWLY: the stamp it wrote must name gluetun and nothing
+        # else, so a second container going sick still fails this subtest.
+        if services_vm.execute("test -e /run/unhealthy-containers.failed")[0] == 0:
+            stamp = services_vm.succeed(
+                "cat /run/unhealthy-containers.failed"
+            ).split()
+            assert stamp == ["gluetun"], (
+                f"unhealthy-containers alerted on {stamp!r} — only gluetun is "
+                "unhealthy by construction here"
+            )
+            allowed.add("unhealthy-containers.service")
+
         failed = services_vm.succeed(
             "systemctl --failed --no-legend --plain"
         ).strip()
