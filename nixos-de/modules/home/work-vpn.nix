@@ -227,6 +227,32 @@ let
       fi
       args+=( "/scale-desktop:$scale" "/scale-device:$device" )
 
+      # ---- getting the Windows key into the session -----------------------
+      # niri binds 69 different Mod+<key> combinations, and it matches them
+      # BEFORE the focused window ever sees the key, so Super+anything can
+      # never reach the remote desktop. The clean fix does not exist here:
+      # the keyboard-shortcuts-inhibit Wayland protocol is the mechanism for
+      # this, but the CLIENT has to request it, and no FreeRDP client
+      # implements it (checked xfreerdp, sdl-freerdp and wlfreerdp, plus their
+      # libraries), nor does xwayland-satellite proxy it. niri window-rules
+      # have no per-window bind control either. So there is nothing to toggle.
+      #
+      # What DOES work: send the Windows key from a key niri has no bind for.
+      # The Menu/Application key (0x015d) is unused by niri, so Menu+D arrives
+      # at FreeRDP intact and gets remapped to LeftWin+D (0x015b) on the way
+      # out. Same trick, different local key, via WORK_RDP_WINKEY:
+      #   menu (default) | ralt | none
+      winkey="''${WORK_RDP_WINKEY:-menu}"
+      case "$winkey" in
+        menu) args+=( /kbd:remap:0x015d=0x015b ) ;; # Menu    -> LeftWin
+        ralt) args+=( /kbd:remap:0x0138=0x015b ) ;; # Right Alt -> LeftWin
+        none) ;;
+        *)
+          echo "workrdp: WORK_RDP_WINKEY must be menu, ralt or none (got '$winkey')" >&2
+          exit 1
+          ;;
+      esac
+
       # ---- desktop size ---------------------------------------------------
       # Default: /dynamic-resolution, so the remote desktop follows the window
       # as you resize it. Set WORK_RDP_SIZE to pin a fixed resolution instead
