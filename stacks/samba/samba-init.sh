@@ -63,7 +63,8 @@ esac
 #
 # adduser -u creates the user INSIDE the container; the files land on the
 # host. Nothing connects the two but agreement between config.yml and a
-# tmpfiles rule in nixos/hardware-configuration.nix. A mismatch is not a
+# tmpfiles rule in the generated nixos/stack-dirs.nix (its source of truth is
+# the DIR_NOTES entry in nixos/generate-stack-dirs.py). A mismatch is not a
 # crash — it is files nothing else in the fleet can read, discovered much
 # later.
 #
@@ -81,9 +82,10 @@ got_gid=$(stat -c %g /share)
 if [ "$got_uid" != "$WANT_UID" ] || [ "$got_gid" != "$WANT_GID" ]; then
   die "share directory is owned by $got_uid:$got_gid but config.yml creates
   the SMB user as $WANT_UID:$WANT_GID. Files written over SMB would be
-  unreadable to everything else in the fleet. Fix the tmpfiles rule in
-  nixos/hardware-configuration.nix, or the uid in config.yml — but make them
-  agree."
+  unreadable to everything else in the fleet. Fix the DIR_NOTES entry for
+  /mnt/slow/samba/shared in nixos/generate-stack-dirs.py (then rerun
+  ./nixos/generate-stack-dirs.sh — stack-dirs.nix is generated, hand-edits
+  fail the lint), or the uid in config.yml — but make them agree."
 fi
 
 log "password present, interfaces include lo, share is $got_uid:$got_gid"

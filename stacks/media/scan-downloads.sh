@@ -228,6 +228,12 @@ while :; do
     rm -f "$MARKER"
   fi
 
+  # Scan errors travel through a file for the same subshell reason as
+  # promote_audiobooks' verdict: the `while` below is a pipeline subshell,
+  # and the marker decision at the bottom needs to see them.
+  ef="/tmp/scan-errors.$$"
+  : > "$ef"
+
   # downloads/audiobooks is pruned here and handled entry-at-a-time by
   # promote_audiobooks (see its header).
   #
@@ -255,8 +261,10 @@ while :; do
       if [ "$rc" = 1 ]; then
         quarantine_file "$f"
       elif [ "$rc" != 0 ]; then
-        # 2 = scan error (unreadable, clamd hiccup): log and keep going; the
-        # file stays eligible next pass because the marker only advances below.
+        # 2 = scan error (unreadable, clamd hiccup): log, record, keep going;
+        # the marker below advances only on an error-free pass, which is what
+        # keeps this file eligible next pass.
+        echo E >> "$ef"
         echo "scan: ERROR: clamdscan rc=$rc on $f" >&2
       fi
     done
@@ -264,6 +272,17 @@ while :; do
 
   promote_audiobooks
 
-  mv /tmp/scan-pass "$MARKER"
+  # Advance the marker ONLY on an error-free pass. A settled file that hit a
+  # clamd hiccup has an mtime before the pass start, so advancing anyway would
+  # exclude it via -newer on every later pass — a permanently unscanned file,
+  # the silent failure the header calls the worst property a scanner can have.
+  # Keeping the old marker re-covers the whole window next pass instead.
+  if [ -s "$ef" ]; then
+    echo "scan: WARN: pass had scan errors — not advancing the marker, so the window is re-scanned next pass" >&2
+    rm -f /tmp/scan-pass
+  else
+    mv /tmp/scan-pass "$MARKER"
+  fi
+  rm -f "$ef"
   sleep "$INTERVAL"
 done

@@ -169,13 +169,24 @@ bootstrap() {
   return 0
 }
 
-# Nothing has been written for DEBOUNCE seconds. `find -newermt` over the
-# space, .git excluded (git's own writes would otherwise re-arm the debounce
-# forever). -quit stops at the first hit; on a space of any size this is
-# cheaper than it looks.
+# Nothing has been written for DEBOUNCE seconds. BusyBox find has no
+# -newermt — it errors, and with stderr discarded the check always reported
+# "quiet", so the debounce never engaged — hence a stamp file dated DEBOUNCE
+# seconds in the past and the supported `-newer`. .git is excluded (git's own
+# writes would otherwise re-arm the debounce forever). -quit stops at the
+# first hit; on a space of any size this is cheaper than it looks. find's
+# stderr is deliberately NOT discarded any more: swallowing it is exactly
+# what hid the -newermt failure.
 space_is_quiet() {
+  stamp=/tmp/git-sync.debounce
+  if ! touch -d "@$(( $(date +%s) - DEBOUNCE ))" "$stamp" 2>/dev/null; then
+    # No stamp, no debounce: commit anyway rather than defer forever — the
+    # loop must never wedge on a broken /tmp.
+    log "cannot write $stamp; skipping the write-debounce this cycle"
+    return 0
+  fi
   hit="$(find "$SPACE" -path "$SPACE/.git" -prune -o \
-      -type f -newermt "-${DEBOUNCE} seconds" -print -quit 2>/dev/null)"
+      -type f -newer "$stamp" -print -quit)"
   [ -z "$hit" ]
 }
 

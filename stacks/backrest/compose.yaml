@@ -51,6 +51,13 @@ services:
     volumes:
       - ./config-init.sh:/template/config-init.sh:ro
       - ./config.template.json:/template/config.template.json:ro
+      # ssh_config is read-only INPUT to the placeholder gate below, nothing
+      # more: backrest itself gets its own copy via the backrest service's
+      # mount. Mounted here so config-init can refuse to start the stack while
+      # the committed uXXXXXX storage-box username placeholder is still in it —
+      # an unedited ssh_config with real secrets otherwise starts Backrest
+      # with every backup failing on DNS (uXXXXXX.your-storagebox.de).
+      - ./ssh_config:/template/ssh_config:ro
       - /mnt/fast/backrest/config:/config
       # ONE FILE, not the whole /var/lib/backup directory (which is what this
       # mounted until 2026-08-31). The directory also holds vps_ed25519 — the

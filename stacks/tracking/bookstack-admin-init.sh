@@ -56,17 +56,30 @@ cd /app/www || { log "FATAL: /app/www missing — image layout changed"; exit 0;
 # there is no users table yet and the command fails harmlessly; the next boot
 # picks it up. Deliberately not retried in a loop: s6 init blocking on a
 # database is how a container never starts.
-if php artisan bookstack:create-admin \
+#
+# Captured rather than piped through sed in the `if`: without pipefail the
+# pipeline's status is sed's (always 0), which logged CHANGE on every boot
+# and made the exit-2 branch unreachable. Capturing also lets exit 2 be told
+# apart from a real failure.
+out=$(php artisan bookstack:create-admin \
         --initial \
         --email="$BOOKSTACK_ADMIN_EMAIL" \
         --name="${BOOKSTACK_ADMIN_NAME:-Admin}" \
-        --password="$BOOKSTACK_ADMIN_PASSWORD" 2>&1 | sed 's/^/[bookstack-admin-init] /'; then
+        --password="$BOOKSTACK_ADMIN_PASSWORD" 2>&1)
+rc=$?
+printf '%s\n' "$out" | sed 's/^/[bookstack-admin-init] /'
+if [ "$rc" -eq 0 ]; then
     log "CHANGE: admin set to $BOOKSTACK_ADMIN_EMAIL"
-else
+elif [ "$rc" -eq 2 ]; then
     # Exit 2 is the documented "a real admin already exists" case, which is
     # the steady state after the first boot — not an error.
-    log "create-admin did not apply (already provisioned, or the database is"
-    log "not migrated yet) - no change"
+    log "create-admin did not apply (already provisioned) - no change"
+else
+    # Fresh-volume case (database not migrated yet) or a real failure. Either
+    # way the seeded admin is still live — say so loudly, but do not block
+    # the boot (see the contract above); the next boot retries.
+    log "ERROR: create-admin failed (rc=$rc) — the seeded admin"
+    log "(admin@admin.com / password) is still in place - no change"
 fi
 
 exit 0
