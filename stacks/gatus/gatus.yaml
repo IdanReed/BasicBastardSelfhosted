@@ -453,6 +453,41 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # Ghostfolio is NOT behind forward auth (it has its own security-token
+  # login), so the path probe expects a normal 2xx/3xx, not the 302 the
+  # protected routes get. `/` is an Angular SPA shell that 302s to a
+  # locale-prefixed route, which is why ignore-redirect is still set.
+  - name: "ghostfolio (path: caddy -> service)"
+    group: "path"
+    url: "https://ghostfolio.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # The service probe deliberately hits /api/v1/health rather than `/`: it is
+  # the one endpoint here that means something, returning 200 only once the app
+  # has finished the `npx prisma migrate deploy` its entrypoint runs at every
+  # start. A probe of `/` would go green off the static SPA shell while the
+  # backend was still migrating or had failed to.
+  - name: "ghostfolio (service)"
+    group: "service"
+    url: "http://127.0.0.1:10306/api/v1/health"
+    interval: 1m
+    headers:
+      Host: "ghostfolio.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
   - name: "glance (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://glance.svc.idanreed.com/"
@@ -725,6 +760,41 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY] == OK"
+    alerts:
+      - type: ntfy
+
+  # 🚨 Owl has NO authentication of its own — none, not a default account — so
+  # this 302 is not a formality. It is the only evidence anywhere that the
+  # outpost is still in front of the app. If this probe ever starts returning
+  # 200, Owl is not "logged in", it is OPEN: fix the route, do not relax the
+  # condition.
+  - name: "owl (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://owl.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # /_stcore/health rather than `/`: Streamlit serves its static index shell
+  # before the script runtime is ready, so `/` goes 200 on an app that cannot
+  # yet run a session. The health route answers only once the runtime accepts
+  # connections. Blind to forward auth by design — that is the path probe's job.
+  - name: "owl (service)"
+    group: "service"
+    url: "http://127.0.0.1:10307/_stcore/health"
+    interval: 1m
+    headers:
+      Host: "owl.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
     alerts:
       - type: ntfy
 

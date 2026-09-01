@@ -1,0 +1,101 @@
+# Owl — retirement planner (Tracking range, port 10307).
+# Upstream: https://github.com/mdlacasse/Owl
+#
+# ⚠ THIS IS AN EVALUATION STACK, and the leanest one in the fleet: one
+# container, no database, no secrets, no volume, no init. Idan wants to try Owl
+# before deciding whether it stays.
+#
+# 🚨 IT HAS NO AUTHENTICATION OF ANY KIND. Not "a default password", not "an
+# open registration" — a Streamlit app with no login, no session isolation and
+# no concept of a user. Anyone who reaches port 8501 gets the whole thing. That
+# makes forward auth a HARD PRECONDITION for exposing it, not a nice-to-have:
+# the Caddy vhost imports `protected` and the Authentik blueprint entry
+# (headscale-vps/authentik/blueprints/custom/forward-auth.yaml) must exist
+# BEFORE the route does, or the outpost matches nothing and every request
+# 404s. The loopback publish below is the second half of that: it is what stops
+# a tailnet user from reaching 10307 directly and skipping Caddy entirely.
+
+services:
+  owl:
+    # ---------------------------------------------------------------------------
+    # 🚨 THE TAG CHOICE IS THE WHOLE DESIGN DECISION HERE. Upstream publishes
+    # two images from two different Dockerfiles, and they are not variants of
+    # each other — they have opposite runtime contracts:
+    #
+    #   docker/Dockerfile.versioned  -> `latest` and the dated tags. `git clone`
+    #       and `uv sync --frozen` are RUN layers, i.e. BUILD time. The
+    #       entrypoint (runentrypoint.sh) makes no network calls at all; it
+    #       execs the pre-built venv. ~251 MB, ~8s to start.
+    #
+    #   docker/Dockerfile.edge       -> `edge`. Installs NOTHING at build time.
+    #       Its entrypoint (buildentrypoint.sh) runs, on EVERY container start,
+    #       `git clone --depth 1 https://github.com/mdlacasse/Owl.git` followed
+    #       by `uv sync`, under `set -e`. ~38 MB, ~52s to start.
+    #
+    # `edge` is disqualified outright, twice over: it cannot start in the
+    # offline test VM (the clone fails and takes the container with it), and it
+    # is not reproducible even online — the same image tag runs whatever is on
+    # main at the moment you restarted it. This is the finding-#4 shape.
+    #
+    # `latest` is disqualified too: it is a MOVING alias that today points at
+    # the same digest as 2026.8.29 and will not tomorrow.
+    #
+    # So: the dated tag. It is BARE, with no `v` prefix — upstream derives it
+    # from src/owlplanner/version.py, and `v2026.8.29` does not exist.
+    # amd64 only, which is what this host is.
+    # ---------------------------------------------------------------------------
+    image: owlplanner/owldocker:2026.8.29
+    container_name: owl
+    ports:
+      # Loopback only. See the header: with no auth in the app, the port IS the
+      # authentication bypass, so this must never become 0.0.0.0.
+      - '127.0.0.1:10307:8501'
+    # NO volumes, and that is VERIFIED rather than assumed. Neither Dockerfile
+    # has a VOLUME instruction, upstream's own compose declares none, and the
+    # documented run command uses --rm. Owl saves and loads work through the
+    # BROWSER — st.download_button for the case TOML and the xlsx workbook,
+    # st.file_uploader to bring one back — so the server holds nothing between
+    # sessions. Streamlit's own state is in memory (MemorySessionStorage,
+    # MemoryMediaFileStorage).
+    #
+    # ⚠ The consequence, which belongs in the operator's head and not just
+    # here: RESTARTING THIS CONTAINER LOSES ANY UNSAVED WORK. That is upstream's
+    # design for a privacy-preserving calculator, not a misconfiguration. Do not
+    # "fix" it by adding a bind mount — there is nothing for it to hold, and the
+    # container runs as uid 1001 (NOT the 1000 this fleet uses elsewhere), so a
+    # mount added on the 1000:1000 assumption would fail in a new way.
+    environment:
+      - TZ=America/Chicago
+      # Suppresses the startup disclaimer modal (ui/Welcome.py). Behind forward
+      # auth the only people who can see it have already agreed to it once.
+      - OWL_SKIP_DISCLAIMER=1
+    # NO env_file: this stack has no secrets at all, so there is no .sops.env,
+    # no .sops.env.example and no test fixture — and the env-file-coverage lint
+    # only demands them of a compose file that declares `env_file:`.
+    healthcheck:
+      # The image DOES ship a healthcheck:
+      #   HEALTHCHECK CMD wget -q --spider http://localhost:8501/_stcore/health
+      # It is overridden rather than trusted, for two reasons:
+      #
+      #   1. NO start_period. Streamlit needs several seconds to import the
+      #      solver stack and bind, and without a start_period every probe in
+      #      that window counts against `retries` — the Outline lesson: override
+      #      an upstream healthcheck's timing, do not disable it.
+      #   2. `--spider` issues a HEAD, and this fleet has been burned by exactly
+      #      that (finding #34: Homebox answered 405 to `wget --spider` and sat
+      #      unhealthy for 152s while serving perfectly). Streamlit 1.62
+      #      registers /_stcore/health through Starlette, which DOES auto-add
+      #      HEAD alongside GET, so the builtin very probably works — but
+      #      "probably" is not worth keeping when an unambiguous GET costs
+      #      three lines. Note the image is alpine-based, so busybox `wget` is
+      #      genuinely present here (it is NOT in ghostfolio's node:22-slim).
+      #
+      # /_stcore/health is the right endpoint: Streamlit's own docs describe it
+      # as returning 200 only once the runtime is ready to accept connections,
+      # and it needs no auth (there is none).
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8501/_stcore/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped

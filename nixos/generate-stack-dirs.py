@@ -80,15 +80,19 @@ DEFAULT_OWNER = ("root", "root")
 # by that four times. An empty string is a legitimate entry — it means "every
 # directory here is root:root and the image runs as root".
 #
-# ⚠ ARCANE: arcane/compose.yaml is scanned by this generator but currently
-# keeps its state in a NAMED VOLUME, so it contributes no directories. When
-# that becomes a /mnt/fast/arcane bind mount (campaign item 1c — its GitOps
-# sync definitions are otherwise in no backup), this script will stop with
-# "stack 'arcane' has no STACK_NOTES entry". The answer is 1000:1000, NOT the
-# default: Arcane runs as PUID/PGID 1000 (the same reason /srv/stacks is
-# 1000:1000 — finding #10), and root-owned it cannot write its own database.
-# Add both a STACK_NOTES entry and DIR_NOTES["/mnt/fast/arcane"] with
-# owner ("1000", "1000"), then re-run the generator.
+# ⚠ ARCANE: arcane/compose.yaml is scanned by this generator even though it
+# lives outside stacks/, and it now contributes /mnt/fast/arcane — its state
+# moved off the arcane_data NAMED VOLUME (campaign item 1c: named volumes live
+# under /var/lib/docker, which every Backrest plan excludes via **/docker/**,
+# so its GitOps sync definitions were in no backup).
+#
+# That move is a TWO-FILE change and the halves landed a campaign apart, which
+# is worth remembering because the failure was loud in one direction and silent
+# in the other: with the STACK_NOTES/DIR_NOTES entries present and the compose
+# file still on the named volume, this script exits nonzero with "DIR_NOTES has
+# an entry for /mnt/fast/arcane, which no compose file bind-mounts" and the
+# stack-dirs-generated lint goes red. The reverse — compose mounting a path
+# this table says nothing about — is the case the table exists to catch.
 STACK_NOTES = {
     "arcane": """\
 1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
@@ -139,11 +143,13 @@ Ownership, VERIFIED per image (annex §2.2):
     entrypoint recursively chowns /config and repairs /tmp/shelfmark, so
     these would self-heal — declaring them 1000:1000 anyway just means it
     has nothing to do.
-  - The two /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes
-    the ebook tree, and the audiobook tree keeps the same ownership for
-    whatever ends up filling it (shelfmark's Direct Download source is
-    ebook-only, so audiobooks arrive by other means for now). Kavita and
-    audiobookshelf mount their tree :ro as root and only read.""",
+  - The /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes the
+    ebook tree, and the audiobook tree and the drop dir keep the same
+    ownership for whatever ends up filling them (shelfmark's Direct
+    Download source is ebook-only, so audiobooks arrive from the MEDIA
+    stack — see the /mnt/slow/books/drop note; it is the one directory
+    here a container in another stack writes). Kavita and audiobookshelf
+    mount their trees :ro as root and only read.""",
     "caddy": """\
 root:root. The official caddy image runs as root (it binds 80/443 and here
 network_mode: host), so the ACME account key and the issued certificates
@@ -206,6 +212,19 @@ tmpfiles-ownership lint's COMPOSE_FILES list, so this — the git ROOT for the
 homelab, including the remote Arcane's GitOps sync pulls from — was left to
 docker to create root-owned.""",
     "gatus": "",
+    "ghostfolio": """\
+One directory, root:root, and that is VERIFIED rather than inherited: the
+only /mnt mount in this stack is the Postgres datadir, and the
+postgres:17.9-alpine image starts as root and chowns /var/lib/postgresql/data
+to uid 999 itself before `initdb` drops privileges — the same reasoning that
+makes paperless, wger, windmill, tandoor and firefly's pgdata roots
+root:root here.
+
+The app container has NO /mnt mount at all (all its state is in Postgres),
+and its Redis deliberately has no volume either — it is a cache plus a
+re-enqueueable Bull job queue, following the wger_cache precedent. So this
+stack contributes exactly one leaf directory plus its parent, and the whole
+of its backup story is the pg_dumpall of ghostfolio_db.""",
     "immich": """\
 root:root everywhere ON PURPOSE: the immich images have no PUID/PGID
 mechanism and run as root by default (the FAQ's non-root mode is deliberately
@@ -234,7 +253,13 @@ the pinned image's entrypoint script) runs as root and does
 `chown -R clamav:clamav /var/lib/clamav` unconditionally before
 starting clamd. /mnt/slow/data is 1000:1000: every media container
 works there as uid 1000 and media-init creates the skeleton with that
-owner.""",
+owner.
+
+This stack also bind-mounts /mnt/slow/books/drop, which BELONGS TO THE
+BOOKS STACK (its rule and its reasoning are under books, where the
+directory lives). That is the entire audiobook hand-off: clamav-scanner
+moves a clean `audiobooks` download into it and audiobookshelf reads it
+:ro. Nothing else crosses.""",
     "notes-sync": """\
 ALL 1000:1000, and for two different reasons:
   - rmfakecloud is FROM scratch with no entrypoint and no PUID/PGID, so
@@ -385,6 +410,29 @@ slow-volume-selective plan already includes that path, so they are backed
 up without touching its config.""",
     },
     "/mnt/slow/books/audiobooks": {"owner": ("1000", "1000")},
+    "/mnt/slow/books/drop": {
+        "owner": ("1000", "1000"),
+        "note": """\
+🚨 The one directory TWO stacks share, and the whole of the coupling
+between them (ServerNotes/designs/audiobook-acquisition.md, Option C).
+
+WRITER: stacks/media's clamav-scanner, which runs as ROOT (the pinned
+clamav image sets no USER and this service overrides the entrypoint), so
+the ownership here does not constrain it. It moves a completed
+`audiobooks` download in — a rename within /mnt/slow, so the entry keeps
+the ownership qBittorrent gave it, which is 1000:1000 — and only after a
+clean ClamAV verdict on every file in it.
+
+READER: stacks/books' audiobookshelf, which mounts it :ro as a second
+folder of its Audiobooks library. It runs as root and only reads, so the
+1000:1000 here is for the third party: a human (or shelfmark, uid 1000)
+reorganising a promoted book into /mnt/slow/books/audiobooks, which a
+root-owned drop dir would make a sudo job.
+
+Under /mnt/slow/books deliberately, like the two library trees: backrest's
+slow-volume-selective plan includes that path, so a promoted audiobook is
+backed up from the moment it lands and needs no backrest change.""",
+    },
     "/mnt/slow/books/library": {"owner": ("1000", "1000")},
     # --- automation ----------------------------------------------------
     "/mnt/fast/mosquitto/config": {"owner": ("1883", "1883")},

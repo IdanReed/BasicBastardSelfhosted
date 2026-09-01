@@ -1,0 +1,245 @@
+# Ghostfolio — wealth / portfolio tracker (Tracking range, port 10306).
+#
+# ⚠ THIS IS AN EVALUATION STACK. Idan wants to try Ghostfolio before deciding
+# whether it stays, so it is deliberately LEAN: no SimpleFIN linkage, no
+# Firefly integration, no OIDC, no init container, no seeded admin. Everything
+# here is what it takes to boot the app and log in; nothing here wires it to
+# anything else in the fleet. If it earns a permanent place, the integration
+# work is a separate decision.
+#
+# Its own Postgres and its own Redis, NOT shared with any other stack — the
+# app owns its schema (prisma migrations run at container start, see below)
+# and there is no shared-database convention in this fleet to hook into.
+#
+# Backup contract: ghostfolio_db is dumped by nixos/backup-prepare.sh's
+# `pg_dumpall` loop, which requires BOTH `container_name: ghostfolio_db` and
+# `POSTGRES_USER=ghostfolio` — the loop runs `docker exec ${svc}_db pg_dumpall
+# -U ${svc}` for svc=ghostfolio. Rename either and the nightly dump fails with
+# rc=1 in a unit nobody reads. The Backrest plans exclude **/pgdata/**
+# precisely so the raw datadir is not mistaken for a backup.
+
+services:
+  # ---------------------------------------------------------------------------
+  # ghostfolio — the app. NestJS + Angular, one container, no volume: every
+  # byte of state is in Postgres (holdings, accounts, activities, users) or
+  # Redis (cache + the Bull data-gathering queue). There is nothing on this
+  # container's filesystem worth keeping, which is why it has no /mnt mount and
+  # why the whole stack's backup story is one pg_dumpall.
+  #
+  # 🚨 THE ENTRYPOINT RUNS DATABASE MIGRATIONS AT EVERY CONTAINER START:
+  # `npx prisma migrate deploy` before the server boots. Two consequences that
+  # are easy to get wrong:
+  #
+  #   1. It must work with NO NETWORK, and this is the ExcaliDash failure
+  #      (finding #40) asked of a different image — so it was checked by
+  #      unpacking the published layer rather than reasoned about:
+  #        - `node_modules/.bin/prisma` EXISTS in the runtime image, and the
+  #          entrypoint's WORKDIR is that node_modules' package root. `npx`
+  #          only reaches the registry when a package is NOT locally
+  #          resolvable, so it execs the local binary.
+  #        - `@prisma/engines/schema-engine-debian-openssl-3.0.x` is baked in,
+  #          and its binary target is exactly the runtime base (node:22-slim,
+  #          Debian bookworm + OpenSSL 3). `migrate deploy` needs no other.
+  #        - prisma is 7.x, which runs QUERIES through a WASM compiler plus
+  #          @prisma/adapter-pg — there is no `libquery_engine*.node` in the
+  #          image at all, so there is no runtime engine to fetch. This is
+  #          precisely what ExcaliDash could not say: its schema declared an
+  #          arm64 binaryTarget its amd64 image did not carry, and `npx prisma
+  #          generate` at boot went looking for it. Ghostfolio's `generate`
+  #          runs at BUILD time (`RUN npm run database:generate-typings`);
+  #          only `migrate deploy` and an idempotent `db seed` run at start.
+  #      And it is still ASSERTED rather than left at that:
+  #      `./tests/run.sh stack ghostfolio` boots this stack in a VM with no
+  #      route to the internet.
+  #   2. It means the app CANNOT start before Postgres is accepting
+  #      connections, hence the service_healthy dependency below rather than
+  #      the bare `depends_on` upstream's compose uses.
+  # ---------------------------------------------------------------------------
+  ghostfolio:
+    # Docker Hub only — there is no ghcr/quay mirror. The tag is BARE: the
+    # repository publishes `latest`, `3`, `3.65.0`, `3.64.0` … and NO
+    # `v`-prefixed tag exists at all, so `v3.65.0` could never have been
+    # pulled. Worth stating because the `v`-or-not question has broken two
+    # other stacks in this repo in opposite directions.
+    #
+    # Upstream releases roughly daily, so this pin will look stale fast. That
+    # is the intended behaviour: `tests/update-images.sh` resolves the digest
+    # and the `image-pins` lint fails on drift, so the version only moves when
+    # someone moves it.
+    image: ghostfolio/ghostfolio:3.65.0
+    container_name: ghostfolio
+    depends_on:
+      ghostfolio_db:
+        condition: service_healthy
+      ghostfolio_cache:
+        condition: service_healthy
+    ports:
+      # Loopback only, like every other stack: the way in is Caddy at
+      # ghostfolio.svc.idanreed.com, so a tailnet user cannot bypass the
+      # vhost by port number.
+      - '127.0.0.1:10306:3333'
+    environment:
+      - TZ=America/Chicago
+      - NODE_ENV=production
+      # The port the NestJS server binds inside the container. Set explicitly:
+      # the image defaults to 3333 today, but the published port above is a
+      # separate file's decision and a silent upstream change would turn this
+      # stack into a 502 with a healthy container.
+      - PORT=3333
+      # 🚨 The Prisma connection string, assembled here from POSTGRES_PASSWORD
+      # so the password exists in exactly ONE key of .sops.env. `${VAR:-}`
+      # interpolates from the project directory's .env at compose PARSE time
+      # (same mechanism stacks/books uses); the `:-` default is what keeps
+      # Arcane's staged sync validation — which runs where the decrypted .env
+      # cannot exist — from failing the whole stack (finding #11).
+      #
+      # connect_timeout is Prisma's, in SECONDS, and the generous value is
+      # deliberate: the migration step runs before the app and a cold Postgres
+      # first-init on this host takes tens of seconds.
+      - 'DATABASE_URL=postgresql://ghostfolio:${POSTGRES_PASSWORD:-}@ghostfolio_db:5432/ghostfolio?connect_timeout=300'
+      - REDIS_HOST=ghostfolio_cache
+      - REDIS_PORT=6379
+      # ⚠ REDIS_PASSWORD is deliberately NOT set — see ghostfolio_cache. This
+      # is safe rather than merely untidy: the app's envalid schema declares it
+      # `str({ default: '' })`, and ioredis sends no AUTH for a falsy password.
+      #
+      # ACCESS_TOKEN_SALT and JWT_SECRET_KEY arrive from .env and are BOTH
+      # HARD boot requirements — the same schema declares them bare `str()`
+      # with no default, so envalid aborts startup rather than defaulting.
+      # ACCESS_TOKEN_SALT in particular must NEVER be rotated once users exist:
+      # it salts the hash of every security token, which is the only credential
+      # Ghostfolio accounts have (see .sops.env.example).
+      #
+      # OIDC ships OFF. Ghostfolio has native OIDC, but upstream labels it
+      # EXPERIMENTAL, and turning it on needs an Authentik client secret that
+      # requires the production age key to reach the VPS secrets.sops.yaml.
+      # Same posture as the books and tracking stacks: run on the app's own
+      # auth until the operator lands the secret. The off state is the default
+      # — ENABLE_FEATURE_AUTH_OIDC defaults to false and
+      # ENABLE_FEATURE_AUTH_TOKEN defaults to true — so nothing is set here.
+      #
+      # 🚨 WHEN IT IS TURNED ON, READ THIS FIRST. Setting
+      # ENABLE_FEATURE_AUTH_OIDC=true makes the auth module fetch
+      # ${OIDC_ISSUER}/.well-known/openid-configuration AT BOOT, and the catch
+      # arm `throw`s — Nest bootstrap aborts and the container exits. This is
+      # Homebox's eager-discovery problem (see stacks/tracking/compose.yaml)
+      # with the failure escalated from a restart loop to a hard stop, and the
+      # dependency is a cross-tailnet call to the Hetzner VPS, so a tailnet
+      # blip during `docker compose up` takes the stack down.
+      #
+      # The escape hatch is in the code: discovery is skipped entirely when
+      # OIDC_AUTHORIZATION_URL, OIDC_TOKEN_URL and OIDC_USER_INFO_URL are ALL
+      # set. Set all three, or accept the boot-time dependency knowingly.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync VALIDATES the compose in a staging directory before copying, where
+    # the host-side decrypted .env cannot exist yet — a plain `env_file: .env`
+    # fails that validation and the sync of the whole stack aborts.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image ships no healthcheck. /api/v1/health is the right probe and
+      # an HONEST one, which is rarer here than it should be — verified in
+      # health.service.ts rather than assumed:
+      #   - it runs a REAL query against the Property table with
+      #     `skipCache: true`, so it cannot go green off a warm cache or while
+      #     the prisma migration above is still running;
+      #   - it ALSO checks Redis, so a 200 here means Postgres and Redis are
+      #     both actually reachable — this one probe covers all three
+      #     containers;
+      #   - it is unauthenticated: HealthController carries no guard, and the
+      #     one global guard returns true for every GET.
+      # ⚠ Its siblings /api/v1/health/data-provider/:src and /health/ai DO
+      # make outbound calls. Never probe those.
+      #
+      # start_period is long because that migration is inside it: on a first
+      # boot the schema is created from zero before the server binds at all.
+      #
+      # 🚨 `curl`, NOT `wget`, and that is not a style preference. The image is
+      # node:22-slim, and the node slim variants install curl/wget as build
+      # dependencies and then PURGE them — so a `wget` probe would exec a
+      # binary that does not exist. Docker records that as a FAILING
+      # healthcheck, not as a configuration error, so the container would sit
+      # unhealthy forever while serving perfectly (finding #34's failure mode,
+      # reached by a different door). Ghostfolio's own Dockerfile re-adds
+      # exactly two packages to the runtime stage — `curl` and `openssl` — so
+      # curl is the only HTTP client in here.
+      test: ['CMD-SHELL', 'curl -fsS -o /dev/null http://127.0.0.1:3333/api/v1/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # ghostfolio_db — Postgres. container_name and POSTGRES_USER are BOTH
+  # load-bearing for nixos/backup-prepare.sh; see the header.
+  # ---------------------------------------------------------------------------
+  ghostfolio_db:
+    # postgres:17.9-alpine, matching every other Postgres in this fleet
+    # (paperless, wger, windmill, tandoor, firefly). Upstream's compose says
+    # `postgres:15`; there is no schema reason to stay there and a single
+    # version across the host is worth more than following upstream's default.
+    image: postgres:17.9-alpine
+    container_name: ghostfolio_db
+    volumes:
+      - /mnt/fast/ghostfolio/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=ghostfolio
+      - POSTGRES_DB=ghostfolio
+      # POSTGRES_PASSWORD arrives from .env. It is the same value the app's
+      # DATABASE_URL interpolates above — one key, two readers.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ghostfolio -d ghostfolio']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # ghostfolio_cache — Redis. Cache plus the Bull queue that drives
+  # Ghostfolio's market-data gathering.
+  #
+  # NO VOLUME, ON PURPOSE — the wger_cache precedent. Everything in here is
+  # reconstructible: the cache re-fills on demand and the gathering jobs are
+  # re-enqueued by the app's own cron. Giving it a bind mount would put pure
+  # churn into the /mnt/fast Backrest include set for state that is worth
+  # nothing the moment it is restored.
+  #
+  # NO PASSWORD, ON PURPOSE, and this is a deviation worth stating plainly.
+  # Upstream's compose runs `redis-server --requirepass ${REDIS_PASSWORD}` and
+  # sets a matching REDIS_PASSWORD on the app. Two reasons not to copy that:
+  #
+  #   1. It puts the password on ARGV, and containers on this host share the
+  #      host PID namespace — `/proc/<pid>/cmdline` is readable. That exact
+  #      shape is a logged defect in this repo already (the MySQL password on
+  #      argv in backup-prepare.sh). Fixing it properly means templating a
+  #      redis.conf from the secret, which is real machinery for an evaluation
+  #      stack.
+  #   2. There is nothing to defend against here. This compose file declares no
+  #      `networks:`, so the project gets its OWN bridge network; the only
+  #      containers that can resolve or reach `ghostfolio_cache` are the two
+  #      above. Nothing is published. Every other Redis in this fleet
+  #      (paperless, wger, dawarich) is unauthenticated for the same reason.
+  #
+  # The consequence to know: REDIS_PASSWORD must stay UNSET on the app. If it
+  # is set while redis has no `requirepass`, redis answers AUTH with "ERR
+  # Client sent AUTH, but no password is set" and the app fails to reach its
+  # cache — so the two halves have to move together or not at all.
+  ghostfolio_cache:
+    image: redis:7.4-alpine
+    container_name: ghostfolio_cache
+    environment:
+      - TZ=America/Chicago
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped

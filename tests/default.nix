@@ -200,7 +200,22 @@ let
   # Caddyfile substitution and a TAILNET_IP, which the generic suite cannot
   # provide. Its routing is covered by the services and tailnet suites.
   stackChecks = lib.genAttrs [
+    # An EVALUATION stack, and the generic suite is the whole of its coverage
+    # on purpose — there is nothing bespoke to seed. What it does prove is the
+    # one thing that was in doubt: the image's entrypoint runs
+    # `npx prisma migrate deploy` before the server starts, and this suite
+    # boots it with NO ROUTE TO THE INTERNET. An npx that reached the registry,
+    # or a prisma engine downloaded at runtime, fails here rather than on the
+    # host.
+    "ghostfolio"
     "ntfy"
+    # Also an evaluation stack, and the generic suite is a genuinely good fit:
+    # one container, no secrets, no volume, no init oneshot. What it proves
+    # that a lint cannot is that the VERSIONED tag really does carry its
+    # dependencies — upstream's `edge` image `git clone`s and `uv sync`s from
+    # the entrypoint on every start, and an accidental swap to it would boot
+    # fine on a developer's machine and fail only here.
+    "owl"
     "util"
     # Both wikis are generic-suite-shaped: no restart:"no" init containers, and
     # every service healthchecked. Two things the generic suite CANNOT see
