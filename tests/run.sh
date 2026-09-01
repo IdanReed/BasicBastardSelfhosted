@@ -27,6 +27,9 @@
 #   ./tests/run.sh restore        # the restore DRILL: dumps + a real restic repo round trip
 #   ./tests/run.sh tandoor        # heavy: the silent SQLite fallback, proven absent
 #   ./tests/run.sh wger           # heavy: admin/adminadmin retired + static files really served
+#   ./tests/run.sh mealie         # heavy: changeme@example.com retired + sqlite by decision
+#   ./tests/run.sh actual         # heavy: headless bootstrap + login contract
+#   ./tests/run.sh wealthfolio    # heavy: argon2 $-quoting login round trip + boot-fatal OIDC pinned
 #   ./tests/run.sh gatus          # the host-network bind, proven from another machine
 #   ./tests/run.sh beszel         # heavy: the key/token triangle, and real disk numbers
 #   ./tests/run.sh samba          # heavy: an authenticated SMB round trip, and a refused one
@@ -109,7 +112,7 @@ case "$TARGET" in
     exec nix-build tests "${NIX_ARGS[@]}" -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | gatus | docspace | beszel | samba | journald-logging)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 
