@@ -8,8 +8,10 @@
 #     KOReader sync), shelfmark (search + download), audiobookshelf. Caddy on
 #     the host network is the only path in.
 #   - TWO library trees on purpose (annex §2.2): /mnt/slow/books/library for
-#     ebooks and /mnt/slow/books/audiobooks for audiobooks. Kavita and
-#     audiobookshelf each mount only their own tree, READ-ONLY. The layouts
+#     ebooks and /mnt/slow/books/audiobooks for audiobooks, plus
+#     /mnt/slow/books/drop, the media stack's audiobook hand-off, which
+#     audiobookshelf carries as a second folder of the same library. Kavita
+#     and audiobookshelf each mount only their own tree, READ-ONLY. The layouts
 #     genuinely conflict (ABS wants {Author}/{Series}/{Book}/, Kavita wants
 #     series-per-folder) and sharing one tree would double inotify pressure
 #     over the same inodes on the slow tier for no gain.
@@ -18,12 +20,17 @@
 #     `supported_content_types = ["ebook"]`. Audiobooks come only from
 #     AudiobookBay, which is a TORRENT source available solely under
 #     SEARCH_MODE=universal — that needs a download client and a VPN, i.e. the
-#     media stack's gluetun, which is a separate design decision (annex §7.4,
-#     operator question §8.6). So shelfmark does NOT mount the audiobook tree,
-#     and DESTINATION_AUDIOBOOK / FILE_ORGANIZATION_AUDIOBOOK are deliberately
-#     absent: setting them under SEARCH_MODE=direct configures a pipeline
-#     nothing can ever feed. Audiobooks arrive by other means (Samba, manual
-#     copy) until that decision is made.
+#     media stack's gluetun. That decision has now been made, and the answer
+#     was NO (ServerNotes/designs/audiobook-acquisition.md, Option C): the
+#     media stack acquires audiobooks under its own `audiobooks` qBittorrent
+#     category and hands them over through /mnt/slow/books/drop after the
+#     ClamAV verdict. So shelfmark still does NOT mount the audiobook tree,
+#     DESTINATION_AUDIOBOOK / FILE_ORGANIZATION_AUDIOBOOK stay absent, and no
+#     QBITTORRENT_* variable exists in this stack — Shelfmark drives no
+#     downloads it cannot produce, and nothing here can reach the media
+#     stack's download client. The cost, accepted with the decision:
+#     audiobooks are requested from qBittorrent/the media side, not from
+#     Shelfmark's UI.
 #   - Both slow paths live under /mnt/slow/books, which backrest's
 #     slow-volume-selective plan ALREADY includes — the library trees are
 #     backed up with no backrest change. Keep them there.
@@ -299,6 +306,21 @@ services:
       # (both hold here — shelfmark is the only writer). The suite asserts the
       # tree is untouched after a scan rather than trusting it.
       - /mnt/slow/books/audiobooks:/audiobooks:ro
+      # The drop directory: the media stack's audiobook hand-off, and the
+      # WHOLE of the coupling between the two stacks (Option C,
+      # ServerNotes/designs/audiobook-acquisition.md). qBittorrent downloads
+      # under the `audiobooks` category, stacks/media/scan-downloads.sh moves
+      # an entry in here only after a clean ClamAV verdict on every file in
+      # it, and books-init registers this path as a SECOND FOLDER of the
+      # Audiobooks library — so a book that lands here is playable where it
+      # lies, with no manual promotion step.
+      #
+      # Read-only for the same reason as the tree above, and it is why no
+      # QBITTORRENT_* variables appear anywhere in this stack: nothing here
+      # reaches the media stack's download client, over the network or
+      # through a mount of its download tree. Acquisition is driven from the
+      # media side.
+      - /mnt/slow/books/drop:/drop:ro
     environment:
       - PORT=80
       - CONFIG_PATH=/config
