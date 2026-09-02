@@ -28,6 +28,7 @@ in
       AUTHENTIK_SECRET_KEY=${config.sops.placeholder.AUTHENTIK_SECRET_KEY}
       HEADSCALE_OIDC_CLIENT_SECRET=${config.sops.placeholder.HEADSCALE_OIDC_CLIENT_SECRET}
       IMMICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.IMMICH_OIDC_CLIENT_SECRET}
+      OUTLINE_OIDC_CLIENT_SECRET=${config.sops.placeholder.OUTLINE_OIDC_CLIENT_SECRET}
       AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
       AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
@@ -50,9 +51,17 @@ in
     # a re-up.
     IMMICH_OIDC_CLIENT_SECRET = { };
 
-    # First-start creation of the `akadmin` superuser + API token. Without
-    # these the blueprint's `idan` user has no credential and no SMTP reset
-    # path exists — nobody could log in at all.
+    # Same shape as immich's: consumed by !Env in
+    # blueprints/custom/outline-oidc.yaml, worker is the only VPS-side
+    # consumer, twin copy in stacks/outline/.sops.env as OIDC_CLIENT_SECRET.
+    # Outline has NO local accounts — a mismatched pair is a total login
+    # lockout, silent until token exchange.
+    OUTLINE_OIDC_CLIENT_SECRET = { };
+
+    # Without these the blueprint creates user `idan` with no credential, and
+    # with no SMTP configured there is no password-reset path either — nobody
+    # could log in at all. The worker consumes them on first start to create
+    # the `akadmin` superuser and an API token.
     AUTHENTIK_BOOTSTRAP_PASSWORD = { };
     AUTHENTIK_BOOTSTRAP_TOKEN = { };
   };
