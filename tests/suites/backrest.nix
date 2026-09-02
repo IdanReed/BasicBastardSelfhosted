@@ -21,7 +21,7 @@
 #     snapshot success/failure webhook takes (the old host.docker.internal
 #     design failed exactly here)
 #   - the whole services-VM boot chain underneath it: sops fixture decrypt,
-#     docker-network-homelab, bootstrap-arcane
+#     docker-network-homelab, bootstrap-komodo
 #
 #   - the restic pipeline FOR REAL: this VM runs its own SFTP endpoint (a
 #     `restic` user whose authorized key is the same test key mounted into the
@@ -66,9 +66,12 @@ let
   ];
 
   stackImages = [
-    # The boot chain: bootstrap-arcane is wantedBy multi-user.target, so its
+    # The boot chain: bootstrap-komodo is wantedBy multi-user.target, so its
     # image must be loadable before the script gets control.
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     images."binwiederhier_ntfy_v2_11_0"
     images."garethgeorge_backrest_v1_9_1"
     # config-init's base image. Stock — config-init.sh uses only what alpine
@@ -85,9 +88,9 @@ let
   # password, a base64 bcrypt that actually decodes (so the API login works),
   # and a DEADMAN_URL pointing at the discard port.
   seedSrv = pkgs.runCommand "srv-seed-backrest" { } ''
-    mkdir -p $out/arcane $out/stacks
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
@@ -117,17 +120,19 @@ pkgs.testers.runNixOSTest {
           profiles.manualTailscaleAutoconnect
           (profiles.sopsFixture ../fixtures/services-vm.sops.yaml)
           (profiles.sized {
-            memoryMB = 4096;
+            memoryMB = 6144;
             diskMB = 12288;
           })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
+          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; backrest additionally bind-mounts /mnt/fast
         # and /mnt/slow read-only. tmpfs gives each a genuine .mount unit.
         virtualisation.fileSystems = {
@@ -151,7 +156,7 @@ pkgs.testers.runNixOSTest {
         # Copied from nixos/hardware-configuration.nix, which cannot be
         # imported here because it mounts real partitions by partlabel.
         systemd.tmpfiles.rules = [
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Volume roots the two stacks bind-mount. Pre-created rather than
@@ -186,8 +191,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -279,7 +284,7 @@ pkgs.testers.runNixOSTest {
     # The same chain the services suite covers in depth; here it only has to
     # deliver a decrypted .env and the homelab network before compose runs.
     services_vm.wait_for_unit("docker-network-homelab.service")
-    services_vm.wait_for_unit("bootstrap-arcane.service")
+    services_vm.wait_for_unit("bootstrap-komodo.service")
     services_vm.succeed("test -s /srv/stacks/backrest/.env")
     services_vm.succeed("test -s /srv/stacks/ntfy/.env")
 

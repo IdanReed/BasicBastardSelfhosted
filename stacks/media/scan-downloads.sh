@@ -236,8 +236,16 @@ echo "scan: clamd up; polling $DOWNLOADS every ${INTERVAL}s"
 
 while :; do
   # Timestamp BEFORE scanning, so files modified mid-pass are re-scanned next
-  # pass instead of slipping through the window.
-  touch /tmp/scan-pass
+  # pass instead of slipping through the window. Back-dated 2s because
+  # `find -newer` is a STRICT '>' at 1s mtime resolution: a file whose mtime
+  # lands in the SAME wall-clock second as an un-back-dated marker is `-newer`
+  # than it on NO later pass, so it is scanned NEVER — a silent, permanent AV
+  # gap. (An *arr hardlink import that finishes as a pass starts hits exactly
+  # this; the media suite's hardlink-race subtest reproduces it intermittently.)
+  # The 2s overlap re-scans at most the tail of the previous window — cheap and
+  # idempotent (a settled clean file rescanned is a no-op; a quarantined one is
+  # pruned).
+  touch -d "@$(( $(date +%s) - 2 ))" /tmp/scan-pass
 
   # A marker with a mtime in the FUTURE — a clock step, a restored /state, a
   # copy that landed the timestamp wrong — makes `-newer` exclude every file

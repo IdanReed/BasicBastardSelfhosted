@@ -1,12 +1,14 @@
-# Services VM: the sops-decrypt -> docker-network -> Arcane boot chain, plus
+# Services VM: the sops-decrypt -> docker-network -> Komodo boot chain, plus
 # the stacks themselves behind Caddy.
 #
 # Genuinely under test:
 #   - decrypt-sops-envs.service turning .sops.env into .env, with modes, and
 #     its ordering against srv.mount
-#   - docker-network-homelab ordering before bootstrap-arcane (containers on
+#   - docker-network-homelab ordering before bootstrap-komodo (containers on
 #     the shared network cannot resolve each other otherwise)
-#   - bootstrap-arcane bringing Arcane up on 127.0.0.1:10000
+#   - bootstrap-komodo bringing Komodo Core up on 127.0.0.1:10000, OFFLINE,
+#     against FerretDB + Postgres loaded from the Nix store (the air-gapped
+#     Core-boot proof — invariant #4)
 #   - the real compose files for every light stack, with real healthchecks
 #   - Caddy's routing table and its 404 fallback
 #   - notify-failure@.service actually delivering to Ntfy — the failure signal
@@ -51,7 +53,12 @@ let
   stackImages = [
     # For the backup-prepare subtest's stand-in database container.
     images."postgres_17_9-alpine"
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    # Komodo deploy plane: Core + Periphery + FerretDB + its Postgres backend.
+    # All four preloaded so bootstrap-komodo's `up` never reaches a registry.
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
@@ -86,13 +93,13 @@ let
         PY
       '';
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Fixture .sops.env files stand in for the real
   # encrypted ones, so decrypt-sops-envs.service is exercised for real.
   seedSrv = pkgs.runCommand "srv-seed" { } ''
-    mkdir -p $out/arcane $out/stacks
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
@@ -125,17 +132,29 @@ pkgs.testers.runNixOSTest {
           profiles.testSshAccess
           (profiles.sopsFixture ../fixtures/services-vm.sops.yaml)
           (profiles.sized {
-            memoryMB = 4096;
+            # Komodo (Core Rust + Periphery + FerretDB + Postgres) is a heavier
+            # deploy plane than Arcane's single container; the extra headroom
+            # keeps FerretDB/Postgres init and Core's first DB connect from
+            # flaking the boot window.
+            memoryMB = 6144;
             diskMB = 12288;
           })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          {
+            # stack-git-sync polls Forgejo, which is NOT running in this suite
+            # (its own delivery loop is the gitops suite's job). Left armed it
+            # would fail its clone every tick and ntfy-alert, tripping the
+            # no-failed-units sweep. Take only its TRIGGER out; the unit is
+            # unchanged. (gitops.nix exercises the real sync.)
+            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+          }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`. Without a real mount unit at /srv they would
         # fail to start, and the ordering this suite exists to check would
         # never be exercised. tmpfs gives a genuine .mount unit.
@@ -160,13 +179,16 @@ pkgs.testers.runNixOSTest {
         # Copied from nixos/hardware-configuration.nix, which cannot be
         # imported here because it mounts real partitions by partlabel.
         systemd.tmpfiles.rules = [
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Volume roots the stacks bind-mount into.
           "d /mnt/fast/caddy 0755 root root -"
           "d /mnt/fast/ntfy 0755 root root -"
           "d /mnt/fast/_dumps 0755 root root -"
+          # Komodo's Postgres datadir (the only stateful komodo bind).
+          "d /mnt/fast/komodo 0755 root root -"
+          "d /mnt/fast/komodo/pgdata 0755 root root -"
           # No key planting here any more: both backup SSH keys are
           # sops-managed now (BACKUP_VPS_SSH_KEY / BACKUP_STORAGEBOX_SSH_KEY
           # in the fixture, carrying the committed test keys), so the suite
@@ -188,8 +210,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -220,9 +242,10 @@ pkgs.testers.runNixOSTest {
 
     start_all()
     # decrypt-sops-envs is a transient oneshot now (the timer must be able to
-    # re-fire it); bootstrap-arcane Requires+After it, so arcane being up IS
-    # the proof the decrypt pass succeeded.
-    services_vm.wait_for_unit("bootstrap-arcane.service")
+    # re-fire it); bootstrap-komodo Requires+After it, so the compose being
+    # brought up IS the proof the decrypt pass succeeded. (bootstrap-komodo is
+    # `up -d`, not `--wait`, so Core readiness is polled separately below.)
+    services_vm.wait_for_unit("bootstrap-komodo.service")
 
     # -----------------------------------------------------------------------
     # Secret decryption
@@ -231,7 +254,7 @@ pkgs.testers.runNixOSTest {
         # util is deliberately absent: it has no secrets, so no .sops.env and
         # therefore no .env. Its compose file declares no env_file either — the
         # env-file-coverage lint is what keeps those two facts consistent.
-        for path in ["/srv/arcane/.env",
+        for path in ["/srv/komodo/.env",
                      "/srv/stacks/ntfy/.env",
                      "/srv/stacks/caddy/.env"]:
             services_vm.succeed(f"test -s {path}")
@@ -278,68 +301,93 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # Boot ordering
     # -----------------------------------------------------------------------
-    with subtest("the shared docker network exists before Arcane starts"):
+    with subtest("the shared docker network exists before Komodo starts"):
         # Containers cannot reach a loopback-bound host port, so the homelab
-        # network is how Backrest reaches Ntfy. If bootstrap-arcane wins the
-        # race, stacks attach to a network that does not exist yet.
+        # network is how Core reaches Forgejo (Resource-Sync polling). If
+        # bootstrap-komodo wins the race, Core attaches to a network that does
+        # not exist yet.
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.succeed("docker network inspect homelab >/dev/null")
 
         # The timestamp comparison below is timing luck on its own:
-        # bootstrap-arcane sleeps 5s and loads images while the network unit
+        # bootstrap-komodo sleeps 5s and loads images while the network unit
         # finishes in well under a second, so deleting the before= edge would
         # almost never flip the order. The dependency edge itself is the
         # contract — assert it directly, and keep the timestamps only as
         # corroboration that it was honoured on this boot.
         after_deps = services_vm.succeed(
-            "systemctl show -p After --value bootstrap-arcane.service"
+            "systemctl show -p After --value bootstrap-komodo.service"
         )
         assert "docker-network-homelab.service" in after_deps, (
-            f"bootstrap-arcane has no ordering edge on docker-network-homelab: "
+            f"bootstrap-komodo has no ordering edge on docker-network-homelab: "
             f"{after_deps!r}"
         )
 
         # Both units must have ENTERED active before their timestamps mean
         # anything — monotonic 0 is "never started", and comparing against it
-        # reports a phantom ordering violation while bootstrap-arcane is still
+        # reports a phantom ordering violation while bootstrap-komodo is still
         # in its start sleep.
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
 
         net_t = services_vm.succeed(
             "systemctl show -p ActiveEnterTimestampMonotonic --value "
             "docker-network-homelab.service"
         ).strip()
-        arc_t = services_vm.succeed(
+        kom_t = services_vm.succeed(
             "systemctl show -p ActiveEnterTimestampMonotonic --value "
-            "bootstrap-arcane.service"
+            "bootstrap-komodo.service"
         ).strip()
-        assert int(net_t) > 0 and int(arc_t) > 0, \
-            f"a unit never activated (net={net_t}, arcane={arc_t})"
-        assert int(net_t) <= int(arc_t), (
-            f"docker-network-homelab activated at {net_t} but bootstrap-arcane "
-            f"at {arc_t} — the ordering is not being honoured"
+        assert int(net_t) > 0 and int(kom_t) > 0, \
+            f"a unit never activated (net={net_t}, komodo={kom_t})"
+        assert int(net_t) <= int(kom_t), (
+            f"docker-network-homelab activated at {net_t} but bootstrap-komodo "
+            f"at {kom_t} — the ordering is not being honoured"
         )
 
-    with subtest("Arcane answers on loopback and the LAN cannot reach it"):
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+    with subtest("Komodo Core answers on loopback (offline boot) and the LAN cannot reach it"):
+        services_vm.wait_for_unit("bootstrap-komodo.service")
+        # The air-gapped Core-boot proof: Core depends_on FerretDB healthy,
+        # which depends_on Postgres healthy — all three from the Nix store, no
+        # registry, no egress. 300s covers docdb initdb + FerretDB + Core's
+        # first DB connect and migrations. `[234..]` accepts the SPA (200), a
+        # login redirect (3xx) or an auth challenge (401) — any real HTTP reply
+        # proves Core is listening; a 5xx (DB not ready yet) keeps retrying.
         services_vm.wait_until_succeeds(
-            "curl -sf --max-time 5 http://127.0.0.1:10000/ -o /dev/null", timeout=120
+            "curl -s --max-time 5 http://127.0.0.1:10000/ -o /dev/null "
+            "-w '%{http_code}' | grep -qE '^(2|3|4)'", timeout=300
         )
-        # Arcane mounts the docker socket, so reachability from off-host would
-        # be a root-equivalent interface behind only its own login. What this
-        # negative proves is FIREWALL posture: the outsider sits on the plain
-        # VLAN, which the firewall drops wholesale. It says nothing about the
-        # loopback publish address, because the interface that could expose a
-        # 0.0.0.0 bind is the *trusted* tailscale0 — unreachable from this
-        # suite. The on-tailnet probes live in tailnet.nix.
+        # Core's UI drives Periphery (docker socket) — a root-equivalent
+        # interface off-host. This negative proves FIREWALL posture: the
+        # outsider sits on the plain VLAN, which the firewall drops wholesale.
+        # It says nothing about the loopback publish address (the interface
+        # that could expose a 0.0.0.0 bind is the *trusted* tailscale0,
+        # unreachable from this suite). On-tailnet probes live in tailnet.nix.
         outsider.fail("curl -sf --max-time 5 http://services-vm:10000/ -o /dev/null")
+
+    with subtest("invariant #1: the age key never entered Periphery"):
+        # The whole point of host-side decrypt + files_on_host: Periphery runs
+        # `docker compose up` in a directory where .env already exists; it must
+        # never see the age key or Komodo's sops material. Read host-side via
+        # docker inspect — Periphery is distroless, so no in-container `env`.
+        env = services_vm.succeed(
+            "docker inspect komodo_periphery --format '{{json .Config.Env}}'"
+        )
+        assert "AGE-SECRET-KEY" not in env, "age secret key leaked into Periphery env"
+        assert "SOPS_AGE_KEY" not in env, f"SOPS_AGE_KEY present in Periphery env: {env!r}"
+        # Only the docker socket and /srv/stacks are bind-mounted in; the host
+        # key path (/var/lib/sops-nix) must NOT appear among the mounts.
+        mounts = services_vm.succeed(
+            "docker inspect komodo_periphery --format '{{json .Mounts}}'"
+        )
+        assert "sops-nix" not in mounts, f"sops key dir mounted into Periphery: {mounts!r}"
+        assert "/var/run/docker.sock" in mounts, "socket mount missing (sanity)"
 
     # -----------------------------------------------------------------------
     # Stacks
     # -----------------------------------------------------------------------
-    # On the real host Arcane brings these up from /srv/stacks. Driving compose
+    # On the real host Komodo brings these up from /srv/stacks. Driving compose
     # directly tests the compose files, the decrypted env and the network,
-    # without depending on Arcane's scheduler.
+    # without depending on Komodo's scheduler.
     with subtest("every light stack starts and reports healthy"):
         for stack in ${builtins.toJSON startedStacks}:
             services_vm.succeed(
@@ -352,7 +400,7 @@ pkgs.testers.runNixOSTest {
             "curl -sf --max-time 5 http://127.0.0.1:10001/v1/health "
             "| jq -e '.healthy == true'", timeout=120
         )
-        # Firewall posture only, as with Arcane above — the loopback-binding
+        # Firewall posture only, as with Komodo above — the loopback-binding
         # question is answered from a real tailnet peer in tailnet.nix.
         outsider.fail("curl -sf --max-time 5 http://services-vm:10001/v1/health")
 
@@ -373,7 +421,7 @@ pkgs.testers.runNixOSTest {
 
         # -k because the cert comes from Caddy's internal CA here; the routing
         # decision is what is being checked. ntfy is the probe target because
-        # its route has no forward_auth: arcane's route now imports
+        # its route has no forward_auth: komodo's route now imports
         # (protected), and in this single-host VM the outpost upstream does
         # not exist, so a protected route can only 502 (the full forward-auth
         # flow is forward-auth.nix's job).
@@ -384,15 +432,15 @@ pkgs.testers.runNixOSTest {
         assert body.startswith("2") or body.startswith("3"), \
             f"ntfy route returned {body}"
 
-        # And arcane's 502 is asserted AS a 502: it proves the (protected)
+        # And komodo's 502 is asserted AS a 502: it proves the (protected)
         # import is live on that route (a missing route would 404 via the
-        # fallback below; an unprotected one would 2xx straight to arcane).
+        # fallback below; an unprotected one would 2xx straight to Komodo).
         body = services_vm.succeed(
-            "curl -sk --max-time 10 --resolve arcane.svc.idanreed.com:443:127.0.0.1 "
-            "https://arcane.svc.idanreed.com/ -o /dev/null -w '%{http_code}'"
+            "curl -sk --max-time 10 --resolve komodo.svc.idanreed.com:443:127.0.0.1 "
+            "https://komodo.svc.idanreed.com/ -o /dev/null -w '%{http_code}'"
         ).strip()
         assert body == "502", \
-            f"arcane (protected, no outpost in this VM) returned {body}"
+            f"komodo (protected, no outpost in this VM) returned {body}"
 
         # The explicit fallback. Without it a stray subdomain gets a blank 200
         # from the wildcard site, which looks like a working service.
@@ -549,11 +597,11 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # A stack delivered AFTER boot gets its secrets without a reboot
     # -----------------------------------------------------------------------
-    # The gap that used to be a known issue: Arcane's git sync delivers
-    # .sops.env at runtime, the old boot-only oneshot never decrypted it, and
-    # compose started with unset variables. A minutely timer re-runs the
-    # (make-style, idempotent) decrypt now — this subtest plays the part of
-    # the git sync and waits out one tick.
+    # The gap that used to be a known issue: stack-git-sync delivers .sops.env
+    # at runtime, the old boot-only oneshot never decrypted it, and compose
+    # started with unset variables. A minutely timer re-runs the (make-style,
+    # idempotent) decrypt now — this subtest plays the part of the git sync
+    # and waits out one tick.
     with subtest("a runtime-synced stack gets its .env within a timer tick"):
         services_vm.succeed("systemctl is-active decrypt-sops-envs.timer")
         services_vm.succeed(
@@ -568,14 +616,14 @@ pkgs.testers.runNixOSTest {
         )
         mode = services_vm.succeed("stat -c '%a' /srv/stacks/latestack/.env").strip()
         assert mode == "600", f"late .env is mode {mode}"
-        # The decrypt runs as root, so without the explicit chown the .env
-        # would land root-owned at 0600 — unreadable to Arcane (PUID 1000),
-        # which is what deploys the stack. The mode check above cannot catch
-        # that; the owner check is what pins it.
+        # The decrypt runs as root and chowns to 1000:1000 — the /srv/stacks
+        # ownership world (finding #10). Periphery runs as root and would read
+        # a root-owned .env too, so 1000 no longer strictly binds, but decrypt
+        # preserves it anyway; the owner check pins that it is not left root.
         owner = services_vm.succeed(
             "stat -c '%u:%g' /srv/stacks/latestack/.env").strip()
         assert owner == "1000:1000", \
-            f"late .env is owned {owner}, expected 1000:1000 (Arcane's PUID)"
+            f"late .env is owned {owner}, expected 1000:1000 (/srv/stacks world)"
 
         # And no mtime churn for everyone else: a tick that changes nothing
         # must rewrite nothing (compose watches these files).
@@ -610,9 +658,13 @@ pkgs.testers.runNixOSTest {
         services_vm.shutdown()
         services_vm.start()
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
+        # Postgres datadir persists across the reboot (tmpfs is per-boot, but
+        # the compose named volumes + /mnt tmpfs are recreated) — Core still
+        # reconnects and answers. Same tolerant HTTP check as first boot.
         services_vm.wait_until_succeeds(
-            "curl -sf --max-time 5 http://127.0.0.1:10000/ -o /dev/null", timeout=180
+            "curl -s --max-time 5 http://127.0.0.1:10000/ -o /dev/null "
+            "-w '%{http_code}' | grep -qE '^(2|3|4)'", timeout=300
         )
 
     # -----------------------------------------------------------------------

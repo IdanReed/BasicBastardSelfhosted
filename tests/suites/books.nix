@@ -85,7 +85,7 @@
 let
   stackImages = [
     # Every pinned ref from stacks/books/compose.yaml. Arcane's image is NOT
-    # here — bootstrap-arcane is masked below.
+    # here — bootstrap-komodo is masked below.
     images."jvmilazz0_kavita_0_9_1"
     images."ghcr_io_calibrain_shelfmark_1_3_13"
     images."ghcr_io_advplyr_audiobookshelf_2_36_0"
@@ -167,8 +167,8 @@ let
   '';
 
   # Seeds /srv the way the real host gets it: Arcane's git sync on the live
-  # machine, a store copy here. Only the books stack — bootstrap-arcane is
-  # masked, so /srv/arcane is not needed.
+  # machine, a store copy here. Only the books stack — bootstrap-komodo is
+  # masked, so /srv/komodo is not needed.
   seedSrv = pkgs.runCommand "srv-seed-books" { } ''
     mkdir -p $out/stacks/books
     cp -r ${../../stacks/books}/. $out/stacks/books/
@@ -212,7 +212,7 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            # Nothing container-shaped runs at boot (bootstrap-arcane is
+            # Nothing container-shaped runs at boot (bootstrap-komodo is
             # masked), so the contract is just "loaded before the script's
             # first compose up".
             beforeUnits = [ "multi-user.target" ];
@@ -224,9 +224,11 @@ pkgs.testers.runNixOSTest {
         # runtime of a suite that already loads a Chromium-bearing image.
         #
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-arcane chain and Arcane itself. checks.services covers
+        # bootstrap-komodo chain and Arcane itself. checks.services covers
         # exactly that — run it before trusting a change to that chain.
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         # Migrations plus two scans on the sized profile's 2 cores make every
         # healthcheck window a coin toss; 4 keeps it sane.
@@ -444,7 +446,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         # Transient oneshot on a minutely timer, so wait_for_unit would race

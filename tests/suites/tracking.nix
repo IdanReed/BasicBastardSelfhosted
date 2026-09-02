@@ -117,7 +117,9 @@ pkgs.testers.runNixOSTest {
 
         # Arcane stays out of the boot path (mk-stack-suite's rationale);
         # checks.services covers that chain.
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 4;
 
@@ -252,7 +254,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # boot chain + decrypt
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_until_succeeds(

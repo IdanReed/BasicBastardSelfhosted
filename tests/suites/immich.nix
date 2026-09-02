@@ -65,9 +65,12 @@
 
 let
   stackImages = [
-    # The boot chain: bootstrap-arcane is wantedBy multi-user.target, so its
+    # The boot chain: bootstrap-komodo is wantedBy multi-user.target, so its
     # image must be loadable before the script gets control.
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     # The stack, every pinned ref from stacks/immich/compose.yaml:
     images."ghcr_io_immich-app_immich-server_v3_1_0"
     images."ghcr_io_immich-app_immich-machine-learning_v3_1_0"
@@ -79,11 +82,11 @@ let
 
   # Seeds /srv the way the real host gets it: Arcane's git sync on the live
   # machine, a store copy here. Only the immich stack is seeded — the other
-  # stacks are the light suite's job — plus /srv/arcane for bootstrap-arcane.
+  # stacks are the light suite's job — plus /srv/komodo for bootstrap-komodo.
   seedSrv = pkgs.runCommand "srv-seed-immich" { } ''
-    mkdir -p $out/arcane $out/stacks/immich
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks/immich
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     cp -r ${../../stacks/immich}/. $out/stacks/immich/
     chmod -R u+w $out/stacks/immich
@@ -127,15 +130,17 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
+          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
         ];
 
         # Migrations + thumbnail jobs + ML import on the sized profile's 2
         # cores make every healthcheck window a coin toss; 4 keeps it sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
         # /srv stays tmpfs ON PURPOSE: its post-reboot re-seed + re-decrypt is
         # itself the production shape (Arcane sync + the decrypt timer).
@@ -161,7 +166,7 @@ pkgs.testers.runNixOSTest {
         systemd.tmpfiles.rules = [
           # Mirrors nixos/hardware-configuration.nix, which cannot be
           # imported here because it mounts real partitions by partlabel.
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # The /mnt disk is bare ext4; production's separate fast/slow
@@ -197,8 +202,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -274,9 +279,9 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/immich/.env")
         stat = services_vm.succeed(
             "stat -c '%a %u:%g' /srv/stacks/immich/.env"
@@ -288,7 +293,7 @@ pkgs.testers.runNixOSTest {
                   "IMMICH_OIDC_CLIENT_SECRET", "IMMICH_ADMIN_EMAIL"]:
             services_vm.succeed(f"grep -q '^{k}=' /srv/stacks/immich/.env")
 
-    # Images are loaded before bootstrap-arcane; the compose runs below must
+    # Images are loaded before bootstrap-komodo; the compose runs below must
     # not race the load (an `up` mid-load pulls nothing offline).
     services_vm.wait_for_unit("load-test-images.service")
 
@@ -645,7 +650,7 @@ pkgs.testers.runNixOSTest {
         services_vm.shutdown()
         services_vm.start()
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
         # restart:unless-stopped brings the four long-runners back; the
         # oneshots stay exited (restart:"no") — nothing re-seeds, which is
         # exactly why the data must have survived on disk.

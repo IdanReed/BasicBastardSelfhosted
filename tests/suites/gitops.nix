@@ -1,44 +1,46 @@
-# The Arcane GitOps loop, for real: push -> sync -> deploy -> update.
+# The Komodo GitOps loop, for real, OFFLINE: push -> sync -> decrypt -> deploy
+# -> update, driven end to end against a live Komodo Core + Periphery + FerretDB
+# + Postgres, all loaded from the Nix store with no network. This is the
+# invariant-#4 proof (air-gapped deploy plane) and the finding-#11 proof
+# (deploy reads a .env Komodo never created).
 #
-# Every other suite drives `docker compose` by hand and treats Arcane as a
-# service to health-check. This one exercises what Arcane is actually FOR:
-#   (a) a git repository is registered through the API and a GitOps sync
-#       created for a project inside it
-#   (b) triggering a sync clones the repo, copies the WHOLE project directory
-#       (compose.yaml AND the sibling .sops.env — the v1.17 directory-sync
-#       behaviour CLAUDE.md documents as the reason the fork retired)
-#   (c) the delivered .sops.env is decrypted by the host timer within a tick —
-#       the runtime-sync chain the decrypt-sops-envs fix exists for — and the
-#       resulting .env is chowned so Arcane (PUID 1000) can deploy with it
-#   (d) Arcane deploys the project AFTER the decrypt; the container actually
-#       runs and, via env_file, SEES the fixture secret — delivery -> decrypt
-#       -> deploy, the whole loop closed on a value that exists only encrypted
-#   (e) a second push + sync REDEPLOYS the change (the container reflects the
-#       new definition)
+# The chain, and who owns each link (the whole point of the migration is that
+# the age key and the git credentials both stay OFF the socket-touching
+# Periphery):
+#   (a) a compose repo is pushed to the REAL Forgejo stack in the same VM.
+#   (b) stack-git-sync (a HOST unit, not a container) pulls it over loopback
+#       with a read-only Forgejo token and materialises
+#       /srv/stacks/<name>/{compose.yaml,.sops.env} owned 1000:1000.
+#   (c) decrypt-sops-envs (host) writes the sibling .env within a timer tick,
+#       chowned 1000:1000 — the age key never leaves the host.
+#   (d) Komodo Core registers a files_on_host Stack via its API and Periphery
+#       (which dialled Core over the Noise keypair, no passkey) runs
+#       `docker compose up` in that directory. The container comes up AND, via
+#       env_file, SEES the host-decrypted secret — the loop closed on a value
+#       that exists only encrypted. environment="" so Komodo writes no env file
+#       of its own: the decrypted .env is never clobbered (the CLOBBER HAZARD).
+#   (e) a second push + re-sync + redeploy reflects the change.
 #
-# The remote is the REAL Forgejo stack (stacks/forgejo) in the same VM,
-# seeded through its own headless path: CLI admin + CLI-issued token, repo
-# via the API, the project pushed over git-http WITH credentials. Arcane
-# dials it with authType http + username/token — the exact production shape
-# once the repo lives at forgejo.svc.idanreed.com. This retires the
-# git-daemon/git:// transport substitution this suite used to carry (its
-# header said the substitution would go when Forgejo landed — it has; the
-# forgejo suite covers the stack on its own, this one covers Arcane
-# consuming it with credentials).
+# Why the registration is driven by the API and not a Resource-Sync TOML:
+# Komodo's RunSync only REGISTERS resources — deploy-on-sync is upstream-broken
+# (issue #1120), so a deploy is always a separate explicit action (the API call
+# here, or the Stack's /listener/github/stack/{id}/deploy webhook in
+# production). Driving CreateStack + DeployStack directly is the deterministic
+# form of exactly what the webhook triggers, and it does not need Core to hold
+# git credentials for Forgejo. The git-declarative registration path is
+# documented in ServerNotes/designs/komodo-migration.md.
 #
-# One test-only wire remains: Arcane's container is connected to the
-# forgejo_default network at runtime (`docker network connect`), because the
-# production route — https://forgejo.svc.idanreed.com through Caddy bound to
-# a tailnet IP — has no tailnet to ride inside this VM, and the host port is
-# (correctly) loopback-only, unreachable from a container. The smart-HTTP
-# protocol and the credential exchange are identical either way; only the L3
-# path differs. Coverage lost: the Caddy hop and TLS, owned by the
-# services/tailnet suites' routing assertions.
+# The v2 auth model is load-bearing here and DIFFERENT from the design's first
+# draft: Core auto-creates an enabled server "Local" (KOMODO_FIRST_SERVER_NAME)
+# and Periphery DIALS Core (ws://core:9120) authenticating with the Noise
+# keypair in the shared /config/keys volume. The old shared KOMODO_PASSKEY is
+# the deprecated v1 path and is gone. Verified against komodo 2.1.0: ListServers
+# shows "Local" state Ok with no network.
 #
-# The API shapes were probed against the deployed 1.17.4 via its OpenAPI
-# document (the repo create-DTO rejects unknown properties; the 1.16-era bulk
-# sync trigger is gone — autoSync on an interval is the mechanism). The repo
-# create-DTO's auth fields: authType (none|http|ssh) + username + token.
+# The API contract, verified against a live komodo 2.1.0:
+#   login   POST /auth/login/LoginLocalUser {username,password} -> {data:{jwt}}
+#   authed  POST /read|/write|/execute/<Type>  header `authorization: <jwt>`
+#           (RAW jwt, no Bearer), body = the params object.
 
 {
   pkgs,
@@ -51,7 +53,10 @@
 
 let
   stackImages = [
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     # The remote: the real forgejo stack, playing the production forge.
     images."codeberg_org_forgejo_forgejo_16_0"
     # The test project's container image; pinned and preloaded like all others.
@@ -59,38 +64,34 @@ let
   ];
 
   seedSrv = pkgs.runCommand "srv-seed-gitops" { } ''
-    mkdir -p $out/arcane $out/stacks
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
-    # A working-tree copy can capture a developer's locally-decrypted
-    # plaintext .env (gitignored on purpose) in the world-readable store.
-    rm -f $out/arcane/.env
-    # The remote's stack, exactly as Arcane would have delivered it on the
-    # real host. No .sops.env by design: forgejo self-generates its keys in
-    # the volume (see the stack's header).
+    mkdir -p $out/komodo $out/stacks
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
+    # A working-tree copy can capture a developer's locally-decrypted plaintext
+    # .env (gitignored on purpose) in the world-readable store.
+    rm -f $out/komodo/.env
+    # The remote's stack, exactly as stack-git-sync would deliver it. No
+    # .sops.env by design: forgejo self-generates its keys in the volume.
     mkdir -p $out/stacks/forgejo
     cp -r ${../../stacks/forgejo}/. $out/stacks/forgejo/
     chmod -R u+w $out/stacks/forgejo
     rm -f $out/stacks/forgejo/.env
   '';
 
-  # The project as it lives in git. Two revisions, staged as directories the
-  # test script commits in order — the second changes the container's
-  # definition so a redeploy is observable.
+  # The project as it lives in git, under stacks/ so stack-git-sync (which
+  # rsyncs the repo's stacks/ into /srv/stacks) delivers it. Two revisions, so
+  # the second changes the container's definition and a redeploy is observable.
   projectV1 = pkgs.runCommand "gitops-project-v1" { } ''
-    mkdir -p $out/teststack
-    cat > $out/teststack/compose.yaml <<'EOF'
+    mkdir -p $out/stacks/teststack
+    cat > $out/stacks/teststack/compose.yaml <<'EOF'
     services:
       gitops-test:
         image: alpine:3.21
         container_name: gitops_test
         command: ["sleep", "infinity"]
-        # Consumes the host-decrypted secret, same as every production stack;
-        # the test script therefore deploys only AFTER the decrypt gate, so
-        # the up cannot race the timer into unset variables.
-        # required:false — finding #11: Arcane validates in a staging dir
-        # where the host-decrypted .env cannot exist; plain env_file aborts
-        # the whole sync there.
+        # Consumes the host-decrypted secret, same as every production stack.
+        # required:false — the decrypted .env is written host-side by
+        # decrypt-sops-envs; a plain env_file would hard-fail before it exists.
         env_file:
           - path: .env
             required: false
@@ -98,14 +99,14 @@ let
           revision: "one"
         restart: unless-stopped
     EOF
-    # A sibling secret file: delivered by directory sync, decrypted by the
-    # host timer into the .env the compose above reads through env_file.
-    cp ${../fixtures/ntfy.sops.env} $out/teststack/.sops.env
+    # A sibling secret file: delivered by stack-git-sync, decrypted by the host
+    # timer into the .env the compose above reads through env_file.
+    cp ${../fixtures/ntfy.sops.env} $out/stacks/teststack/.sops.env
   '';
 
   projectV2 = pkgs.runCommand "gitops-project-v2" { } ''
-    mkdir -p $out/teststack
-    cat > $out/teststack/compose.yaml <<'EOF'
+    mkdir -p $out/stacks/teststack
+    cat > $out/stacks/teststack/compose.yaml <<'EOF'
     services:
       gitops-test:
         image: alpine:3.21
@@ -113,9 +114,6 @@ let
         command: ["sleep", "infinity"]
         # Same env_file as revision one — the redeploy must keep reading the
         # decrypted secret, not drop it with the definition change.
-        # required:false — finding #11: Arcane validates in a staging dir
-        # where the host-decrypted .env cannot exist; plain env_file aborts
-        # the whole sync there.
         env_file:
           - path: .env
             required: false
@@ -123,7 +121,7 @@ let
           revision: "two"
         restart: unless-stopped
     EOF
-    cp ${../fixtures/ntfy.sops.env} $out/teststack/.sops.env
+    cp ${../fixtures/ntfy.sops.env} $out/stacks/teststack/.sops.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -142,17 +140,25 @@ pkgs.testers.runNixOSTest {
           profiles.manualTailscaleAutoconnect
           (profiles.sopsFixture ../fixtures/services-vm.sops.yaml)
           (profiles.sized {
-            # 3072 sufficed with git-daemon as the remote; forgejo (sqlite,
-            # but a real forge) rides alongside arcane now, and the extra GB
-            # keeps a slow first-start from flaking the --wait window.
-            memoryMB = 4096;
+            # Komodo (Core+Periphery+FerretDB+Postgres) rides alongside a real
+            # Forgejo here; the headroom keeps the DB init and first Core connect
+            # from flaking under the parallel load of `run.sh all`.
+            memoryMB = 6144;
             diskMB = 12288;
           })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          {
+            # stack-git-sync's TRIGGER is masked: at boot Forgejo is not up yet
+            # and STACK_GIT_TOKEN still holds the fixture placeholder, so a timer
+            # tick would fail its clone and ntfy-alert. The test seeds Forgejo +
+            # a real token, overwrites the secret, then starts the unit by hand —
+            # the unit that runs is the production one, only its trigger moves.
+            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         virtualisation.fileSystems = {
@@ -174,11 +180,12 @@ pkgs.testers.runNixOSTest {
         };
 
         systemd.tmpfiles.rules = [
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
-          # The remote's volume root, owned 1000 to match its USER_UID (the
-          # same ownership world as /srv/stacks — finding #10).
+          "d /mnt/fast/komodo 0755 root root -"
+          "d /mnt/fast/komodo/pgdata 0755 root root -"
+          # The remote's volume root, owned 1000 to match its USER_UID.
           "d /mnt/fast/forgejo 0755 1000 1000 -"
         ];
 
@@ -194,8 +201,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -211,46 +218,100 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     import json
 
-    API = "http://127.0.0.1:10000/api"
-    JAR = "/tmp/arcane-cookies"
-    # Session-cookie auth; every call goes through the jar.
-    CURL = f"curl -sf --max-time 20 -b {JAR} -c {JAR} -H 'Content-Type: application/json'"
+    KAPI = "http://127.0.0.1:10000"
+    # Komodo admin, from the komodo fixture (KOMODO_INIT_ADMIN_*).
+    KADMIN = "admin"
+    KPASS = "test_admin_password_not_secret"
 
-    # The remote forge (stacks/forgejo), seeded headless below.
-    FORGE_API = "http://127.0.0.1:10550/api/v1"
-    ADMIN = "forgeadmin"
-    # Test-only credential, VM-local — the real instance gets its admin
-    # created the same headless way at deploy time, with a real password.
-    PASSWORD = "test_forgejo_password_not_secret"
+    # The remote forge (stacks/forgejo), seeded headless below. stack-git-sync
+    # hardcodes user "idan" + repo "idan/BasicBastardSelfhosted" + host
+    # 127.0.0.1:10550, so the seed must match those names exactly.
+    FORGE = "http://127.0.0.1:10550"
+    FORGE_API = f"{FORGE}/api/v1"
+    GUSER = "idan"
+    GPASS = "test_forgejo_password_not_secret"
+    GREPO = "BasicBastardSelfhosted"
 
     def diag(label):
         print(f"=== diagnostics: {label} ===")
         for cmd in [
-            # 300 lines, not 50: the minutely sync poller emits ~12 lines per
-            # tick, so a deploy error from even 5 minutes ago scrolls out of a
-            # 50-line tail — which is exactly what hid the sweep-16b recreate
-            # failure. Errors separately, unbounded by the spam.
-            "docker logs arcane 2>&1 | tail -300",
-            "docker logs arcane 2>&1 | grep -iE 'err|fail|fatal' | tail -40",
-            "docker logs forgejo 2>&1 | tail -30",
             "docker ps -a",
-            "ls -laR /srv/stacks | head -40",
-            f"curl -si --max-time 10 -b {JAR} {API}/environments | head -20",
+            "docker logs komodo 2>&1 | tail -60",
+            "docker logs komodo 2>&1 | grep -iE 'err|fail|fatal' | tail -30",
+            "docker logs komodo_periphery 2>&1 | tail -40",
+            "docker logs forgejo 2>&1 | tail -20",
+            "ls -laR /srv/stacks | head -50",
+            "journalctl -u stack-git-sync --no-pager | tail -40",
+            "cat /srv/stacks/teststack/.env 2>&1 | head",
         ]:
             print("--- " + cmd)
             print(services_vm.execute(cmd)[1])
 
+    def klogin():
+        # POST /auth/login/LoginLocalUser -> {"type":"Jwt","data":{"jwt":...}}
+        jwt = services_vm.succeed(
+            f"curl -sf --max-time 15 -X POST {KAPI}/auth/login/LoginLocalUser "
+            "-H 'Content-Type: application/json' "
+            f"-d '{json.dumps({'username': KADMIN, 'password': KPASS})}' "
+            "| jq -re '.data.jwt'"
+        ).strip()
+        assert jwt and jwt != "null", f"no jwt from komodo login: {jwt!r}"
+        return jwt
+
+    def kapi(jwt, path, body):
+        # Authed POST: header `authorization: <raw jwt>`, body = params object.
+        return services_vm.succeed(
+            f"curl -sf --max-time 30 -X POST {KAPI}{path} "
+            f"-H 'authorization: {jwt}' -H 'Content-Type: application/json' "
+            f"-d '{json.dumps(body)}'"
+        )
+
     start_all()
-    services_vm.wait_for_unit("bootstrap-arcane.service")
-    services_vm.wait_until_succeeds(
-        "curl -sf --max-time 5 http://127.0.0.1:10000/ -o /dev/null", timeout=180
-    )
+    services_vm.wait_for_unit("bootstrap-komodo.service")
 
     # -----------------------------------------------------------------------
-    # The remote: a real Forgejo, seeded with revision one
+    # Komodo boots offline and Periphery attaches over the Noise keypair
     # -----------------------------------------------------------------------
-    with subtest("forgejo boots and is seeded headless (admin, token, private repo)"):
-        # The stack's own healthcheck is /api/healthz; --wait gates on it.
+    with subtest("komodo Core answers and Periphery is connected (offline)"):
+        services_vm.wait_until_succeeds(
+            f"curl -s --max-time 5 {KAPI}/ -o /dev/null -w '%{{http_code}}' "
+            "| grep -qE '^(2|3|4)'", timeout=300
+        )
+        JWT = klogin()
+        # The v2 first-server model: Core auto-created "Local"; Periphery dialled
+        # in and must reach state Ok before any deploy can land on it.
+        try:
+            services_vm.wait_until_succeeds(
+                f"curl -sf -X POST {KAPI}/read/ListServers "
+                f"-H 'authorization: {JWT}' -H 'Content-Type: application/json' "
+                "-d '{}' | jq -re '.[] | select(.name==\"Local\") | .info.state' "
+                "| grep -qx Ok",
+                timeout=120,
+            )
+        except Exception:
+            diag("periphery connect")
+            raise
+        global SID
+        SID = services_vm.succeed(
+            f"curl -sf -X POST {KAPI}/read/ListServers "
+            f"-H 'authorization: {JWT}' -H 'Content-Type: application/json' "
+            "-d '{}' | jq -re '.[] | select(.name==\"Local\") | .id'"
+        ).strip()
+        assert SID and SID != "null", f"no Local server id: {SID!r}"
+
+    with subtest("invariant #1: the age key never entered Periphery"):
+        env = services_vm.succeed(
+            "docker inspect komodo_periphery --format '{{json .Config.Env}}'")
+        assert "AGE-SECRET-KEY" not in env, "age secret key leaked into Periphery env"
+        assert "SOPS_AGE_KEY" not in env, f"SOPS_AGE_KEY in Periphery env: {env!r}"
+        mounts = services_vm.succeed(
+            "docker inspect komodo_periphery --format '{{json .Mounts}}'")
+        assert "sops-nix" not in mounts, f"sops key dir mounted into Periphery: {mounts!r}"
+
+    # -----------------------------------------------------------------------
+    # The remote: a real Forgejo, seeded with revision one under user "idan"
+    # -----------------------------------------------------------------------
+    with subtest("forgejo boots and is seeded headless (idan, token, private repo)"):
         try:
             services_vm.succeed(
                 "docker compose -f /srv/stacks/forgejo/compose.yaml "
@@ -259,31 +320,31 @@ pkgs.testers.runNixOSTest {
         except Exception:
             diag("forgejo up")
             raise
-        # -u 1000:1000: the CLI must run as the server's uid (USER_UID) or
-        # it creates root-owned state the server cannot touch.
+        # -u 1000:1000: the CLI must run as the server's uid or it creates
+        # root-owned state the server cannot touch.
         services_vm.succeed(
             "docker exec -u 1000:1000 forgejo forgejo admin user create "
-            f"--admin --username {ADMIN} --password {PASSWORD} "
-            "--email forgeadmin@svc.idanreed.com --must-change-password=false"
+            f"--admin --username {GUSER} --password {GPASS} "
+            "--email idan@svc.idanreed.com --must-change-password=false"
         )
         global TOKEN, PUSH_URL
         TOKEN = services_vm.succeed(
             "docker exec -u 1000:1000 forgejo forgejo admin user "
-            f"generate-access-token --username {ADMIN} --token-name gitops "
+            f"generate-access-token --username {GUSER} --token-name gitops "
             "--scopes all --raw"
         ).strip()
         assert TOKEN and "\n" not in TOKEN and " " not in TOKEN, (
             f"unexpected token output: {TOKEN!r}"
         )
-        # PRIVATE on purpose: Arcane must authenticate to clone it, which is
-        # the credentialed path this suite upgrade exists to prove.
+        # PRIVATE on purpose: stack-git-sync must authenticate to clone it,
+        # which is the credentialed path this suite exists to prove.
         services_vm.succeed(
             f"curl -sf --max-time 10 -X POST -H 'Authorization: token {TOKEN}' "
             "-H 'Content-Type: application/json' "
-            "-d '{\"name\":\"remote\",\"private\":true,\"auto_init\":false}' "
+            f"-d '{json.dumps({'name': GREPO, 'private': True, 'auto_init': False})}' "
             f"{FORGE_API}/user/repos -o /dev/null"
         )
-        PUSH_URL = f"http://{ADMIN}:{TOKEN}@127.0.0.1:10550/{ADMIN}/remote.git"
+        PUSH_URL = f"http://{GUSER}:{TOKEN}@127.0.0.1:10550/{GUSER}/{GREPO}.git"
 
     with subtest("revision one is pushed over authenticated http"):
         services_vm.succeed(
@@ -294,184 +355,87 @@ pkgs.testers.runNixOSTest {
             "git add -A && git commit -m 'revision one' -q && "
             f"git push -q {PUSH_URL} main"
         )
-        # The credential is load-bearing: anonymous smart-http on the
-        # private repo refuses (GIT_TERMINAL_PROMPT=0 or git hangs asking)...
+        # The credential is load-bearing: anonymous smart-http on the private
+        # repo refuses...
         services_vm.fail(
             "GIT_TERMINAL_PROMPT=0 git ls-remote "
-            f"http://127.0.0.1:10550/{ADMIN}/remote.git"
+            f"http://127.0.0.1:10550/{GUSER}/{GREPO}.git"
         )
         # ...and with it the ref is served.
         services_vm.succeed(f"git ls-remote {PUSH_URL} main | grep -q main")
 
-    with subtest("arcane gets a route to the forge (test-only network connect)"):
-        # The host port is loopback-only (correct — Caddy is the only path
-        # in) and a container cannot reach a loopback-bound host port, so
-        # Arcane joins forgejo's compose network to stand in for the
-        # production tailnet+Caddy route. See the header for exactly what
-        # this does and does not substitute.
-        services_vm.succeed("docker network connect forgejo_default arcane")
-        global GIT_URL
-        GIT_URL = f"http://forgejo:3000/{ADMIN}/remote.git"
-
     # -----------------------------------------------------------------------
-    # Drive the API
+    # stack-git-sync (host) delivers the files; decrypt writes .env
     # -----------------------------------------------------------------------
-    with subtest("login and register the repository + sync"):
+    with subtest("stack-git-sync pulls the repo into /srv/stacks (1000:1000)"):
+        # Overwrite the fixture-placeholder STACK_GIT_TOKEN with idan's real
+        # token (root can write the 0400 sops secret), then run the production
+        # unit by hand — its trigger is masked, its behaviour is not.
+        services_vm.succeed(
+            f"printf '%s' '{TOKEN}' > /run/secrets/STACK_GIT_TOKEN")
         try:
-            services_vm.succeed(
-                f"{CURL} -X POST -d "
-                "'{\"username\":\"arcane\",\"password\":\"arcane-admin\"}' "
-                f"{API}/auth/login -o /dev/null"
-            )
+            services_vm.succeed("systemctl start stack-git-sync.service")
         except Exception:
-            print(services_vm.execute(
-                f"curl -si --max-time 10 -X POST -H 'Content-Type: application/json' "
-                "-d '{\"username\":\"arcane\",\"password\":\"arcane-admin\"}' "
-                f"{API}/auth/login | head -25")[1])
-            diag("login")
+            diag("stack-git-sync")
             raise
-
-        env_id = services_vm.succeed(
-            f"{CURL} {API}/environments | jq -r '.data[0].id'"
-        ).strip()
-        assert env_id and env_id != "null", f"no environment id: {env_id!r}"
-
-        # No 'branch' here: 1.17.4's create-DTO rejects unknown properties
-        # (422 unexpected property body.branch) — the branch belongs to the
-        # sync, not the repository. Auth per the DTO (authType none|http|ssh
-        # + username/token): http with the CLI-issued token, the production
-        # shape against a real forge.
-        repo_body = json.dumps({
-            "name": "test-remote",
-            "url": GIT_URL,
-            "authType": "http",
-            "username": ADMIN,
-            "token": TOKEN,
-        })
-        try:
-            repo_id = services_vm.succeed(
-                f"{CURL} -X POST -d '{repo_body}' "
-                f"{API}/customize/git-repositories | jq -r '.data.id'"
-            ).strip()
-            assert repo_id and repo_id != "null", f"no repository id: {repo_id!r}"
-        except Exception:
-            # 1.17.4's real surface, from the horse's mouth: Huma serves the
-            # OpenAPI document. Dump every git-ish path + the raw response.
-            print(services_vm.execute(
-                f"curl -s -b {JAR} {API}/openapi.json "
-                "| jq -r '.paths | keys[]' | grep -iE 'git|repo' | head -20")[1])
-            print(services_vm.execute(
-                f"curl -si -b {JAR} -H 'Content-Type: application/json' "
-                f"-X POST -d '{repo_body}' "
-                f"{API}/customize/git-repositories | head -25")[1])
-            diag("repo create")
-            raise
-
-        # Print the deployed version's create-DTO before using it — the field
-        # set (sync mode, deploy behaviour) is exactly what drifted since the
-        # 1.16 source this suite was first written against.
-        schema_jq = (
-            ".paths[\"/environments/{id}/gitops-syncs\"].post.requestBody"
-            ".content[\"application/json\"].schema as $s | "
-            "if $s[\"$ref\"] then .components.schemas[($s[\"$ref\"] | split(\"/\") | last)] "
-            "else $s end"
-        )
-        # The jq program contains double quotes but no single quotes, so a
-        # plain single-quote wrap is shell-safe.
-        print(services_vm.succeed(
-            f"curl -s -b {JAR} {API}/openapi.json | jq '{schema_jq}'"
-        ))
-
-        sync_body = json.dumps({
-            "name": "teststack",
-            "repositoryId": repo_id,
-            "branch": "main",
-            "composePath": "teststack/compose.yaml",
-            "projectName": "teststack",
-            "autoSync": True,
-            "syncInterval": 1,
-            # Off by default in 1.17.4 despite the upstream changelog phrasing
-            # ("single file sync mode" in the logs); without it the sibling
-            # .sops.env never leaves the repo.
-            "syncDirectory": True,
-        })
-        try:
-            services_vm.succeed(
-                f"{CURL} -X POST -d '{sync_body}' "
-                f"{API}/environments/{env_id}/gitops-syncs -o /dev/null"
-            )
-        except Exception:
-            # Dump the deployed version's actual create schema.
-            print(services_vm.execute(
-                f"curl -s -b {JAR} {API}/openapi.json | jq -r "
-                "'.paths[\"/environments/{id}/gitops-syncs\"].post.requestBody"
-                ".content[\"application/json\"].schema'")[1])
-            print(services_vm.execute(
-                f"curl -si -b {JAR} -H 'Content-Type: application/json' "
-                f"-X POST -d '{sync_body}' "
-                f"{API}/environments/{env_id}/gitops-syncs | tail -5")[1])
-            raise
-
-    with subtest("autoSync delivers the project within its interval"):
-        # 1.17.4's sync DELIVERS files and registers a project; it has no
-        # deploy flag at all (the create-DTO above is the proof). Deployment
-        # is a separate, explicit action — and it happens only AFTER the
-        # decrypt gate below, because the compose consumes .env via env_file.
-        # autoSync on the 1-minute interval is the production cadence.
-        try:
-            services_vm.wait_until_succeeds(
-                "test -s /srv/stacks/teststack/compose.yaml", timeout=180
-            )
-        except Exception:
-            diag("first sync")
-            raise
-
-    with subtest("directory sync delivered the sibling secret, and the host decrypted it"):
-        # The v1.17 behaviour the fork existed for, plus the runtime decrypt
-        # chain: file lands via Arcane, .env appears via the minutely timer.
-        # Gating the deploy on this is the production ordering — delivery ->
-        # decrypt -> deploy — not a test convenience.
+        services_vm.succeed("test -s /srv/stacks/teststack/compose.yaml")
         services_vm.succeed("test -s /srv/stacks/teststack/.sops.env")
-        # 150s: worst case the delivery lands just after a timer tick, so the
-        # budget must hold a full minutely interval plus a decrypt pass — 90s
-        # left almost no slack over that.
+        # Delivered files are chowned 1000:1000 (the /srv/stacks world).
+        owner = services_vm.succeed(
+            "stat -c '%u:%g' /srv/stacks/teststack/compose.yaml").strip()
+        assert owner == "1000:1000", f"compose delivered as {owner}, expected 1000:1000"
+
+    with subtest("decrypt-sops-envs turns the delivered secret into a 0600 .env"):
+        # The runtime decrypt chain: file lands via stack-git-sync, .env appears
+        # via the minutely timer. 150s holds a full interval plus a decrypt pass.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/teststack/.env", timeout=150
         )
-        # The decrypt script chowns to 1000:1000 so Arcane (PUID 1000) can
-        # read it at deploy time — existence alone would pass with a
-        # root-owned .env that compose-in-Arcane cannot open.
+        mode = services_vm.succeed(
+            "stat -c '%a' /srv/stacks/teststack/.env").strip()
+        assert mode == "600", f".env is mode {mode}, expected 600"
         owner = services_vm.succeed(
-            "stat -c '%u:%g' /srv/stacks/teststack/.env"
-        ).strip()
+            "stat -c '%u:%g' /srv/stacks/teststack/.env").strip()
         assert owner == "1000:1000", f".env owned by {owner}, expected 1000:1000"
 
-    with subtest("deploying the synced project runs the container"):
-        # The project id materialises on the sync record once the first sync
-        # completes.
-        project_id = services_vm.wait_until_succeeds(
-            f"{CURL} {API}/environments/{env_id}/gitops-syncs "
-            "| jq -re '.data[0].projectId // empty'",
-            timeout=60,
-        ).strip()
+    # -----------------------------------------------------------------------
+    # Register + deploy the files_on_host Stack; the loop closes on the secret
+    # -----------------------------------------------------------------------
+    with subtest("Komodo deploys the files_on_host Stack and it reads the host .env"):
+        create_body = {
+            "name": "teststack",
+            "config": {
+                "server_id": SID,
+                "files_on_host": True,
+                "run_directory": "/srv/stacks/teststack",
+                "file_paths": ["compose.yaml"],
+                # 🚨 environment EMPTY so Komodo writes NO env file and cannot
+                # clobber decrypt-sops-envs' .env; env_file_path points away
+                # from .env as belt-and-suspenders. skip_secret_interp: Periphery
+                # gets no Komodo secrets — the host already wrote them.
+                "environment": "",
+                "env_file_path": "komodo.env",
+                "skip_secret_interp": True,
+                # auto_pull=false: DeployStack defaults to `docker compose pull`
+                # first, which hits the registry and FAILS in this air-gapped VM
+                # (registry-1.docker.io: no such host). The test image is
+                # pre-loaded from the Nix store (loadImages), exactly as the
+                # offline harness requires — so skip the pull and deploy the
+                # local image. Production (with egress) keeps the default true
+                # and pulls the PINNED tag.
+                "auto_pull": False,
+            },
+        }
         try:
-            services_vm.succeed(
-                f"{CURL} -X POST "
-                f"{API}/environments/{env_id}/projects/{project_id}/up "
-                "-o /dev/null"
-            )
+            kapi(JWT, "/write/CreateStack", create_body)
+            kapi(JWT, "/execute/DeployStack",
+                 {"stack": "teststack", "services": [], "stop_time": None})
             services_vm.wait_until_succeeds(
                 "docker inspect -f '{{.State.Running}}' gitops_test "
                 "| grep -qx true",
-                timeout=120,
+                timeout=180,
             )
         except Exception:
-            print(services_vm.execute(
-                f"curl -s -b {JAR} {API}/openapi.json "
-                "| jq -r '.paths | keys[] | select(test(\"projects\"))' | head -20")[1])
-            print(services_vm.execute(
-                f"curl -si -b {JAR} -X POST "
-                f"{API}/environments/{env_id}/projects/{project_id}/up | head -15")[1])
             diag("first deploy")
             raise
         rev = services_vm.succeed(
@@ -479,18 +443,26 @@ pkgs.testers.runNixOSTest {
         ).strip()
         assert rev == "one", f"deployed revision {rev!r}, expected 'one'"
         # The loop, closed on a real value: this string exists only inside the
-        # encrypted fixture, so the container seeing it proves the
-        # Arcane-driven deploy actually read the host-decrypted .env — a
-        # container that merely runs proves none of that.
+        # encrypted fixture, so the container seeing it proves the deploy
+        # actually read the HOST-decrypted .env — a .env Komodo never wrote
+        # (environment=""). A container that merely runs proves none of that.
         val = services_vm.succeed(
             "docker exec gitops_test printenv NTFY_SMTP_SENDER_USER"
         ).strip()
         assert val == "test", f"NTFY_SMTP_SENDER_USER={val!r}, expected 'test'"
 
+    with subtest("Komodo did not clobber the host .env (environment empty)"):
+        # environment="" => Komodo writes no env file at all. Neither a stray
+        # komodo.env nor a rewritten .env may appear.
+        services_vm.fail("test -e /srv/stacks/teststack/komodo.env")
+        val = services_vm.succeed(
+            "grep '^NTFY_SMTP_SENDER_USER=' /srv/stacks/teststack/.env").strip()
+        assert val == "NTFY_SMTP_SENDER_USER=test", f".env was altered: {val!r}"
+
     # -----------------------------------------------------------------------
     # Revision two: the loop closes
     # -----------------------------------------------------------------------
-    with subtest("a new commit redeploys the changed project"):
+    with subtest("a new commit re-syncs and redeploys the changed project"):
         services_vm.succeed(
             "cd /root/work && "
             "cp -r --no-preserve=mode ${projectV2}/. . && "
@@ -498,26 +470,18 @@ pkgs.testers.runNixOSTest {
             f"git push -q {PUSH_URL} main"
         )
         try:
-            # Sync tick delivers the new file...
+            # Re-run the host sync (production: the minutely timer) to deliver
+            # the new compose...
+            services_vm.succeed("systemctl start stack-git-sync.service")
             services_vm.wait_until_succeeds(
                 "grep -q 'revision: \"two\"' /srv/stacks/teststack/compose.yaml",
-                timeout=180,
+                timeout=60,
             )
-            # ...the decrypted .env must still be there for env_file (a sync
-            # rewriting the directory plus a decrypt-timer race could leave a
-            # window without it; wait like the first deploy did)...
-            services_vm.wait_until_succeeds(
-                "test -s /srv/stacks/teststack/.env", timeout=150
-            )
-            # ...and an explicit up applies it.
-            services_vm.succeed(
-                f"{CURL} -X POST "
-                f"{API}/environments/{env_id}/projects/{project_id}/up "
-                "-o /dev/null"
-            )
-            # 300 not 120: under a parallel `run.sh all` this VM shares the host
-            # with several others, and the recreate exceeded 120s once (sweep
-            # 12e) while passing alone — the wait is load-bound, not broken.
+            # ...the decrypted .env must still be present for env_file...
+            services_vm.succeed("test -s /srv/stacks/teststack/.env")
+            # ...and a redeploy applies it (production: the /listener webhook).
+            kapi(JWT, "/execute/DeployStack",
+                 {"stack": "teststack", "services": [], "stop_time": None})
             services_vm.wait_until_succeeds(
                 "docker inspect -f '{{index .Config.Labels \"revision\"}}' "
                 "gitops_test | grep -qx two",
@@ -526,5 +490,10 @@ pkgs.testers.runNixOSTest {
         except Exception:
             diag("redeploy")
             raise
+        # The secret survived the redeploy — not dropped with the definition.
+        val = services_vm.succeed(
+            "docker exec gitops_test printenv NTFY_SMTP_SENDER_USER"
+        ).strip()
+        assert val == "test", f"after redeploy NTFY_SMTP_SENDER_USER={val!r}"
   '';
 }

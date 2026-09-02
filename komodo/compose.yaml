@@ -1,0 +1,150 @@
+# Komodo — the deploy plane for the services VM (replaces arcane/).
+#
+# Four containers, one trust boundary:
+#   core       — web UI + API, the ONLY published port (loopback 10000).
+#   periphery  — the socket-toucher; runs `docker compose up` for the stacks.
+#   ferretdb   — Mongo-wire front (Apache-2.0) that Core talks to.
+#   postgres   — FerretDB's backend; the ONLY stateful component (backup target).
+#
+# The age key NEVER enters this compose. decrypt-sops-envs (host unit) walks
+# /srv/stacks/*/.sops.env -> .env; Periphery only reads a .env that already
+# exists. See ServerNotes/designs/komodo-migration.md.
+services:
+  # State. FerretDB stores documents as JSONB here; pg_dumpall captures all of
+  # Komodo's state (backup-prepare.sh). Version pinned: docdb updates can break.
+  postgres:
+    image: ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0
+    # komodo_db, NOT komodo_postgres: backup-prepare.sh's pg_dumpall loop and
+    # the backup-coverage lint both key on container_name = "<svc>_db".
+    container_name: komodo_db
+    labels:
+      komodo.skip: # never auto-stop own DB
+    # No publish. Private komodo net only.
+    volumes:
+      - /mnt/fast/komodo/pgdata:/var/lib/postgresql/data
+    environment:
+      # Username is a fixed LITERAL, not a secret: fleet convention is
+      # POSTGRES_USER = the stack name (immich/wger/windmill/dawarich), matched
+      # by backup-prepare.sh's `pg_dumpall -U komodo` and the backup-coverage
+      # lint. Only the password is interpolated from /srv/komodo/.env.
+      POSTGRES_USER: komodo
+      POSTGRES_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
+      POSTGRES_DB: postgres
+    # Cold-boot gate. Core has NO DB retry — it exits FATAL and crash-loops on
+    # `restart` until the DB accepts connections; gating dependents on a ready
+    # cluster keeps the offline suite green (start_period covers docdb initdb).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U komodo -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      - komodo
+    restart: unless-stopped
+
+  # Mongo-wire adapter. Stateless — everything lives in postgres above.
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:2.7.0
+    container_name: komodo_ferretdb
+    labels:
+      komodo.skip:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - komodo_ferretdb_state:/state
+    environment:
+      # Literal user komodo; password interpolated from .env — keep it hex
+      # (rand -hex) so no '$' / ':' / '@' / '/' breaks source-ing or this URL.
+      FERRETDB_POSTGRESQL_URL: postgres://komodo:${KOMODO_DATABASE_PASSWORD}@postgres:5432/postgres
+    networks:
+      - komodo
+    restart: unless-stopped
+
+  # Deploy plane. The slot Arcane held.
+  core:
+    image: ghcr.io/moghtech/komodo-core:2.1.0
+    container_name: komodo
+    init: true
+    labels:
+      komodo.skip:
+    # ferretdb's own healthcheck gates Core, so first connect finds a live DB
+    # (see postgres cold-boot note).
+    depends_on:
+      ferretdb:
+        condition: service_healthy
+    # Loopback only. Reach it through Caddy at komodo.svc.idanreed.com; the UI
+    # drives Periphery (root-equivalent) so it must never bind the tailnet.
+    ports:
+      - '127.0.0.1:10000:9120'
+    environment:
+      # Non-secret config. Headless: no browser wizard. Secrets (INIT_ADMIN_*,
+      # WEBHOOK, JWT, DATABASE password) arrive via env_file below.
+      KOMODO_HOST: https://komodo.svc.idanreed.com
+      KOMODO_LOCAL_AUTH: 'true' # password login; default off
+      KOMODO_DISABLE_USER_REGISTRATION: 'true' # single admin
+      KOMODO_DATABASE_ADDRESS: ferretdb:27017
+      KOMODO_DATABASE_USERNAME: komodo # literal, matches postgres role; pw via env_file
+      # v2 auth model — NOT the deprecated shared passkey. Core auto-creates an
+      # ENABLED server named "Local" on first boot; Periphery dials Core
+      # (ws://core:9120) and attaches AS it, authenticating with the Noise
+      # keypair both write into the shared /config/keys volume. No CreateServer
+      # API call, no inbound Periphery port. (Verified against komodo 2.1.0:
+      # ListServers shows "Local" state Ok, offline. Passkey path is v1-legacy.)
+      KOMODO_FIRST_SERVER_NAME: Local
+      KOMODO_PERIPHERY_PUBLIC_KEY: file:/config/keys/periphery.pub
+    volumes:
+      # Noise keypairs, shared with periphery (core.key/pub + periphery.key/pub).
+      # Regenerable — not backed up (named volume under /var/lib/docker).
+      - komodo_keys:/config/keys
+    # Long form, required:false (finding #11): decrypt writes /srv/komodo/.env
+    # host-side; a plain `env_file: .env` would hard-fail before first decrypt.
+    env_file:
+      - path: .env
+        required: false
+    networks:
+      - komodo # reach ferretdb + periphery
+      - homelab # reach forgejo for Resource-Sync polling
+    restart: unless-stopped
+
+  # The socket-toucher. No published port — Periphery DIALS OUT to Core
+  # (ws://core:9120) and holds the connection open, so it needs no listener at
+  # all. A published :8120 would be a root-equivalent interface on the tailnet.
+  periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.1.0
+    container_name: komodo_periphery
+    init: true
+    labels:
+      komodo.skip:
+    depends_on:
+      - core
+    volumes:
+      - komodo_keys:/config/keys
+      # Socket + stack files. /srv/stacks same path in/out so files_on_host
+      # run_directory paths resolve identically on the host daemon (upstream
+      # discussion #180) and are children of PERIPHERY_ROOT_DIRECTORY below.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/stacks:/srv/stacks
+    environment:
+      # v2 keypair model (NOT the deprecated PERIPHERY_PASSKEYS): Periphery
+      # dials Core and registers as the "Local" first-server, trusting Core's
+      # pubkey from the shared /config/keys volume.
+      PERIPHERY_CORE_ADDRESS: ws://core:9120
+      PERIPHERY_CONNECT_AS: Local
+      PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
+      # files_on_host reads compose files from here; run_directory must be a
+      # CHILD of this root. Same path in/out (see the /srv/stacks bind).
+      PERIPHERY_ROOT_DIRECTORY: /srv/stacks
+    networks:
+      - komodo
+    restart: unless-stopped
+
+volumes:
+  komodo_keys:
+  komodo_ferretdb_state:
+
+networks:
+  komodo:
+  homelab:
+    external: true
