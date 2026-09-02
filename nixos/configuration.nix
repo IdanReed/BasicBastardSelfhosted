@@ -505,7 +505,7 @@ in
       Type = "oneshot";
       # NOT RemainAfterExit: starting an active unit is a no-op, so a
       # remain-after-exit oneshot would silently absorb every timer tick and
-      # the runtime-sync gap would be back. bootstrap-arcane's Requires= is
+      # the runtime-sync gap would be back. bootstrap-komodo's Requires= is
       # satisfied by the successful start in the same boot transaction; it
       # does not need the unit to linger.
     };
@@ -520,7 +520,7 @@ in
 
       # Per-file failures accumulate instead of aborting the walk, so one bad
       # .sops.env cannot stop every healthy stack from decrypting — and, at
-      # boot, cannot leave bootstrap-arcane's Requires= forever unsatisfied
+      # boot, cannot leave bootstrap-komodo's Requires= forever unsatisfied
       # over a single broken stack. $failing collects WHICH files failed
       # (glob order, so deterministic) for the change-detection stamp below.
       fail=0
@@ -653,7 +653,7 @@ in
   # .env, and Komodo Core registers the Stacks from the git TOML syncs.
   #
   # Timer-driven, NOT wantedBy multi-user.target: /srv/stacks is pre-seeded at
-  # provisioning (as /srv/arcane was for Arcane) and Forgejo — the git remote —
+  # provisioning (as /srv/komodo was for Arcane) and Forgejo — the git remote —
   # is itself a managed stack, so a boot-time pull would race a not-yet-running
   # Forgejo and page. The minutely timer converges once Forgejo is up.
   systemd.services.stack-git-sync = {

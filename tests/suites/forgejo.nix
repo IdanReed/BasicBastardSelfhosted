@@ -5,7 +5,7 @@
 # round-tripped, and the anonymous + off-host negatives.
 #
 # Boots ONLY the forgejo stack on the real services-VM config —
-# bootstrap-arcane is taken out of the boot path, the same trade
+# bootstrap-komodo is taken out of the boot path, the same trade
 # lib/mk-stack-suite.nix makes (the arcane boot chain is checks.services'
 # job, and the Arcane-driven GitOps loop against this same Forgejo is
 # checks.gitops' job).
@@ -63,7 +63,7 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            # Nothing container-shaped runs at boot here (bootstrap-arcane is
+            # Nothing container-shaped runs at boot here (bootstrap-komodo is
             # masked below), so the only contract is "loaded before the test
             # script's compose up", i.e. before the boot finishes.
             beforeUnits = [ "multi-user.target" ];
@@ -74,7 +74,7 @@ pkgs.testers.runNixOSTest {
         # bootstrap ordering are irrelevant to proving the forgejo stack.
         #
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-arcane chain and Arcane itself — checks.services covers
+        # bootstrap-komodo chain and Arcane itself — checks.services covers
         # the chain, checks.gitops covers Arcane driving THIS forgejo.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
         # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
