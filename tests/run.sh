@@ -11,7 +11,7 @@
 #   ./tests/run.sh backrest       # heavy: config seeding + the key gate
 #   ./tests/run.sh rotation       # heavy: secret rotation restarts both consumers
 #   ./tests/run.sh gitops         # komodo: push -> sync -> decrypt -> deploy -> update
-#   ./tests/run.sh forwardauth    # heavy: forward-auth pilot (bentopdf) end to end
+#   ./tests/run.sh forwardauth    # heavy: the gate is on bentopdf, scoped to it (no login leg)
 #   ./tests/run.sh forgejo        # heavy: healthz, admin seed, API repo, push/clone
 #   ./tests/run.sh media          # heavy: gluetun kill-switch, x265 guard, EICAR chain
 #   ./tests/run.sh immich         # heavy: config render, v3 API, thumbs sans ML, reboot
@@ -22,7 +22,7 @@
 #   ./tests/run.sh dawarich       # heavy: the force_ssl/sidekiq interlock + seeded admin
 #   ./tests/run.sh vaultwarden    # the ADMIN_TOKEN $-mangling regression + backup paths
 #   ./tests/run.sh notes-sync     # heavy: rmfakecloud create-once window + the bare 22000 publish
-#   ./tests/run.sh util           # glance/it-tools/excalidash: the https-redirect healthcheck trap
+#   ./tests/run.sh util           # no-secrets stack, glance offline, the unhealthy-container alert
 #   ./tests/run.sh windmill       # heavy: the seeded dependency cache + admin@windmill.dev retired
 #   ./tests/run.sh restore        # the restore DRILL: dumps + a real restic repo round trip
 #   ./tests/run.sh tandoor        # heavy: the silent SQLite fallback, proven absent
@@ -35,6 +35,8 @@
 #   ./tests/run.sh samba          # heavy: an authenticated SMB round trip, and a refused one
 #   ./tests/run.sh docspace       # heavy: the machine key in play is the one from sops
 #   ./tests/run.sh journald-logging # the log driver + the `docker logs` contract
+#   ./tests/run.sh silverbullet   # heavy: git-sync vs a real Forgejo — mirror, remote-wins, canary
+#   ./tests/run.sh outline        # migrations, the local OIDC redirect leg, uid-1001 writes, backup
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh proxmox        # image build gate (also part of all)
 #   ./tests/run.sh proxmox-boot   # boots the image: cloud-init key -> sops decrypt
@@ -58,7 +60,7 @@ fi
 
 case "$TARGET" in
   debug)
-    SUITE="${2:?usage: run.sh debug <vps|services|tailnet|authentik|paperless|backrest>}"
+    SUITE="${2:?usage: run.sh debug <suite> — any suite target from the list above}"
     # driverInteractive drops you into a Python REPL with the machines
     # available. start_all(), then e.g. headscale_vps.shell_interact() for a
     # root shell inside the guest. This is the only sane way to work out why an
@@ -112,7 +114,7 @@ case "$TARGET" in
     exec nix-build tests "${NIX_ARGS[@]}" -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging | silverbullet | outline)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 

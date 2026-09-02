@@ -37,7 +37,7 @@ let
   sources = import ./lib/sources.nix { lockFile = ../headscale-vps/flake.lock; };
 
   pkgs = import sources.nixpkgs { inherit system; };
-  lib = pkgs.lib;
+  inherit (pkgs) lib;
 
   images = import ./lib/images.nix;
 
@@ -201,6 +201,12 @@ let
     # 131 call sites across tests/ rely on. Cheap (~20 s of test script) and
     # the only place rateLimitBurst = 0 is actually proven to take effect.
     journald-logging = callSuite ./suites/journald-logging.nix { };
+    # The wiki bake-off's dedicated halves — each also keeps its generic
+    # stackCheck (the util precedent). silverbullet stages a real Forgejo so
+    # the git-sync path (seed, mirror, remote-wins, canary) is driven for the
+    # first time; outline covers everything provable without an IdP.
+    silverbullet = callSuite ./suites/silverbullet.nix { };
+    outline = callSuite ./suites/outline.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting
@@ -247,20 +253,17 @@ let
     "owl"
     "util"
     # Both wikis are generic-suite-shaped: no restart:"no" init containers, and
-    # every service healthchecked. Two things the generic suite CANNOT see
-    # here, recorded so the green is not over-read:
-    #   outline      — it boots and reports healthy with Authentik unreachable
+    # every service healthchecked. What the generic green does NOT prove is
+    # carried by the dedicated suites (checks.outline / checks.silverbullet):
+    #   outline      — boots and reports healthy with Authentik unreachable
     #                  (measured), so this proves the stack runs, never that
-    #                  anyone can log in. Outline has no local accounts, so
-    #                  login is the only way in and nothing automated covers it.
-    #   silverbullet — mk-stack-suite creates /mnt bind sources root-owned,
-    #                  while production tmpfiles give the space 1000:1000. The
-    #                  server adapts (it infers PUID from that owner) but the
-    #                  git-sync sidecar, pinned to uid 1000, cannot write and
-    #                  spends the suite alerting instead of mirroring. It stays
-    #                  HEALTHY throughout, which is the designed behaviour —
-    #                  but this suite therefore exercises the failure path, not
-    #                  the sync path.
+    #                  anyone can log in (no local accounts).
+    #   silverbullet — ownership IS correct here (the stack-dirs.nix rules are
+    #                  spliced in, /space is 1000:1000), but the fixture's
+    #                  GIT_SYNC_REMOTE points at 127.0.0.1:10550 and no
+    #                  Forgejo runs in this VM, so fetch/rebase/push fail
+    #                  every cycle: only the local half of the sidecar runs —
+    #                  the failure path, alerting, healthy throughout.
     "outline"
     "silverbullet"
   ] (name: mkStackSuite { stack = name; });
@@ -298,7 +301,7 @@ rec {
   # guest agent. Outside `suites` (a raw qemu runCommand, no driverInteractive).
   proxmoxBoot = import ./suites/proxmox-boot.nix {
     inherit pkgs lib sopsModule;
-    nixpkgs = sources.nixpkgs;
+    inherit (sources) nixpkgs;
   };
 
   # Disk layout test for headscale-vps/disk-config.nix, via disko's own
