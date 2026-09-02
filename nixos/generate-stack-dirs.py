@@ -1,29 +1,17 @@
 #!/usr/bin/env python3
 """Generate nixos/stack-dirs.nix from the compose files.
 
-WHY THIS EXISTS
----------------
-Docker creates a missing bind-mount source as a ROOT-OWNED directory at
-container start. That default is the bug — it is what made seerr crash-loop on
-first deploy (EACCES mkdir as uid 1000), what makes MySQL's `--initialize`
-refuse its datadir, and what makes syncthing report a HEALTHY container with an
-errored folder. So every /mnt bind source named by a compose file gets a
-`systemd.tmpfiles` 'd' rule with a deliberate owner.
+WHY: docker creates a missing bind-mount source ROOT-OWNED at container start
+— the default behind seerr's EACCES crash-loop, MySQL's `--initialize`
+refusing its datadir, and syncthing reporting HEALTHY with an errored folder.
+So every /mnt bind source named by a compose file gets a `systemd.tmpfiles`
+'d' rule with a deliberate owner. (The hand-maintained list this replaced
+named 17 of 22 stacks; 13 bind sources had no rule and nothing noticed.)
 
-Those rules used to be ~95 hand-written lines in hardware-configuration.nix,
-kept in sync with the compose files by a hand-maintained list in the
-`tmpfiles-ownership` lint. The list named 17 of 22 stacks, so 13 bind sources
-across backrest, caddy, forgejo, ntfy and paperless had no rule at all and
-nothing noticed for a whole campaign.
-
-WHY A GENERATED, CHECKED-IN FILE
---------------------------------
-`nixos/` is its own flake root and a flake cannot reference files outside its
-root, so the NixOS config CANNOT read ../stacks/ at eval time — the same
-constraint that triplicates ssh-pubkeys.nix. Hence: this script writes a
-CHECKED-IN stack-dirs.nix, and the `stack-dirs-generated` lint re-runs this
-exact script and byte-compares. Drift is a build failure, exactly like
-ssh-pubkey-parity. The human step is not removed; the SILENT GAP is.
+WHY GENERATED AND CHECKED IN: `nixos/` is its own flake root and cannot read
+../stacks/ at eval time (the constraint that triplicates ssh-pubkeys.nix), so
+this script writes a CHECKED-IN stack-dirs.nix and the `stack-dirs-generated`
+lint re-runs it and byte-compares — drift is a build failure.
 
 USAGE
 -----
@@ -33,9 +21,8 @@ USAGE
     python3 generate-stack-dirs.py --repo <repo-root> --write
     python3 generate-stack-dirs.py --manifest m.json --json      # for the lints
 
-`--manifest` takes [{"stack": ..., "path": ...}, ...] so the lints can feed the
-compose files they discovered themselves (a Nix-side readDir) through the same
-code path; the rule computation below is then provably the same one.
+`--manifest` takes [{"stack": ..., "path": ...}, ...] so the lints can feed
+their own compose discovery (a Nix-side readDir) through this same code path.
 """
 
 from __future__ import annotations
@@ -69,29 +56,23 @@ DEFAULT_OWNER = ("root", "root")
 
 
 # ---------------------------------------------------------------------------
-# Per-stack prose. Moved verbatim from hardware-configuration.nix — the reason
-# a given ownership is what it is IS the valuable part of these rules, and it
-# has to live where the value is decided, which is now here.
+# Per-stack prose — the reason an ownership is what it is lives here, where
+# the value is decided.
 # ---------------------------------------------------------------------------
-# A stack that gains /mnt bind mounts and has no entry here makes this script
-# EXIT NONZERO (see _check_tables), which fails the stack-dirs-generated lint.
-# That is deliberate: root:root is also docker's default, so inheriting it
-# silently is indistinguishable from choosing it, and this fleet has been bitten
-# by that four times. An empty string is a legitimate entry — it means "every
-# directory here is root:root and the image runs as root".
+# A stack that gains /mnt bind mounts with no entry here makes this script
+# EXIT NONZERO (_check_tables), failing the stack-dirs-generated lint:
+# root:root is also docker's default, so inheriting it silently is
+# indistinguishable from choosing it. An empty string is a legitimate entry —
+# "every directory here is root:root and the image runs as root".
 #
-# ⚠ KOMODO: komodo/compose.yaml is scanned by this generator even though it
-# lives outside stacks/, because it is bootstrapped onto the same host — the
-# deploy-plane manager that replaced arcane/. It contributes the Postgres
-# datadir /mnt/fast/komodo/pgdata (the FerretDB backend), the ONLY stateful
-# part of the Komodo stack; Core, Periphery and FerretDB keep no /mnt state.
+# ⚠ KOMODO: komodo/compose.yaml is scanned even though it lives outside
+# stacks/, because the deploy plane is bootstrapped onto the same host. It
+# contributes only /mnt/fast/komodo/pgdata (the FerretDB backend), the ONLY
+# stateful part of the Komodo stack.
 #
-# The tables below are the tripwire the generator exists for: with a
-# STACK_NOTES/DIR_NOTES entry present but the compose not yet mounting the
-# path, this script exits nonzero with "DIR_NOTES has an entry for
-# /mnt/fast/komodo/pgdata, which no compose file bind-mounts" and the
-# stack-dirs-generated lint goes red. The reverse — compose mounting a path
-# this table says nothing about — is the case the table exists to catch.
+# Both directions trip: a table entry for a path no compose file mounts exits
+# nonzero, and a mounted path with no entry is the case the table exists to
+# catch.
 STACK_NOTES = {
     "actual": """\
 1001:1001 — the uid the compose file PINS with `user: "1001:1001"`. The
@@ -121,12 +102,8 @@ All root:root. The backrest image declares no USER and its compose sets
 none — it must run as root to read every service's data through the
 /mnt/{fast,slow}:ro mounts — and config-init is plain alpine, also root.
 config/ must stay WRITABLE (:ro breaks it): Backrest rewrites config.json
-whenever anything changes in the UI.
-
-These had NO rule at all until the generator landed: stacks/backrest was
-never in the tmpfiles-ownership lint's hand-maintained COMPOSE_FILES list.
-tests/suites/backrest.nix has run green against exactly this ownership
-since it was written (backrest.nix, systemd.tmpfiles.rules).""",
+whenever anything changes in the UI. tests/suites/backrest.nix runs green
+against exactly this ownership.""",
     "beszel": "",
     "books": """\
 Ownership, VERIFIED per image (annex §2.2):
@@ -154,12 +131,8 @@ Ownership, VERIFIED per image (annex §2.2):
 root:root. The official caddy image runs as root (it binds 80/443 and here
 network_mode: host), so the ACME account key and the issued certificates
 under data/ are written as root. Nothing else on the host reads them.
-
-This stack was never in the tmpfiles-ownership lint's COMPOSE_FILES list
-either, so both directories were left to docker to create. That happened to
-be harmless — docker's default IS root:root — but it was luck, not a
-decision: tests/suites/services-vm.nix and tailnet.nix pre-create
-/mnt/fast/caddy root-owned and have run green throughout.""",
+tests/suites/services-vm.nix and tailnet.nix pre-create /mnt/fast/caddy
+root-owned and run green.""",
     "dawarich": """\
 Both of its entrypoints gosu-drop to PUID/PGID *only if* they start as uid
 0, chowning first — which is why its compose sets no `user:` and these are
@@ -203,15 +176,10 @@ this ownership and pushes/clones against it.
 
 /data holds app.ini — which carries the SECRET_KEY, INTERNAL_TOKEN and JWT
 secrets Forgejo self-generates on first start — plus gitea.db and every
-repository. There is no .sops.env for this stack precisely because that
-material lives here instead, which makes this directory the whole of
-Forgejo's identity and state.
-
-Never had a rule before the generator: stacks/forgejo was missing from the
-tmpfiles-ownership lint's COMPOSE_FILES list, so this — the git ROOT for the
-homelab, including the compose repo the deploy-plane manager (Komodo, via the
-host stack-git-sync unit) pulls from — was left to docker to create
-root-owned.""",
+repository, including the compose repo the deploy plane (Komodo, via the
+host stack-git-sync unit) pulls from. There is no .sops.env for this stack
+precisely because that material lives here instead, which makes this
+directory the whole of Forgejo's identity and state.""",
     "gatus": "",
     "ghostfolio": """\
 One directory, root:root, and that is VERIFIED rather than inherited: the
@@ -334,13 +302,11 @@ ALL 1000:1000, and for two different reasons:
 root:root. The ntfy image declares no USER and the compose sets none, so
 `ntfy serve` runs as root and owns both trees. lib/ holds the auth database
 (user.db) and the attachment store; cache/ holds cache.db, the recent-message
-buffer, which is deliberately transient — see the backup-coverage allowlist.
+buffer, deliberately transient — see the backup-coverage allowlist.
 
-Another stack that was missing from the tmpfiles-ownership lint's
-COMPOSE_FILES list. It is the single place every failure in the fleet gets
-reported, so it silently failing to start would take the alert path with it;
-tests/suites/backrest.nix and services-vm.nix both pre-create these
-root-owned and have run green throughout.""",
+The single place every failure in the fleet gets reported: silently failing
+to start would take the alert path with it. tests/suites/backrest.nix and
+services-vm.nix pre-create these root-owned and run green.""",
     "outline": """\
 1001:1001 for the app's data directory, and that is VERIFIED rather than
 assumed: the image ends on `USER nodejs` and `id` inside the pinned
@@ -361,10 +327,7 @@ paperless entrypoint runs as root, maps its `paperless` user onto
 USERMAP_UID/USERMAP_GID (1000 here) and chowns data/media/consume/export
 before dropping privileges, and the postgres image chowns pgdata itself from
 its root entrypoint. tests/suites/paperless.nix creates exactly these six
-directories root-owned and runs the whole document pipeline against them.
-
-Missing from the tmpfiles-ownership lint's COMPOSE_FILES list until the
-generator landed — five bind sources with no rule.""",
+directories root-owned and runs the whole document pipeline against them.""",
     "samba": """\
 smbd runs as ROOT and must — it needs to setuid per connection — so /data is
 root-owned.""",
@@ -584,12 +547,8 @@ actually needs to capture.""",
 104:107 = the image's `USER onlyoffice`. NOT load-bearing: the compose
 file sets `user: root` following upstream, because the entrypoint edits
 /etc/nginx and /app/onlyoffice/config before dropping into supervisord.
-These are declared anyway so that dropping `user: root` later degrades
-rather than breaking, and so the ownership matches what the app expects
-if it ever drops privileges internally. (An earlier version of this
-comment claimed root ownership was what broke the first suite run. It
-was not — that was mysqldata below. Corrected rather than left to be
-believed.)""",
+Declared anyway so that dropping `user: root` later degrades rather than
+breaking. (The first suite run broke on mysqldata below, not on this.)""",
     },
     "/mnt/fast/docspace/logs": {"owner": ("104", "107")},
     "/mnt/fast/docspace/mysqldata": {

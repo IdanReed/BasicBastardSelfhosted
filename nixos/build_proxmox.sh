@@ -21,13 +21,10 @@ if [[ ! -f "$AGE_KEY_FILE" ]]; then
     exit 1
 fi
 
-# Indent every line to match the YAML block scalar below.
-#
-# age-keygen output is three lines ("# created:", "# public key:", then the
-# key). Interpolating it raw put only the FIRST line at the block's indent and
-# left the rest at column 0, which terminates the block scalar and produces
-# invalid YAML — cloud-init then failed, the key was never written, and
-# sops-nix could not decrypt anything. Silently, on every re-image.
+# Indent EVERY line to match the block scalar below: age-keygen output is
+# three lines, and interpolating it raw leaves lines 2-3 at column 0 —
+# terminating the scalar, invalidating the YAML, and silently leaving the key
+# unwritten on every re-image.
 AGE_KEY_INDENTED=$(sed 's/^/      /' "$AGE_KEY_FILE")
 
 echo "> Stopping VM $VM_ID if running..."

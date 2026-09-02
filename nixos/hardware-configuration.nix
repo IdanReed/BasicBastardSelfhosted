@@ -3,16 +3,12 @@
 {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
-    # Every per-stack `d /mnt/...` tmpfiles rule, GENERATED from the compose
-    # files by nixos/generate-stack-dirs.sh and checked in. It is a separate
-    # file because nixos/ is its own flake root and cannot read ../stacks/ at
-    # eval time (the constraint that also triplicates ssh-pubkeys.nix), so the
-    # only way to keep the rules honest is to generate them and have a lint
-    # regenerate + byte-compare. Do not hand-edit it; edit the generator.
+    # Per-stack `d /mnt/...` tmpfiles rules, GENERATED from the compose files
+    # — see nixos/generate-stack-dirs.py for the why. Do not hand-edit; the
+    # stack-dirs-generated lint regenerates and byte-compares.
     #
-    # 🚨 It is a NEW file, and flakes only see git-tracked files — `git add`
-    # nixos/stack-dirs.nix before any `nixos-rebuild --flake` or the import
-    # resolves to nothing.
+    # 🚨 Flakes only see git-tracked files — `git add` nixos/stack-dirs.nix
+    # before any `nixos-rebuild --flake` or the import resolves to nothing.
     ./stack-dirs.nix
   ];
 
@@ -63,30 +59,23 @@
     depends = [ "/mnt/fast" ];
   };
 
-  # Ensure required directories exist.
-  #
-  # ONLY the rules that are not derived from a compose file live here. Every
-  # per-stack /mnt bind-mount source (and its parents) is generated into
-  # ./stack-dirs.nix — see the import above. A rule added here for a path some
-  # compose file mounts would be invisible to that generator and would drift
-  # the moment the stack moved, which is the failure this whole split exists
-  # to end.
+  # ONLY rules NOT derived from a compose file live here; per-stack /mnt bind
+  # sources are generated into ./stack-dirs.nix (import above). A rule added
+  # here for a compose-mounted path would be invisible to the generator and
+  # drift when the stack moves.
   systemd.tmpfiles.rules = [
     # The Komodo deploy plane's compose dir (Core/Periphery/FerretDB/Postgres).
     # root:root — it holds compose + the decrypted .env, no non-root owner.
     "d /srv/komodo 0755 root root -"
-    # 1000:1000: stack-git-sync (host) writes project directories here as 1000,
-    # and decrypt-sops-envs chowns the .env to 1000. Root-owned, the sync could
-    # never create a project directory here — GitOps delivery silently dead
-    # (caught by tests/suites/gitops.nix). Periphery runs as root and reads the
-    # 0600 .env regardless, so 1000 no longer strictly binds but is preserved.
+    # 1000:1000: stack-git-sync (host) writes project directories here as
+    # 1000, decrypt-sops-envs chowns the .env to 1000. Root-owned, the sync
+    # could never create a directory — GitOps delivery silently dead (caught
+    # by tests/suites/gitops.nix).
     "d /srv/stacks 0755 1000 1000 -"
-    # Live-host migration: tmpfiles 'd' only applies its owner when it CREATES
-    # the directory — on the real VM /srv/stacks already existed (root-owned,
-    # populated) before the 1000:1000 rule above landed, so 'd' never fixes
-    # it. 'Z' recursively re-owns everything on each boot; the mode field is
-    # left '-' on purpose so per-file modes (0600 .env vs 0644 compose) stay
-    # untouched.
+    # Live-host migration: 'd' only applies its owner when it CREATES the
+    # directory, and on the real VM /srv/stacks pre-existed root-owned. 'Z'
+    # recursively re-owns on each boot; mode left '-' on purpose so per-file
+    # modes (0600 .env vs 0644 compose) stay untouched.
     "Z /srv/stacks - 1000 1000 -"
     # NOT stack-derived: this is the bind SOURCE for the /var/lib/docker mount
     # declared above, i.e. the docker daemon's own storage, not a service's

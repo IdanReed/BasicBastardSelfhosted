@@ -39,13 +39,9 @@
 
       # Proxmox VMA image for initial provisioning.
       #
-      # Both attributes must live in ONE `packages.${system}` set. Nix does not
-      # merge two separate dynamic-attribute paths that share a key, so
-      # declaring `packages.${system}.proxmox-image` and
-      # `packages.${system}.default` as siblings raised
-      #   error: dynamic attribute 'x86_64-linux' already defined
-      # which made the whole flake fail to evaluate — `nix build
-      # .#proxmox-image` could never have worked.
+      # ⚠ Both attributes must live in ONE `packages.${system}` set: Nix does
+      # not merge sibling dynamic-attribute paths sharing a key
+      # (error: dynamic attribute 'x86_64-linux' already defined).
       packages.${system} = rec {
         proxmox-image = nixos-generators.nixosGenerate {
           inherit system;
