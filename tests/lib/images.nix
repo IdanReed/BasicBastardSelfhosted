@@ -42,6 +42,30 @@
     finalImageName = "apache/tika";
     finalImageTag = "3.3.0.0";
   };
+  "astradraw_api_1_0_1" = {
+    composeRef = "astradraw/api:1.0.1";
+    imageName = "astradraw/api";
+    imageDigest = "sha256:ab71911363b1dcafb35e737570bf642e1ae3e8cf9b4286a51183584ee20ee2ba";
+    hash = "sha256-LvC+AHo/aXfgAeBgS85cl4xqLLkRxhzHUQ4xeBXwfu0=";
+    finalImageName = "astradraw/api";
+    finalImageTag = "1.0.1";
+  };
+  "astradraw_app_1_0_1" = {
+    composeRef = "astradraw/app:1.0.1";
+    imageName = "astradraw/app";
+    imageDigest = "sha256:ce6261a39e5bfc377f17938b53126267744115f08a7d35e859059bba5bf48ae8";
+    hash = "sha256-5PyPHnRUhQv3uTUh4W6cNpcEw6R/qq7Kt+Z6TuadSBA=";
+    finalImageName = "astradraw/app";
+    finalImageTag = "1.0.1";
+  };
+  "astradraw_room_1_0_1" = {
+    composeRef = "astradraw/room:1.0.1";
+    imageName = "astradraw/room";
+    imageDigest = "sha256:7cff5ef3a367eab1c39d51d00a9cd10366e1eade6aa408e531376359c8beea05";
+    hash = "sha256-68li1rVE2xjkaqtv/uoqJcnjl/lRrt1zJTEfUhiljnA=";
+    finalImageName = "astradraw/room";
+    finalImageTag = "1.0.1";
+  };
   "binwiederhier_ntfy_v2_11_0" = {
     composeRef = "binwiederhier/ntfy:v2.11.0";
     imageName = "binwiederhier/ntfy";
@@ -290,6 +314,14 @@
     finalImageName = "ghcr.io/moghtech/komodo-periphery";
     finalImageTag = "2.1.0";
   };
+  "ghcr_io_onemorebyte_hydroxide_v0_2_30" = {
+    composeRef = "ghcr.io/onemorebyte/hydroxide:v0.2.30";
+    imageName = "ghcr.io/onemorebyte/hydroxide";
+    imageDigest = "sha256:6f6a855bf0f8c40b02d590a54038ef27b0623af5a57bf2df5aff406577814b65";
+    hash = "sha256-2zrpgtiV8ifUE0xwux/JZw/v0RytQbqwN6C8NP+LMWw=";
+    finalImageName = "ghcr.io/onemorebyte/hydroxide";
+    finalImageTag = "v0.2.30";
+  };
   "ghcr_io_paperless-ngx_paperless-ngx_2_20" = {
     composeRef = "ghcr.io/paperless-ngx/paperless-ngx:2.20";
     imageName = "ghcr.io/paperless-ngx/paperless-ngx";
@@ -394,14 +426,6 @@
     finalImageName = "grafana/grafana";
     finalImageTag = "13.2.0";
   };
-  "grafana_loki_3_7_7" = {
-    composeRef = "grafana/loki:3.7.7";
-    imageName = "grafana/loki";
-    imageDigest = "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500";
-    hash = "sha256-6t3JDDRrvT/6RQ/m+eoHdOxWr3LZ6JlsKKPDPGPD128=";
-    finalImageName = "grafana/loki";
-    finalImageTag = "3.7.7";
-  };
   "henrygd_beszel_0_18_8" = {
     composeRef = "henrygd/beszel:0.18.8";
     imageName = "henrygd/beszel";
@@ -453,8 +477,8 @@
   "lscr_io_linuxserver_prowlarr_2_5_2" = {
     composeRef = "lscr.io/linuxserver/prowlarr:2.5.2";
     imageName = "lscr.io/linuxserver/prowlarr";
-    imageDigest = "sha256:ab91301778251f82a31bbfc87f0497376d59e84439d9a1ceff6a61d594d1e3d7";
-    hash = "sha256-trhuZM+usGIDVAv4K1qcitKrxHYJdcyBfar3mHLfQpQ=";
+    imageDigest = "sha256:91844fa2c927ad6ede5630127183cc7868b175f6223e83e6a5da1fffea2aa782";
+    hash = "sha256-9tGyntMFWcLC519wYPwXk9UW4D/PYoHXbJNDrF+IRrY=";
     finalImageName = "lscr.io/linuxserver/prowlarr";
     finalImageTag = "2.5.2";
   };
@@ -594,6 +618,14 @@
     finalImageName = "syncthing/syncthing";
     finalImageTag = "2.1.3";
   };
+  "theohbrothers_docker-isync_1_5_0" = {
+    composeRef = "theohbrothers/docker-isync:1.5.0";
+    imageName = "theohbrothers/docker-isync";
+    imageDigest = "sha256:cb105cddafae0e23e6c465988b802403e7827927bf4fd6b617fad966d0d87715";
+    hash = "sha256-L+msRBFzJRPJDTLS0Rvatw0l7524KBnrgB9LB1SiP4Y=";
+    finalImageName = "theohbrothers/docker-isync";
+    finalImageTag = "1.5.0";
+  };
   "valkey_valkey_9_1-alpine" = {
     composeRef = "valkey/valkey:9.1-alpine";
     imageName = "valkey/valkey";
@@ -609,6 +641,14 @@
     hash = "sha256-eZu7Be9lm/hCvqkG+oZ7fyP+YTBG3osSeXWrIZiV/2k=";
     finalImageName = "vaultwarden/server";
     finalImageTag = "1.37.2";
+  };
+  "victoriametrics_victoria-logs_v1_52_0" = {
+    composeRef = "victoriametrics/victoria-logs:v1.52.0";
+    imageName = "victoriametrics/victoria-logs";
+    imageDigest = "sha256:47b820890d64c4575a2a0a46415dcd8a4fd59a0f1fcd6a377693d7aea639442e";
+    hash = "sha256-wuZVm9Ep2oauyOXpYBvRXfBvuRHlntX5m4VcCimAOnk=";
+    finalImageName = "victoriametrics/victoria-logs";
+    finalImageTag = "v1.52.0";
   };
   "wealthfolio_wealthfolio_3_7_0" = {
     composeRef = "wealthfolio/wealthfolio:3.7.0";

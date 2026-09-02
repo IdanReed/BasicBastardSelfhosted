@@ -784,13 +784,14 @@ entries:
       policy_engine_mode: any
       meta_description: "Host and container resource monitoring"
 
-  # Grafana — log search over Loki (stacks/logging, 10455). Browser surface
-  # only, and unusually clean for it: the INGESTION path never touches Caddy
-  # at all (Alloy pushes to loki:3100 on the stack's own compose network, and
-  # Grafana queries the same address), so there is no API caller for the
-  # outpost to 302 and no Unauthenticated-URL carve-out is needed. There is
-  # deliberately NO provider for Loki or Alloy — neither has a Caddy route,
-  # and Alloy's UI is bound to its container's loopback and never published.
+  # Grafana — log search over VictoriaLogs (stacks/logging, 10455). Browser
+  # surface only, and unusually clean for it: the INGESTION path never touches
+  # Caddy at all (Alloy pushes to victorialogs:9428 on the stack's own compose
+  # network, and Grafana queries the same address), so there is no API caller
+  # for the outpost to 302 and no Unauthenticated-URL carve-out is needed.
+  # There is deliberately NO provider for VictoriaLogs or Alloy — neither has
+  # a Caddy route, and Alloy's UI is bound to its container's loopback and
+  # never published.
   #
   # ⚠ The one carve-out this WOULD need is /api/live/* (Grafana Live
   # websockets, which the outpost 302s). It is not here because Live is

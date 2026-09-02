@@ -1,14 +1,25 @@
-# Logging — Loki + Alloy + Grafana (Monitoring range, 10455 and 10456).
+# Logging — VictoriaLogs + Alloy + Grafana (Monitoring range, 10455 and 10456).
 # Design: ServerNotes/designs/service-monitoring-stack-research.md; the
-# retention arithmetic lives in loki.yaml's header and the journald half of it
-# in nixos/configuration.nix.
+# retention arithmetic lives in the victorialogs block below (there is no
+# config file any more — VictoriaLogs is flag-driven) and the journald half of
+# it in nixos/configuration.nix.
 #
 # WHY THIS EXISTS, when gatus probes every vhost and beszel trends every
 # resource: both of those answer "is it up". Neither can answer "why did it
 # stop", and the fleet's only tool for that today is `docker logs` on a
 # guessed container name — which shows one container, only while it still
-# exists, with no search and no history across a restart. Grafana over Loki
-# turns the whole fleet's output into one queryable, 30-day window.
+# exists, with no search and no history across a restart. Grafana over
+# VictoriaLogs turns the whole fleet's output into one queryable window.
+#
+# 🔄 VICTORIALOGS REPLACED LOKI HERE (2026-09). The reason is the one knob
+# Loki structurally lacks: SIZE-BASED RETENTION. Loki's only retention is
+# time, so the 100 GB budget was a 720h window plus a daily du alarm and a
+# human; VictoriaLogs enforces it natively with
+# -retention.maxDiskSpaceUsageBytes (details in the victorialogs block).
+# The old store at /mnt/slow/loki is ABANDONED — it was reconstructible
+# telemetry, deliberately never backed up, and nothing migrates from it;
+# delete the directory whenever the space is wanted. Alloy stays; only its
+# sink URL changed (see config.alloy).
 #
 # 🚨 JOURNALD, NOT THE DOCKER SOCKET. This is the load-bearing decision of the
 # whole stack and it is Idan's hard rule. The obvious design — Alloy with
@@ -29,67 +40,121 @@
 #
 # Three services:
 #
-#   loki     the store. uid 10001 (from the image), chunks on /mnt/slow.
-#            NO healthcheck is possible — see its block.
-#   alloy    the collector. Runs as ROOT (the image sets no USER), which is
-#            what lets it read root:systemd-journal 0640 journal files.
-#            No published port, no socket, no vhost.
-#   grafana  the UI. uid 472, published loopback-only, behind Caddy with
-#            `import protected`.
+#   victorialogs  the store. Runs as ROOT (image config User "0"; unlike
+#                 loki's 10001), data on /mnt/slow. NO healthcheck is
+#                 possible — see its block.
+#   alloy         the collector. Runs as ROOT (the image sets no USER), which
+#                 is what lets it read root:systemd-journal 0640 journal
+#                 files. No published port, no socket, no vhost.
+#   grafana       the UI. uid 472, published loopback-only, behind Caddy with
+#                 `import protected`. Needs the victoriametrics-logs-datasource
+#                 plugin, installed by a ONE-TIME operator step — see its block.
 #
 # Everything talks over the compose project's own default bridge network, by
 # SERVICE NAME. Nothing here joins `homelab`: the only cross-container traffic
-# is alloy -> loki and grafana -> loki, and both are inside this project.
+# is alloy -> victorialogs and grafana -> victorialogs, and both are inside
+# this project.
 
 services:
   # ---------------------------------------------------------------------------
-  # Loki — the log store
+  # VictoriaLogs — the log store
   # ---------------------------------------------------------------------------
-  loki:
-    image: grafana/loki:3.7.7
-    container_name: loki
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.52.0
+    container_name: victorialogs
     restart: unless-stopped
 
-    # The image's own default is -config.file=/etc/loki/local-config.yaml,
-    # which is a demo config with no retention and a different data layout.
-    # Naming ours explicitly is the difference between 30-day retention and
-    # keeping every chunk forever.
-    command: -config.file=/etc/loki/config.yaml
+    # ⚠ The tag has a `v` AND no suffix. Older VictoriaLogs tags looked like
+    # `v1.0.0-victorialogs`; the suffix is gone as of the 2026 releases
+    # (v1.52.0 verified to exist on Docker Hub, pushed 2026-07-16 — the
+    # chronologically newer v1.51.1 is a cluster-upgrade backport, not the
+    # latest release). Run ./tests/update-images.sh after any change here.
+
+    # VictoriaLogs has NO config file — every knob is a flag, so the whole
+    # config surface is this list (loki.yaml is gone with Loki). Spelled out
+    # rather than defaulted so the retention contract is visible in one place.
+    command:
+      # The bind target below. The image default is a RELATIVE
+      # "victoria-logs-data" under WorkingDir "/", which happens to be the
+      # same path — pinned absolutely anyway so the bind mount and the flag
+      # cannot drift apart.
+      - -storageDataPath=/victoria-logs-data
+
+      # 🚨 THE 100 GB CAP, NATIVE AT LAST — the headline reason this replaced
+      # Loki. When total disk usage at -storageDataPath exceeds this,
+      # VictoriaLogs drops the OLDEST per-day partitions until it fits.
+      # Honest fine print (upstream-documented): it always keeps at least the
+      # two most recent days, so a burst bigger than 100 GiB in two days
+      # would overshoot the cap rather than drop today's logs — for this
+      # fleet that failure mode is science fiction, but it is why the
+      # du-quota alarm in nixos/configuration.nix survives as a failsafe
+      # (retargeted at this directory) instead of being retired.
+      # Verified against this pinned image: the flag parses and the process
+      # boots with exactly this value; the victorialogs suite asserts it in
+      # the running argv.
+      - -retention.maxDiskSpaceUsageBytes=100GiB
+
+      # Time-based retention is SECONDARY now — the disk cap is the budget.
+      # 1y is an honesty bound, not a target: at the ingest rates this fleet
+      # has measured, the 100 GiB cap trims the window long before a year.
+      # Side effect worth knowing: ingested entries with timestamps older
+      # than now-retentionPeriod are REJECTED (this replaces Loki's
+      # reject_old_samples; at 1y it only ever bites a clock catastrophe,
+      # and Alloy's max_age=12h bounds cold-start replay anyway).
+      - -retentionPeriod=1y
+
+      # The image default already listens on 9428 on all interfaces of the
+      # container's own network namespace — spelled out so the listener is
+      # visible. Only the compose bridge and the loopback publish below can
+      # reach it.
+      - -httpListenAddr=:9428
+
+      # No analytics flag, and none is needed: unlike Loki (reporting to
+      # stats.grafana.org unless disabled) and Grafana (four env vars below),
+      # VictoriaLogs has no usage-reporting to turn off — verified against
+      # the pinned binary's full flag list. It boots and serves fully
+      # offline, which the suites depend on.
 
     volumes:
-      - ./loki.yaml:/etc/loki/config.yaml:ro
-      # 🚨 /mnt/slow, not /mnt/fast. Log chunks are append-mostly and
+      # 🚨 /mnt/slow, not /mnt/fast. Log data is append-mostly and
       # query-rarely, which is exactly what _overview.md's hardware section
       # says belongs on the 80 TB HDD tier; 100 GB of it is 0.125% of that
-      # volume, against ~1.25% of the SSD. The tsdb index and the WAL live
-      # under here too rather than being split onto the fast tier — one
-      # directory is one thing to reason about for retention, for the disk
-      # alarm and for `NOT_BACKED_UP`, and this fleet's query rate does not
-      # make index seeks the bottleneck.
-      - /mnt/slow/loki:/loki
+      # volume, against ~1.25% of the SSD. Everything lives under this ONE
+      # directory (per-day partitions carry their own indexes — there is no
+      # separate index tier to place): one directory is one thing to reason
+      # about for the retention cap, for the disk alarm and for
+      # `NOT_BACKED_UP`. Owner is root:root — the image runs as uid 0
+      # (config User "0", read from the pinned image), NOT loki's 10001;
+      # nixos/generate-stack-dirs.py carries the note.
+      - /mnt/slow/victorialogs:/victoria-logs-data
 
     ports:
       # Loopback only. Nothing routes to it through Caddy — Grafana is the UI
-      # and Alloy pushes over the compose network — so this publish exists for
-      # exactly one consumer: gatus's service probe. That matters more here
-      # than for most stacks, because Loki cannot have a healthcheck (below),
-      # so without this publish its liveness would be observed by nothing at
-      # all. The `caddy-routes` lint prints a NOTE about the unrouted publish;
-      # that NOTE is correct and this comment is the answer to it.
-      - "127.0.0.1:10456:3100"
+      # and Alloy pushes over the compose network — so this publish exists
+      # for the host-side consumers: gatus's /health probe (the container
+      # cannot carry a healthcheck, below, so without this publish its
+      # liveness would be observed by nothing), the query API for an ingest
+      # probe (`/select/logsql/query` answers plain GETs — something Loki
+      # never offered gatus), and vmui at /select/vmui/ for debugging when
+      # Grafana itself is the broken thing. The `caddy-routes` lint prints a
+      # NOTE about the unrouted publish; that NOTE is correct and this
+      # comment is the answer to it. Same port Loki held — same role.
+      - "127.0.0.1:10456:9428"
 
-    # NO healthcheck stanza, and none is possible: the image ships exactly one
-    # file under /usr/bin — the `loki` binary — with no shell, no wget, no
-    # curl, and no client subcommand (`loki -version` is all there is;
-    # verified by exporting the image filesystem). This is the gatus and
-    # karakeep-chrome situation and it gets the same treatment: declare
-    # nothing rather than something that lies, and NEVER make anything
-    # `depends_on: {condition: service_healthy}` against it — compose errors
-    # outright (finding #42). GET /ready is the probe, asserted by gatus and
-    # by the stack suite, not by Docker.
+    # NO healthcheck stanza, and none is possible: the image is DISTROLESS
+    # (v1.52.0 switched from Alpine precisely to shed the shell) — one static
+    # binary at /victoria-logs-prod, no sh, no wget, no curl (verified:
+    # `docker exec ... sh` fails with "executable file not found"). This is
+    # the loki/gatus/karakeep-chrome situation and it gets the same
+    # treatment: declare nothing rather than something that lies, and NEVER
+    # make anything `depends_on: {condition: service_healthy}` against it —
+    # compose errors outright (finding #42). GET /health (a literal "OK",
+    # 200) is the probe, asserted by gatus and the victorialogs suite, not
+    # by Docker.
     #
-    # For sizing expectations: measured cold start to HTTP 200 on /ready with
-    # this config and an empty /loki was 17 s.
+    # For sizing expectations: measured cold start to HTTP 200 on /health
+    # with an empty data dir was under 3 s — a single binary opening an
+    # empty directory, nothing like Loki's 17 s ring-and-WAL dance.
 
   # ---------------------------------------------------------------------------
   # Alloy — the collector
@@ -99,10 +164,11 @@ services:
     container_name: alloy
     restart: unless-stopped
 
-    # ⚠ Note the `v`. grafana/alloy tags carry one and grafana/loki and
-    # grafana/grafana do not — three images from the same vendor, two
-    # conventions. Run ./tests/update-images.sh after any change here; the
-    # image-pins lint is what stops a tag that does not exist from shipping.
+    # ⚠ Note the `v`. grafana/alloy tags carry one and grafana/grafana does
+    # not — two images from the same vendor, two conventions (victorialogs
+    # above also carries one). Run ./tests/update-images.sh after any change
+    # here; the image-pins lint is what stops a tag that does not exist from
+    # shipping.
 
     # No `user:` — and that is deliberate, not an omission. The image sets no
     # USER, so this runs as uid 0, which is what makes the journal readable:
@@ -124,7 +190,8 @@ services:
       # /run/log/journal is deliberately absent — see config.alloy.
       - /var/log/journal:/var/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
-      # Positions file + the write-ahead log that survives a Loki restart.
+      # Positions file + the write-ahead log that survives a VictoriaLogs
+      # restart.
       - /mnt/fast/alloy:/var/lib/alloy/data
 
     # Spelled out rather than inherited from the image's CMD so the listen
@@ -149,13 +216,13 @@ services:
       # `path`, a lost bind mount or a `user:` added to this service all leave
       # this container green and forwarding nothing.
       #
-      # 🚨 NO SUITE COVERS THAT TODAY. `run.sh stack logging` is the generic
-      # harness: it asserts health, decryption and loopback publishing, not
-      # ingest. The signals that would catch it are Loki's
-      # `{job="systemd-journal"}` stream (verified by hand against these exact
-      # images: a marker line reached Loki 2 s after the container wrote it)
-      # and Alloy's loki_source_journal_target_lines_total metric. Stated as a
-      # gap rather than implied to be covered.
+      # The victorialogs suite now covers that gap (it was uncovered in the
+      # Loki era, stated loudly here): a container writes a marker line and
+      # the suite polls VictoriaLogs' query API until it arrives — the whole
+      # journald -> alloy -> store chain, or a red build. In production the
+      # same check is the recommended gatus ingest probe against
+      # /select/logsql/query; Alloy's loki_source_journal_target_lines_total
+      # metric (loopback:12345, unpublished) is the manual cross-check.
       test:
         - CMD
         - bash
@@ -167,10 +234,10 @@ services:
       start_period: 30s
 
     depends_on:
-      # Ordering only, NOT service_healthy — Loki has no healthcheck and
-      # naming it in a health condition is a hard compose error. Alloy
-      # tolerates an absent Loki anyway: its WAL buffers and it retries.
-      - loki
+      # Ordering only, NOT service_healthy — VictoriaLogs has no healthcheck
+      # and naming it in a health condition is a hard compose error. Alloy
+      # tolerates an absent store anyway: its WAL buffers and it retries.
+      - victorialogs
 
   # ---------------------------------------------------------------------------
   # Grafana — the UI
@@ -187,14 +254,16 @@ services:
 
     volumes:
       - /mnt/fast/grafana:/var/lib/grafana
-      # Provisioned datasource — the Loki connection exists before anyone logs
-      # in, and re-asserts itself on every deploy. Zero-UI deployment is a
-      # stated principle of this fleet (_overview.md), and a hand-clicked
-      # datasource lives only in grafana.db, i.e. only in the backup.
-      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/loki.yaml:ro
+      # Provisioned datasource — the VictoriaLogs connection exists before
+      # anyone logs in, and re-asserts itself on every deploy. Zero-UI
+      # deployment is a stated principle of this fleet (_overview.md), and a
+      # hand-clicked datasource lives only in grafana.db, i.e. only in the
+      # backup.
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/victorialogs.yaml:ro
 
     # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the host-side decrypt, and the plain form aborts the whole stack.
+    # race the first decrypt (the .env not yet written), and the plain form
+    # aborts the whole stack.
     env_file:
       - path: .env
         required: false
@@ -217,6 +286,9 @@ services:
       # check, plus a news feed fetched when the home dashboard renders. The
       # test VMs run fully offline and this host has no reason to dial out;
       # each of these is a slow spinner or a stalled panel when it cannot.
+      # This is also why the datasource plugin is NOT installed via
+      # GF_INSTALL_PLUGINS, which downloads on every container create — see
+      # the plugin note below.
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
       - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
@@ -236,6 +308,39 @@ services:
       # grafana.db is created; changing them later needs `grafana-cli admin
       # reset-admin-password` or a wiped database.
 
+    # 🚨 THE DATASOURCE PLUGIN IS A ONE-TIME OPERATOR STEP, NOT PART OF THE
+    # DEPLOY. VictoriaLogs has NO Loki-compatible QUERY API (its ingestion
+    # speaks Loki's push protocol; its query side is LogsQL only — verified
+    # against the v1.52 docs), so a stock Grafana cannot query it: the
+    # victoriametrics-logs-datasource plugin is required. Every hands-off
+    # install path downloads at container create (GF_INSTALL_PLUGINS and
+    # its preinstall successor both), which the offline test VMs and this
+    # fleet's no-runtime-downloads rule forbid. So, ONCE, on the host:
+    #
+    #   curl -fL -o /tmp/vl-ds.zip \
+    #     https://grafana.com/api/plugins/victoriametrics-logs-datasource/versions/0.31.0/download
+    #   mkdir -p /mnt/fast/grafana/plugins
+    #   unzip /tmp/vl-ds.zip -d /mnt/fast/grafana/plugins
+    #   chmod +x /mnt/fast/grafana/plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_*
+    #   docker restart grafana
+    #
+    # Grafana's default plugin dir is /var/lib/grafana/plugins — INSIDE the
+    # bind above — so the plugin survives every redeploy with no compose
+    # change. The catalog zip is SIGNED (no allow_loading_unsigned_plugins
+    # needed) and the chmod is load-bearing: an extractor that drops
+    # permission bits leaves the backend binary non-executable, and Grafana
+    # logs "Could not start plugin backend" while reporting itself healthy.
+    # All of this measured against grafana:13.2.0 + plugin v0.31.0 + the
+    # pinned VictoriaLogs: datasource health answers "Data source is
+    # working".
+    #
+    # Until that step runs, Grafana is HEALTHY BUT CANNOT QUERY — the
+    # provisioned datasource sits unusable ("plugin not found" in the UI;
+    # measured: startup, provisioning and /api/health are all unaffected,
+    # which is what keeps the offline suites green with no plugin). The
+    # stopgap log UI is vmui on the store's own loopback publish,
+    # http://127.0.0.1:10456/select/vmui/ — debug-only, no vhost, by design.
+
     healthcheck:
       # -O /dev/null, NOT --spider: --spider issues a HEAD, and a route
       # registered GET-only answers 405, which leaves the container
@@ -253,5 +358,6 @@ services:
 
     depends_on:
       # Ordering only; Grafana starts fine against an absent datasource and
-      # the panel simply errors. Loki has no healthcheck to condition on.
-      - loki
+      # the panel simply errors. VictoriaLogs has no healthcheck to condition
+      # on.
+      - victorialogs

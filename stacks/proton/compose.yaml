@@ -1,0 +1,251 @@
+# Proton — mail bridge + automated mailbox export (Infra range, 10003-10005).
+# Design: ServerNotes/designs/external-email.md; _overview.md owns the
+# port/auth rows. Provider: Proton Mail Business, custom domain idanreed.com.
+#
+# WHAT THIS IS NOT FOR: ntfy's alert email. That path uses Proton's native
+# SMTP submission tokens (smtp.protonmail.ch:587, stacks/ntfy/.sops.env) and
+# needs no bridge at all. This stack exists for the two things a submission
+# token cannot do: SEND as a real mailbox from an ordinary SMTP client, and
+# READ the mailbox over IMAP — which is what makes an automated export
+# possible at all. external-email.md's backup row says "Manual export via
+# Proton desktop app — no API for automated backup"; the proton-export
+# sidecar below is that quarterly manual chore, automated daily.
+#
+# 🚨 HYDROXIDE, NOT THE OFFICIAL BRIDGE. Both were researched (2026-09):
+#
+#   hydroxide (codeberg.org/emersion/hydroxide, upstream at v0.2.32) — a
+#   thin Go translator: standard-protocol listeners in front of the Proton
+#   API, no local mail replica. SMTP is solid, CardDAV is upstream-"tested
+#   on Evolution and DAVDroid", IMAP is upstream-flagged work-in-progress
+#   ("here be dragons"). ~30 MB image, non-root user, and — read from
+#   source, cmd/hydroxide/main.go — `serve` binds all three listeners
+#   UNCONDITIONALLY: credentials are consulted per client connection only,
+#   so an unbootstrapped or Proton-less bridge still answers its banners.
+#
+#   official protonmail-bridge, headless — mature IMAP/SMTP, but NO
+#   CardDAV at all, and it keeps a FULL local replica of the mailbox
+#   (~100k messages here) inside its volume, plus a gpg/pass keyring and a
+#   heavier login dance. Of its images, shenxn/protonmail-bridge was 12
+#   months stale at research time; ghcr.io/videocurio/proton-mail-bridge
+#   was current (v3.24.2, 2026-04) and version-pinned — the honest pick if
+#   this stack ever switches.
+#
+#   Deciding factors, in order: (1) DEGRADATION — hydroxide's listeners
+#   hold with no login and no egress, which the offline test contract
+#   requires, while the official bridge's servers front a local replica it
+#   cannot build without an account; (2) CARDDAV — only hydroxide has it;
+#   (3) WEIGHT — a stateless translator vs a second copy of the mailbox on
+#   /mnt/fast. hydroxide's WIP IMAP is the accepted cost, confined to the
+#   export sidecar (PipelineDepth 1 in ./mbsyncrc), never interactive.
+#   Upstream is "casually maintained" (GitHub archived 2026-08 in favour of
+#   Codeberg, commits through 2026-08) — watched, not ideal.
+#
+# 🚨 CALDAV: NOT POSSIBLE — THROUGH ANY BRIDGE — AND THE DESIGN DOC IS
+# WRONG ABOUT IT. external-email.md's client-setup section claims "Proton
+# supports native CalDAV/CardDAV (no Bridge required)". Verified 2026-09:
+# Proton Calendar supports only INBOUND CalDAV subscription (pulling an
+# external calendar in); there is NO CalDAV or CardDAV server endpoint on
+# Proton's side, the UserVoice request is 10+ years old and still open, and
+# neither bridge serves CalDAV (hydroxide has no caldav module — checked at
+# source level; the official bridge is IMAP/SMTP only). Third-party
+# calendar sync with Proton Calendar does not exist; Proton's own apps are
+# the only calendar clients. Contacts are the exception: hydroxide's
+# CardDAV (10005) is real. Stated here so nobody goes looking for the
+# missing calendar port.
+#
+# ---------------------------------------------------------------------------
+# OPERATOR BOOTSTRAP — one interactive login, once per (re-keyed) volume
+# ---------------------------------------------------------------------------
+#   docker exec -it hydroxide /app/hydroxide auth idan@idanreed.com
+#     Password:       Proton account password — typed, never stored anywhere
+#     2FA TOTP code:  if enabled (TOTP is the only 2FA method supported)
+#     ... prints "Bridge password: <base64>"  — shown ONCE, save it NOW
+#   sopsedit stacks/proton/.sops.env       # PROTON_BRIDGE_PASSWORD = that
+#                                          # value; PROTON_ACCOUNT = the email
+#   docker restart proton_export           # or wait for its next daily tick
+#   docker exec proton_export /sync        # first export, verbose, on demand
+#
+# WHAT LIVES IN THE STATE VOLUME (/mnt/fast/proton/hydroxide): auth.json —
+# the Proton refresh token and passwords, ENCRYPTED with a key derived from
+# the bridge password, which hydroxide prints once and does not store
+# (auth/auth.go: GeneratePassword → EncryptAndSave). So the volume is
+# encrypted at rest: state volume alone is useless, .sops.env alone is
+# useless, both together are the mailbox. Every SMTP/IMAP/CardDAV client
+# authenticates with <account email> + the bridge password.
+#
+# NO CREDS / NO EGRESS: hydroxide serves banners and answers every login
+# with a clean failure; proton-export logs one failed sync per day and
+# sleeps. Nothing crash-loops. This is measured by tests/suites/proton.nix
+# in a VM with no route anywhere.
+
+services:
+  # ---------------------------------------------------------------------------
+  # hydroxide — the bridge
+  # ---------------------------------------------------------------------------
+  hydroxide:
+    # The only version-pinned hydroxide image found (built 2025-08, amd64,
+    # alpine 3.22 + the upstream binary — Containerfile read). It trails
+    # upstream by two patch releases (v0.2.30 vs v0.2.32); revisit on bump.
+    image: ghcr.io/onemorebyte/hydroxide:v0.2.30
+    container_name: hydroxide
+    restart: unless-stopped
+
+    # 🚨 ENTRYPOINT OVERRIDDEN — the load-bearing line of this service. The
+    # image's own entrypoint.py EXITS 1 when neither PROTONMAIL_USER/PASS
+    # env credentials nor an auth.json exist: a crash loop on every fresh
+    # host until first login, and in the offline test VM forever. That
+    # wrapper exists to support env-var logins, which this stack REFUSES
+    # anyway — Proton account credentials in env/sops would persist the one
+    # secret the interactive `auth` flow keeps off disk. Calling the binary
+    # directly gets `serve`'s real behaviour: listeners bind
+    # unconditionally, auth.json is consulted per connection.
+    entrypoint: ['/app/hydroxide']
+    command:
+      # 0.0.0.0 is IN-CONTAINER only (the binary's default 127.0.0.1 would
+      # be unreachable through docker-proxy); host exposure is the loopback
+      # publishes below, nothing else.
+      - '-smtp-host'
+      - '0.0.0.0'
+      - '-imap-host'
+      - '0.0.0.0'
+      - '-carddav-host'
+      - '0.0.0.0'
+      - serve
+
+    volumes:
+      # auth.json (encrypted — see the header). Owned by uid 1000: the image
+      # ends on `USER hydroxide` (alpine adduser -D → first uid, 1000) with
+      # no chown-on-start, so a root-owned bind source means `auth` cannot
+      # write its credential file — finding #14's class, silent variant.
+      - /mnt/fast/proton/hydroxide:/home/hydroxide/.config/hydroxide
+
+    ports:
+      # Loopback only, NO Caddy vhost — and two of the three can never have
+      # one: SMTP and IMAP are not HTTP. The caddy-routes lint prints its
+      # unrouted-publish NOTE for all three; the NOTE is correct (the Loki
+      # 10456 precedent). Consumers: host-side scripts, and SSH-tunnelled
+      # clients, e.g. from the desktop:
+      #   ssh -L 1025:127.0.0.1:10003 -L 1143:127.0.0.1:10004 idan@10.0.0.3
+      # (the export sidecar uses the compose network, not these publishes).
+      # CardDAV (10005) IS HTTP and could later take a Caddy vhost for
+      # DAVx5-over-tailnet; recommended in the phase report, not done here.
+      - '127.0.0.1:10003:1025' # SMTP
+      - '127.0.0.1:10004:1143' # IMAP
+      - '127.0.0.1:10005:8080' # CardDAV
+
+    # NO env_file, deliberately: this container consumes no environment.
+    # The bridge's secrets live in auth.json (above), and putting the
+    # account password in .sops.env to feed the stock wrapper would store
+    # exactly what the interactive flow exists not to store.
+
+    healthcheck:
+      # SMTP banner over a raw socket: proves `serve` is up and accepting.
+      # One process, and any listener's error is log.Fatal for all of them,
+      # so this is also an honest proxy for the IMAP and CardDAV
+      # goroutines — the suite still probes those two individually; Docker
+      # gets the cheap one. python3 is in the image (the stock wrapper
+      # needs it: `apk add python3` in the Containerfile). No wget/curl
+      # HTTP probe is possible — nothing here speaks HTTP except CardDAV,
+      # whose every anonymous response is a 401 challenge.
+      #
+      # ⚠ What this can NEVER prove, offline or in production: that anyone
+      # is logged in, or that Proton is reachable. A bridge with no
+      # auth.json is green here and fails every client login — by design
+      # (see the bootstrap section). Login state is
+      # `docker exec hydroxide /app/hydroxide status`.
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import socket; s=socket.create_connection(('127.0.0.1',1025),5); d=s.recv(64); s.close(); raise SystemExit(0 if d.startswith(b'220') else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # proton-export — the automated mailbox archive
+  # ---------------------------------------------------------------------------
+  # mbsync (isync 1.5.0) pulling every folder through the bridge's IMAP into
+  # a maildir on /mnt/slow — the external-email.md backup story, automated.
+  # Semantics are set in ./mbsyncrc and they are ARCHIVE semantics: one-way
+  # pull, Expunge None, so a message deleted (or ransomed) server-side is
+  # NEVER deleted from the archive. Append-only by construction.
+  #
+  # 🚨 /mnt/slow, NOT /mnt/fast — and not external-email.md's
+  # /mnt/fast/email-exports, which described the manual desktop-app flow
+  # this sidecar replaces. A full-mailbox maildir (~100k messages, GBs) is
+  # append-mostly and read-rarely: the Loki-chunk reasoning, byte for byte.
+  # Unlike Loki it IS backed up — the archive is the entire point — via the
+  # slow-tier Backrest plan (see the phase report / backup-coverage).
+  proton-export:
+    # Actively maintained isync packaging (image rebuilt 2025-11, amd64,
+    # pinned upstream-version tags; ships mbsync + busybox + curl). Its
+    # stock CMD is a ONE-SHOT sync (/sync), so the schedule has to come
+    # from somewhere; see the entrypoint note below.
+    image: theohbrothers/docker-isync:1.5.0
+    container_name: proton_export
+    restart: unless-stopped
+
+    depends_on:
+      # Ordering only in effect: hydroxide healthy means its listeners
+      # answer, not that anyone can log in. A sync that starts too early
+      # fails exactly like the no-creds case below and retries next tick.
+      hydroxide:
+        condition: service_healthy
+
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first decrypt, and the plain form aborts the whole stack.
+    env_file:
+      - path: .env
+        required: false
+
+    volumes:
+      - ./mbsyncrc:/mbsyncrc:ro
+      # The archive. Written as root — the image sets no USER — so the
+      # volume root stays root:root (docker's default, chosen, not
+      # inherited).
+      - /mnt/slow/proton-mail-archive:/mail
+
+    # A SHELL LOOP, not the image's documented crond pattern, deliberately:
+    # the credentials arrive as compose-delivered env vars (mbsyncrc reads
+    # them via UserCmd/PassCmd), and a child of this shell inherits its
+    # environment by POSIX construction — whereas busybox crond's env
+    # inheritance into jobs is a claim this fleet has not measured, and a
+    # cron job that silently sees an empty PROTON_BRIDGE_PASSWORD would
+    # fail auth forever while looking configured. Daily cadence (the old
+    # manual process was quarterly); ticks drift by sync duration, which an
+    # archive does not care about. Failure is CALM: one log line, sleep,
+    # retry in 24h — never a hot crash-loop, measured by the suite.
+    #
+    # No `$` anywhere in this block: compose interpolates the file itself
+    # (finding #30) and this keeps the loop expansion-proof.
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        while :; do
+          if mbsync --config /mbsyncrc --all; then
+            date -u +%s > /mail/.last-export-success
+            echo "[proton-export] sync OK"
+          else
+            echo "[proton-export] sync FAILED - no login yet, or hydroxide/Proton unreachable; retrying in 24h"
+          fi
+          sleep 86400
+        done
+
+    # The loop spends 24h inside busybox `sleep`, which ignores SIGTERM
+    # here (sh is PID 1 and does not forward it) — without this every stop
+    # waits out docker's 10s grace. SIGKILL mid-sync is safe for mbsync:
+    # its per-mailbox journal (.mbsyncstate.journal) recovers an
+    # interrupted run on the next tick. Upstream's own compose example
+    # ships the same line.
+    stop_signal: SIGKILL
+
+    # NO healthcheck, deliberately. A probe can only see the sleep loop —
+    # "the shell is alive" is true even when every sync has failed for a
+    # year, and a stamp-age check would page unhealthy for the entire
+    # pre-bootstrap era by design. The honest signals are the
+    # /mail/.last-export-success stamp (age = time since last good export)
+    # and the FAILED log line above; NOTHING ALERTS ON A STALE STAMP TODAY
+    # — stated as a gap, with candidates named in the phase report, rather
+    # than implied to be covered.

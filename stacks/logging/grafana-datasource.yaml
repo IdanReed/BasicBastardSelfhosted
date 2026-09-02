@@ -1,11 +1,24 @@
-# Grafana datasource provisioning — the Loki connection, declared.
+# Grafana datasource provisioning — the VictoriaLogs connection, declared.
 #
-# Mounted at /etc/grafana/provisioning/datasources/loki.yaml (read-only).
-# Grafana reads this directory at every start and reconciles, so the datasource
-# exists before anyone logs in and re-asserts itself on every redeploy. A
-# hand-clicked datasource would live only in grafana.db, i.e. only in the
-# nightly sqlite dump — "zero-UI deployment" is a stated principle of this
-# fleet and this is what it means in practice.
+# Mounted at /etc/grafana/provisioning/datasources/victorialogs.yaml
+# (read-only). Grafana reads this directory at every start and reconciles, so
+# the datasource exists before anyone logs in and re-asserts itself on every
+# redeploy. A hand-clicked datasource would live only in grafana.db, i.e. only
+# in the nightly sqlite dump — "zero-UI deployment" is a stated principle of
+# this fleet and this is what it means in practice.
+#
+# 🚨 THE TYPE BELOW IS A PLUGIN, AND THE PLUGIN IS AN OPERATOR STEP.
+# VictoriaLogs has no Loki-compatible query API (verified against the v1.52
+# docs — ingestion speaks Loki's push protocol, querying is LogsQL only), so
+# a `type: loki` datasource cannot point at it and the
+# victoriametrics-logs-datasource plugin is required. It is installed ONCE,
+# by hand, into /mnt/fast/grafana/plugins — the exact commands and the
+# reasoning (no runtime downloads, offline suites) are in compose.yaml's
+# grafana block. Provisioning this file WITHOUT the plugin present is safe
+# and measured against grafana:13.2.0: startup, provisioning and /api/health
+# are all unaffected; the datasource just sits unusable until the plugin
+# lands. The victorialogs suite pins exactly that (grafana healthy, offline,
+# plugin absent).
 #
 # ⚠ `apiVersion: 1` is Grafana's provisioning schema version, not a Grafana
 # version. It is still 1 in 13.x; do not "update" it.
@@ -13,13 +26,13 @@
 apiVersion: 1
 
 datasources:
-  - name: Loki
-    type: loki
+  - name: VictoriaLogs
+    type: victoriametrics-logs-datasource
     # The service name on the compose project's own bridge network. NOT
     # 127.0.0.1:10456 (a bridged container cannot reach a loopback-bound host
-    # publish) and NOT the Caddy vhost (there is none, and forward auth would
+    # publish) and NOT a Caddy vhost (there is none, and forward auth would
     # 302 every query).
-    url: http://loki:3100
+    url: http://victorialogs:9428
     access: proxy
 
     # The only datasource, so it is the default: Explore opens on it with no
@@ -32,11 +45,14 @@ datasources:
     editable: false
 
     jsonData:
-      # Caps the number of log lines a single query returns (Grafana's
-      # default is 1000); raised to 5000 for incident scrollback. Nothing to
-      # do with retention — that coupling lives in loki.yaml.
+      # Caps the number of log lines a single query returns — the plugin's
+      # "maximum lines" setting, same semantic as the old Loki datasource's
+      # (the plugin's query UI is a fork of Loki's); raised from the 1000
+      # default to 5000 for incident scrollback. Nothing to do with
+      # retention — that lives in the victorialogs command flags.
       maxLines: 5000
 
-    # No `secureJsonData`: auth_enabled is false in loki.yaml (single tenant,
-    # reachable only from inside this compose project), so there is no
-    # credential to provision and nothing here belongs in .sops.env.
+    # No `secureJsonData`: VictoriaLogs runs unauthenticated (single tenant,
+    # reachable only from inside this compose project plus the loopback
+    # publish), so there is no credential to provision and nothing here
+    # belongs in .sops.env.
