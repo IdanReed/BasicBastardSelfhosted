@@ -1,0 +1,640 @@
+#!/usr/bin/env bash
+# sops-gen — generate-if-absent secret manager over sops. See README.md.
+#
+# Never decrypts unless it must (presence = plaintext key grep), never
+# overwrites a real value (fire = absent or decrypted ^changeme), never
+# generates pull-class values, writes only through `sops set` / `sops encrypt`
+# so the MAC stays valid and the recipient comes from .sops.yaml.
+set -euo pipefail
+umask 077
+
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MANIFEST=$SELF_DIR/manifest.yaml
+ROOT=""
+FORCE=0
+DRY=0
+
+usage() {
+  cat <<'EOF'
+usage: sops-gen [--manifest FILE] [--root DIR] COMMAND [args]
+
+  apply [--dry-run]        fill missing/changeme generate-class values
+                           (--dry-run: read-only plan, no decryption)
+  rotate NAME [--force]    force-regenerate one entry (--force for frozen)
+  list                     every managed entry: class, recipe, present/missing
+  view FILE                one file's keys (values shown when key available)
+  search --keys PATTERN    grep key NAMES across managed files (no key needed)
+  search --values PATTERN  decrypt-and-grep values (needs the age key)
+
+Key custody (sopsedit posture — key never touches disk here):
+  SOPS_AGE_KEY="$(sudo cat /var/lib/sops-nix/sops_age_key.txt)" sops-gen apply
+EOF
+  exit "${1:-0}"
+}
+
+die()  { echo "sops-gen: $*" >&2; exit 1; }
+warn() { echo "  ! $*" >&2; }
+need() { command -v "$1" >/dev/null || die "missing tool: $1 (enter the devshell: nix-shell secrets-gen/shell.nix)"; }
+
+# scratch: tmpfs preferred, shredded on exit
+SCRATCH=""
+scratch() {
+  [[ -n $SCRATCH ]] && return
+  SCRATCH=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/sops-gen.XXXXXX")
+  trap 'find "$SCRATCH" -type f -exec shred -u {} + 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+}
+
+# ---------------------------------------------------------------------------
+# manifest
+# ---------------------------------------------------------------------------
+F_PATH=() F_FORMAT=() F_EXAMPLE=()
+E_NAME=() E_CLASS=() E_RECIPE=() E_FREEZE=() E_COPY=() E_RECOVERY=() E_TARGETS=() E_NOTE=() E_REMIND=() E_DEPS=()
+declare -A FMT_OF EX_OF IDX_OF
+RECOVERY_FILE=""
+
+load_manifest() {
+  need yq
+  [[ -f $MANIFEST ]] || die "manifest not found: $MANIFEST"
+  [[ -n $ROOT ]] || ROOT=$(cd "$(dirname "$MANIFEST")/.." && pwd)
+  RECOVERY_FILE=$(yq -r '.recovery_file' "$MANIFEST")
+
+  # one field per line, not @tsv: tab is whitespace-class IFS, so empty
+  # fields would collapse and shift everything left (fields are single-line)
+  local path format example
+  while IFS= read -r path && IFS= read -r format && IFS= read -r example; do
+    F_PATH+=("$path"); F_FORMAT+=("$format"); F_EXAMPLE+=("$example")
+    FMT_OF[$path]=$format; EX_OF[$path]=$example
+  done < <(yq -r '.files[] | [.path, .format, (.example // "")] | .[]' "$MANIFEST")
+
+  local name class recipe freeze copy recovery targets note remind deps
+  while IFS= read -r name && IFS= read -r class && IFS= read -r recipe \
+     && IFS= read -r freeze && IFS= read -r copy && IFS= read -r recovery \
+     && IFS= read -r targets && IFS= read -r note && IFS= read -r remind \
+     && IFS= read -r deps; do
+    [[ -z ${IDX_OF[$name]:-} ]] || die "manifest: duplicate entry name $name"
+    IDX_OF[$name]=${#E_NAME[@]}
+    E_NAME+=("$name"); E_CLASS+=("$class"); E_RECIPE+=("$recipe")
+    E_FREEZE+=("$freeze"); E_COPY+=("$copy"); E_RECOVERY+=("$recovery")
+    E_TARGETS+=("$targets"); E_NOTE+=("$note"); E_REMIND+=("$remind"); E_DEPS+=("$deps")
+    case $class in generate|derived|pull|config) ;; *) die "manifest: $name: bad class '$class'";; esac
+    # deps must precede (ordering is manifest order)
+    local d
+    for d in $deps; do
+      [[ -n ${IDX_OF[$d]:-} ]] || die "manifest: $name: dep '$d' not defined earlier"
+    done
+    local t
+    for t in ${targets//^/ }; do
+      local tf=${t%%|*}
+      [[ -n ${FMT_OF[$tf]:-} ]] || die "manifest: $name: target file '$tf' not in files:"
+    done
+  done < <(yq -r '.secrets[] | [.name, .class, (.recipe // ""), (.freeze // false), (.copy_only // false),
+                   (.recovery // ""), ([.targets[] | [.file, .key, (.part // "plain"), (.template // "")] | join("|")] | join("^")),
+                   (.note // ""), (.reminder // ""), ((.deps // []) | join(" "))] | .[]' "$MANIFEST")
+}
+
+split_target() { IFS='|' read -r T_FILE T_KEY T_PART T_TPL <<<"$1"; }
+
+# yaml keypath "ssh/github" -> ["ssh"]["github"]
+keypath() {
+  local out="" seg rest=$1
+  while [[ -n $rest ]]; do
+    seg=${rest%%/*}
+    [[ $seg == "$rest" ]] && rest="" || rest=${rest#*/}
+    out+="[\"$seg\"]"
+  done
+  printf '%s' "$out"
+}
+
+# ---------------------------------------------------------------------------
+# read side (no key needed)
+# ---------------------------------------------------------------------------
+key_present() { # file format key -> 0/1; keys are plaintext in both formats
+  local f=$ROOT/$1 fmt=$2 key=$3
+  [[ -f $f ]] || return 1
+  if [[ $fmt == dotenv ]]; then
+    grep -qE "^${key}=" "$f"
+  elif [[ $key == */* ]]; then
+    grep -qE "^${key%%/*}:" "$f" && grep -qE "^[[:space:]]+${key##*/}:" "$f"
+  else
+    grep -qE "^${key}:" "$f"
+  fi
+}
+
+file_keys() { # file format -> key names, one per line
+  local f=$ROOT/$1 fmt=$2
+  [[ -f $f ]] || return 0
+  if [[ $fmt == dotenv ]]; then
+    # sops_* = encrypted-dotenv metadata keys, not secrets
+    grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$f" | tr -d '=' | grep -v '^sops_' || true
+  else
+    # top-level + one nested level; sops metadata filtered by name
+    awk '
+      /^[A-Za-z_][A-Za-z0-9_-]*:/ { top=$1; sub(":.*","",top); if (top=="sops") { insops=1 } else { insops=0; print top } next }
+      /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:/ && !insops { k=$1; sub(":.*","",k); print top "/" k }
+    ' "$f"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# key custody + decrypt side
+# ---------------------------------------------------------------------------
+HAVE_KEY=-1
+have_key() { # probe once: can we decrypt the first existing managed file?
+  [[ $HAVE_KEY != -1 ]] && return $HAVE_KEY
+  local i
+  HAVE_KEY=1
+  for i in "${!F_PATH[@]}"; do
+    [[ -f $ROOT/${F_PATH[$i]} ]] || continue
+    if (cd "$ROOT" && sops -d "${F_PATH[$i]}" >/dev/null 2>&1); then HAVE_KEY=0; fi
+    break
+  done
+  return $HAVE_KEY
+}
+
+get_value() { # file key -> decrypted value on stdout
+  (cd "$ROOT" && sops -d --extract "$(keypath "$2")" "$1")
+}
+
+# ---------------------------------------------------------------------------
+# write side (through sops only; value via stdin, never argv)
+# ---------------------------------------------------------------------------
+json_str() {
+  local s=$1
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\t'/\\t}
+  printf '"%s"' "$s"
+}
+
+quote_for() { # dotenv values containing $ must be single-quoted (ledger #30)
+  local fmt=$1 v=$2
+  if [[ $fmt == dotenv && $v == *'$'* ]]; then printf "'%s'" "$v"; else printf '%s' "$v"; fi
+}
+
+sops_set() { # file key value
+  local fmt=${FMT_OF[$1]}
+  json_str "$(quote_for "$fmt" "$3")" \
+    | (cd "$ROOT" && sops set --idempotent --value-stdin "$1" "$(keypath "$2")")
+}
+
+sops_encrypt_new() { # relpath plainfile  (pubkey-only; recipient via .sops.yaml)
+  local rel=$1 plain=$2
+  (cd "$ROOT" && { sops encrypt --filename-override "$rel" "$plain" > "$rel.tmp" \
+    && mv "$rel.tmp" "$rel"; } || { rm -f "$rel.tmp"; exit 1; })
+}
+
+# ---------------------------------------------------------------------------
+# generators + transforms
+# ---------------------------------------------------------------------------
+DRAW="" DRAW_PUB="" DRAW_PRIV_B64=""
+draw() { # recipe -> DRAW (+ DRAW_PUB/DRAW_PRIV_B64 for keypairs)
+  local r=$1
+  DRAW="" DRAW_PUB="" DRAW_PRIV_B64=""
+  case $r in
+    hex:*)    local n=${r#hex:}; (( n % 2 == 0 )) || die "recipe $r: odd char count"
+              DRAW=$(openssl rand -hex $((n / 2)));;
+    base64:*) DRAW=$(openssl rand -base64 "${r#base64:}" | tr -d '\n');;
+    alnum:*)  DRAW=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${r#alnum:}");;
+    uuid)     need uuidgen; DRAW=$(uuidgen);;
+    wg)       need wg; DRAW=$(wg genkey); DRAW_PUB=$(wg pubkey <<<"$DRAW");;
+    ssh-ed25519)
+              need ssh-keygen; scratch
+              ssh-keygen -q -t ed25519 -N '' -C sops-gen -f "$SCRATCH/draw_key"
+              DRAW=$(cat "$SCRATCH/draw_key")
+              DRAW_PUB=$(cat "$SCRATCH/draw_key.pub")
+              DRAW_PRIV_B64=$(base64 -w0 "$SCRATCH/draw_key")
+              shred -u "$SCRATCH/draw_key" "$SCRATCH/draw_key.pub";;
+    cmd:*)    DRAW=$(bash -c "${r#cmd:}");;
+    *)        die "unknown recipe: $r";;
+  esac
+  [[ -n $DRAW ]] || die "recipe $r produced empty value"
+}
+
+hex_b64() { printf '%s' "$1" | xxd -r -p | base64 -w0; }
+
+render() { # part template -> transformed DRAW on stdout
+  local part=$1 tpl=$2 out
+  case $part in
+    plain)       out=$DRAW;;
+    public)      out=$DRAW_PUB;;
+    private)     out=$DRAW;;
+    private_b64) out=$DRAW_PRIV_B64;;
+    bcrypt)      need htpasswd
+                 out=$(htpasswd -bnBC 10 '' "$DRAW" | tr -d ':\n');;
+    bcrypt_b64)  need htpasswd
+                 out=$(htpasswd -bnBC 10 '' "$DRAW" | tr -d ':\n' | base64 -w0);;
+    htpasswd:*)  need htpasswd
+                 out=$(htpasswd -bnBC 10 "${part#htpasswd:}" "$DRAW" | head -1);;
+    argon2)      need argon2  # params match vaultwarden's own `hash` helper
+                 out=$(printf '%s' "$DRAW" | argon2 "$(openssl rand -base64 16)" -id -t 3 -k 65540 -p 4 -e);;
+    pbkdf2_qbit) need xxd  # qBittorrent: PBKDF2-HMAC-SHA512, 100k iters, @ByteArray(salt_b64:dk_b64)
+                 local salt dk pass_hex
+                 salt=$(openssl rand -hex 16)
+                 pass_hex=$(printf '%s' "$DRAW" | od -An -tx1 | tr -d ' \n')
+                 dk=$(openssl kdf -keylen 64 -kdfopt digest:SHA512 -kdfopt "hexpass:$pass_hex" \
+                        -kdfopt "hexsalt:$salt" -kdfopt iter:100000 PBKDF2 | tr -d ':\n')
+                 out="@ByteArray($(hex_b64 "$salt"):$(hex_b64 "$dk"))";;
+    *)           die "unknown part: $part";;
+  esac
+  [[ -n $tpl ]] && out=${tpl//\$\{v\}/$out}
+  printf '%s' "$out"
+}
+
+# recover the public half from a stored private half (partial keypair fill)
+pub_from_priv() { # recipe private_value(raw or b64 per part) part_of_stored
+  local recipe=$1 val=$2 part=$3
+  case $recipe in
+    wg)  wg pubkey <<<"$val";;
+    ssh-ed25519)
+         scratch
+         if [[ $part == private_b64 ]]; then base64 -d <<<"$val" > "$SCRATCH/re_key"
+         else printf '%s\n' "$val" > "$SCRATCH/re_key"; fi
+         chmod 600 "$SCRATCH/re_key"
+         ssh-keygen -y -f "$SCRATCH/re_key"
+         shred -u "$SCRATCH/re_key";;
+    *)   return 1;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# recovery file (central plaintext escrow for hash-derived creds)
+# ---------------------------------------------------------------------------
+recovery_present() { key_present "$RECOVERY_FILE" yaml "$1"; }
+
+recovery_set() { # key value — create pubkey-only if absent, else sops set
+  local rf=$ROOT/$RECOVERY_FILE
+  if [[ ! -f $rf ]]; then
+    scratch
+    {
+      echo "# Central recovery plaintext for hash-derived app credentials."
+      echo "# Written by sops-gen; NOT a .sops.env — decrypt-sops-envs never"
+      echo "# turns this into a container .env. Read with: sops -d $RECOVERY_FILE"
+      printf '%s: %s\n' "$1" "$2"
+    } > "$SCRATCH/recovery.yaml"
+    sops_encrypt_new "$RECOVERY_FILE" "$SCRATCH/recovery.yaml"
+    shred -u "$SCRATCH/recovery.yaml"
+  else
+    json_str "$2" | (cd "$ROOT" && sops set --idempotent --value-stdin "$RECOVERY_FILE" "$(keypath "$1")")
+  fi
+  # printed ONCE, here, for the operator's password manager
+  echo "  RECOVERY $1 = $2"
+}
+
+# ---------------------------------------------------------------------------
+# apply
+# ---------------------------------------------------------------------------
+declare -A NEWFILE FILLS  # FILLS["path|KEY"]=value for files being created
+
+plan_target_state() { # file key -> newfile|absent|present|nofile
+  local fmt=${FMT_OF[$1]}
+  if [[ ! -f $ROOT/$1 ]]; then
+    if [[ -n ${EX_OF[$1]} ]]; then echo newfile; else echo nofile; fi
+  elif key_present "$1" "$fmt" "$2"; then echo present
+  else echo absent; fi
+}
+
+apply_pull_entry() { # i — pull/config are report-only, generation is refused
+  local i=$1 label t st v
+  [[ ${E_CLASS[$i]} == pull ]] && label=PULL || label=CONFIG
+  for t in ${E_TARGETS[$i]//^/ }; do
+    split_target "$t"
+    st=$(plan_target_state "$T_FILE" "$T_KEY")
+    case $st in
+      newfile|absent|nofile)
+        echo "  $label missing  ${T_FILE}:${T_KEY} — add by hand. ${E_NOTE[$i]}";;
+      present)
+        if [[ $DRY == 0 ]] && have_key; then
+          v=$(get_value "$T_FILE" "$T_KEY" 2>/dev/null || echo "")
+          if [[ $v == changeme* || -z $v ]]; then
+            echo "  $label changeme ${T_FILE}:${T_KEY} — add by hand. ${E_NOTE[$i]}"
+          fi
+        fi;;
+    esac
+  done
+}
+
+apply_gen_entry() { # i — the real machine: fire on absent/^changeme only
+  local i=$1 name=${E_NAME[$i]} t st v
+  local -a tgt_spec=() tgt_state=() tgt_val=()
+  local firing=0 locked=0 real_plain="" real_plain_n=0 real_priv="" real_priv_part=""
+
+  for t in ${E_TARGETS[$i]//^/ }; do
+    split_target "$t"
+    st=$(plan_target_state "$T_FILE" "$T_KEY")
+    v=""
+    if [[ $st == present ]]; then
+      if have_key; then
+        v=$(get_value "$T_FILE" "$T_KEY" 2>/dev/null || echo "")
+        # strip the dotenv single-quote convention before comparing
+        [[ $v == "'"*"'" ]] && v=${v#\'} && v=${v%\'}
+        if [[ $v == changeme* || -z $v ]]; then st=fire; else st=real; fi
+      else
+        st=locked; locked=1
+      fi
+    fi
+    [[ $st == newfile || $st == absent || $st == fire ]] && firing=1
+    if [[ $st == real ]]; then
+      case $T_PART in
+        plain)
+          if [[ -z $T_TPL ]]; then
+            if [[ $real_plain_n -gt 0 && $v != "$real_plain" ]]; then
+              warn "$name: diverged twin values (${T_FILE}:${T_KEY}) — fix by hand or rotate"
+              return 1
+            fi
+            real_plain=$v; real_plain_n=$((real_plain_n + 1))
+          fi;;
+        private|private_b64) real_priv=$v; real_priv_part=$T_PART;;
+      esac
+    fi
+    tgt_spec+=("$t"); tgt_state+=("$st"); tgt_val+=("$v")
+  done
+
+  if [[ $firing == 0 ]]; then
+    if [[ $locked == 1 ]]; then
+      echo "  present   $name (changeme-check needs the age key)"
+    else
+      echo "  ok        $name"
+    fi
+    return 0
+  fi
+  if [[ $locked == 1 ]]; then
+    echo "  SKIP      $name — some targets present but undecryptable; run with the age key"
+    return 0
+  fi
+  if ! have_key; then
+    # keyless tier: only fresh draws whose every firing target lands in a
+    # file being created (pubkey-only) can proceed; sops set / recovery
+    # escrow / copy sources all need decryption
+    local j keyless_ok=1
+    for j in "${!tgt_spec[@]}"; do
+      [[ ${tgt_state[$j]} == absent ]] && keyless_ok=0
+    done
+    [[ -n ${E_RECOVERY[$i]} || ${E_COPY[$i]} == true ]] && keyless_ok=0
+    if [[ $keyless_ok == 0 ]]; then
+      echo "  SKIP      $name — needs the age key"
+      return 0
+    fi
+  fi
+
+  # resolve the base value: propagate > re-derive > recovery > fresh draw
+  local mode=""
+  if [[ ${E_COPY[$i]} == true ]]; then
+    if [[ $real_plain_n -gt 0 ]]; then
+      DRAW=$real_plain; mode=copied
+    else
+      echo "  SKIP      $name — copy-only and no real source value exists; refusing a fresh draw. ${E_NOTE[$i]}"
+      return 0
+    fi
+  elif [[ $real_plain_n -gt 0 ]]; then
+    DRAW=$real_plain; mode=propagated
+  elif [[ -n $real_priv ]]; then
+    DRAW=$real_priv
+    DRAW_PUB=$(pub_from_priv "${E_RECIPE[$i]}" "$real_priv" "$real_priv_part") \
+      || { echo "  SKIP      $name — cannot re-derive from stored private half"; return 0; }
+    [[ $real_priv_part == private_b64 ]] && DRAW_PRIV_B64=$real_priv || DRAW_PRIV_B64=$(printf '%s\n' "$real_priv" | base64 -w0)
+    mode=rederived
+  elif [[ -n ${E_RECOVERY[$i]} ]] && recovery_present "${E_RECOVERY[$i]}"; then
+    DRAW=$(get_value "$RECOVERY_FILE" "${E_RECOVERY[$i]}")
+    mode=from-recovery
+  else
+    # partial derived group with only irreversible parts real -> refuse
+    local j only_derived_real=0
+    for j in "${!tgt_spec[@]}"; do
+      split_target "${tgt_spec[$j]}"
+      [[ ${tgt_state[$j]} == real && $T_PART != plain ]] && only_derived_real=1
+    done
+    if [[ $only_derived_real == 1 ]]; then
+      echo "  SKIP      $name — derived value real but its base is unknown; fill by hand or rotate"
+      return 0
+    fi
+    draw "${E_RECIPE[$i]}"; mode=generated
+  fi
+
+  # write every firing target (twins: same draw everywhere)
+  local j rendered wrote=0
+  for j in "${!tgt_spec[@]}"; do
+    split_target "${tgt_spec[$j]}"
+    case ${tgt_state[$j]} in
+      newfile)
+        rendered=$(render "$T_PART" "$T_TPL")
+        FILLS["$T_FILE|$T_KEY"]=$(quote_for "${FMT_OF[$T_FILE]}" "$rendered")
+        NEWFILE[$T_FILE]=1; wrote=1;;
+      absent|fire)
+        rendered=$(render "$T_PART" "$T_TPL")
+        sops_set "$T_FILE" "$T_KEY" "$rendered"; wrote=1;;
+    esac
+  done
+
+  echo "  $mode $name"
+  if [[ $wrote == 1 && -n ${E_RECOVERY[$i]} && $mode != from-recovery ]]; then
+    recovery_set "${E_RECOVERY[$i]}" "$DRAW"
+  fi
+  [[ -n ${E_REMIND[$i]} ]] && echo "  REMINDER  $name: ${E_REMIND[$i]}"
+  return 0
+}
+
+create_new_files() { # materialize NEWFILE paths from their examples + FILLS
+  local path line k
+  for path in "${!NEWFILE[@]}"; do
+    scratch
+    local plain=$SCRATCH/new-file
+    : > "$plain"
+    while IFS= read -r line; do
+      if [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] && [[ -n ${FILLS["$path|${BASH_REMATCH[1]}"]:-} ]]; then
+        printf '%s=%s\n' "${BASH_REMATCH[1]}" "${FILLS["$path|${BASH_REMATCH[1]}"]}"
+      else
+        printf '%s\n' "$line"
+      fi
+    done < "$ROOT/${EX_OF[$path]}" > "$plain"
+    sops_encrypt_new "$path" "$plain"
+    shred -u "$plain"
+    echo "  created   $path (from ${EX_OF[$path]}; pull/config values left as in the example)"
+  done
+}
+
+dry_run_entry() { # i — grep-only, zero decryption, zero writes
+  local i=$1 t st
+  for t in ${E_TARGETS[$i]//^/ }; do
+    split_target "$t"
+    st=$(plan_target_state "$T_FILE" "$T_KEY")
+    case ${E_CLASS[$i]} in
+      pull|config)
+        case $st in
+          newfile|absent|nofile) echo "  ${E_CLASS[$i]} missing: ${T_FILE}:${T_KEY} — by hand. ${E_NOTE[$i]}";;
+        esac;;
+      *)
+        case $st in
+          newfile) echo "  would create+fill ${T_FILE}:${T_KEY}  [${E_NAME[$i]}]";;
+          absent)  echo "  would fill        ${T_FILE}:${T_KEY}  [${E_NAME[$i]}]";;
+          present) echo "  present           ${T_FILE}:${T_KEY}  (changeme-check needs key)";;
+          nofile)  echo "  no file, no example: ${T_FILE}";;
+        esac;;
+    esac
+  done
+}
+
+cmd_apply() {
+  local i rc=0
+  if [[ $DRY == 1 ]]; then
+    echo "dry-run plan (read-only; presence by plaintext key grep, no decryption):"
+    for i in "${!F_PATH[@]}"; do
+      [[ ! -f $ROOT/${F_PATH[$i]} && -n ${F_EXAMPLE[$i]} ]] \
+        && echo "  would create ${F_PATH[$i]} from ${F_EXAMPLE[$i]}"
+    done
+    for i in "${!E_NAME[@]}"; do dry_run_entry "$i"; done
+    return 0
+  fi
+  # every missing file with an example is created, even fill-less ones
+  # (pull-only stacks like ntfy still need key-set parity on disk)
+  for i in "${!F_PATH[@]}"; do
+    [[ ! -f $ROOT/${F_PATH[$i]} && -n ${F_EXAMPLE[$i]} ]] && NEWFILE[${F_PATH[$i]}]=1
+  done
+  if ! have_key; then
+    warn "age key unavailable — only creating missing files; present values stay unchecked"
+    warn "full run: SOPS_AGE_KEY=\"\$(sudo cat /var/lib/sops-nix/sops_age_key.txt)\" sops-gen apply"
+  fi
+  echo "apply:"
+  for i in "${!E_NAME[@]}"; do
+    case ${E_CLASS[$i]} in
+      generate|derived) apply_gen_entry "$i" || rc=1;;
+      pull|config)      apply_pull_entry "$i";;
+    esac
+  done
+  create_new_files
+  echo "done. Next: git diff, ./tests/run.sh, commit."
+  return $rc
+}
+
+cmd_rotate() {
+  local name=$1 i=${IDX_OF[$1]:-}
+  [[ -n $i ]] || die "no manifest entry named '$name'"
+  case ${E_CLASS[$i]} in
+    pull)   die "$name is pull-class — it cannot be generated, only obtained. ${E_NOTE[$i]}";;
+    config) die "$name is a config fact — edit it by hand (sopsedit)";;
+  esac
+  [[ ${E_COPY[$i]} == true ]] && die "$name is copy-only — rotate the source entry instead"
+  if [[ ${E_FREEZE[$i]} == true && $FORCE == 0 ]]; then
+    die "$name is FROZEN (rotation breaks things — see manifest note). Re-run with --force if you accept that. ${E_NOTE[$i]}"
+  fi
+  have_key || die "rotate needs the age key: SOPS_AGE_KEY=\"\$(sudo cat /var/lib/sops-nix/sops_age_key.txt)\" sops-gen rotate $name"
+
+  draw "${E_RECIPE[$i]}"
+  local t rendered
+  for t in ${E_TARGETS[$i]//^/ }; do
+    split_target "$t"
+    [[ -f $ROOT/$T_FILE ]] || die "rotate: $T_FILE does not exist — run apply first"
+    rendered=$(render "$T_PART" "$T_TPL")
+    sops_set "$T_FILE" "$T_KEY" "$rendered"
+    echo "  rotated   ${T_FILE}:${T_KEY}"
+  done
+  [[ -n ${E_RECOVERY[$i]} ]] && recovery_set "${E_RECOVERY[$i]}" "$DRAW"
+  [[ -n ${E_REMIND[$i]} ]] && echo "  REMINDER  ${E_REMIND[$i]}"
+  echo "done. Next: git diff, ./tests/run.sh, commit, restart the consumers."
+}
+
+cmd_list() {
+  local i t st mark flags
+  for i in "${!E_NAME[@]}"; do
+    flags=""
+    [[ ${E_FREEZE[$i]} == true ]] && flags+=" freeze"
+    [[ ${E_COPY[$i]} == true ]] && flags+=" copy-only"
+    [[ -n ${E_RECOVERY[$i]} ]] && flags+=" recovery"
+    printf '%-34s %-8s %-12s%s\n' "${E_NAME[$i]}" "${E_CLASS[$i]}" "${E_RECIPE[$i]:--}" "$flags"
+    for t in ${E_TARGETS[$i]//^/ }; do
+      split_target "$t"
+      st=$(plan_target_state "$T_FILE" "$T_KEY")
+      case $st in
+        present) mark=present;;
+        newfile) mark="missing (file would be created)";;
+        *)       mark=MISSING;;
+      esac
+      printf '    %-52s %s\n' "${T_FILE}:${T_KEY}" "$mark"
+    done
+  done
+}
+
+cmd_view() {
+  local file=$1 i found="" k cls v
+  for i in "${!F_PATH[@]}"; do
+    [[ ${F_PATH[$i]} == "$file" || ${F_PATH[$i]} == *"/$file"* || $(basename "$(dirname "${F_PATH[$i]}")") == "$file" ]] \
+      && { found=${F_PATH[$i]}; break; }
+  done
+  [[ -n $found ]] || die "no managed file matches '$file'"
+  [[ -f $ROOT/$found ]] || die "$found does not exist yet (apply creates it)"
+  local can_read=0
+  have_key && can_read=1
+  echo "$found (${FMT_OF[$found]})$( ((can_read)) || echo ' — values need the age key')"
+  # entry class per key, for annotation
+  declare -A CLS
+  for i in "${!E_NAME[@]}"; do
+    local t
+    for t in ${E_TARGETS[$i]//^/ }; do
+      split_target "$t"
+      [[ $T_FILE == "$found" ]] && CLS[$T_KEY]=${E_CLASS[$i]}
+    done
+  done
+  while IFS= read -r k; do
+    cls=${CLS[$k]:-unmanaged}
+    if ((can_read)); then
+      v=$(get_value "$found" "$k" 2>/dev/null || echo '<extract failed>')
+      printf '  %-38s %-10s %s\n' "$k" "($cls)" "$v"
+    else
+      printf '  %-38s %-10s <encrypted>\n' "$k" "($cls)"
+    fi
+  done < <(file_keys "$found" "${FMT_OF[$found]}")
+}
+
+cmd_search_keys() {
+  local pat=$1 i k
+  for i in "${!F_PATH[@]}"; do
+    while IFS= read -r k; do
+      [[ $k =~ $pat ]] && echo "${F_PATH[$i]}:$k"
+    done < <(file_keys "${F_PATH[$i]}" "${F_FORMAT[$i]}")
+  done
+  return 0
+}
+
+cmd_search_values() { # decrypt-and-grep: NEEDS the age key, by design
+  have_key || die "search --values decrypts every managed file — run with the age key"
+  local pat=$1 i
+  for i in "${!F_PATH[@]}"; do
+    [[ -f $ROOT/${F_PATH[$i]} ]] || continue
+    (cd "$ROOT" && sops -d "${F_PATH[$i]}" 2>/dev/null || true) \
+      | grep -E "$pat" | sed "s|^|${F_PATH[$i]}: |" || true
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+main() {
+  need sops; need openssl
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --manifest) MANIFEST=$2; shift 2;;
+      --root)     ROOT=$2; shift 2;;
+      --dry-run)  DRY=1; shift;;
+      --force)    FORCE=1; shift;;
+      -h|--help)  usage;;
+      *)          args+=("$1"); shift;;
+    esac
+  done
+  set -- "${args[@]:-}"
+  load_manifest
+  case ${1:-} in
+    apply)  cmd_apply;;
+    rotate) [[ -n ${2:-} ]] || die "rotate needs an entry name"; cmd_rotate "$2";;
+    list)   cmd_list;;
+    view)   [[ -n ${2:-} ]] || die "view needs a file"; cmd_view "$2";;
+    search)
+      case ${2:-} in
+        --keys)   [[ -n ${3:-} ]] || die "search --keys needs a pattern"; cmd_search_keys "$3";;
+        --values) [[ -n ${3:-} ]] || die "search --values needs a pattern"; cmd_search_values "$3";;
+        *)        die "search needs --keys or --values";;
+      esac;;
+    "")     usage 1;;
+    *)      die "unknown command: $1";;
+  esac
+}
+
+main "$@"
