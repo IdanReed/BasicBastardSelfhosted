@@ -56,9 +56,11 @@ let
     }) stackNames)
     ++ [
       {
-        stack = "arcane";
-        path = repo + "/arcane/compose.yaml";
-        dir = repo + "/arcane";
+        # komodo: the deploy plane, a root-level compose (not under stacks/),
+        # bootstrapped onto this host like arcane/ was before it.
+        stack = "komodo";
+        path = repo + "/komodo/compose.yaml";
+        dir = repo + "/komodo";
       }
       {
         stack = "authentik";

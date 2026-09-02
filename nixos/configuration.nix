@@ -5,6 +5,14 @@ let
   # flake cannot reference paths outside its own root, so each flake carries
   # its own copy and the ssh-pubkey-parity lint fails the harness on drift.
   sshPubkeys = import ./ssh-pubkeys.nix;
+
+  # Feeds stack-git-sync's Forgejo token to git WITHOUT putting it in argv:
+  # git calls GIT_ASKPASS for the basic-auth password and this prints the
+  # sops-decrypted value. /proc/<pid>/cmdline is world-readable on this host
+  # (firefly-cron makes the same narrowing), so the token never rides argv.
+  stackGitAskpass = pkgs.writeShellScript "stack-git-askpass" ''
+    exec cat ${config.sops.secrets.STACK_GIT_TOKEN.path}
+  '';
 in
 {
   # Modules are imported HERE, not from nixos/flake.nix — deliberately, and
@@ -272,6 +280,15 @@ in
       # compose file mounts instead.
       BACKUP_STORAGEBOX_SSH_KEY = {
         mode = "0600";
+      };
+
+      # Read-only Forgejo token for stack-git-sync's compose pull. Forgejo runs
+      # with DISABLE_SSH=true (stacks/forgejo), so the design's "deploy key" is
+      # necessarily a git-over-HTTP token, not an SSH key — read over loopback,
+      # same path modules/renovate.nix takes to keep the tailnet out of the
+      # dependency set. Root-only; the host unit consumes it via GIT_ASKPASS.
+      STACK_GIT_TOKEN = {
+        mode = "0400";
       };
     };
   };
@@ -543,7 +560,7 @@ in
         fi
       }
 
-      [ -f /srv/arcane/.sops.env ] && decrypt /srv/arcane/.sops.env
+      [ -f /srv/komodo/.sops.env ] && decrypt /srv/komodo/.sops.env
 
       for f in /srv/stacks/*/.sops.env; do
         [ -f "$f" ] && decrypt "$f"
@@ -593,33 +610,161 @@ in
     };
   };
 
-  # Arcane bootstrap service
-  systemd.services.bootstrap-arcane = {
-    description = "Bootstrap Arcane Docker Management";
-    after = [ "docker.service" "network-online.target" "srv.mount" "decrypt-sops-envs.service" ];
+  # Komodo bootstrap service — the deploy plane (replaces Arcane).
+  systemd.services.bootstrap-komodo = {
+    description = "Bootstrap Komodo container management";
+    # docker-network-homelab.service added over the Arcane wiring: Komodo Core
+    # joins `homelab` to reach Forgejo for Resource-Sync polling, so the shared
+    # network is a real start dependency, not just an ordering edge.
+    after = [ "docker.service" "network-online.target" "srv.mount" "decrypt-sops-envs.service" "docker-network-homelab.service" ];
     wants = [ "network-online.target" ];
-    requires = [ "docker.service" "srv.mount" "decrypt-sops-envs.service" ];
+    requires = [ "docker.service" "srv.mount" "decrypt-sops-envs.service" "docker-network-homelab.service" ];
     wantedBy = [ "multi-user.target" ];
 
     # This is the deploy plane, and it had no failure path at all. Without it
-    # Arcane is down: no stack can be deployed or updated, and no git sync
-    # delivers anything — while every stack already running keeps running, so
+    # Komodo is down: no stack can be deployed or updated, and no Resource Sync
+    # registers anything — while every stack already running keeps running, so
     # nothing looks wrong until the next change silently does not land.
     onFailure = [ "notify-failure@%n.service" ];
 
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      WorkingDirectory = "/srv/arcane";
+      WorkingDirectory = "/srv/komodo";
     };
 
     script = ''
       # Wait for docker to be fully ready
       sleep 5
 
-      # Start arcane
+      # Start Komodo Core + Periphery + FerretDB + Postgres
       ${config.virtualisation.docker.package}/bin/docker compose up -d
     '';
+  };
+
+  # ---------------------------------------------------------------------------
+  # Stack file delivery — the host-side clone Komodo's files_on_host needs
+  # ---------------------------------------------------------------------------
+  # Arcane cloned the compose repo INSIDE the socket-mounting container; Komodo
+  # Periphery reads pre-existing files (files_on_host), so the clone moves to
+  # the host — git credentials and file writes now leave the socket-toucher.
+  # This unit pulls the compose repo and materialises /srv/stacks/<name>/{
+  # compose.yaml,.sops.env} owned 1000:1000; decrypt-sops-envs then writes each
+  # .env, and Komodo Core registers the Stacks from the git TOML syncs.
+  #
+  # Timer-driven, NOT wantedBy multi-user.target: /srv/stacks is pre-seeded at
+  # provisioning (as /srv/arcane was for Arcane) and Forgejo — the git remote —
+  # is itself a managed stack, so a boot-time pull would race a not-yet-running
+  # Forgejo and page. The minutely timer converges once Forgejo is up.
+  systemd.services.stack-git-sync = {
+    description = "Sync compose stacks from Forgejo into /srv/stacks";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+
+    # Its silent failure is a stack that never updates — alert directly.
+    onFailure = [ "notify-failure@%n.service" ];
+
+    path = with pkgs; [ git rsync coreutils ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      # Private root-owned checkout; the age key never enters here and this is
+      # not the socket-toucher, so no secret material lives in it.
+      StateDirectory = "stack-git-sync";
+      StateDirectoryMode = "0700";
+    };
+
+    script = ''
+      # NOT set -e: each step is guarded by `|| fail` so one error alerts with a
+      # useful message instead of a bare nonzero exit.
+      set -uo pipefail
+      umask 077
+
+      # Loopback HTTP, NOT the tailnet vhost — same reasoning as
+      # modules/renovate.nix: keep tailscaled + Caddy + the wildcard cert out of
+      # the sync's dependency set. Forgejo has DISABLE_SSH=true, so the "deploy
+      # key" is a read-only Forgejo token (basic-auth password), not an SSH key.
+      host="127.0.0.1:10550"
+      user="idan"
+      repo="idan/BasicBastardSelfhosted"
+      branch="main"
+      work="$STATE_DIRECTORY/checkout"
+      url="http://$user@$host/$repo.git"
+
+      # Token via GIT_ASKPASS (see stackGitAskpass) — never in argv. Fail fast
+      # instead of blocking on a TTY prompt the oneshot has no way to answer.
+      export GIT_ASKPASS=${stackGitAskpass}
+      export GIT_TERMINAL_PROMPT=0
+
+      # Alert on state CHANGE, not every tick — the decrypt-sops-envs pattern:
+      # a persistent failure (Forgejo briefly down) must not ntfy every 60s.
+      # The stamp holds the last failure message and lives in /run (reboot
+      # clears it). Recovery is logged when the stamp is removed below.
+      stamp=/run/stack-git-sync.failed
+
+      fail() {
+        echo "$1" >&2
+        if [ -e "$stamp" ] && [ "$1" = "$(cat "$stamp")" ]; then
+          echo "(already notified; see the journal above)" >&2
+          exit 0
+        fi
+        printf '%s\n' "$1" > "$stamp"
+        exit 1
+      }
+
+      # Clone once, fetch+reset thereafter so a force-push or a diverged
+      # checkout heals rather than wedging the sync.
+      if [ ! -d "$work/.git" ]; then
+        rm -rf "$work"
+        git clone --quiet --branch "$branch" "$url" "$work" \
+          || fail "clone failed (is Forgejo reachable at $host?)"
+      else
+        git -C "$work" fetch --quiet origin "$branch" \
+          || fail "fetch failed (is Forgejo reachable at $host?)"
+        git -C "$work" reset --quiet --hard "origin/$branch" \
+          || fail "reset to origin/$branch failed"
+      fi
+
+      [ -d "$work/stacks" ] || fail "repo checkout has no stacks/ directory"
+
+      # Make-style delivery: --checksum copies only content-changed files, so an
+      # unchanged .sops.env keeps its mtime and decrypt-sops-envs does not
+      # re-decrypt it every minute. NO --delete: the decrypted .env is
+      # gitignored and absent from the checkout, so --delete would nuke it —
+      # and tearing a stack down is the deploy plane's job, not delivery's. The
+      # excludes are belt-and-suspenders in case a stray .env is ever committed.
+      rsync -rlptD --checksum \
+        --exclude='.env' --exclude='komodo.env' \
+        "$work/stacks/" /srv/stacks/ \
+        || fail "rsync into /srv/stacks failed"
+
+      # 1000:1000 on the delivered stacks (finding #10 world): rsync copies them
+      # root-owned from the checkout. Only the dirs this sync manages, never
+      # /srv/stacks itself (root, owned by the hand-written tmpfiles rule).
+      for d in "$work"/stacks/*/; do
+        name="$(basename "$d")"
+        [ -d "/srv/stacks/$name" ] && chown -R 1000:1000 "/srv/stacks/$name"
+      done
+
+      if [ -e "$stamp" ]; then
+        rm -f "$stamp"
+        echo "recovered: stack sync succeeded again"
+      fi
+      exit 0
+    '';
+  };
+
+  systemd.timers.stack-git-sync = {
+    description = "Poll Forgejo for compose stack changes";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "minutely";
+      # Match decrypt-sops-envs: the suites' delivery waits assume prompt ticks,
+      # and systemd's 1min default accuracy would slip a minutely tick by ~120s.
+      AccuracySec = "1s";
+      # No Persistent: a missed tick means nothing, the next one re-syncs.
+      Unit = "stack-git-sync.service";
+    };
   };
 
   # ---------------------------------------------------------------------------
@@ -1028,7 +1173,7 @@ in
     after = [ "docker.service" ];
     requires = [ "docker.service" ];
     wantedBy = [ "multi-user.target" ];
-    before = [ "bootstrap-arcane.service" ];
+    before = [ "bootstrap-komodo.service" ];
 
     # Its failure is the quietest one on the box: the network simply does not
     # exist, every stack that declares `networks: [homelab]` fails to start

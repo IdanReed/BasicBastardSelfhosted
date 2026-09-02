@@ -186,13 +186,21 @@
     finalImageName = "ghcr.io/dictionarry-hub/profilarr";
     finalImageTag = "2.2.0";
   };
-  "ghcr_io_getarcaneapp_arcane_v1_17_4" = {
-    composeRef = "ghcr.io/getarcaneapp/arcane:v1.17.4";
-    imageName = "ghcr.io/getarcaneapp/arcane";
-    imageDigest = "sha256:97492274e59c9f822a9c49d67981912b81919c0edad6094e496fa3507348082e";
-    hash = "sha256-mqBArBFkyP5M6KOsb2RX974vPpDh9W/RtxoIpmt7IcQ=";
-    finalImageName = "ghcr.io/getarcaneapp/arcane";
-    finalImageTag = "v1.17.4";
+  "ghcr_io_ferretdb_ferretdb_2_7_0" = {
+    composeRef = "ghcr.io/ferretdb/ferretdb:2.7.0";
+    imageName = "ghcr.io/ferretdb/ferretdb";
+    imageDigest = "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985";
+    hash = "sha256-BUMz8i4cp5EM2+rIywzO28wEbBF94qtuZhn6cOfL8uI=";
+    finalImageName = "ghcr.io/ferretdb/ferretdb";
+    finalImageTag = "2.7.0";
+  };
+  "ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0" = {
+    composeRef = "ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0";
+    imageName = "ghcr.io/ferretdb/postgres-documentdb";
+    imageDigest = "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7";
+    hash = "sha256-0+sYANK7dYsznEIgW+9bKKwbTxdIr9cTbdke6+1OxYA=";
+    finalImageName = "ghcr.io/ferretdb/postgres-documentdb";
+    finalImageTag = "17-0.107.0-ferretdb-2.7.0";
   };
   "ghcr_io_goauthentik_server_2026_5_6" = {
     composeRef = "ghcr.io/goauthentik/server:2026.5.6";
@@ -265,6 +273,22 @@
     hash = "sha256-KJUbKmGU1GVGdUY1lXBN93ZDFIdr5QQrzjRWmIvObuA=";
     finalImageName = "ghcr.io/mealie-recipes/mealie";
     finalImageTag = "v3.24.0";
+  };
+  "ghcr_io_moghtech_komodo-core_2_1_0" = {
+    composeRef = "ghcr.io/moghtech/komodo-core:2.1.0";
+    imageName = "ghcr.io/moghtech/komodo-core";
+    imageDigest = "sha256:4915d91b5c6e9de4e8fd59391eed5cad090ec84dcf6a1a9233d97edfdbbb88e7";
+    hash = "sha256-oOAXEKJIw51I5X68i2pw3QO+f8SzaQl0Raeb42FnMRI=";
+    finalImageName = "ghcr.io/moghtech/komodo-core";
+    finalImageTag = "2.1.0";
+  };
+  "ghcr_io_moghtech_komodo-periphery_2_1_0" = {
+    composeRef = "ghcr.io/moghtech/komodo-periphery:2.1.0";
+    imageName = "ghcr.io/moghtech/komodo-periphery";
+    imageDigest = "sha256:f5b272e3d9acd60d4eac69ea4fa0292dcaddfdecfc2be64ba5575e5ae18e72ae";
+    hash = "sha256-cCMZDvf6olwByWn0yMaQO0h4lNe2TTFXqVJEWN3lgFI=";
+    finalImageName = "ghcr.io/moghtech/komodo-periphery";
+    finalImageTag = "2.1.0";
   };
   "ghcr_io_paperless-ngx_paperless-ngx_2_20" = {
     composeRef = "ghcr.io/paperless-ngx/paperless-ngx:2.20";
@@ -413,8 +437,8 @@
   "lscr_io_linuxserver_bazarr_1_6_0" = {
     composeRef = "lscr.io/linuxserver/bazarr:1.6.0";
     imageName = "lscr.io/linuxserver/bazarr";
-    imageDigest = "sha256:3a820372f19fcb2981ea19fe4b5382934d67414afaba974bce831ddda0a64a02";
-    hash = "sha256-ppbFf06Lj8bCjXfgTMFwffy0LN41Kzcwbbky5i3PEng=";
+    imageDigest = "sha256:a20fb11a440d704a9d61c283aa26462aad33dc63223b173f8d8c77d33e8e9d59";
+    hash = "sha256-dRCNNNII+D9MiuRQnb9Pam83210+NGCbg7ghrYQrlqQ=";
     finalImageName = "lscr.io/linuxserver/bazarr";
     finalImageTag = "1.6.0";
   };
@@ -541,7 +565,7 @@
   "python_3_13-alpine" = {
     composeRef = "python:3.13-alpine";
     imageName = "python";
-    imageDigest = "sha256:62e80a1ff2a4af41c6fe72a629e5729463a4fd05ae89ecc9c812a6c1457f2cc7";
+    imageDigest = "sha256:7415fbc3c9e4979cc717d92377ab2bc7b2b4a2af1ac03cc52b5f3f88efedaf3a";
     hash = "sha256-pwnSc3NmB+lvUPvFkAleug+eY2di2E3iD0nPolMgf3c=";
     finalImageName = "python";
     finalImageTag = "3.13-alpine";
