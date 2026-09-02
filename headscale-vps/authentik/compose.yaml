@@ -111,6 +111,9 @@ services:
       # Consumed by the immich-oidc blueprint via its !Env tag; the stack-side
       # copy is stacks/immich/.sops.env (rendered into immich.json).
       IMMICH_OIDC_CLIENT_SECRET: ${IMMICH_OIDC_CLIENT_SECRET:?immich oidc client secret required}
+      # Consumed by the outline-oidc blueprint via its !Env tag; the stack-side
+      # copy is stacks/outline/.sops.env (OIDC_CLIENT_SECRET).
+      OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}
       # First-start bootstrap of the `akadmin` superuser. Without these there is
       # no way to log in at all: the blueprint's `idan` user has no credential
       # and no SMTP is configured for a reset link. Ignored on later starts.

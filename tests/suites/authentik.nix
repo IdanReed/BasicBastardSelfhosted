@@ -159,6 +159,10 @@ pkgs.testers.runNixOSTest {
       # stack end against ITS fixture, and the two fixtures agreeing is what
       # closes the loop.
       IMMICH_OIDC_FIXTURE = "test_immich_oidc_client_secret_not_secret"
+      # Same twin shape as immich: the other copy lives in
+      # stacks/outline/.sops.env (fixture tests/fixtures/outline.sops.env),
+      # and the two fixtures agreeing closes the loop.
+      OUTLINE_OIDC_FIXTURE = "test_outline_oidc_client_secret_not_secret"
 
       API = "http://127.0.0.1:9000/api/v3"
       CURL = f"curl -sf --max-time 10 -H 'Authorization: Bearer {TOKEN}'"
@@ -256,6 +260,7 @@ pkgs.testers.runNixOSTest {
                   "AUTHENTIK_BOOTSTRAP_PASSWORD=test_bootstrap_password",
                   "AUTHENTIK_BOOTSTRAP_TOKEN=test0bootstrap0token0deadbeef0deadbeef0deadbeef",
                   "IMMICH_OIDC_CLIENT_SECRET=test_immich_oidc_client_secret_not_secret",
+                  "OUTLINE_OIDC_CLIENT_SECRET=test_outline_oidc_client_secret_not_secret",
               }
               assert lines == expected, (
                   f"template did not render bare per-key values:\n"
@@ -415,6 +420,76 @@ pkgs.testers.runNixOSTest {
                   ).strip().splitlines()[-1]
               assert stored == IMMICH_OIDC_FIXTURE, (
                   f"Authentik stores a different immich client_secret than "
+                  f"the fixture: {stored!r}"
+              )
+          except Exception:
+              authentik_diag()
+              raise
+
+      # ---------------------------------------------------------------------
+      # (c4) The outline-oidc blueprint applied — third custom blueprint,
+      # own poll for the same per-file reason as (c2). Outline has NO local
+      # accounts, so this provider IS the login: the stored secret matching
+      # the fixture is the whole ballgame, not a detail.
+      # ---------------------------------------------------------------------
+      with subtest("the outline-oidc blueprint has been applied"):
+          for what, cmd in [
+              ("oauth2 provider 'outline' with client_id 'outline'",
+               f"{CURL} '{API}/providers/oauth2/?name=outline' "
+               "| jq -e '[.results[] | select(.name == \"outline\")] "
+               "| length == 1 and .[0].client_id == \"outline\"'"),
+              ("application with slug 'outline'",
+               f"{CURL} '{API}/core/applications/outline/' "
+               "| jq -e '.slug == \"outline\"'"),
+          ]:
+              try:
+                  headscale_vps.wait_until_succeeds(cmd, timeout=300)
+              except Exception:
+                  print(f"blueprint object never appeared: {what}")
+                  for label, dcmd in [
+                      ("api status, raw",
+                       f"{CURL_RAW} -i '{API}/providers/oauth2/?name=outline' | head -30"),
+                      ("blueprint instances",
+                       f"{CURL} '{API}/managed/blueprints/' "
+                       "| jq '.results[] | {name, path, status, last_applied}'"),
+                      ("worker log: outline blueprint",
+                       "docker logs authentik_worker 2>&1 "
+                       "| grep -iE 'outline|custom|discover' | tail -30"),
+                      ("worker errors",
+                       "docker logs authentik_worker 2>&1 "
+                       "| grep -iE '\"level\": \"(error|warning)\"|Traceback|exc_type' "
+                       "| tail -40"),
+                  ]:
+                      print(f"=== {label} ===")
+                      print(headscale_vps.execute(dcmd)[1])
+                  authentik_diag()
+                  raise
+
+      with subtest("outline provider stores the fixture secret"):
+          # Fixture -> template -> worker env -> !Env -> DB row, same chain
+          # as immich; a literal-!Env break here 401s every login with a
+          # healthy container and empty logs.
+          try:
+              providers = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/providers/oauth2/?name=outline'"
+              ))
+              matches = [p for p in providers["results"] if p["name"] == "outline"]
+              assert len(matches) == 1, (
+                  f"expected exactly one provider named 'outline', got "
+                  f"{[p['name'] for p in providers['results']]}"
+              )
+              detail = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/providers/oauth2/{matches[0]['pk']}/'"
+              ))
+              stored = detail.get("client_secret") or ""
+              if not stored:
+                  stored = headscale_vps.succeed(
+                      "docker exec authentik_worker ak shell -c "
+                      "\"from authentik.providers.oauth2.models import OAuth2Provider; "
+                      "print(OAuth2Provider.objects.get(name='outline').client_secret)\""
+                  ).strip().splitlines()[-1]
+              assert stored == OUTLINE_OIDC_FIXTURE, (
+                  f"Authentik stores a different outline client_secret than "
                   f"the fixture: {stored!r}"
               )
           except Exception:

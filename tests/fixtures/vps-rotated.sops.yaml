@@ -9,6 +9,7 @@ HEADSCALE_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:FIk9+XHe0Jm4WMadgWCQ2I+SOk/9FZ
 AUTHENTIK_BOOTSTRAP_PASSWORD: ENC[AES256_GCM,data:NDBI/3wL8JKJNScxtW+7+5qkms5moZM=,iv:mmQt8EgYx+FBB95C4aeuesEpCi1unygvBxySpAmeC2E=,tag:cjD3RgSE5bWqmeBi8ub7kQ==,type:str]
 AUTHENTIK_BOOTSTRAP_TOKEN: ENC[AES256_GCM,data:cdo+1E6jfsmasQEPI+6VUrrtS88YMYnwVj1+CGKSgyrwY6gXUrEWlD++5iZzEkk=,iv:WZ5bOcSZ3HV6tCjQT7DCZn8hO76aVxmha+j2DDkxVJ4=,tag:KJCMdvMshA+VagqTJ51Ykg==,type:str]
 IMMICH_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:UsEsnOy4fA4fQg4X7I1u8ISZ8fOFbwcR5nM7IaIyP70QaK7mE/kmA5Q=,iv:PsDb5M7LcDHf8blyG2MB/OvJYeOcULvaJ7m06xZ8Cb8=,tag:BQUQdR2R1A5jQrIJr0X98g==,type:str]
+OUTLINE_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:mG75gRaDUD99XBSP1440lJ03DJLFFUyQ0AN9qHo+hB8vvTKJKucqh3vB,iv:KVOD4vMWXvYbmwahWT6tin62o5UhCVOQfZ6gCkECv+I=,tag:WYplMgBs9vRKw+/RvU2tRg==,type:str]
 sops:
     age:
         - enc: |
@@ -20,7 +21,7 @@ sops:
             pdM41vvs2oM6kK5aJcNQ5gb96fp7MnM7Iqu3NpNtjXEfUZfumh0hAw==
             -----END AGE ENCRYPTED FILE-----
           recipient: age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
-    lastmodified: "2026-08-30T14:11:23Z"
-    mac: ENC[AES256_GCM,data:4ru6aOcnSYW1qvx8Slawpfe/SwFYnGQLpbfLqqlH/dx/185DZ3ZNbwLcSRJ4biTgDOlAIx5LPbmGDW96tJRcq4QhjXQdi/sxYR9HC3QxDWdiGvFoUISNwyf7mVIhIhXmbhzgsEHmPzDOXkd0H0DbKMvsNTX66jkTf0h4K6ByjfI=,iv:WNch4H75W2Yxx0ZZcR08pDnX04RU7AsTE9opakOKyXc=,tag:ZnJZb8KJNK3T06Wkt8wW3Q==,type:str]
+    lastmodified: "2026-09-02T16:24:56Z"
+    mac: ENC[AES256_GCM,data:QjEqQFrLSBpRB8tuXwobvGLedezebVeyrZKidbwipl3pSJL+pdBwq4XDaOXd3HImKAY44AHbUYIAaSsVwISCm9jzIVNAuC+LZNmFDvhlj51S7c2WN+5OnC/yLP+/Tvv51cvOx2PmR/ddkxs/xNVUpH/NCW/4W/J7zYLQkM9tQHE=,iv:gT3ilwyNkcYfKs688VqPKUuuPQbRH9q0P0GKLf5uZvM=,tag:vWfHiOkoqN5mosgGVdeayg==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.0
