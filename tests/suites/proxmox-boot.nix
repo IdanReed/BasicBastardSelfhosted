@@ -120,7 +120,7 @@ let
   # partition/bootloader layout tracks the real image by construction.
   qcowImage = import "${nixpkgs}/nixos/lib/make-disk-image.nix" {
     inherit pkgs lib;
-    config = imageSystem.config;
+    inherit (imageSystem) config;
     inherit (imageSystem.config.proxmox) partitionTableType;
     format = "qcow2";
     diskSize = "auto";

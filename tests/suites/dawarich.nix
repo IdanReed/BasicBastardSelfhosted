@@ -19,7 +19,7 @@
 #     in Redis, and separately pins the 301 that makes the header necessary.
 #   - **The mirror image: APPLICATION_HOSTS.** config.host_authorization
 #     explicitly EXCLUDES /api/v1/health, so a typo'd hostname yields a healthy
-#     container, a happy deploy plane, a happy Uptime Kuma — and a 403 "Blocked
+#     container, a happy deploy plane, a happy Gatus — and a 403 "Blocked
 #     hosts" on every browser request. The suite fetches `/` with the real Host
 #     header and, as the control, with a wrong one.
 #   - **The seeded admin is GONE.** db/seeds.rb creates

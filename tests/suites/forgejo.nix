@@ -306,6 +306,9 @@ pkgs.testers.runNixOSTest {
             assert line.startswith("3000/tcp -> 127.0.0.1:"), (
                 f"unexpected published port: {line!r}"
             )
+        # Positive control first (immich/books precedent): without it a
+        # node-naming or routing regression makes both fail()s pass vacuously.
+        outsider.succeed("nc -z -w 5 services-vm 22")
         outsider.fail(f"nc -z -w 5 services-vm {PORT}")
         outsider.fail("nc -z -w 5 services-vm 3000")
 

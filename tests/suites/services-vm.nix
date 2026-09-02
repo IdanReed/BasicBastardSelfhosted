@@ -606,9 +606,11 @@ pkgs.testers.runNixOSTest {
             "mkdir -p /srv/stacks/latestack && "
             "cp /srv/stacks/ntfy/.sops.env /srv/stacks/latestack/.sops.env"
         )
-        # 150s, not one 60s tick: OnCalendar=minutely plus systemd's default
-        # AccuracySec=1min means a tick can land up to ~120s after the copy in
-        # the worst case; the slack on top keeps a slow VM from flaking.
+        # 150s: the unit pins AccuracySec=1s (nixos/configuration.nix), so
+        # the worst case is one ~60s tick + the decrypt itself; the slack on
+        # top keeps a slow VM from flaking. If that AccuracySec ever reverts
+        # to systemd's 1min default a tick can slip ~120s — the
+        # timer-accuracy lint holds the pin.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/latestack/.env", timeout=150
         )
@@ -624,10 +626,12 @@ pkgs.testers.runNixOSTest {
             f"late .env is owned {owner}, expected 1000:1000 (/srv/stacks world)"
 
         # And no mtime churn for everyone else: a tick that changes nothing
-        # must rewrite nothing (compose watches these files).
-        before = services_vm.succeed("stat -c '%Y' /srv/stacks/ntfy/.env").strip()
+        # must rewrite nothing (compose watches these files). %y, not %Y:
+        # nanosecond precision, so a rewrite landing in the same second as
+        # the before-read cannot hide.
+        before = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
         services_vm.succeed("systemctl start decrypt-sops-envs.service")
-        after = services_vm.succeed("stat -c '%Y' /srv/stacks/ntfy/.env").strip()
+        after = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
         assert before == after, "an unchanged .env was rewritten by a re-run"
 
     # -----------------------------------------------------------------------
@@ -643,7 +647,7 @@ pkgs.testers.runNixOSTest {
         outsider.succeed(f"{SSH} -i /etc/test-ssh-key idan@services-vm sudo -n true")
         methods = outsider.succeed(
             f"{SSH} -v -o PubkeyAuthentication=no idan@services-vm true 2>&1 "
-            "| grep 'Authentications that can continue' | head -1 || true"
+            "| grep 'Authentications that can continue' | head -1"
         )
         assert "publickey" in methods, f"never saw the auth offer: {methods!r}"
         assert "password" not in methods, f"sshd offers passwords: {methods!r}"

@@ -148,6 +148,8 @@ let
       images
       serverNotes
       ;
+    # Keys only; laziness keeps this from forcing any suite derivation.
+    suiteNames = builtins.attrNames suites;
   };
 
   suites = {

@@ -292,7 +292,7 @@ pkgs.testers.runNixOSTest {
     # HTTP 200 that containers WITH egress reach through the host's NAT and
     # qbittorrent must not.
     outsider =
-      { ... }:
+      _:
       {
         services.nginx = {
           enable = true;
