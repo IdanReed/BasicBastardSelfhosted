@@ -1,0 +1,311 @@
+# Excalidraw workspace — AstraDraw (Util range: 10406 app, 10408 collab ws,
+# 10409 api). Takes the 10406 slot ExcaliDash vacated (bake-off 2026-09-01).
+#
+# WHAT THIS IS. The user wants a persistent whiteboard WORKSPACE — named
+# scenes that survive the browser and can be reopened later, ideally with
+# live collab — not the official image's single throwaway localStorage
+# canvas. AstraDraw (astradraw/*, an Excalidraw fork, MIT) is the only 2026
+# option that actually delivers that server-side: named scenes in Postgres,
+# a dashboard to reopen them, collections/teams, live collab, comments.
+#
+# WHAT WAS REJECTED, and why (verified 2026-09-02, not remembered):
+#   - ExcaliDash (10406's previous tenant): STILL DEFERRED. Upstream
+#     (ZimengXiong/ExcaliDash, main @ 2026-08-23) runs `npx prisma generate`
+#     UNCONDITIONALLY in docker-entrypoint.sh line 83, with cross-arch
+#     binaryTargets hardcoded in schema.prisma — the runtime-download crash
+#     loop stacks/util/compose.yaml documents is unfixed. Do not revive.
+#   - official excalidraw/excalidraw: single canvas in localStorage; the
+#     collab/storage endpoints are Vite BUILD-time env, so the published
+#     image cannot be pointed anywhere without rebuilding it.
+#   - excalidraw-room: relay only, persists nothing, dormant since 2024-07.
+#   - kiliandeca/excalidraw-storage-backend (+ kitsteam/alswl forks,
+#     alswl/excalidraw-collaboration): persists share-links and rooms only —
+#     the canvas itself stays a localStorage singleton, no scene library.
+#   - PatWie/excalidraw-complete: repo 404s at that path now, releases
+#     stalled at 0.0.2, no first-party registry image, no scene library.
+#   - BetterAndBetterII/excalidraw-full: real canvas library in one Go
+#     binary, but ghcr publishes ONLY moving tags (latest/main/dev/pr-*) —
+#     unpinnable, which this fleet treats as disqualifying — and auth is
+#     GitHub OAuth (egress) or a bundled Dex.
+#
+# ⚠ MATURITY, STATED HONESTLY: AstraDraw is an alpha by a solo developer
+# (README's own words; ~23 stars; code largely AI-assisted; last push
+# 2025-12-27). It was chosen because it is the only candidate satisfying the
+# workspace requirement at all, and every load-bearing behaviour below was
+# MEASURED against the pinned images rather than trusted — but expect rough
+# edges, and treat version bumps as re-verification events, not routine.
+# There is no functional workspace gap to disclose; the gap is maturity.
+#
+# WHY THE PRISMA BACKEND DOES NOT REPEAT THE EXCALIDASH TRAP: the api image
+# runs `prisma generate` at BUILD time, and the published 1.0.1 image was
+# verified (docker export | tar -t) to bake the prisma CLI, the
+# schema-engine and the query engine for its own arch. Boot-time
+# `npx prisma migrate deploy` therefore resolves locally — measured on an
+# internal no-egress docker network: 3 migrations applied, server up, full
+# scene round trip. CHECKPOINT_DISABLE below turns off the prisma CLI's
+# phone-home so even its non-fatal telemetry never dials out.
+#
+# ONE VHOST, PATH-ROUTED. The frontend expects same-origin siblings:
+#   /           -> app  (10406)   static SPA shell, nginx
+#   /socket.io  -> room (10408)   collab websocket relay
+#   /api/v2     -> api  (10409)   auth + workspace + scene storage
+# The browser must reach all three, hence three loopback publishes and three
+# reverse_proxy targets inside the single excalidraw.svc.idanreed.com handle.
+# Postgres is deliberately NOT published — its only consumers are the api and
+# backup-prepare.sh's docker exec, neither of which needs a port.
+#
+# AUTH: NO forward auth, the outline/tandoor posture. AstraDraw has real
+# auth of its own: a local admin seeded from env at first boot, and NATIVE
+# OIDC against Authentik (OIDC_* vars, ready-but-off until the client secret
+# lands). ENABLE_REGISTRATION=false below is load-bearing — it closes the
+# open-registration window that would otherwise let any tailnet user mint an
+# account. The room relay is unauthenticated BY DESIGN, as upstream
+# excalidraw-room deployments are: joining a room needs its id AND its
+# E2E-encryption key (128-bit, generated per scene, travels in the URL
+# fragment which never reaches any server), and exposure is tailnet-only.
+#
+# EGRESS, stated precisely because "no runtime downloads" is a fleet rule:
+#   containers: ZERO. Proven by booting all four on an internal no-egress
+#     network: migrations, login, scene create/read, collab handshake all
+#     work. No suite or deploy step needs the internet.
+#   the user's BROWSER: index.html prefers Excalidraw's CDN for fonts
+#     (EXCALIDRAW_ASSET_PATH lists the CDN first, then "/" — the woff2 files
+#     ARE baked into the image, so an offline browser falls back and works),
+#     and fetches one UI font from fonts.googleapis.com (degrades to system
+#     fonts). simpleanalytics is gated OFF by VITE_APP_DISABLE_TRACKING=true.
+#   features that are SaaS and therefore stay OFF: GIPHY sticker search
+#     (VITE_APP_GIPHY_API_KEY unset) and Talktrack video recordings
+#     (Kinescope keys unset). Scenes, collab, comments, presentation mode
+#     need neither.
+#
+# BACKUP CONTRACT: everything lives in ONE Postgres CLUSTER — the
+# `excalidraw` database (Prisma: users/workspaces/scene metadata) and the
+# `excalidraw_storage` database (keyv: the scene payloads; S3/MinIO was
+# rejected as a second stateful store with a weaker dump story). ONE
+# pg_dumpall captures both plus roles. Covered by adding `excalidraw` to
+# backup-prepare.sh's pg_dumpall loop (container excalidraw_db,
+# POSTGRES_USER=excalidraw — both names are what the loop derives).
+# /mnt/fast/excalidraw/pgdata is excluded from Backrest's raw snapshot like
+# every pgdata; the dump is the artifact.
+#
+# 🚨 keyv-init.sql IS LOAD-BEARING, AND SO IS THE TWO-DATABASE SPLIT IT
+# CREATES. Two measured failure modes, one stone:
+#   1. @keyv/postgres lazily CREATEs its table on connect, the api opens
+#      FOUR keyv connections at boot, and on a missing table they race —
+#      the losers' connections are broken until the next restart (boots
+#      coin-flip healthy vs 500-on-every-scene-read). Pre-creating the
+#      table defuses that.
+#   2. But pre-creating it in PRISMA'S database poisons the entrypoint's
+#      migration chain: `prisma migrate deploy` fails P3005 ("schema is not
+#      empty") on EVERY boot, the fallback `prisma db push
+#      --accept-data-loss` then syncs the db to schema.prisma — and DROPS
+#      the keyv table, WITH every saved scene, on each restart. Measured,
+#      not theorised.
+# Hence the keyv table lives in its own `excalidraw_storage` database
+# (STORAGE_URI in .sops.env points there): Prisma's db is empty at first
+# migrate, so deploy succeeds and db push never runs; and nothing Prisma
+# does can reach the blob table. The suite pins the whole arrangement with
+# a zero-"Connection Error" assertion across a restart plus a
+# write -> restart -> read-back round trip.
+#
+# ⚠ MEASURED FAILURE MODE: the api PROCESS EXITS when its Postgres goes away
+# (unhandled pg pool error). restart: unless-stopped is the recovery path —
+# docker brings it back, migrations no-op, state is intact. Expect one
+# restart cycle in `docker ps` timestamps after any db restart; it is not a
+# crash loop.
+
+services:
+  # ---------------------------------------------------------------------------
+  # excalidraw — the frontend. Static SPA under nginx; a fork of the
+  # Excalidraw app whose entrypoint writes the VITE_* values below into
+  # /env-config.js at container start (window.__ENV__), which is what makes
+  # a PREBUILT image deployable behind our vhost at all — stock Excalidraw
+  # bakes these at compile time, which is half of why the official image was
+  # rejected above.
+  # ---------------------------------------------------------------------------
+  excalidraw:
+    image: astradraw/app:1.0.1
+    container_name: excalidraw
+    ports:
+      - '127.0.0.1:10406:80'
+    environment:
+      # Same-origin URLs, all riding the one Caddy vhost. WS_SERVER_URL is
+      # the ORIGIN only — the socket.io client appends /socket.io itself,
+      # which is the path Caddy routes to :10408.
+      - VITE_APP_WS_SERVER_URL=https://excalidraw.svc.idanreed.com
+      - VITE_APP_BACKEND_V2_GET_URL=https://excalidraw.svc.idanreed.com/api/v2/scenes/
+      - VITE_APP_BACKEND_V2_POST_URL=https://excalidraw.svc.idanreed.com/api/v2/scenes/
+      - VITE_APP_STORAGE_BACKEND=http
+      - VITE_APP_HTTP_STORAGE_BACKEND_URL=https://excalidraw.svc.idanreed.com/api/v2
+      # Unset FIREBASE_CONFIG defaults to "{}" in the entrypoint — no
+      # firebase, which is the excalidraw.com storage path this stack
+      # replaces with the api below.
+      # Load-bearing: index.html only injects the simpleanalytics <script>
+      # when this is not "true". Without it every visitor's browser dials
+      # scripts.simpleanalyticscdn.com.
+      - VITE_APP_DISABLE_TRACKING=true
+    healthcheck:
+      # nginx:alpine base ships busybox wget. GET, not --spider (the
+      # homebox/glance 405 lesson). Proves nginx is serving AND the
+      # entrypoint completed (it writes env-config.js before exec'ing
+      # nginx). Cannot prove the injected URLs are RIGHT — the suite greps
+      # env-config.js for that.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # excalidraw_room — the collab relay (socket.io, an excalidraw-room fork).
+  # Stateless: scene bytes ride the sockets end-to-end encrypted, nothing
+  # touches disk. Unauthenticated by design — see the header.
+  # ---------------------------------------------------------------------------
+  excalidraw_room:
+    image: astradraw/room:1.0.1
+    container_name: excalidraw_room
+    ports:
+      - '127.0.0.1:10408:80'
+    environment:
+      # The image's production default is already 80; pinned so the publish
+      # above cannot silently diverge from it on a bump.
+      - PORT=80
+      # Exact origin, not upstream's compose default of '*'. CORS is
+      # browser-enforced, so this does not gate curl or the healthcheck —
+      # it stops OTHER tailnet-reachable origins scripting the relay from a
+      # logged-in browser.
+      - CORS_ORIGIN=https://excalidraw.svc.idanreed.com
+    healthcheck:
+      # Engine.IO polling handshake — the real protocol, not just a TCP
+      # accept: a 200 here means socket.io answered with a session id. The
+      # node:alpine base ships busybox wget.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:80/socket.io/?EIO=4&transport=polling']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # excalidraw_api — auth, workspaces, scene storage (NestJS + Prisma).
+  # Stateless itself; everything durable is in excalidraw_db.
+  # ---------------------------------------------------------------------------
+  excalidraw_api:
+    image: astradraw/api:1.0.1
+    container_name: excalidraw_api
+    ports:
+      - '127.0.0.1:10409:8080'
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first decrypt, and the plain form aborts the whole stack.
+    # Carries POSTGRES_PASSWORD, STORAGE_URI, JWT_SECRET, ROOM_KEY_SECRET,
+    # ADMIN_PASSWORD — see .sops.env.example.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=America/Chicago
+      # 'production' flips the session cookie to Secure — correct behind the
+      # HTTPS vhost. (Suites talking plain http to the loopback publish must
+      # replay the Set-Cookie header by hand; curl's jar refuses Secure
+      # cookies over http. The api itself does not care.)
+      - NODE_ENV=production
+      - PORT=8080
+      # keyv = scene blobs in Postgres — chosen over upstream's recommended
+      # S3/MinIO so this stack has ONE stateful store and one dump line.
+      # 🚨 STORAGE_URI (from .env) must point at the excalidraw_storage
+      # database, NOT at `excalidraw` — see keyv-init.sql for why the split
+      # is load-bearing. And it must be SET at all: with it unset the api
+      # logs one WARN line and silently stores scenes in process memory —
+      # every save lost on restart.
+      - STORAGE_BACKEND=keyv
+      - POSTGRES_HOST=excalidraw_db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=excalidraw
+      - POSTGRES_DB=excalidraw
+      # Absolute links (OIDC redirects, invite links) are built from this.
+      - APP_URL=https://excalidraw.svc.idanreed.com
+      # 🚨 THE AUTH POSTURE. Local admin seeded at first boot from
+      # ADMIN_USERNAME/ADMIN_PASSWORD/ADMIN_EMAIL; registration CLOSED so
+      # reaching the vhost does not mint accounts. The suite pins all three
+      # flags via /api/v2/auth/status.
+      - ENABLE_LOCAL_AUTH=true
+      - ENABLE_REGISTRATION=false
+      - ADMIN_USERNAME=admin
+      - ADMIN_EMAIL=admin@idanreed.com
+      # Must contain ADMIN_EMAIL for the seeded admin to be super admin.
+      # ⚠ Before enabling OIDC, ADD the operator's Authentik email here —
+      # super-admin is matched by email at login.
+      - SUPERADMIN_EMAILS=admin@idanreed.com
+      # NATIVE OIDC — ready but OFF (empty issuer = local auth only, same
+      # posture as tandoor/mealie/outline). Turning it on needs an Authentik
+      # oauth2 provider + client secret in .env, then:
+      #   - OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/excalidraw/
+      #   - OIDC_CLIENT_ID=excalidraw
+      #   - OIDC_CLIENT_SECRET  (add to .sops.env — key-set drift lint!)
+      #   - OIDC_CALLBACK_URL=https://excalidraw.svc.idanreed.com/api/v2/auth/callback
+      # ⚠ Verify discovery behaviour against a dead issuer BEFORE enabling —
+      # wealthfolio taught this fleet that discovery can be boot-fatal, and
+      # AstraDraw's has not been measured.
+      #
+      # Prisma CLI phone-home (checkpoint telemetry during the boot-time
+      # migrate) — off. Failure would be non-fatal but it is a pointless
+      # dial-out on a host with no egress.
+      - CHECKPOINT_DISABLE=1
+    depends_on:
+      excalidraw_db:
+        # Real condition, not ordering: the entrypoint runs migrations
+        # immediately and its fallback chain ends in "continue anyway", so
+        # racing an unready db would start the server against an empty
+        # schema instead of failing loudly.
+        condition: service_healthy
+    healthcheck:
+      # node:20-slim ships NO wget and NO curl (verified in-container) —
+      # node itself is the probe. /api/v2/auth/status is liveness plus "the
+      # auth config parsed"; it touches no table, so a dead db leaves this
+      # GREEN. That blind spot is smaller than it looks: the api process
+      # EXITS on a lost db connection (measured), so db-down shows up as a
+      # restarting container, not a lying healthcheck. Cold start to
+      # listening incl. migrations: ~10 s measured; start_period covers a
+      # slow multi-stack boot.
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/api/v2/auth/status').then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # excalidraw_db — PostgreSQL. Same pin as paperless/firefly/etc. so the
+  # fleet keeps one postgres entry in tests/images.nix; stay on 17 (18 moved
+  # PGDATA, see the firefly block). The ONLY stateful service in this stack.
+  # ---------------------------------------------------------------------------
+  excalidraw_db:
+    image: postgres:17.9-alpine
+    container_name: excalidraw_db
+    volumes:
+      - /mnt/fast/excalidraw/pgdata:/var/lib/postgresql/data
+      # 🚨 Load-bearing, not an optimisation — creates the SECOND database
+      # (excalidraw_storage) with the keyv table pre-made; see the header
+      # and the file itself. Runs once, when initdb creates the cluster, at
+      # which point postgres is not yet accepting TCP, so the api cannot
+      # race it.
+      - ./keyv-init.sql:/docker-entrypoint-initdb.d/10-keyv-init.sql:ro
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_USER=excalidraw
+      - POSTGRES_DB=excalidraw
+      # POSTGRES_PASSWORD arrives from .env and must match the password
+      # embedded in STORAGE_URI — see .sops.env.example.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # -U is required: pg_isready defaults to the OS user (root here),
+      # which does not exist as a role (the firefly lesson).
+      test: ['CMD-SHELL', 'pg_isready -U excalidraw -d excalidraw']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
