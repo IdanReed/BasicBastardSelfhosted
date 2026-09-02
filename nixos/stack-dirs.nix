@@ -506,6 +506,9 @@
     # before dropping privileges, and the postgres image chowns pgdata itself from
     # its root entrypoint. tests/suites/paperless.nix creates exactly these six
     # directories root-owned and runs the whole document pipeline against them.
+    #
+    # Missing from the tmpfiles-ownership lint's COMPOSE_FILES list until the
+    # generator landed — five bind sources with no rule.
     "d /mnt/fast/paperless 0755 root root -"
     "d /mnt/fast/paperless/consume 0755 root root -"
     "d /mnt/fast/paperless/data 0755 root root -"
