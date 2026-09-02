@@ -17,7 +17,7 @@ today passes identically next month.
 ./tests/run.sh services     # services VM: sops -> arcane -> stacks
 ./tests/run.sh tailnet      # both hosts on one tailnet, end to end
 ./tests/run.sh stack <name> # one stack alone — the fast loop for stack work
-./tests/run.sh <suite>      # one named suite — 28 exist, authentik through
+./tests/run.sh <suite>      # one named suite — 29 exist, authentik through
                             # journald-logging; run.sh's own header is the
                             # authoritative list (it sits next to the case
                             # statement it documents, so it cannot drift far)
@@ -56,7 +56,7 @@ work and iteration is instant.
 
 `nixpkgs` is pinned from `headscale-vps/flake.lock` (see `lib/sources.nix`), so
 the suites evaluate against exactly the nixpkgs the hosts are built with. The
-`nixpkgs-parity` lint fails if `nixos/flake.lock` drifts from it, because a
+`flake-input-parity` lint fails if `nixos/flake.lock` drifts from it, because a
 suite testing against a different nixpkgs than the host is built with is a
 green light that means nothing.
 
