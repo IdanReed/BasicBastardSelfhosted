@@ -188,6 +188,10 @@ let
     restore = callSuite ./suites/restore.nix { };
     tandoor = callSuite ./suites/tandoor.nix { };
     wger = callSuite ./suites/wger.nix { };
+    mealie = callSuite ./suites/mealie.nix { };
+    actual = callSuite ./suites/actual.nix { }; # hand-written: restart:"no" init one-shot fails mk-stack-suite's all-running check
+    # Hand-written: the argon2 $-quoting trap needs a REAL login; boot-fatal OIDC needs negative containers.
+    wealthfolio = callSuite ./suites/wealthfolio.nix { };
     gatus = callSuite ./suites/gatus.nix { };
     beszel = callSuite ./suites/beszel.nix { };
     samba = callSuite ./suites/samba.nix { };

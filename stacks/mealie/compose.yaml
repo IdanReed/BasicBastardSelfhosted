@@ -1,0 +1,146 @@
+# Mealie (Food range, port 10352).
+#
+# ⚠ THIS IS AN EVALUATION STACK — the Tandoor side-by-side from
+# ServerNotes/designs/service-bakeoff.md item 6. It runs on Mealie's own
+# local admin (created by mealie_init below) with OIDC config-ready and OFF,
+# exactly like the tandoor stack it is being compared against. If it wins,
+# retiring Tandoor is a separate decision.
+#
+# Backup contract: there is no _db container and no pg_dumpall entry. The
+# database is /mnt/fast/mealie/mealie.db, dumped by backup-prepare.sh's
+# sqlite_backup (the vaultwarden path). That line lands WITH this stack —
+# the backup-coverage lint fails on a speculative line and on a missing one.
+
+services:
+  # ---------------------------------------------------------------------------
+  # mealie — recipe manager. One container, one bind mount: recipes, images,
+  # the SQLite database AND the token-signing secrets all live in /app/data.
+  #
+  # 🚨 SQLITE ON PURPOSE, AND THE REASONING IS TANDOOR'S TRAP INVERTED.
+  # settings/db_providers.py (v3.24.0) ends in
+  #     if provider_name == "postgres": PostgresProvider(...)
+  #     else:                           SQLiteProvider(...)
+  # and the constructor passes `DB_ENGINE or "sqlite"` — so unset, empty, AND
+  # ANY TYPO ("postgresql" is Django's CORRECT engine string next door in
+  # tandoor!) all select sqlite with no log line. Worse than Tandoor's
+  # version of the hole: PostgresProvider defaults POSTGRES_PASSWORD to the
+  # literal "mealie", so a half-lost postgres config doesn't even fail auth —
+  # it either connects with a published password or silently runs sqlite.
+  #
+  # Choosing Postgres here would therefore rebuild the finding-#11 race
+  # (deploy beats first decrypt -> phantom database) with a wider mouth.
+  # Choosing sqlite DELETES the whole class: the fallback state and the
+  # intended state are the same file, and that file is on the bind mount —
+  # persistent and backed up — not in the container's writable layer. A race
+  # window writes to the real database.
+  # ---------------------------------------------------------------------------
+  mealie:
+    # `v` prefix REQUIRED (tandoor next door has none — the exact trap
+    # CLAUDE.md warns about, in one 50-port range).
+    image: ghcr.io/mealie-recipes/mealie:v3.24.0
+    container_name: mealie
+    ports:
+      - '127.0.0.1:10352:9000'
+    volumes:
+      # Everything: recipe data (sqlite), images, and the auto-generated
+      # .secret/.session_secret files that sign every auth token — the app
+      # writes them here on first boot (settings.py: determine_secrets), so
+      # no SECRET key is needed in .env and the fast-tier backup carries them.
+      # Losing .secret logs everyone out; it does not lose data.
+      - /mnt/fast/mealie:/app/data
+    environment:
+      - TZ=America/Chicago
+      # 🚨 Pinned HERE, not in .env, and `environment` BEATS `env_file` in
+      # compose precedence — so a stray DB_ENGINE in a future .env can never
+      # silently flip the engine. A mid-life flip would present an EMPTY
+      # database (healthcheck green — /api/app/about queries whichever DB is
+      # configured) while mealie.db still held every recipe.
+      - DB_ENGINE=sqlite
+      # The port the API binds in-container. Explicit for the same reason
+      # ghostfolio pins PORT=3333: the published port above is a separate
+      # file's decision and a silent upstream default change would be a 502
+      # with a healthy container.
+      - API_PORT=9000
+      # Used for notification links and the OIDC callback URL.
+      - BASE_URL=https://mealie.svc.idanreed.com
+      # Explicit although currently the default: upstream flipped this very
+      # default once already (true -> false in v1.4.0, "security review").
+      - ALLOW_SIGNUP=false
+      # ⚠ No DEFAULT_EMAIL / DEFAULT_PASSWORD, because THEY NO LONGER EXIST.
+      # v3's settings.py holds _DEFAULT_EMAIL / _DEFAULT_PASSWORD as pydantic
+      # PRIVATE attrs ("should no longer be set by end users") — env vars
+      # cannot reach them. Every fresh Mealie boots with an ADMIN account
+      # changeme@example.com / MyPassword (username `admin`), both strings in
+      # the public repository, and no knob to change them. mealie_init below
+      # is the mitigation. Same class as wger's admin/adminadmin.
+      #
+      # OIDC — config-ready and OFF, the tandoor/books posture: run on the
+      # local admin until the Authentik client secret lands.
+      # Verified NOT boot-fatal to configure: auth.py registers the authlib
+      # client with server_metadata_url and discovery happens lazily on the
+      # first login redirect — a VPS blip cannot take the stack down at `up`
+      # (ghostfolio's eager-discovery hazard does not exist here).
+      - OIDC_AUTH_ENABLED=false
+      - OIDC_PROVIDER_NAME=Authentik
+      - OIDC_CONFIGURATION_URL=https://auth.idanreed.com/application/o/mealie/.well-known/openid-configuration
+      - OIDC_CLIENT_ID=mealie
+      # ⚠ When enabling: leave OIDC_USER_GROUP / OIDC_ADMIN_GROUP unset OR
+      # make sure the groups claim is in the token — settings.OIDC_FEATURE
+      # refuses the whole feature if either is set while OIDC_GROUPS_CLAIM
+      # resolves to nothing. OIDC_CLIENT_SECRET arrives from .env and is
+      # inert while OIDC_AUTH_ENABLED=false.
+      #
+      # ALLOW_PASSWORD_LOGIN stays default (true) on purpose: the local
+      # admin is the fallback when the IdP is unreachable.
+    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
+    # sync validates the compose in a staging directory where the host-side
+    # decrypted .env cannot exist yet — the plain form aborts the whole
+    # stack's sync.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      # The image bakes `curl -fsk .../api/app/about` and for once the baked
+      # probe is HONEST — verified in routes/app/app_about.py: it runs a real
+      # groups query (get_by_name) against the configured database,
+      # unauthenticated, no outbound calls. Rewritten here only to pin the
+      # timings: the baked HEALTHCHECK has no start_period, and first boot
+      # runs every alembic migration before uvicorn binds.
+      # curl IS in the image — the Dockerfile installs it in the production
+      # stage (unlike ghostfolio's node-slim purge trap).
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:9000/api/app/about']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # mealie_init — headless first-run. Retires the boot-time default admin
+  # (changeme@example.com / MyPassword — PUBLISHED credentials with admin
+  # rights) that v3 pre-creates with no env override. See mealie-init.py for
+  # the verified upstream details; unlike tandoor_init this drives the app's
+  # own REST API rather than its ORM, so it survives schema changes.
+  # ---------------------------------------------------------------------------
+  mealie_init:
+    image: ghcr.io/mealie-recipes/mealie:v3.24.0
+    container_name: mealie_init
+    depends_on:
+      # service_healthy, not service_started: the healthcheck above proves
+      # migrations finished and the DB answers — the API this script drives.
+      mealie:
+        condition: service_healthy
+    volumes:
+      - ./mealie-init.py:/init/mealie-init.py:ro
+    # ⚠ The entrypoint MUST be overridden — the image's /app/run.sh would
+    # start a second server. System python3 (python:3.12-slim base), NOT the
+    # /opt/mealie venv: the script is stdlib-urllib only and imports nothing
+    # of the app, so it needs none of the venv and cannot break with it.
+    entrypoint: ['/usr/local/bin/python3', '/init/mealie-init.py']
+    environment:
+      - MEALIE_BASE_URL=http://mealie:9000
+      # MEALIE_ADMIN_USER / _EMAIL / _PASSWORD arrive from .env.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"

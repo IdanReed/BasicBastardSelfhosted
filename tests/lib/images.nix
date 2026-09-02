@@ -10,6 +10,14 @@
 #     built by .github/workflows/build-caddy.yml and is not published yet; the 
 #     DNS-01 plugin it adds is unused in the suites, which force 'tls internal')
 {
+  "actualbudget_actual-server_26_9_0" = {
+    composeRef = "actualbudget/actual-server:26.9.0";
+    imageName = "actualbudget/actual-server";
+    imageDigest = "sha256:552beab3dec8c93d46b8b9245612d63c3f123b8a45063a474f53e229b17621d3";
+    hash = "sha256-mFsUtEh4Nj8kDp7jPszG704fN9xK47LHp/JOIXGPJG4=";
+    finalImageName = "actualbudget/actual-server";
+    finalImageTag = "26.9.0";
+  };
   "alpine_3_21" = {
     composeRef = "alpine:3.21";
     imageName = "alpine";
@@ -249,6 +257,14 @@
     hash = "sha256-ypbGcOEpuUSZoEZr1x0keH+WCBDOz0HiH0iqKhcJQlI=";
     finalImageName = "ghcr.io/karakeep-app/karakeep-chrome";
     finalImageTag = "151.0.7922.47-r1";
+  };
+  "ghcr_io_mealie-recipes_mealie_v3_24_0" = {
+    composeRef = "ghcr.io/mealie-recipes/mealie:v3.24.0";
+    imageName = "ghcr.io/mealie-recipes/mealie";
+    imageDigest = "sha256:0b08ac3a9f0a65b8298bcb3a9fcb596f870f92fbefbecd8fffe075fa9b6d2d5d";
+    hash = "sha256-KJUbKmGU1GVGdUY1lXBN93ZDFIdr5QQrzjRWmIvObuA=";
+    finalImageName = "ghcr.io/mealie-recipes/mealie";
+    finalImageTag = "v3.24.0";
   };
   "ghcr_io_paperless-ngx_paperless-ngx_2_20" = {
     composeRef = "ghcr.io/paperless-ngx/paperless-ngx:2.20";
@@ -569,6 +585,14 @@
     hash = "sha256-eZu7Be9lm/hCvqkG+oZ7fyP+YTBG3osSeXWrIZiV/2k=";
     finalImageName = "vaultwarden/server";
     finalImageTag = "1.37.2";
+  };
+  "wealthfolio_wealthfolio_3_7_0" = {
+    composeRef = "wealthfolio/wealthfolio:3.7.0";
+    imageName = "wealthfolio/wealthfolio";
+    imageDigest = "sha256:de137d64acf712c5c71093b27ecc98ccc1dbbbf00befdb684bed531cdb40069a";
+    hash = "sha256-/nTKRMFwze2glez1QvokGv4nVEHxboealPV+fDqZxVw=";
+    finalImageName = "wealthfolio/wealthfolio";
+    finalImageTag = "3.7.0";
   };
   "wger_server_2_6" = {
     composeRef = "wger/server:2.6";

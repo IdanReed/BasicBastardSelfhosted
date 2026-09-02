@@ -1890,6 +1890,15 @@ in
       # fast-volume plan, so leg 1 was happy, and the file it was copying was a
       # live WAL-mode sqlite database.
       STACKS_WITHOUT_DUMPS = {
+          "actual":
+              "EVALUATION stack, deliberately dump-less for the trial: "
+              "account.sqlite is a live-writer SQLite database, so the raw "
+              "copy inside the fast-volume plan can snapshot torn — an "
+              "accepted risk while the only data is bake-off test entries. "
+              "The compose header carries the graduation line to add "
+              "(`sqlite_backup actual "
+              "/mnt/fast/actual/server-files/account.sqlite`); this entry "
+              "must be REMOVED in the same commit that adds it.",
           "backrest":
               "No database. config.json is re-seeded from "
               "config.template.json + .sops.env by config-init on every "
