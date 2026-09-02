@@ -4,72 +4,47 @@
 # delivers it alongside compose.yaml; the container mounts it read-only at the
 # path its ENTRYPOINT hardcodes.
 #
-# THREE RULES THIS FILE FOLLOWS, all load-bearing:
+# THREE RULES, all load-bearing:
 #
-#   1. NO WIDGET MAY REQUIRE EGRESS. Glance fetches widget content inside the
-#      page-content request handler and wg.Wait()s on every widget goroutine,
-#      so a widget that cannot reach the internet does not degrade — it stalls
-#      the whole page until that widget's HTTP client times out. This host is
-#      tailnet-only. `rss`, `reddit`, `weather`, `hacker-news` and friends are
-#      therefore deliberately absent; add them only if this host ever gets
-#      general egress, and expect the page to be as slow as the slowest feed.
+#   1. NO WIDGET MAY REQUIRE EGRESS. Widget fetches run inside the
+#      page-content handler with wg.Wait() on every goroutine, so a widget
+#      that cannot reach the internet stalls the WHOLE page until its HTTP
+#      client times out. Hence no rss/reddit/weather/hacker-news — and no
+#      `monitor` widget even though targets are tailnet-reachable: N
+#      services = N serial-ish round trips before render, and one WEDGED
+#      service (never RSTs) holds the dashboard hostage. Status is Gatus's
+#      job; this file LINKS to Gatus (duplicated checks = two threshold
+#      sets drifting). Icons are the same trap one layer out: `si:`/`di:`
+#      prefixes resolve to CDN URLs fetched by the BROWSER — broken images
+#      offline — so every link is text-only on purpose.
 #
-#      The same rule is why there is NO `monitor` widget here even though every
-#      target would be reachable on the tailnet: `monitor` fetches each site
-#      inside that same content handler, so N services become N serial-ish
-#      HTTP round trips in front of the page render, and one wedged service
-#      (not down — wedged, so it never RSTs) holds the dashboard hostage for
-#      its full timeout. Status is Gatus's job; this file LINKS to Gatus.
-#      Duplicating the checks here would also mean two sets of thresholds
-#      drifting apart, with the one nobody configured alerts on winning.
-#
-#      Icons are the same trap one layer out: Glance's `si:`/`di:` icon
-#      prefixes resolve to CDN URLs fetched by the BROWSER. They would not
-#      stall the server, but they render as broken images for anyone whose
-#      client has no internet, so every link here is text-only on purpose.
-#
-#   2. NO `auth:` BLOCK. Glance's own login stays off and Caddy's (protected)
-#      snippet does the work — one login instead of two, and this is a
-#      browser-only dashboard so forward auth costs nothing. There is also a
-#      sharp edge behind the loopback publish: docker-proxy re-dials from the
-#      bridge gateway, so every request looks like it comes from one address,
-#      and Glance blocks an IP after 5 failed logins in 5 minutes. Turning its
-#      auth on WITHOUT also setting `server.proxied: true` means the first five
-#      typos lock out everybody at once.
+#   2. NO `auth:` BLOCK. Caddy's (protected) does the work — one login, not
+#      two. Sharp edge: docker-proxy re-dials from the bridge gateway, so
+#      every request shares one address, and Glance blocks an IP after 5
+#      failed logins in 5 minutes — turning auth on WITHOUT
+#      `server.proxied: true` means five typos lock out everybody at once.
 #
 #   3. EVERY CADDY-ROUTED SERVICE APPEARS ON EXACTLY ONE OF THE TWO PAGES.
-#      The split below is ORGANISATION, NOT A SECURITY BOUNDARY — every user
-#      on the tailnet is trusted, both pages sit behind the same single
-#      (protected) import, and Glance page navigation is client-side anyway.
-#      "Admin" means "you only open this when something needs tending", not
-#      "restricted". Do not reason about it as a privilege tier, and do not
-#      let a service fall off the list because it felt too internal: an
-#      unlisted service is one nobody remembers exists at 2am.
+#      The split is ORGANISATION, NOT A SECURITY BOUNDARY (same login, same
+#      tailnet; page nav is client-side). "Admin" = "open when something
+#      needs tending", not "restricted". An unlisted service is one nobody
+#      remembers exists at 2am.
+#      Invariant: every `*.svc` host in stacks/caddy/Caddyfile is linked
+#      below except `glance` itself; any future omission gets a line here
+#      saying why. No lint parses this file — the check is
+#      `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the
+#      URLs below, worth doing when adding a stack.
+#      `headscale.idanreed.com` is not a Caddy route on this host (VPS
+#      coordination API, no browser UI) — its liveness belongs in Gatus.
 #
-#      The invariant: every `*.svc` host in stacks/caddy/Caddyfile is linked
-#      below except `glance` itself (you are here) — no literal counts here,
-#      because a hand-maintained number was five services stale within months.
-#      Any future omission gets a line in this comment saying why. Nothing
-#      verifies this mechanically — no lint parses this file —
-#      so `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the
-#      URLs below is the check, and it is worth doing when adding a stack.
-#      `headscale.idanreed.com` is NOT a Caddy route on this host at all — it
-#      lives on the VPS and serves a coordination API with no browser UI, so
-#      there is nothing to bookmark. Its liveness belongs in Gatus.
-#
-# 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML PARSING —
-# SO COMMENTS ARE NOT EXEMPT. A dollar-brace reference anywhere in this file,
-# including in a comment like this one, is resolved, and a missing variable is
-# a hard startup error:
-#     Config has errors: parsing variable: environment variable ENV_VAR not found
-# ...repeated forever, because the container restarts.
-#
-# That is exactly what happened: an earlier version of THIS COMMENT spelled the
-# substitution syntax out literally in order to warn about it, and the warning
-# broke the file. Describe the syntax in words here; never write it.
-#
-# The behaviour itself is the good kind of loud — a typo'd variable name fails
-# at boot rather than rendering an empty string into a widget.
+# 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML
+# PARSING — COMMENTS ARE NOT EXEMPT. A dollar-brace reference anywhere,
+# including in a comment, is resolved; a missing variable is a hard startup
+# error, repeated forever as the container restarts. An earlier version of
+# THIS COMMENT spelled the syntax out to warn about it and broke the file:
+# describe the syntax in words; never write it. (The behaviour itself is
+# the good kind of loud — a typo'd name fails at boot, not as an empty
+# string in a widget.)
 
 server:
   host: 0.0.0.0
@@ -90,12 +65,9 @@ theme:
 # information worth a third column on a page you open to fix something.
 pages:
   # ===========================================================================
-  # Page 1 — HOME. Things a person opens on purpose.
-  #
-  # The *arr suite is NOT here: Radarr/Sonarr/Bazarr/Prowlarr/Profilarr/
-  # Cleanuparr are how the library gets filled, not how it gets used, and
-  # burying Jellyfin and Seerr under six management UIs was the concrete
-  # complaint that produced this restructure. They are on Admin.
+  # Page 1 — HOME. Things a person opens on purpose. The *arr suite is on
+  # Admin: it is how the library gets filled, not how it gets used, and it
+  # buried Jellyfin/Seerr under six management UIs.
   # ===========================================================================
   - name: Home
     slug: home
@@ -174,10 +146,9 @@ pages:
                   - title: SilverBullet
                     url: https://silverbullet.svc.idanreed.com
 
-              # Firefly III is here; its DATA IMPORTER is on Admin. They are
-              # separate hostnames with separate Authentik applications
-              # (the importer holds a full-privilege Firefly PAT and has no
-              # login of its own), and separating them here matches that.
+              # Firefly III here; its DATA IMPORTER is on Admin — separate
+              # hostnames, separate Authentik applications (the importer
+              # holds a full-privilege PAT, no login of its own).
               - title: Money and Health
                 links:
                   - title: Firefly III

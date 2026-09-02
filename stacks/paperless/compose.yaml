@@ -7,9 +7,8 @@ services:
       - db
       - tika
       - gotenberg
-    # Bound to loopback so Caddy (network_mode: host) is the only path in.
-    # On 0.0.0.0 this was directly reachable from the tailnet, bypassing any
-    # reverse-proxy auth.
+    # Loopback: Caddy (host network) is the only path in — on 0.0.0.0 this
+    # was reachable from the tailnet, bypassing reverse-proxy auth.
     ports:
       - '127.0.0.1:10100:8000'
     volumes:
@@ -23,31 +22,23 @@ services:
       - PAPERLESS_DBHOST=db
       - PAPERLESS_DBUSER=paperless
       # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_USER, PAPERLESS_ADMIN_PASSWORD
-      # and PAPERLESS_DBPASS arrive from .env. DBPASS was the literal
-      # `paperless` here until 2026-08-31 — a database password committed to a
-      # public repo, in a stack that already had a .sops.env for everything
-      # else.
+      # and PAPERLESS_DBPASS arrive from .env (DBPASS was a committed literal
+      # `paperless` until 2026-08-31 — see the db service's initdb note).
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000
       - PAPERLESS_TIKA_ENDPOINT=http://tika:9998
       - PAPERLESS_TIME_ZONE=America/Chicago
       - PAPERLESS_OCR_LANGUAGE=eng
       # Feeds CSRF_TRUSTED_ORIGINS / ALLOWED_HOSTS / CORS. Without it Django
-      # 403s every POST arriving through the https vhost — the login form
-      # included, and there is no forward auth on this host so that login IS
-      # the auth. The suite can't see the break: it probes loopback, where
-      # the Origin header matches.
+      # 403s every POST through the https vhost — login form included, and
+      # that login IS the auth here. The suite can't see the break: it probes
+      # loopback, where the Origin matches.
       - PAPERLESS_URL=https://paperless.svc.idanreed.com
       - USERMAP_UID=1000
       - USERMAP_GID=1000
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
-    # window: a deploy racing the first decrypt starts with unset vars — the
-    # loud guard is each service's own healthcheck/startup failure.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
