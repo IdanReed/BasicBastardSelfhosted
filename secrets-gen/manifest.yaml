@@ -48,6 +48,9 @@ files:
   - { path: stacks/wealthfolio/.sops.env, format: dotenv, example: stacks/wealthfolio/.sops.env.example }
   - { path: stacks/wger/.sops.env, format: dotenv, example: stacks/wger/.sops.env.example }
   - { path: stacks/windmill/.sops.env, format: dotenv, example: stacks/windmill/.sops.env.example }
+  # post-fork stacks (merged after sops-keygen branched): excalidraw + proton.
+  - { path: stacks/excalidraw/.sops.env, format: dotenv, example: stacks/excalidraw/.sops.env.example }
+  - { path: stacks/proton/.sops.env, format: dotenv, example: stacks/proton/.sops.env.example }
 
 secrets:
   # --- nixos/secrets.sops.yaml (services VM, OS-level) ---------------------
@@ -679,3 +682,36 @@ secrets:
     class: generate
     recipe: base64:24
     targets: [{ file: stacks/windmill/.sops.env, key: WINDMILL_ADMIN_PASSWORD }]
+
+  # --- stacks/excalidraw/.sops.env (AstraDraw; merged post-fork) -----------
+  - name: excalidraw/pg
+    class: derived
+    recipe: hex:64
+    note: "two-key lockstep: bare pw + embedded raw in STORAGE_URI (hex so the URL needs no encoding)"
+    targets:
+      - { file: stacks/excalidraw/.sops.env, key: POSTGRES_PASSWORD }
+      - { file: stacks/excalidraw/.sops.env, key: STORAGE_URI, template: "postgres://excalidraw:${v}@excalidraw_db:5432/excalidraw_storage" }
+  - name: excalidraw/JWT_SECRET
+    class: generate
+    recipe: hex:64
+    targets: [{ file: stacks/excalidraw/.sops.env, key: JWT_SECRET }]
+  - name: excalidraw/ROOM_KEY_SECRET
+    class: generate
+    recipe: hex:64
+    targets: [{ file: stacks/excalidraw/.sops.env, key: ROOM_KEY_SECRET }]
+  - name: excalidraw/ADMIN_PASSWORD
+    class: generate
+    recipe: base64:24
+    targets: [{ file: stacks/excalidraw/.sops.env, key: ADMIN_PASSWORD }]
+
+  # --- stacks/proton/.sops.env (hydroxide export sidecar; merged post-fork) -
+  # Both are PULL-class: the account email and the bridge password printed once
+  # by `hydroxide auth` — neither is generable.
+  - name: proton/PROTON_ACCOUNT
+    class: pull
+    note: "the Proton account email the bridge was auth'd as"
+    targets: [{ file: stacks/proton/.sops.env, key: PROTON_ACCOUNT }]
+  - name: proton/PROTON_BRIDGE_PASSWORD
+    class: pull
+    note: "printed exactly once by `hydroxide auth`; not derivable"
+    targets: [{ file: stacks/proton/.sops.env, key: PROTON_BRIDGE_PASSWORD }]
