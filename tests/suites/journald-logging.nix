@@ -25,10 +25,10 @@
 #     stderr too, or nothing.
 #   - **`CONTAINER_TAG` is the container NAME.** With no `tag` log-opt docker
 #     uses the TRUNCATED CONTAINER ID, which changes on every
-#     `docker compose up`. Alloy promotes this field to Loki's `container`
-#     stream label, so the untagged version is both unqueryable and a
-#     cardinality bomb — and it is also the field a future fail2ban-style
-#     `journalmatch` on this host would key on.
+#     `docker compose up`. Alloy promotes this field to the store's
+#     `container` stream label (VictoriaLogs today), so the untagged version
+#     is both unqueryable and a cardinality bomb — and it is also the field a
+#     future fail2ban-style `journalmatch` on this host would key on.
 #   - 🚨 **`services.journald.rateLimitBurst = 0` actually takes effect.**
 #     This is the reason the suite exists. journald rate-limits PER SENDING
 #     UNIT, and docker's journald driver submits from dockerd, so every
@@ -50,9 +50,9 @@
 #     different mechanism from this one on purpose.
 #   - **Alloy is not here.** Whether the journal is READ correctly is
 #     stacks/logging's problem (`run.sh stack logging`), and whether entries
-#     reach Loki is asserted by neither — see the note on the loki probe in
-#     stacks/gatus/gatus.yaml. This suite is only about what the journald
-#     driver does to `docker logs`.
+#     reach the store is the victorialogs suite's (it writes a marker and
+#     polls the query API). This suite is only about what the journald driver
+#     does to `docker logs`.
 #   - **No rotation pressure.** SystemMaxUse=2G is configured but never
 #     filled here, so the interaction between journal rotation and a suite
 #     reading `docker logs` of a long-lived container is untested.
@@ -127,7 +127,7 @@ pkgs.testers.runNixOSTest {
         assert "RateLimitBurst=0" in conf, (
             "RateLimitBurst is not 0. The whole fleet shares one bucket "
             "through docker.service, and dropped lines vanish from "
-            "`docker logs` as well as from Loki.\n" + conf
+            "`docker logs` as well as from the log store.\n" + conf
         )
 
     with subtest("docker logs returns both streams, demultiplexed, after exit"):
@@ -157,7 +157,7 @@ pkgs.testers.runNixOSTest {
     with subtest("CONTAINER_TAG is the container NAME, not its id"):
         # log-opts tag={{.Name}}. Without it this is the truncated container
         # id, which changes on every recreate — Alloy promotes this field to
-        # Loki's `container` label.
+        # the store's `container` label.
         tag = services_vm.succeed(
             "journalctl CONTAINER_NAME=streams -o json --no-pager "
             "| head -1 | jq -r .CONTAINER_TAG"
