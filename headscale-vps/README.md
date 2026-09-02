@@ -23,7 +23,7 @@ Hetzner VPS (headscale-vps)
 Public ports: **22, 80, 443 TCP** and **3478 UDP** (STUN). Nothing else. Headscale
 and Authentik both bind loopback only.
 
-There is **no GitOps agent on this host** — no Arcane, no sync timer, no
+There is **no GitOps agent on this host** — no Komodo, no sync timer, no
 mutable checkout. Everything is deployed by `nixos-rebuild switch` over SSH.
 
 Headscale runs as a native systemd service rather than a container so that the

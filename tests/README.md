@@ -12,13 +12,14 @@ today passes identically next month.
 ## Running
 
 ```bash
-./tests/run.sh              # lints only — seconds
+./tests/run.sh              # structural lints only — seconds, always green
+./tests/run.sh deploy-check # structural + deploy-readiness (sops-declared) + operator to-dos
 ./tests/run.sh vps          # VPS: caddy + headscale + a real tailnet
 ./tests/run.sh services     # services VM: sops -> komodo -> stacks
 ./tests/run.sh tailnet      # both hosts on one tailnet, end to end
 ./tests/run.sh stack <name> # one stack alone — the fast loop for stack work
-./tests/run.sh <suite>      # one named suite — 29 exist, authentik through
-                            # journald-logging; run.sh's own header is the
+./tests/run.sh <suite>      # one named suite — 34 exist, authentik through
+                            # excalidraw; run.sh's own header is the
                             # authoritative list (it sits next to the case
                             # statement it documents, so it cannot drift far)
 ./tests/run.sh disko        # disk-config.nix formats, mounts, and boots
@@ -28,8 +29,10 @@ today passes identically next month.
 ./tests/run.sh debug vps    # live VM + Python REPL
 ```
 
-Run `./tests/run.sh` (lints) constantly — it is a few seconds and catches the
-cross-file contracts. Run a VM suite when you have changed something it covers.
+Run `./tests/run.sh` (structural lints) constantly — it is a few seconds and
+catches the cross-file contracts, and it stays green. `deploy-check` adds the
+deploy-readiness lints and the operator to-do scan; run it before a real
+deploy. Run a VM suite when you have changed something it covers.
 
 ### Debugging a failure
 
