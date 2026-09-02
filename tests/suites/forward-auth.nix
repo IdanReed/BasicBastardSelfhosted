@@ -149,6 +149,12 @@ in
 pkgs.testers.runNixOSTest {
   name = "forward-auth";
 
+  # Two full hosts + Authentik + three stacks, and wait_until_succeeds
+  # timeouts count ITERATIONS (command duration + 1s each), so the worst
+  # case here overruns the 3600s default and reds as a driver kill blamed
+  # on the wrong subsystem.
+  globalTimeout = 7200;
+
   nodes = {
     vps =
       { nodes, ... }:

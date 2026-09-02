@@ -34,7 +34,7 @@
 # forge's auto-merge-when-checks-pass. Setting only the first would look
 # correct and merge anyway.
 
-{ ... }:
+_:
 
 {
   services.renovate = {

@@ -106,6 +106,10 @@ in
 pkgs.testers.runNixOSTest {
   name = "tailnet";
 
+  # Three nodes and a real tailnet formation; the 3600s default is tight on
+  # a loaded runner (wait iterations cost command duration + 1s each).
+  globalTimeout = 7200;
+
   nodes = {
     vps =
       { nodes, ... }:
@@ -412,11 +416,15 @@ pkgs.testers.runNixOSTest {
           # retry until 2xx/3xx: a cold embedded outpost 503s the first
           # protected requests while it loads applications, and the bare
           # http_code curl "succeeds" on a 503, so poll on the code itself.
+          # case-matched, NOT `-lt 400`: a refused/dead connection prints
+          # 000 and `test 000 -lt 400` is true, so the old form passed with
+          # nothing answering at all (the forward-auth.nix idiom).
           client.wait_until_succeeds(
-              f"test $(curl -sk --max-time 10 "
+              f"c=$(curl -sk --max-time 10 "
               f"--resolve komodo.svc.idanreed.com:443:{svc_ip} "
               "https://komodo.svc.idanreed.com/ "
-              "-o /dev/null -w '%{http_code}') -lt 400", timeout=180
+              "-o /dev/null -w '%{http_code}'); "
+              "case $c in 2??|3??) true ;; *) false ;; esac", timeout=180
           )
 
       with subtest("unknown subdomains 404 rather than returning a blank 200"):

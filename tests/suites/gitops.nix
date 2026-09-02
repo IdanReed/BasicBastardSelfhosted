@@ -495,5 +495,33 @@ pkgs.testers.runNixOSTest {
             "docker exec gitops_test printenv NTFY_SMTP_SENDER_USER"
         ).strip()
         assert val == "test", f"after redeploy NTFY_SMTP_SENDER_USER={val!r}"
+
+    # -----------------------------------------------------------------------
+    # The failure path: alert on state CHANGE, silent-success thereafter
+    # -----------------------------------------------------------------------
+    # The util suite proves this pattern for unhealthy-containers; nothing
+    # proved it for stack-git-sync — whose design cost is sharper: while a
+    # persistent failure is suppressed the unit reports SUCCESS, invisible to
+    # `systemctl --failed` and to every failed-units sweep. This subtest is
+    # the only witness that the one page it does send actually happens.
+    with subtest("🚨 a broken token FAILS the sync once, then suppresses"):
+        services_vm.succeed("cp /run/secrets/STACK_GIT_TOKEN /root/token.bak")
+        services_vm.succeed("printf 'broken' > /run/secrets/STACK_GIT_TOKEN")
+        # First run must FAIL — the exit 1 is what reaches ntfy via OnFailure.
+        services_vm.fail("systemctl start stack-git-sync.service")
+        services_vm.succeed("test -e /run/stack-git-sync.failed")
+        # Same failure again: exit 0 by design (the state-change stamp), so a
+        # down Forgejo pages once, not every minute forever.
+        services_vm.succeed("systemctl start stack-git-sync.service")
+        services_vm.succeed("test -e /run/stack-git-sync.failed")
+
+    with subtest("recovery clears the stamp and says so"):
+        services_vm.succeed("cp /root/token.bak /run/secrets/STACK_GIT_TOKEN")
+        services_vm.succeed("systemctl start stack-git-sync.service")
+        services_vm.fail("test -e /run/stack-git-sync.failed")
+        journal = services_vm.succeed(
+            "journalctl -u stack-git-sync.service --no-pager | tail -20"
+        )
+        assert "recovered" in journal, journal
   '';
 }

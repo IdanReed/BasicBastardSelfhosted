@@ -207,10 +207,11 @@ rec {
   # SSH access
   # --------------------------------------------------------------------------
   # Authorises the committed throwaway keypair (tests/keys/test-ssh-key) for
-  # the idan user, standing in for the real key the production configs still
-  # carry a TODO for. What this makes testable, from another node:
-  #   - key login works at all (the TODO placeholder means it currently would
-  #     not — no key is authorised on either host)
+  # the idan user, merged ALONGSIDE the production ssh-pubkeys.nix entries
+  # (list options concatenate; the entries are all filled now, but their
+  # private halves live sops-encrypted where the harness cannot use them).
+  # What this makes testable, from another node:
+  #   - key login works at all, with a key the harness holds
   #   - PasswordAuthentication no actually refuses passwords
   #   - PermitRootLogin no actually refuses root
   #   - wheelNeedsPassword = false gives passwordless sudo over SSH
