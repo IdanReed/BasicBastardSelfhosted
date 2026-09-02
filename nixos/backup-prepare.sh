@@ -135,7 +135,7 @@ finish_dump() {
 # /srv/stacks/komodo, so require_running's $STACKS/<name> presence check never
 # matches it: a fully-removed komodo silently skips (as arcane did before it),
 # while a stopped-but-present komodo_db still FAILS loudly via the exists() branch.
-for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo; do
+for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo excalidraw; do
     container="${svc}_db"
     # Every service in this loop is also its own stack directory name.
     require_running "$container" "$svc" || continue
@@ -392,17 +392,17 @@ sqlite_backup gatus          /mnt/fast/gatus/gatus.db
 #
 # What is genuinely only here is small but not reproducible: dashboards, saved
 # Explore queries, users, API keys and preferences. Everything else that makes
-# this stack work is declared in git and re-applied on every deploy — the Loki
-# datasource comes from stacks/logging/grafana-datasource.yaml (provisioned
-# read-only, `editable: false`) and the admin credential from
+# this stack work is declared in git and re-applied on every deploy — the
+# VictoriaLogs datasource comes from stacks/logging/grafana-datasource.yaml
+# (provisioned read-only, `editable: false`) and the admin credential from
 # stacks/logging/.sops.env — so a restore that lost this file would come back
 # working, just empty of anything a human made.
 #
-# 🚨 LOKI'S CHUNK STORE IS DELIBERATELY NOT DUMPED AND NOT BACKED UP AT ALL.
-# /mnt/slow/loki is on no Backrest plan and has a NOT_BACKED_UP entry in
-# tests/lib/lints.nix carrying the reasoning: it is up to 100 GB of
+# 🚨 VICTORIALOGS' STORE IS DELIBERATELY NOT DUMPED AND NOT BACKED UP AT ALL.
+# /mnt/slow/victorialogs is on no Backrest plan and has a NOT_BACKED_UP entry
+# in tests/lib/lints.nix carrying the reasoning: it is up to 100 GiB of
 # observations about a fleet whose actual state lives elsewhere, and a restore
-# that replays 30 days of old logs into a rebuilt host would be actively
+# that replays months of old logs into a rebuilt host would be actively
 # misleading. This line is the whole of the logging stack's backup, on purpose.
 sqlite_backup grafana        /mnt/fast/grafana/grafana.db
 
