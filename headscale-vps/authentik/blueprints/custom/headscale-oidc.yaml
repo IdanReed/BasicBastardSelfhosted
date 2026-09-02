@@ -12,13 +12,12 @@ entries:
   # ===========================================
   # Group for Headscale users
   # ===========================================
-  # Users in this group can authenticate to Headscale; membership is granted
-  # in the users section below.
+  # Membership granted in the users section below.
   #
-  # NO `attrs:` key here on purpose. A YAML key whose body is only comments
-  # parses as null, and authentik's importer calls .items() on it —
-  # AttributeError, and the ENTIRE blueprint apply dies, retried forever with
-  # the error visible only in worker logs. Caught by tests/suites/authentik.nix.
+  # NO `attrs:` key here on purpose: a key whose body is only comments parses
+  # as null, and the importer's .items() on it kills the ENTIRE blueprint
+  # apply, retried forever, error only in worker logs. Caught by
+  # tests/suites/authentik.nix.
   - model: authentik_core.group
     id: headscale-users-group
     state: present
@@ -73,18 +72,16 @@ entries:
   # ===========================================
   # MFA (TOTP enforcement)
   # ===========================================
+  # Overrides the built-in MFA stage in place: a free-standing
+  # authenticatorvalidatestage does nothing (stages only run when bound), and
+  # a new stage + binding would collide with the built-in one at order 30 of
+  # default-authentication-flow and prompt twice.
   #
-  # A free-standing authenticatorvalidatestage does nothing — stages only run
-  # when bound into a flow via a flowstagebinding. Rather than create a new
-  # stage plus a binding (which would collide with the built-in MFA stage
-  # already bound at order 30 of default-authentication-flow, and prompt
-  # twice), this overrides the built-in stage in place.
-  #
-  # not_configured_action valid values are skip | deny | configure. There is no
-  # "force"; `configure` is the enforcing option — it pushes users who have no
-  # authenticator through configuration_stages before letting them in.
+  # not_configured_action: skip | deny | configure — no "force" exists;
+  # `configure` is the enforcing option (pushes users with no authenticator
+  # through configuration_stages).
 
-  # Enrollment stage users are sent through when they have no TOTP device.
+  # Enrollment stage for users with no TOTP device.
   - model: authentik_stages_authenticator_totp.authenticatortotpstage
     id: totp-setup-stage
     state: present
@@ -94,8 +91,8 @@ entries:
       friendly_name: "Authenticator App Setup"
       digits: 6
 
-  # Override authentik's built-in MFA validation stage, which ships with
-  # not_configured_action: skip (i.e. 2FA optional). This makes it mandatory.
+  # Built-in stage ships not_configured_action: skip (2FA optional); this
+  # makes it mandatory.
   - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
     id: mfa-validation-stage
     state: present
