@@ -1,10 +1,10 @@
 #!/bin/sh
 # beszel-init — materialise the two artefacts the hub reads exactly once.
 #
-# Runs before the hub every time the stack comes up (Arcane redeploys rerun
-# it), so it must be idempotent. House rule: every mutation logs a line
-# starting "beszel-init: CHANGE:", and a second run on an unchanged input must
-# log ZERO of them. The suite asserts that.
+# Runs before the hub every time the stack comes up (redeploys rerun it), so
+# it must be idempotent. House rule: every mutation logs a line starting
+# "beszel-init: CHANGE:", and a second run on an unchanged input must log
+# ZERO of them. The suite asserts that.
 #
 # Busybox sh in alpine:3.21 — no bashisms, no `local`, no arrays.
 set -eu
@@ -124,14 +124,11 @@ systems:
     token: $TOKEN
 EOF
 
-# 0600 like the key beside it: config.yml carries TOKEN in cleartext, and
-# TOKEN is the credential the agent presents to the hub — the same class of
-# secret as id_ed25519, so it gets the same mode. What actually keeps the
-# token from ever being briefly world-readable under $DATA_DIR is the
-# `umask 077` up top — the file is BORN 0600, before any content lands; a
-# chmod after the write (which is when this one runs) would be too late.
-# Kept, and repeated after the rename like the key does, so the mode
-# contract stays visible where the file is handled.
+# 0600 like the key beside it: config.yml carries TOKEN in cleartext — same
+# class of secret as id_ed25519. What actually prevents a brief
+# world-readable window is the `umask 077` up top (born 0600 before content
+# lands; a post-write chmod would be too late) — this chmod is kept so the
+# mode contract stays visible where the file is handled.
 chmod 600 "$tmp_cfg"
 if [ -f "$CFG_PATH" ] && cmp -s "$tmp_cfg" "$CFG_PATH"; then
   rm -f "$tmp_cfg"

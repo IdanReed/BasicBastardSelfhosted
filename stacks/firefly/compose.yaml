@@ -112,10 +112,9 @@ services:
       # [remote_user_guard] is not defined" — the encrypter fails during config
       # resolution and guard registration collapses downstream, so the message
       # points at the auth config. Expect to lose an afternoon to it.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the host-side
-    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
-    # sync of the whole stack.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written), and the plain form
+    # aborts the whole stack.
     env_file:
       - path: .env
         required: false
@@ -218,38 +217,31 @@ services:
       #
       # SIMPLEFIN_TOKEN also arrives from .env. It is NOT the durable bank
       # credential and cannot be made into one: the importer requires a
-      # base64-encoded SimpleFIN Bridge CLAIM URL (it regex-checks the decoded
-      # string for /simplefin/claim/ and throws on anything else, including on
-      # a bare access URL), POSTs to it on the first import, and the Bridge
-      # invalidates it at that moment. The access URL that comes back is
-      # written to `access_token` in the importer's downloadable Configuration
-      # JSON — session state, not a volume, because this service HAS no volume.
+      # base64-encoded SimpleFIN Bridge CLAIM URL (regex-checked for
+      # /simplefin/claim/; anything else throws, including a bare access
+      # URL), POSTs to it on the first import, and the Bridge invalidates it
+      # at that moment. The access URL that comes back lands in the
+      # importer's downloadable Configuration JSON — session state, not a
+      # volume, because this service HAS no volume.
       #
-      # So the chain that a scheduled sync would need is:
-      #   a volume (or bind) to hold the config JSON
-      #     + CAN_POST_AUTOIMPORT + IMPORT_DIR_ALLOWLIST + AUTO_IMPORT_SECRET
-      #     + something to fire the POST.
-      # Every link but the last is the refusal three paragraphs up. Turning
-      # them on would put an unauthenticated POST endpoint, and a plaintext
-      # file that reads every transaction on every linked bank account, on the
-      # one container in this stack that has no login of its own. That is an
-      # OPERATOR decision, not a tidy-up: see ServerNotes/designs/_todo.md,
-      # "Wire SimpleFIN into Firefly III", which records the three options and
-      # leaves the choice to Idan.
+      # A scheduled sync would need: a volume for the config JSON
+      #   + CAN_POST_AUTOIMPORT + IMPORT_DIR_ALLOWLIST + AUTO_IMPORT_SECRET
+      #   + something to fire the POST
+      # — i.e. an unauthenticated POST endpoint plus a plaintext file that
+      # reads every linked bank account, on the one container with no login
+      # of its own. An OPERATOR decision, not a tidy-up: see
+      # ServerNotes/designs/_todo.md, "Wire SimpleFIN into Firefly III".
       #
       # Until then a SimpleFIN import is a person at
       # https://firefly-importer.svc.idanreed.com (behind its own Authentik
       # application) uploading the saved config JSON and clicking import.
       #
-      # SIMPLEFIN_CORS_ORIGIN_URL and the SIMPLEFIN_* tuning knobs
-      # (timeouts, retries, MAX_TRANSACTIONS, caching, expense matching,
-      # clustering) are deliberately unset — config/simplefin.php supplies a
-      # default for every one of them, and pinning defaults here would be six
-      # more strings to drift out of date across importer upgrades. Set one
-      # only when a real import proves it is needed.
-      # SIMPLEFIN_DEMO_URL / SIMPLEFIN_DEMO_TOKEN are likewise unset: their
-      # defaults point at bridge.simplefin.org's DEMO endpoint and are only
-      # reached if someone picks "demo" in the UI.
+      # SIMPLEFIN_CORS_ORIGIN_URL and the SIMPLEFIN_* tuning knobs are
+      # deliberately unset — config/simplefin.php defaults every one, and
+      # pinning defaults here is six more strings to drift across upgrades.
+      # SIMPLEFIN_DEMO_URL / SIMPLEFIN_DEMO_TOKEN likewise: their defaults
+      # point at bridge.simplefin.org's DEMO endpoint, only reached if
+      # someone picks "demo" in the UI.
     # Long form with required:false ON PURPOSE (finding #11): see firefly.
     env_file:
       - path: .env

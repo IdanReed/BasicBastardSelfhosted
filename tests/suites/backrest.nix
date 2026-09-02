@@ -81,7 +81,7 @@ let
     images."alpine_3_21"
   ];
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. The fixture .sops.env files stand in for the
   # real encrypted ones so decrypt-sops-envs.service runs for real; the
   # backrest fixture deliberately carries a single-quoted '$'-laden restic
@@ -177,8 +177,8 @@ pkgs.testers.runNixOSTest {
           # which sticks because tmpfiles only re-runs at boot/activation.
         ];
 
-        # Populate /srv before anything reads it — the stand-in for Arcane's
-        # git sync having already run.
+        # Populate /srv before anything reads it — the stand-in for
+        # stack-git-sync having already run.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];

@@ -2,13 +2,10 @@
 # yes` in the ssh_config beside this file. Mounted read-only at
 # /etc/ssh/ssh_known_hosts inside the Backrest container.
 #
-# WHY THIS FILE EXISTS: before it, ssh_config said `StrictHostKeyChecking
-# accept-new` and the only known_hosts was ~/.ssh/known_hosts in the
-# container's WRITABLE LAYER — which is discarded on every `docker compose up`
-# that recreates the container (an image bump, a compose edit, an Arcane
-# redeploy). So the "trust on first use" happened over and over, and every one
-# of those first uses would accept whatever answered. The peer being trusted
-# holds credentials that can `forget --prune` every backup this fleet has.
+# WHY: without this pin, `accept-new` + a known_hosts in the container's
+# WRITABLE LAYER (discarded on every recreate) means TOFU over and over, each
+# accepting whatever answered — for a peer holding credentials that can
+# `forget --prune` every backup this fleet has.
 #
 # All Storage Boxes share one set of host keys, so this file is not
 # per-account and needs no edit when uXXXXXX changes.

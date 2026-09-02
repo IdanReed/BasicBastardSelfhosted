@@ -5,8 +5,8 @@
 # Immich's first-user flow is POST /api/auth/admin-sign-up: unauthenticated,
 # works exactly once, no wizard. Contract (media-init pattern):
 #   - The one mutation logs "immich-init: CHANGE: ...". A second run — every
-#     Arcane redeploy reruns this container — must log ZERO change lines:
-#     "already onboarded" responses are success, not failure.
+#     redeploy reruns this container — must log ZERO change lines: "already
+#     onboarded" responses are success, not failure.
 #   - Unset credentials are a HARD error (decrypt race, finding #11): exiting
 #     nonzero fails the deploy loudly instead of leaving a server nobody can
 #     log in to.
@@ -17,9 +17,9 @@
 # first login; seeding IMMICH_ADMIN_EMAIL as your Authentik email makes the
 # OIDC identity merge into this admin (annex §4 / open question §8.4).
 #
-# Lives in a file (mounted read-only, synced by Arcane's whole-directory
-# sync) rather than inline in compose.yaml: python needs no $-escaping here
-# and the script stays runnable/reviewable on its own.
+# Lives in a file (mounted read-only, delivered by the stack git sync)
+# rather than inline in compose.yaml: python needs no $-escaping here and
+# the script stays runnable/reviewable on its own.
 set -eu
 
 exec python3 - <<'PY'

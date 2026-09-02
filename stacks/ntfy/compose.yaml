@@ -1,16 +1,10 @@
-# Ntfy — the single place failures get reported.
-#
-# Everything that can fail silently points here: systemd OnFailure= on the
-# services VM, and Backrest's snapshot hooks. Deployed before the monitoring
-# stack deliberately, because the first thing worth building is a failure
-# signal, not a dashboard.
+# Ntfy — the single place failures get reported: systemd OnFailure= on the
+# services VM, Backrest's snapshot hooks.
 #
 # Reachable two ways on purpose:
 #   - 127.0.0.1:10001 for host systemd units (notify-failure@.service)
-#   - http://ntfy/ on the shared `homelab` docker network, for containers.
-#     Containers cannot reach a loopback-bound host port, which is why the old
-#     design's host.docker.internal webhooks would have failed even with
-#     extra_hosts set correctly.
+#   - http://ntfy/ on the shared `homelab` docker network, for containers —
+#     containers cannot reach a loopback-bound host port.
 services:
   ntfy:
     image: binwiederhier/ntfy:v2.11.0
@@ -26,14 +20,9 @@ services:
       - '127.0.0.1:10001:80'
     networks:
       - homelab
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
-    # window: a deploy racing the first decrypt starts with unset vars — the
-    # loud guard is each service's own healthcheck/startup failure.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false

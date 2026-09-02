@@ -26,49 +26,39 @@
 #	}
 #
 # Defined BEFORE the site block on purpose: Caddy resolves `import` while
-# parsing, so a snippet defined below its first use fails with "File to
-# import not found".
+# parsing — a snippet defined below its first use fails with "File to import
+# not found".
 #
-# What it relies on (all exist now):
-#   1. A Proxy Provider (forward_single) + application per protected service,
-#      assigned to Authentik's embedded outpost — defined in
-#      headscale-vps/authentik/blueprints/custom/forward-auth.yaml. bentopdf
-#      is the pilot entry.
-#   2. AUTHENTIK_COOKIE_DOMAIN=idanreed.com on the Authentik containers, so the
-#      session cookie is valid across auth.idanreed.com and *.svc.idanreed.com
-#      (already set in headscale-vps/authentik/compose.yaml).
-#   3. The VPS Caddy trusting X-Forwarded-* from tailnet sources
-#      (trusted_proxies in headscale-vps/modules/caddy.nix) — see below.
+# Relies on (all exist now): a Proxy Provider + application per protected
+# service on Authentik's embedded outpost
+# (headscale-vps/authentik/blueprints/custom/forward-auth.yaml; bentopdf is
+# the pilot); AUTHENTIK_COOKIE_DOMAIN=idanreed.com so the session cookie
+# spans auth.idanreed.com and *.svc.idanreed.com; and the VPS Caddy trusting
+# X-Forwarded-* from tailnet sources (headscale-vps/modules/caddy.nix).
 #
-# The hop rides the TAILNET (the VPS's MagicDNS node name), not the public
-# route, and that is load-bearing: the embedded outpost routes forward-auth
-# requests BY X-Forwarded-Host, and any Caddy replaces that header unless the
-# source is a trusted proxy. Dialled publicly, the VPS's Caddy sees our home
-# IP (untrusted, not pinnable), rewrites X-Forwarded-Host to auth.idanreed.com,
-# and the outpost 404s every check. Over the tailnet the source is our own
-# 100.64.0.0/10 address, which modules/caddy.nix trusts. tls_server_name +
-# Host pin the request to the auth vhost, whose certificate is for
-# auth.idanreed.com.
+# The hop rides the TAILNET, not the public route, and that is load-bearing:
+# the outpost routes forward-auth requests BY X-Forwarded-Host, and any Caddy
+# replaces that header unless the source is a trusted proxy. Dialled
+# publicly, the VPS Caddy sees our home IP (untrusted), rewrites
+# X-Forwarded-Host to auth.idanreed.com, and the outpost 404s every check.
+# Over the tailnet the source is our 100.64.0.0/10 address, which
+# modules/caddy.nix trusts. tls_server_name + Host pin the request to the
+# auth vhost (cert is for auth.idanreed.com).
 #
 # STILL a lockout hazard per service: importing this into a handle whose
-# external host has no matching provider entry in that blueprint leaves the
-# outpost with nothing to match the Host against — every request 404s or
-# redirect-loops instead of reaching the service. Add the blueprint entry and
-# deploy the VPS first, then flip the import here.
+# external host has no provider entry in that blueprint leaves the outpost
+# nothing to match — every request 404s or redirect-loops. Blueprint entry +
+# VPS deploy FIRST, then flip the import here.
 #
-# ⚠ THE CLIENT-SUPPLIED `X-Authentik-*` STRIP IS NOT IN THIS SNIPPET. It is a
-# single site-level `request_header -X-Authentik-*` at the top of the site
-# block below, and it has to be there — see the comment on it. Adding one here
-# instead would be worse than useless: caddy's directiveOrder
-# (caddyconfig/httpcaddyfile/directives.go, v2.11.2) puts `forward_auth` at
-# entry 44 and `request_header` at entry 45, so a bare `request_header` beside
-# this `forward_auth` runs AFTER it and would delete exactly the headers the
-# outpost had just copied in — every protected app silently loses its
-# identity. Wrapping both in a `route` fixes the order but re-indents this
-# block, which is a documented breaking change for
-# tests/suites/forward-auth.nix (it injects `tls_trust_pool` into the
-# `transport http` block below by an indentation-anchored regex, and fails
-# loudly when it stops matching). Site level needs neither.
+# ⚠ THE CLIENT-SUPPLIED `X-Authentik-*` STRIP IS NOT IN THIS SNIPPET — it is
+# site-level below, and must be: caddy's directiveOrder (v2.11.2) puts
+# `forward_auth` at 44 and `request_header` at 45, so a `request_header`
+# beside this forward_auth runs AFTER it and deletes exactly the headers the
+# outpost just copied in — every protected app silently loses its identity.
+# A `route` wrapper would fix the order but re-indents this block, a
+# documented breaking change for tests/suites/forward-auth.nix (it injects
+# `tls_trust_pool` into the `transport http` block by an indentation-anchored
+# regex and fails loudly when it stops matching). Site level needs neither.
 (protected) {
 	forward_auth https://headscale-vps.tailnet.idanreed.com {
 		uri /outpost.goauthentik.io/auth/caddy
@@ -91,44 +81,30 @@
 	# every vhost below, protected or not, and to every route added later
 	# without anyone remembering this line exists — which is the point.
 	#
-	# WHY IT IS HERE AND NOT IN `(protected)`: caddy's directiveOrder
-	# (v2.11.2) is `... forward_auth (44), request_header (45), ... handle
-	# (53) ...`. A `request_header` written beside the snippet's
-	# `forward_auth` would run AFTER it and delete the outpost's own headers.
-	# At SITE level it is still entry 45, but the things it has to beat are
-	# the `handle` blocks at entry 53 — so it runs before every one of them,
-	# and therefore before the `forward_auth` nested inside them. Verified
-	# with `caddy adapt`: this handler is srv0's first route, ahead of the
-	# subroute holding the vhosts.
+	# HERE AND NOT IN `(protected)`: directiveOrder (v2.11.2) is forward_auth
+	# (44), request_header (45), handle (53). Beside the snippet's
+	# forward_auth this would run AFTER it and delete the outpost's headers;
+	# at SITE level it only has to beat the `handle` blocks at 53, so it runs
+	# before every nested forward_auth. Verified with `caddy adapt`: srv0's
+	# first route, ahead of the vhost subroute.
 	#
-	# WHAT IT ACTUALLY BUYS, stated accurately — the obvious version of this
-	# claim is wrong, and was checked before being written down. `caddy adapt`
-	# shows `copy_headers` expanding, per header, into an UNCONDITIONAL
-	# `request_header -X-Authentik-<Field>` plus a `set` guarded by a
-	# non-empty matcher, all inside `handle_response` matching `status_code
-	# 2xx`. So the FIVE NAMED headers are already stripped on every 2xx auth
-	# response, including the paths a provider's skip_path_regex waves through
-	# (Firefly's `^/api/.*`, which answers 200 carrying no headers at all).
-	# "A client sets X-Authentik-Username and Firefly's remote_user_guard
-	# believes it" does not survive contact with the adapted JSON.
+	# WHAT IT BUYS — the obvious claim is wrong: `caddy adapt` shows
+	# copy_headers already expands into an UNCONDITIONAL strip + guarded set
+	# per named header on every 2xx auth response (including skip_path_regex
+	# paths like Firefly's ^/api/.*), so the FIVE NAMED headers were never
+	# the hole. What was genuinely open, and this closes:
+	#   1. THE REST OF THE FAMILY: X-authentik-jwt and X-authentik-meta-* are
+	#      not in copy_headers, so a client-supplied one forwarded verbatim.
+	#      Nothing consumes them today — precisely the state in which someone
+	#      switches one on.
+	#   2. ORDER INDEPENDENCE: the five are protected only as a side effect
+	#      of copy_headers' expansion; a prefix strip does not depend on it.
+	#   3. UNPROTECTED ROUTES (kavita, audiobookshelf, ntfy, …) never import
+	#      (protected), so nothing was stripping anything there.
 	#
-	# What is genuinely open, and what this closes:
-	#   1. THE REST OF THE FAMILY. The outpost also emits X-authentik-jwt and
-	#      the X-authentik-meta-* set. `copy_headers` names none of them, so a
-	#      client-supplied one is forwarded verbatim by caddy's
-	#      forward-unknown-headers default. Nothing consumes them today —
-	#      which is precisely the state in which someone switches one on.
-	#   2. ORDER INDEPENDENCE. Those five are protected only as a SIDE EFFECT
-	#      of how copy_headers expands. Shorten that list, or land a caddy
-	#      whose expansion differs, and the protection leaves silently. A
-	#      prefix strip depends on none of it.
-	#   3. UNPROTECTED ROUTES. kavita, audiobookshelf, ntfy and the rest never
-	#      import (protected) at all, so nothing was stripping anything there.
-	#
-	# `*` is a real prefix wildcard and the case written here is irrelevant:
-	# the runtime lowercases both pattern and field name
-	# (modules/caddyhttp/headers/headers.go, the `HasSuffix(fieldName, "*")`
-	# arm). Same move as the X-API-Key strip on the Syncthing route below.
+	# `*` is a real prefix wildcard, case-insensitive (headers.go, the
+	# `HasSuffix(fieldName, "*")` arm) — same move as the X-API-Key strip on
+	# the Syncthing route below.
 	#
 	# MEASURED, not reasoned (caddy 2.11.2, stub outpost + echo backend, a
 	# request carrying `X-Authentik-Username: ATTACKER` and
@@ -534,26 +510,20 @@
 		# data plane CANNOT be covered, so forward auth is refused outright
 		# rather than faked.)
 		#
-		# Caddy needs nothing extra for the websocket itself, and the chain
-		# was traced through both codebases rather than hoped at:
-		#   - forward_auth is sugar for reverse_proxy + handle_response. Its
-		#     `header_up Host auth.idanreed.com` in the (protected) snippet
-		#     rewrites only the AUTH SUBREQUEST's copy; the following
-		#     reverse_proxy makes its own copy of the ORIGINAL request. That
-		#     matters here specifically: Streamlit's handshake check compares
-		#     Origin against Host, so a rewritten Host reaching the app would
-		#     fail the socket. It does not reach the app.
-		#   - browsers cannot attach an Authorization header to a websocket
-		#     handshake, but they DO attach cookies, and the handshake is an
-		#     ordinary same-origin GET — so the authentik_proxy_* session
-		#     cookie is in the subrequest like on any other request.
+		# Caddy needs nothing extra for the websocket itself — chain traced
+		# through both codebases, not hoped at:
+		#   - forward_auth is sugar for reverse_proxy + handle_response; the
+		#     snippet's `header_up Host` rewrites only the AUTH SUBREQUEST's
+		#     copy, and the original Host reaches the app — which matters
+		#     here: Streamlit's handshake compares Origin against Host.
+		#   - browsers cannot attach Authorization to a websocket handshake
+		#     but DO attach cookies, and the handshake is an ordinary
+		#     same-origin GET — the authentik_proxy_* cookie rides along.
 		#   - authentik's forwardHandleCaddy is a plain http.HandlerFunc that
-		#     never touches an upgrader, so it cannot answer 101. That is what
-		#     keeps this safe: an auth upstream that DID answer 101 to the
-		#     forwarded Upgrade header would make forward_auth hang forever
-		#     with nothing surfaced to the browser. If that ever happens here,
-		#     the one-line fix is `header_up -Connection` — still not an
-		#     exclusion.
+		#     cannot answer 101. An auth upstream that DID answer 101 to the
+		#     forwarded Upgrade would hang forward_auth forever; if that ever
+		#     happens the one-line fix is `header_up -Connection` — still not
+		#     an exclusion.
 		#
 		# ⚠ NOT VERIFIED END TO END, because it cannot be from here: no suite
 		# has a live outpost. `./tests/run.sh stack owl` proves the container
@@ -865,14 +835,12 @@
 	@beszel host beszel.svc.idanreed.com
 	handle @beszel {
 		# Forward auth, with Beszel's own PocketBase login left underneath —
-		# the Arcane arrangement, so it fails closed either way.
+		# two locks, so it fails closed either way.
 		#
-		# _overview used to say OIDC for this row. It cannot: Beszel's OAuth2
-		# provider config lives in the users collection's `oauth2` options
-		# INSIDE data.db, with no environment variable for any part of it.
-		# Upstream's own procedure is a browser wizard (settings -> disable
-		# collection edit controls -> edit users -> Options tab), which the
-		# house convention treats as a finding rather than a design.
+		# OIDC cannot work for this row: Beszel's OAuth2 provider config
+		# lives in the users collection's `oauth2` options INSIDE data.db,
+		# with no environment variable for any part of it — upstream's own
+		# procedure is a browser wizard.
 		#
 		# 🚨 This vhost is browser-only, and that is what makes forward auth
 		# safe here. The AGENT does not come through this route: it dials
@@ -896,7 +864,7 @@
 	@grafana host grafana.svc.idanreed.com
 	handle @grafana {
 		# Forward auth, with Grafana's own admin login left underneath — the
-		# Arcane/Beszel arrangement, so it fails closed either way. Two logins
+		# beszel arrangement, so it fails closed either way. Two logins
 		# is the deliberate cost: see stacks/logging/.sops.env.example for why
 		# Grafana's auth.proxy header mode is NOT used (it would trust
 		# X-Authentik-* from anything that reaches 127.0.0.1:10455, and this

@@ -1,12 +1,10 @@
 # Beszel — host and container resource monitoring (Monitoring range, 10452).
 # Design: ServerNotes/designs/service-monitoring-stack-research.md §5.
 #
-# WHY THIS EXISTS, when gatus already probes every vhost: gatus answers "is it
-# up". Nothing in the fleet answers "is /mnt/fast about to fill". Every other
-# signal here — healthchecks, notify-failure@, the backup dead-man, the
-# unhealthy-containers timer — fires only once something has already broken.
-# Disk and memory TREND is the one gap with a warning stage, and it is the
-# whole case for this stack.
+# WHY, when gatus already probes every vhost: gatus answers "is it up";
+# nothing else answers "is /mnt/fast about to fill". Every other signal fires
+# only after something broke — disk/memory TREND is the one gap with a
+# warning stage, and it is the whole case for this stack.
 #
 # Three services, and the ordering between them is load-bearing:
 #
@@ -27,31 +25,24 @@ services:
   # ---------------------------------------------------------------------------
   # beszel-init — everything the hub reads once and never re-reads.
   #
-  # Two artefacts, and neither can come from sops-nix:
+  # Two artefacts, neither can come from sops-nix:
   #
-  #   id_ed25519  The hub's identity. The hub SIGNS the agent's token with it
-  #               and the agent verifies that signature against its own KEY, so
-  #               the two halves must match or the agent dies with
-  #               `invalid signature - check KEY value` in a restart loop. If
-  #               the file is absent the hub GENERATES one (hub.go GetSSHKey)
-  #               — silently, and differently on every fresh /mnt/fast. It
-  #               writes NO .pub file: the public half lives only in memory, so
-  #               there is no way to recover it from the host afterwards.
-  #               Seeding it is what makes the pair reproducible across a
-  #               re-image and a restore.
-  #   config.yml  The systems list, and it is DECLARATIVE: config.SyncSystems
-  #               runs on every hub start and DELETES every system row not
-  #               present. That is the property this fleet wants — but it also
-  #               means a half-written file silently wipes history, which is
-  #               why it is written here with tmpfile+rename rather than
-  #               streamed into place.
+  #   id_ed25519  The hub's identity: it SIGNS the agent's token, the agent
+  #               verifies against its own KEY — mismatch is a restart loop
+  #               on `invalid signature - check KEY value`. Absent, the hub
+  #               GENERATES one silently (hub.go GetSSHKey), differently per
+  #               fresh /mnt/fast, and writes NO .pub — the public half is
+  #               unrecoverable afterwards. Seeding makes the pair
+  #               reproducible across re-image and restore.
+  #   config.yml  The systems list, DECLARATIVE: config.SyncSystems runs on
+  #               every hub start and DELETES every system row not present.
+  #               Wanted — but a half-written file silently wipes history,
+  #               hence tmpfile+rename.
   #
-  # Why not sops-nix (the storagebox_ed25519 precedent): that path needs an
-  # edit to nixos/secrets.sops.yaml, which needs the age private key, which
-  # lives only at /var/lib/sops-nix on the host. Routing the key through this
-  # stack's own .sops.env instead costs one base64 and keeps the whole stack
-  # deployable by Arcane with no NixOS rebuild — which is the services VM's
-  # entire GitOps model.
+  # Not sops-nix (the storagebox_ed25519 precedent) because that needs an
+  # edit to nixos/secrets.sops.yaml -> the age private key -> the host.
+  # Routing through this stack's own .sops.env costs one base64 and keeps the
+  # stack deployable with no NixOS rebuild — the services VM's GitOps model.
   # ---------------------------------------------------------------------------
   beszel-init:
     image: alpine:3.21
@@ -59,9 +50,8 @@ services:
     volumes:
       - ./beszel-init.sh:/init.sh:ro
       - /mnt/fast/beszel:/beszel_data
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
-    # sync validation runs where the decrypted .env cannot exist, and the plain
-    # form aborts the whole stack's sync.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt, and the plain form aborts the whole stack.
     env_file:
       - path: .env
         required: false
@@ -77,31 +67,30 @@ services:
   # host-networked: only the agent needs the host namespace.
   # ---------------------------------------------------------------------------
   beszel:
-    # No `v` prefix. Beszel's GIT tags carry one but its DOCKER tags do not —
-    # the workflow uses type=semver,pattern={{version}}, which strips it — so
-    # `henrygd/beszel:v0.18.8` is a 404 and the release notes disagree with
-    # this line by exactly one character, in the direction that breaks.
+    # No `v` prefix: Beszel's GIT tags carry one but its DOCKER tags do not
+    # (type=semver,pattern={{version}} strips it) — `henrygd/beszel:v0.18.8`
+    # is a 404, and the release notes disagree with this line by exactly one
+    # character in the direction that breaks.
     #
-    # Docker Hub, not GHCR, and that is deliberate: ghcr.io/henrygd/beszel does
-    # not exist (an anonymous token request answers DENIED, which reads like a
-    # private repo and means "no such repository"). The GHCR path is NESTED —
-    # ghcr.io/henrygd/beszel/beszel — which is finding #0.2 of the tracking
-    # annex repeating exactly. ⚠ On GHCR the agent's `latest` is a DIFFERENT
-    # image from 0.18.8 (it lands on the alpine build, later in the matrix).
+    # Docker Hub, not GHCR, deliberately: ghcr.io/henrygd/beszel does not
+    # exist (anonymous token request answers DENIED = "no such repository");
+    # the GHCR path is NESTED — ghcr.io/henrygd/beszel/beszel — finding #0.2
+    # of the tracking annex repeating exactly. ⚠ On GHCR the agent's `latest`
+    # is a DIFFERENT image from 0.18.8 (the alpine build, later in the
+    # matrix).
     image: henrygd/beszel:0.18.8
     container_name: beszel
     depends_on:
       beszel-init:
         condition: service_completed_successfully
     ports:
-      # Loopback only. Caddy is the only path in, and beszel.svc.idanreed.com
-      # is `import protected` — which is safe ONLY because the agent talks to
-      # http://127.0.0.1:10452 directly and never traverses Caddy. Pointed at
-      # the vhost, the agent's websocket upgrade would be 302'd by the outpost
-      # and the agent would NOT report an error: it silently falls back to SSH
-      # pull mode, where a bridged hub cannot reach a host-networked agent.
-      # Red system, no useful message — the same shape as the Vaultwarden
-      # websocket note in the Caddyfile.
+      # Loopback only; Caddy is the only path in. beszel.svc.idanreed.com is
+      # `import protected` — safe ONLY because the agent talks to
+      # http://127.0.0.1:10452 directly. Pointed at the vhost, the agent's
+      # websocket upgrade is 302'd by the outpost and the agent reports NO
+      # error: it silently falls back to SSH pull mode, where a bridged hub
+      # cannot reach a host-networked agent. Red system, no useful message —
+      # same shape as the Vaultwarden websocket note in the Caddyfile.
       - "127.0.0.1:10452:8090"
     volumes:
       - /mnt/fast/beszel:/beszel_data
@@ -153,17 +142,14 @@ services:
     volumes:
       - /mnt/fast/beszel-agent:/var/lib/beszel-agent
       # Disk TREND for the two data tiers — the reason this stack exists.
-      #
-      # These are deliberately EMPTY marker directories rather than the tiers
-      # themselves. Beszel reports filesystem usage via statfs, which answers
-      # for the whole containing filesystem regardless of which path on it is
-      # asked — so an empty directory on /mnt/fast yields exactly the numbers
-      # `/mnt/fast:/extra-filesystems/fast:ro` would, without handing this
-      # container a readable copy of every service's data. (backrest mounts
-      # the tiers wholesale because it genuinely must read them; this does
-      # not.) The suite asserts both filesystems report a non-zero total, so
-      # if the assumption about statfs is ever wrong it fails loudly here
-      # rather than silently reporting the overlay.
+      # Deliberately EMPTY marker directories, not the tiers themselves:
+      # statfs answers for the whole containing filesystem whatever path is
+      # asked, so an empty dir on /mnt/fast yields exactly the numbers a
+      # wholesale mount would — without handing this container every
+      # service's data (backrest mounts the tiers wholesale because it must
+      # read them; this does not). The suite asserts both report a non-zero
+      # total, so a wrong statfs assumption fails loudly rather than silently
+      # reporting the overlay.
       - /mnt/fast/beszel-agent/fsprobe:/extra-filesystems/fast:ro
       - /mnt/slow/beszel-fsprobe:/extra-filesystems/slow:ro
     environment:
@@ -175,16 +161,16 @@ services:
       # 🚨 This does NOT lift the KEY requirement: loadPublicKeys tries --key,
       # KEY and KEY_FILE and log.Fatal()s otherwise, regardless of mode.
       - DISABLE_SSH=true
-      # No Docker socket, on purpose. The socket buys per-container CPU/mem/net
-      # and the UI's log and inspect panes — none of which is why this row
-      # exists — at the price of a SECOND root-equivalent container, when the
-      # fleet's stated design is exactly one (Arcane). `:ro` on a unix socket
-      # is cosmetic: it constrains the inode, not the API. An explicitly empty
-      # DOCKER_HOST is a supported off-switch (newDockerManager returns nil),
-      # not a degradation to work around. A socket PROXY is the honest upgrade
-      # path if container stats are ever wanted — the agent is 100% GET — but
-      # CONTAINERS=1 also exposes /containers/{id}/archive, i.e. filesystem
-      # read of every container, so "read-only" would overstate it.
+      # No Docker socket, on purpose: it buys per-container stats and the
+      # log/inspect panes — not why this row exists — at the price of a
+      # SECOND root-equivalent container, when the fleet's stated design is
+      # exactly one (the deploy plane's). `:ro` on a unix socket is cosmetic:
+      # it constrains the inode, not the API. Explicitly empty DOCKER_HOST is
+      # a supported off-switch (newDockerManager returns nil). A socket PROXY
+      # is the honest upgrade path if container stats are ever wanted (the
+      # agent is 100% GET) — but CONTAINERS=1 also exposes
+      # /containers/{id}/archive, filesystem read of every container, so
+      # "read-only" would overstate it.
       - DOCKER_HOST=
     env_file:
       - path: .env

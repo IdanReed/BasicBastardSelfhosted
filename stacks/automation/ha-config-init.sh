@@ -2,26 +2,19 @@
 # ha-config-init — pre-seeds /config/.storage/http before Home Assistant
 # starts. Runs in python:3.13-alpine as a oneshot (annex §3.1).
 #
-# WHY THIS EXISTS, because it is not obvious and the failure is delayed:
-#
-# Home Assistant 2026.8.0 retired the `http:` YAML block. It is now migrated
-# exactly ONCE into a storage-backed config, and the migration stages the YAML
-# as *pending* rather than stable. Loading a pending config is a trial: unless
-# an admin promotes it through the UI within AUTO_REVERT_DELAY (5 minutes),
-# HA marks it not-promoted, restarts, restores the previous stable config, and
-# — in upstream's words — the failed pending config "is kept for inspection
-# but never applied again".
-#
-# For a headless deployment that means reverse-proxy trust works for five
-# minutes and then permanently does not, with the healthcheck green the whole
-# time. And it matters because Caddy always sends X-Forwarded-For, and HA
-# returns 400 for EVERY request when it sees that header without
-# use_x_forwarded_for + trusted_proxies configured.
+# WHY: HA 2026.8.0 retired the `http:` YAML block — it is migrated exactly
+# ONCE into storage-backed config, staged *pending*, and unless an admin
+# promotes it in the UI within AUTO_REVERT_DELAY (5 minutes) HA restores the
+# previous stable config; the failed pending one "is kept for inspection but
+# never applied again". Headless, reverse-proxy trust works for five minutes
+# and then permanently does not, healthcheck green throughout. It matters
+# because Caddy always sends X-Forwarded-For, and HA 400s EVERY request
+# carrying that header without use_x_forwarded_for + trusted_proxies.
 #
 # So this writes a `stable` config directly, with `pending: null` and
-# `yaml_migration_done: true`. That resolves to ActiveConfigType.STABLE, no
-# revert is ever scheduled, and HA logs "Using stable HTTP config" instead of
-# "Using pending HTTP config" — which is exactly what the suite asserts.
+# `yaml_migration_done: true` — resolves to ActiveConfigType.STABLE, no
+# revert ever scheduled, and HA logs "Using stable HTTP config", which is
+# exactly what the suite asserts.
 #
 # ⚠ The store is NOT re-validated on load. HTTP_STORAGE_SCHEMA runs only on
 # migration and on the websocket configure command, so a malformed file here
@@ -60,11 +53,9 @@ with open(TEMPLATE) as fh:
 desired["data"]["stable"]["trusted_proxies"] = [PROXY]
 
 
-# Absence and a null VALUE are different things, and `.get()` cannot tell them
-# apart — which silently dropped `"pending": null` from the rendered file
-# until a suite run caught it. That is not a cosmetic loss: Home Assistant
-# does raw key access on `pending`, so the file it produced would have
-# KeyError'd on load.
+# Absence and a null VALUE are different things and `.get()` cannot tell
+# them apart — that once silently dropped `"pending": null`, and HA does raw
+# key access on `pending`, so the rendered file would KeyError on load.
 MISSING = object()
 
 

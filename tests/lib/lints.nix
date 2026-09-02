@@ -26,6 +26,9 @@
   # Passed in rather than hardcoded so a linked git worktree can point at the
   # main checkout instead of failing to evaluate — see tests/default.nix.
   serverNotes,
+  # attrNames of default.nix's `suites`, for run-sh-suite-parity (keys only —
+  # laziness keeps this from forcing any suite derivation).
+  suiteNames,
 }:
 
 let
@@ -913,19 +916,13 @@ in
       errs = []
 
       # ---- Named exemptions -------------------------------------------------
-      # A bare (0.0.0.0) publish is normally the exact thing this lint exists to
-      # stop. A protocol whose peers must dial THIS host is the one case it
-      # cannot serve, and the honest way to handle that is a per-entry
-      # allow-list with the argument written down — not a blanket skip and not
-      # a silent exception in one compose file.
+      # A bare (0.0.0.0) publish is the exact thing this lint exists to stop;
+      # the one case it cannot serve is a protocol whose peers must dial THIS
+      # host. Per-entry allow-list only, each entry stating why the publish
+      # grants nobody anything (mutual authentication, not convenience).
       #
-      # An entry must state why publishing that port grants nobody anything.
-      # "It is inconvenient otherwise" is not a reason; "the protocol is
-      # mutually authenticated before it does anything" is.
-      #
-      # Unused entries are an ERROR, not a nicety: a stale exemption is a
-      # standing permission for a port nobody is publishing any more, and it
-      # would silently cover the next stack that happens to reuse the number.
+      # Unused entries are an ERROR: a stale exemption is a standing
+      # permission that would silently cover the next stack to reuse the port.
       EXEMPT = {
           ("notes-sync", "22000:22000/tcp"):
               "Syncthing BEP. Peers dial THIS host; a loopback publish makes "
@@ -1194,11 +1191,11 @@ in
   # file with tmpfs stubs plus their own rules — so
   # nothing else evaluates it, and reverting 'd /srv/stacks 0755 1000 1000 -'
   # to root ownership (review finding #10) would keep every suite green while
-  # killing GitOps delivery in production: Arcane runs as PUID/PGID 1000, so
-  # under a root-owned /srv/stacks its git sync can never create a project
-  # directory and its deploys cannot read the 0600 .env files. This asserts
-  # the rule on servicesFullConfig, the one eval that includes the real
-  # hardware config (see default.nix).
+  # breaking the delivery contract in production: delivered stacks and their
+  # 0600 .env files are deliberately uid-1000 (finding #10 — stack-git-sync
+  # and decrypt-sops-envs both chown to it, and the suites' seed path assumes
+  # it). This asserts the rule on servicesFullConfig, the one eval that
+  # includes the real hardware config (see default.nix).
   tmpfiles-ownership =
     mkLint "tmpfiles-ownership" ''
       ${stackDirsJson} > dirs.json
@@ -1216,15 +1213,15 @@ in
       # rule for /srv/stacks, which adjusts but never CREATES — losing the 'd'
       # rule alone would leave first boot with no /srv/stacks at all.
       if not any(f[0].lower().startswith("d") for f in srv):
-          errs.append("no tmpfiles 'd' rule creates /srv/stacks — Arcane's "
-                      "git sync has nowhere to deliver stacks on first boot")
+          errs.append("no tmpfiles 'd' rule creates /srv/stacks — "
+                      "stack-git-sync has nowhere to deliver stacks on "
+                      "first boot")
       for f in srv:
           if (f[3], f[4]) != ("1000", "1000"):
               errs.append(f"rule {' '.join(f)!r} gives /srv/stacks to "
-                          f"{f[3]}:{f[4]}, not 1000:1000 — Arcane (PUID 1000) "
-                          f"cannot create project directories or read the "
-                          f"0600 .env files, so GitOps delivery is silently "
-                          f"dead (review finding #10)")
+                          f"{f[3]}:{f[4]}, not 1000:1000 — the finding-#10 "
+                          f"delivery contract (stacks and their 0600 .env "
+                          f"files owned uid 1000) silently breaks")
 
       # --- bind-source parity ---------------------------------------------
       # Every /mnt directory the compose files imply must have a 'd' rule in
@@ -1234,11 +1231,8 @@ in
       # with deliberate ownership, not docker's).
       #
       # The enumeration comes from nixos/generate-stack-dirs.py over a
-      # readDir'd manifest — there is NO list to extend. There used to be:
-      # COMPOSE_FILES named 17 of 22 stacks, so backrest, caddy, forgejo,
-      # ntfy and paperless were never checked and 13 bind sources had no rule
-      # at all. A hand-maintained enumeration inside a lint is not a check,
-      # it is a second thing to forget.
+      # readDir'd manifest — there is NO list to extend (see the generator
+      # note above stackDirsGenerator for the 17-of-22 hand-list history).
       #
       # This leg is NOT redundant with stack-dirs-generated (which compares
       # the generator's output to the checked-in file): it measures the other
@@ -2250,4 +2244,70 @@ in
         fi
         touch $out
       '';
+
+  # ---------------------------------------------------------------------------
+  # Timer accuracy pins
+  # ---------------------------------------------------------------------------
+  # Both minutely timers set AccuracySec = "1s"; without it systemd's 1min
+  # default lets a "minutely" tick slip ~120s, which turns the suites' 150s
+  # delivery waits marginal — and the flake presents as a decrypt bug, not a
+  # timer setting. Nothing but this lint holds the pin (the suites use the
+  # timers, they never read their config).
+  timer-accuracy =
+    let
+      acc = t: servicesConfig.systemd.timers.${t}.timerConfig.AccuracySec or null;
+      wanted = {
+        decrypt-sops-envs = "1s";
+        stack-git-sync = "1s";
+      };
+      bad = lib.filterAttrs (t: v: acc t != v) wanted;
+    in
+    mkLint "timer-accuracy" ''
+      ${lib.concatStrings (
+        lib.mapAttrsToList (t: v: ''
+          echo "systemd.timers.${t}.timerConfig.AccuracySec is ${builtins.toJSON (acc t)}, must be \"${v}\" — the suites' delivery waits assume prompt minutely ticks" >&2
+          exit 1
+        '') bad
+      )}
+      echo "timer accuracy OK (decrypt-sops-envs + stack-git-sync pin AccuracySec=1s)"
+    '';
+
+  # ---------------------------------------------------------------------------
+  # run.sh <-> suites parity
+  # ---------------------------------------------------------------------------
+  # The named-suite case arm in tests/run.sh and default.nix's `suites` are
+  # hand-mirrored — the same two-list shape module-list-parity guards for the
+  # VPS. A suite added to default.nix alone is unreachable via `run.sh <name>`
+  # (and absent from the usage block people copy from); a run.sh arm without a
+  # suite fails at build with a bare attribute error.
+  run-sh-suite-parity =
+    mkLint "run-sh-suite-parity" ''
+      ${py} - <<'PY'
+      import json, re, sys
+
+      text = open("${repo + "/tests/run.sh"}").read()
+      m = re.search(r"^\s*(vps \|[^)]*)\)", text, re.M)
+      if not m:
+          print("could not find the named-suite case arm in tests/run.sh "
+                "(expected an arm starting with 'vps |')", file=sys.stderr)
+          sys.exit(1)
+      in_runsh = {t.strip() for t in m.group(1).split("|")}
+      suites = set(json.loads(${builtins.toJSON (builtins.toJSON suiteNames)}))
+
+      errs = []
+      for s in sorted(suites - in_runsh):
+          errs.append(f"suite '{s}' exists in tests/default.nix but run.sh "
+                      f"cannot reach it — add it to the case arm and the "
+                      f"usage block")
+      for s in sorted(in_runsh - suites):
+          errs.append(f"run.sh names '{s}' but tests/default.nix has no such "
+                      f"suite — the target fails at build time")
+      if errs:
+          print("run.sh <-> suites drift:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"run.sh suite parity OK ({len(suites)} named targets)")
+      PY
+    '';
 }

@@ -1,13 +1,11 @@
 #!/bin/sh
 # samba-init — refuse to start a file server that would look fine and be
-# unusable.
+# unusable. Checks nothing about Samba itself: it checks the three things
+# that, when wrong, produce a HEALTHY container serving nothing (the image's
+# healthcheck is an anonymous SMB3 round trip and cannot see any of them).
 #
-# This checks nothing about Samba. It checks the three things that, when
-# wrong, produce a HEALTHY container serving nothing — because the image's
-# healthcheck is an anonymous SMB3 round trip and cannot see any of them.
-#
-# House rule: mutations log "samba-init: CHANGE: ...". This one mutates
-# nothing, so a correct run logs zero CHANGE lines by construction.
+# House rule: mutations log "samba-init: CHANGE: ...". This mutates nothing,
+# so a correct run logs zero CHANGE lines by construction.
 #
 # Busybox sh in alpine:3.21 — no bashisms.
 set -eu
@@ -18,13 +16,11 @@ die() { echo "samba-init: FATAL: $*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 # 1. The password must exist and be non-empty.
 #
-# The failure this prevents: the image runs envsubst over config.yml, an unset
-# variable becomes "" with no warning, `smbpasswd -a -s` fails on the empty
-# password, and the user is never added to the passdb. The container then
-# reports healthy forever — its probe authenticates as nobody — while the one
-# user cannot log in. And because the generated [global] carries
-# `map to guest = bad user`, "not in the passdb" is treated as *guest* rather
-# than as a rejection; only the share's `valid users` keeps it out.
+# Prevents: envsubst turns an unset var into "" with no warning, `smbpasswd
+# -a -s` fails, the user never enters the passdb — and the container reports
+# healthy forever (anonymous probe) while `map to guest = bad user` treats
+# the missing user as *guest*, not a rejection; only the share's
+# `valid users` keeps it out.
 # ---------------------------------------------------------------------------
 [ -n "${SAMBA_IDAN_PASSWORD:-}" ] || die \
   "SAMBA_IDAN_PASSWORD is empty or unset. The image would substitute an empty
@@ -39,11 +35,9 @@ esac
 # ---------------------------------------------------------------------------
 # 2. The interface list must exist and must contain `lo`.
 #
-# SAMBA_INTERFACES emits both `interfaces = ...` and
-# `bind interfaces only = yes`. Without `lo`, smbd does not listen on
-# loopback, the healthcheck dials \\localhost, and the container goes
-# permanently unhealthy WHILE EVERY REAL CLIENT WORKS. That is the inverse
-# failure of the one above and just as confusing, so it is worth one line.
+# SAMBA_INTERFACES emits both `interfaces = ...` and `bind interfaces only =
+# yes`. Without `lo` the healthcheck (dials \\localhost) goes permanently
+# unhealthy WHILE EVERY REAL CLIENT WORKS — the inverse failure of #1.
 # ---------------------------------------------------------------------------
 [ -n "${SAMBA_INTERFACES:-}" ] || die \
   "SAMBA_INTERFACES is empty or unset. It must name the interfaces smbd
@@ -61,16 +55,13 @@ esac
 # ---------------------------------------------------------------------------
 # 3. The share directory's ownership must match config.yml's uid/gid.
 #
-# adduser -u creates the user INSIDE the container; the files land on the
-# host. Nothing connects the two but agreement between config.yml and a
-# tmpfiles rule in the generated nixos/stack-dirs.nix (its source of truth is
-# the DIR_NOTES entry in nixos/generate-stack-dirs.py). A mismatch is not a
-# crash — it is files nothing else in the fleet can read, discovered much
-# later.
+# adduser -u creates the user IN the container; the files land on the host.
+# Nothing connects the two but agreement between config.yml and the tmpfiles
+# rule (DIR_NOTES in nixos/generate-stack-dirs.py). A mismatch is files
+# nothing else in the fleet can read, discovered much later.
 #
-# This is a REFUSAL rather than a chown on purpose: silently taking ownership
-# of a directory that already holds someone else's data is a worse outcome
-# than not starting.
+# A REFUSAL rather than a chown on purpose: silently taking ownership of a
+# directory holding someone else's data is worse than not starting.
 # ---------------------------------------------------------------------------
 WANT_UID="${SAMBA_SHARE_UID:-1000}"
 WANT_GID="${SAMBA_SHARE_GID:-1000}"

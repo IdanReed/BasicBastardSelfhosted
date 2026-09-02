@@ -2,84 +2,55 @@
 # Design: ServerNotes/designs/service-notes-sync-stack-research.md §14.
 #
 # ---------------------------------------------------------------------------
-# IDENTITY: LOCAL USERS. This is not the design that was chosen.
-# ---------------------------------------------------------------------------
-# The operator picked "bind to Authentik's LDAP outpost" on 2026-08-31. Closing
-# that research found FOUR independent walls, any one of which is fatal:
-#
-#   1. SMB2/3 offers only NTLMSSP or Kerberos. There is no plaintext credential
-#      to forward as a simple LDAP bind.
-#   2. `ldapsam` needs sambaSamAccount/sambaNTPassword attributes. Authentik's
-#      outpost does not emit them and cannot store them — it holds PBKDF2 and
-#      is bind+search only (authentik #25313, open, `pr_wanted`).
+# IDENTITY: LOCAL USERS — not the design that was chosen ("bind to
+# Authentik's LDAP outpost", 2026-08-31). FOUR independent walls, each fatal:
+#   1. SMB2/3 offers only NTLMSSP or Kerberos — no plaintext credential to
+#      forward as an LDAP bind.
+#   2. `ldapsam` needs sambaNTPassword attrs; Authentik's outpost holds
+#      PBKDF2, bind+search only (authentik #25313, open, `pr_wanted`).
 #   3. No candidate image ships `winbindd`, so `security = ADS` is out.
-#   4. nixpkgs builds Samba `--without-ldap --without-ads`, so going native is
-#      worse rather than better.
-#
-# It would also have been the WRONG trade even if it worked: the outpost lives
-# on a Hetzner VPS across the tailnet, so a VPS reboot would make every share
-# unreadable, and an outpost outage is indistinguishable from a wrong password.
-# A file server that survives a VPS outage is worth more than the SSO was.
-#
-# What recovers most of the intent: SMB usernames MIRROR Authentik usernames,
-# so offboarding is one `sopsedit` and a restart rather than a different
-# workflow. Users are re-added from config.yml on every start, so rotating a
-# password is the same two steps.
+#   4. nixpkgs builds Samba `--without-ldap --without-ads`.
+# Also the WRONG trade even if it worked: an outpost outage (VPS reboot)
+# would be indistinguishable from a wrong password — a file server that
+# survives a VPS outage is worth more than the SSO.
+# Recovered intent: SMB usernames MIRROR Authentik usernames; users are
+# re-added from config.yml every start, so offboarding/rotation is one
+# `sopsedit` + restart.
 #
 # ---------------------------------------------------------------------------
-# 🚨 network_mode: host, and unlike the rest of the fleet it is unavoidable.
-# ---------------------------------------------------------------------------
-# SMB is not an HTTP service behind Caddy: clients speak it directly on 445,
-# and browsing/discovery is multicast. It has no vhost and never will.
+# 🚨 network_mode: host — unavoidable here, alone in the fleet: SMB is
+# spoken directly on 445 and discovery is multicast; no vhost, ever.
 #
-# ⚠ THIS MAKES IT INVISIBLE to `loopback-binding` and to mk-stack-suite's port
-# probe — both derive their lists from `ports:`, so a host-networked service
-# does not FAIL them, it passes with an empty set. It therefore carries a
-# `host-network-declared` entry in tests/lib/lints.nix, and tests/suites/
-# samba.nix asserts reachability from a second machine directly.
+# ⚠ INVISIBLE to `loopback-binding` and mk-stack-suite's port probe (both
+# derive from `ports:` — a host-networked service passes with an empty set).
+# Hence a `host-network-declared` entry in tests/lib/lints.nix, and
+# tests/suites/samba.nix asserts reachability from a second machine.
 #
-# EXPOSURE, as built: TAILNET ONLY. `networking.firewall.trustedInterfaces`
-# already contains tailscale0, and nothing in configuration.nix opens 445 to
-# the LAN — so this is reachable over the tailnet and from the host, and not
-# from the trusted VLAN. That is the same posture Idan chose for Vaultwarden
-# ("tailnet-only, like everything else"). Avahi and wsdd2 are OFF to match:
-# with no firewall opening their multicast announcements would be shouting
-# into a closed door. Turning this into a LAN NAS is two edits, both queued
-# for the operator: AVAHI_ENABLE/WSDD2_ENABLE below, and
-# `allowedTCPPorts = [ 445 3702 5355 ]` / `allowedUDPPorts = [ 5353 3702 5355 ]`
-# in nixos/configuration.nix.
+# EXPOSURE, as built: TAILNET ONLY (trustedInterfaces has tailscale0;
+# nothing opens 445 to the LAN) — the Vaultwarden posture. Avahi/wsdd2 OFF
+# to match: multicast announcements with no firewall opening would shout
+# into a closed door. LAN NAS = two operator edits: AVAHI_ENABLE/WSDD2_ENABLE
+# below, plus `allowedTCPPorts = [ 445 3702 5355 ]` /
+# `allowedUDPPorts = [ 5353 3702 5355 ]` in nixos/configuration.nix.
 #
 # ---------------------------------------------------------------------------
-# 🚨 TWO SINGLE-TOKEN EDITS MAKE A WORKING FILE SERVER LOOK DEAD.
-# ---------------------------------------------------------------------------
-# Both are in config.yml and both invert the healthcheck rather than breaking
-# service, so the symptom is a red container that every client can use:
-#
-#   - dropping `lo` from `interfaces` (with `bind interfaces only = yes`)
-#     stops smbd listening on loopback, and the healthcheck dials \\localhost;
-#   - dropping 127.0.0.0/8 from SAMBA_HOSTS_ALLOW does the same thing by a
-#     different route, because the generated smb.conf hardcodes
-#     `hosts deny = 0.0.0.0/0` underneath.
-#
+# 🚨 TWO SINGLE-TOKEN EDITS MAKE A WORKING FILE SERVER LOOK DEAD — both in
+# config.yml, both invert the healthcheck (red container, working clients):
+#   - dropping `lo` from `interfaces` (healthcheck dials \\localhost);
+#   - dropping 127.0.0.0/8 from SAMBA_HOSTS_ALLOW (the generated smb.conf
+#     hardcodes `hosts deny = 0.0.0.0/0` underneath).
 # And one edit makes a BROKEN one look fine, which is worse: see the
 # healthcheck comment.
 
 services:
   # ---------------------------------------------------------------------------
-  # samba-init — the guard, because nothing else in this stack has one.
-  #
-  # The image interpolates ${VAR} over every string node of config.yml at
-  # start, and an UNSET variable becomes "" SILENTLY. For the password that
-  # produces the worst failure shape in this whole campaign: `smbpasswd -a -s`
-  # fails, the container reports HEALTHY (its probe is anonymous), and the
-  # share is simply unusable — with `map to guest = bad user` underneath
-  # deciding that a user missing from the passdb is a guest rather than a
-  # rejection. Only the share's `valid users` stops it there.
-  #
-  # It also checks the uid contract, which nothing else can: config.yml says
-  # uid 1000 and the share directory's ownership comes from a tmpfiles rule in
-  # a different repo file. A mismatch is not a crash — it is files nothing
-  # else in the fleet can read.
+  # samba-init — the guard, because nothing else in this stack has one. The
+  # image envsubsts config.yml and an UNSET var becomes "" SILENTLY: for the
+  # password that means `smbpasswd -a -s` fails, the container reports
+  # HEALTHY (anonymous probe), and the share is unusable (see
+  # samba-init.sh). It also checks the uid contract, which nothing else can:
+  # a mismatch is not a crash — it is files nothing else in the fleet can
+  # read.
   # ---------------------------------------------------------------------------
   samba-init:
     image: alpine:3.21
@@ -104,69 +75,49 @@ services:
     volumes:
       - /mnt/fast/samba:/data
       - ./config.yml:/data/config.yml:ro
-      # Shares live on the SLOW tier: they are bulk files, and /mnt/slow is
-      # already in Backrest's include set, so this needs no backup-prepare
-      # change. The uid/gid on these directories is a real contract with
-      # config.yml's `auth:` entry — see the tmpfiles rule generated into
-      # nixos/stack-dirs.nix from the DIR_NOTES entry in
-      # nixos/generate-stack-dirs.py.
+      # SLOW tier: bulk files, already in Backrest's include set — no
+      # backup-prepare change. The uid/gid is a real contract with
+      # config.yml's `auth:` entry (tmpfiles rule via DIR_NOTES in
+      # nixos/generate-stack-dirs.py).
       - /mnt/slow/samba/shared:/mnt/slow/samba/shared
     environment:
       - TZ=America/Chicago
       - SAMBA_WORKGROUP=WORKGROUP
-      # 🚨 The tailnet range 100.64.0.0/10 is NOT in the image's default and
-      # its absence looks exactly like the NAS being down — the generated
-      # smb.conf puts `hosts deny = 0.0.0.0/0` underneath this, so anything
-      # not listed is refused rather than ignored. 127.0.0.0/8 is here for the
-      # healthcheck, not for users.
+      # 🚨 100.64.0.0/10 is NOT in the image's default, and its absence looks
+      # exactly like the NAS being down (`hosts deny = 0.0.0.0/0` sits
+      # underneath — unlisted = refused). 127.0.0.0/8 is for the
+      # healthcheck, not users.
       - SAMBA_HOSTS_ALLOW=127.0.0.0/8 10.0.0.0/8 100.64.0.0/10 172.16.0.0/12 192.168.0.0/16
-      # Off deliberately — see the exposure note in the header. These are the
-      # LAN-discovery half of the decision and flipping them without also
-      # opening the firewall achieves nothing.
+      # Off deliberately — the LAN-discovery half of the exposure decision
+      # (header); flipping them without opening the firewall achieves
+      # nothing.
       - AVAHI_ENABLE=0
       - WSDD2_ENABLE=0
-      # 🚨 Which interfaces smbd binds, from the decrypted .env because the
-      # answer is HOST-SPECIFIC and cannot be a literal in a git-tracked file:
-      # the tailnet address is assigned by headscale at runtime, and the
-      # Proxmox NIC name differs from the test VM's.
+      # 🚨 SAMBA_INTERFACES comes from the decrypted .env: HOST-SPECIFIC (the
+      # tailnet address is assigned at runtime; the Proxmox NIC name differs
+      # from the test VM's), so it cannot be a literal here. It emits BOTH
+      # `interfaces = ...` and `bind interfaces only = yes` — which is why
+      # config.yml does not also set them (a duplicated directive `testparm`
+      # will not flag). `lo` is MANDATORY: the healthcheck dials \\localhost,
+      # so omitting it = permanently unhealthy while every real client works.
       #
-      # This env var emits BOTH `interfaces = ...` and
-      # `bind interfaces only = yes`, which is why config.yml does not also
-      # set them — a duplicated directive is something `testparm` will not
-      # flag.
-      #
-      # `lo` is MANDATORY: the healthcheck dials \\localhost, so omitting it
-      # makes the container permanently unhealthy while every real client
-      # works perfectly. Naming a device that does not exist is the same class
-      # of problem from the other end.
-      #
-      # SAMBA_INTERFACES and SAMBA_IDAN_PASSWORD are NOT listed here — they
-      # arrive through env_file below, and samba-init is what refuses to let
-      # this container start without them.
-      #
-      # ⚠ The obvious construction, `${SAMBA_IDAN_PASSWORD:?...}` right here,
-      # is WRONG and was written first: Compose interpolation with `:?` errors
-      # when the variable is unset, and Arcane's staged sync validation runs
-      # in a place where the decrypted .env cannot exist. It would abort the
-      # whole stack's sync — precisely the failure `env_file` long form exists
-      # to avoid (finding #11), reintroduced through a different door.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
-    # sync validation runs where the decrypted .env cannot exist, and the plain
-    # form aborts the whole stack's sync.
+      # SAMBA_INTERFACES and SAMBA_IDAN_PASSWORD arrive via env_file below;
+      # samba-init refuses to let this container start without them.
+      # ⚠ `${SAMBA_IDAN_PASSWORD:?...}` here is WRONG (and was written
+      # first): `:?` errors when unset, so a deploy racing the decrypt aborts
+      # the whole stack — finding #11 reintroduced through a different door.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
-    # The image's own healthcheck, kept: seven lines of
-    # `smbclient -L \\localhost -U % -m SMB3` treating NT_STATUS_ACCESS_DENIED
-    # as success. It is a real SMB3 protocol round trip, which is rare.
-    #
-    # 🚨 But it is ANONYMOUS, so state its limit here rather than discovering
-    # it later (findings #16/#27): it proves smbd is listening and speaking
-    # SMB3 on loopback. It does NOT prove any user can authenticate, and a
-    # failed `smbpasswd -a -s` leaves it GREEN. Worse, the generated [global]
-    # carries `map to guest = bad user` with `guest account = nobody`, and
-    # "bad user" means *not in the passdb* — so a user whose seeding failed is
-    # not rejected, it is silently mapped to guest. Only the share's
-    # `valid users` and `guest ok = no` stop it there, which is why the suite
-    # asserts a wrong password is REFUSED rather than trusting any of this.
+    # The image's own healthcheck, kept: `smbclient -L \\localhost -U % -m
+    # SMB3` treating ACCESS_DENIED as success — a real SMB3 round trip.
+    # 🚨 But ANONYMOUS (findings #16/#27): it proves smbd speaks SMB3 on
+    # loopback, NOT that any user can authenticate — a failed `smbpasswd -a
+    # -s` leaves it GREEN, and `map to guest = bad user` maps the missing
+    # user to guest instead of rejecting (see config.yml's share comment).
+    # The suite asserts a wrong password is REFUSED rather than trusting
+    # any of this.
     restart: unless-stopped

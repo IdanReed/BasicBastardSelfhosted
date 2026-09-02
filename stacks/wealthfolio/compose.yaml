@@ -1,30 +1,26 @@
 # Wealthfolio — wealth / portfolio tracker (Tracking range, port 10309).
 #
-# ⚠ THIS IS AN EVALUATION STACK — the other half of the portfolio bake-off
-# (ServerNotes/designs/service-bakeoff.md): same job as stacks/ghostfolio
-# (10306), radically different shape — ONE container and ONE SQLite file vs
-# app+Postgres+Redis. Deliberately LEAN like its rival: no SimpleFIN, no
-# Firefly linkage, no OIDC, nothing wired to the rest of the fleet. If it
-# wins, integration is a separate decision; if it loses, deleting this
-# directory is the whole rollback.
+# ⚠ EVALUATION STACK — the other half of the portfolio bake-off
+# (service-bakeoff.md): same job as stacks/ghostfolio (10306), ONE container
+# + ONE SQLite file vs app+Postgres+Redis. Deliberately LEAN like its rival:
+# no SimpleFIN, no Firefly linkage, no OIDC. Wins = integration is a
+# separate decision; loses = deleting this directory is the whole rollback.
 #
-# Server ("web") mode is real and current, not a community hack: upstream
-# moved the image to the `wealthfolio` Docker Hub org at v3.4.0 (2026-05-15,
-# the breaking self-host release: non-root uid 1000, default port 8088) and
-# added native OIDC at v3.6.0 (2026-07-05). The binary is Rust/Axum with
-# EMBEDDED migrations that run before the listener binds — no prisma, no npx,
-# nothing fetched at boot (the ExcaliDash class does not apply; the suite
-# still boots it with no route to the internet to keep that true).
+# Server ("web") mode is real: the `wealthfolio` Docker Hub org since v3.4.0
+# (2026-05-15, the breaking self-host release: non-root uid 1000, port
+# 8088); native OIDC since v3.6.0 (2026-07-05). Rust/Axum with EMBEDDED
+# migrations before the listener binds — nothing fetched at boot (the
+# ExcaliDash class does not apply; the suite boots it with no route to the
+# internet to keep that true).
 #
-# Backup contract: everything is under /mnt/fast/wealthfolio (a bind of
-# /data): wealthfolio.db (SQLite, WAL mode) plus secrets.json (market-data
-# provider API keys, encrypted with WF_SECRET_KEY). backup-prepare.sh needs
-# exactly ONE line next to the vaultwarden one:
+# Backup contract: everything under /mnt/fast/wealthfolio (bind of /data):
+# wealthfolio.db (SQLite, WAL) + secrets.json (API keys, encrypted with
+# WF_SECRET_KEY). backup-prepare.sh needs exactly ONE line:
 #   sqlite_backup wealthfolio /mnt/fast/wealthfolio/wealthfolio.db
 # sqlite_backup returns 0 for a MISSING source (finding #25, the Karakeep
-# failure), so the suite pins the db's real path. Note a dump alone is not a
-# full restore: secrets.json is only useful together with WF_SECRET_KEY,
-# which lives in .sops.env — in git, which is the point.
+# failure), so the suite pins the db's real path. A dump alone is not a full
+# restore: secrets.json is only useful with WF_SECRET_KEY, which lives in
+# .sops.env — in git, which is the point.
 
 services:
   wealthfolio:
@@ -78,37 +74,31 @@ services:
       # documented in .sops.env.example.
       #
       # ---- OIDC ships OFF, and OFF is load-bearing ----
-      # Native OIDC exists (v3.6.0+, allowlists, Authentik-tested upstream).
       # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server —
-      # Ghostfolio's boot-fatal trap, but WORSE: Ghostfolio skips discovery
-      # when all three OIDC_*_URL overrides are set, Wealthfolio has NO
-      # escape hatch. Turning it on makes every `docker compose up` depend
-      # on a cross-tailnet call to the Hetzner VPS. When that trade is taken
-      # knowingly: WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret via
-      # .env) + WF_OIDC_REDIRECT_URL
+      # Ghostfolio's boot-fatal trap but WORSE: no escape hatch (Ghostfolio
+      # skips discovery with all three URL overrides set). Enabled, every
+      # `docker compose up` depends on a cross-tailnet call to the VPS. If
+      # taken knowingly: WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret
+      # via .env) + WF_OIDC_REDIRECT_URL
       # (https://wealthfolio.svc.idanreed.com/api/v1/auth/oidc/callback) +
-      # WF_OIDC_ALLOWED_EMAILS — the allowlist is FAIL-CLOSED: empty without
-      # an explicit WF_OIDC_ALLOW_ANY=true refuses to boot.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the decrypted
-    # .env cannot exist yet.
+      # WF_OIDC_ALLOWED_EMAILS — FAIL-CLOSED: empty without an explicit
+      # WF_OIDC_ALLOW_ANY=true refuses to boot.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships NO healthcheck, so this one is ours, and it is
-      # honest only if read precisely. /api/v1/healthz is a STATIC "ok" —
-      # no DB query, no auth check — but the Axum server only binds AFTER
-      # its embedded migrations, so a 200 does mean a live listener over a
-      # migrated schema (app and DB are one process; there is no companion
-      # to be separately down). What it canNOT see: a mangled password hash
-      # (login 404s while this stays green — the suite covers it) and a
-      # locked SQLite after start. /api/v1/readyz is byte-identical to
-      # healthz — never probe it expecting readiness semantics.
-      #
-      # ⚠ busybox `wget`, not curl: the final stage is bare alpine:3.19 and
-      # curl was never installed (a curl probe would fail forever while the
-      # app serves fine — finding #34's failure mode).
+      # No builtin. /api/v1/healthz is a STATIC "ok" — but the Axum server
+      # only binds AFTER its embedded migrations, so 200 does mean a live
+      # listener over a migrated schema. CanNOT see: a mangled password hash
+      # (login 404s while this stays green — the suite covers it) or a
+      # locked SQLite after start. /api/v1/readyz is byte-identical — never
+      # probe it expecting readiness semantics.
+      # ⚠ busybox `wget`, not curl: bare alpine base, curl never installed —
+      # a curl probe would fail forever while the app serves fine (finding
+      # #34's failure mode).
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8088/api/v1/healthz']
       interval: 30s
       timeout: 10s

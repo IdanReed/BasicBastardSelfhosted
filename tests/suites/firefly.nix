@@ -109,10 +109,10 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Arcane stays out of the boot path (mk-stack-suite's rationale);
-        # checks.services covers that chain.
+        # The deploy plane stays out of the boot path (mk-stack-suite's
+        # rationale); checks.services covers that chain.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 4;

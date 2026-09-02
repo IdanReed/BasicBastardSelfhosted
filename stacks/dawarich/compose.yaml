@@ -66,11 +66,11 @@ services:
       - TIME_ZONE=America/Chicago
       - RAILS_LOG_TO_STDOUT=true
       # 🚨 BARE hostnames, comma-separated, no scheme. production.rb splits on
-      # "," and appends to config.hosts. A wrong value here does NOT show up in
-      # the healthcheck — config.host_authorization explicitly EXCLUDES
-      # /api/v1/health — so the container reports healthy, Arcane is happy,
-      # Uptime Kuma is happy, and every browser request gets 403 "Blocked
-      # hosts". Any smoke test must fetch `/` with the real Host header.
+      # "," and appends to config.hosts. A wrong value here does NOT show up
+      # in the healthcheck — config.host_authorization explicitly EXCLUDES
+      # /api/v1/health — so the container reports healthy, every monitor is
+      # happy, and every browser request gets 403 "Blocked hosts". Any smoke
+      # test must fetch `/` with the real Host header.
       # localhost/127.0.0.1 are here so a shell inside the VM can curl the
       # loopback publish without tripping host authorization.
       - APPLICATION_HOSTS=dawarich.svc.idanreed.com,localhost,127.0.0.1
@@ -117,10 +117,9 @@ services:
       # absent, so rotating it makes every encrypted attribute (2FA secrets,
       # geocoding credentials) undecryptable — and Geocoding::Config only LOGS
       # A WARNING and treats geocoding as disabled, so the damage is silent.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the host-side
-    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
-    # sync of the whole stack.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written), and the plain form
+    # aborts the whole stack.
     env_file:
       - path: .env
         required: false

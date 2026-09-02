@@ -336,10 +336,9 @@ pkgs.testers.runNixOSTest {
       # ---------------------------------------------------------------------
       # Port 22 is deliberately public, so what sshd accepts IS the exposure.
       # The key is the committed test keypair authorised by
-      # profiles.testSshAccess, merged alongside the production list — which
-      # is ssh-pubkeys.nix entries filtered for null, so until Idan fills
-      # them the real host authorises nothing (the ssh-pubkey-parity lint
-      # WARNs while entries are null).
+      # profiles.testSshAccess, merged alongside the production list (the
+      # ssh-pubkeys.nix entries, all filled now; a null entry would grant
+      # no access and the ssh-pubkey-parity lint WARNs on it).
       with subtest("key login works, passwords and root are refused"):
           outsider.succeed(
               f"{SSH} -i /etc/test-ssh-key idan@headscale-vps true"
@@ -355,7 +354,7 @@ pkgs.testers.runNixOSTest {
           # so read the advertised methods from the handshake.
           methods = outsider.succeed(
               f"{SSH} -v -o PubkeyAuthentication=no idan@headscale-vps true 2>&1 "
-              "| grep 'Authentications that can continue' | head -1 || true"
+              "| grep 'Authentications that can continue' | head -1"
           )
           # publickey present proves the handshake actually reached auth —
           # without this, a dead sshd would vacuously pass the next assert.

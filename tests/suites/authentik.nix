@@ -53,6 +53,10 @@ in
 pkgs.testers.runNixOSTest {
   name = "authentik";
 
+  # Authentik's 900-iteration polls can overrun the 3600s default on a slow
+  # runner (iterations cost command duration + 1s, not 1s).
+  globalTimeout = 7200;
+
   nodes = {
     # ---------------------------------------------------------------------
     # The host under test — the full VPS, Authentik included

@@ -34,7 +34,7 @@
 #     exit 1 before any HTTP — the placeholder case is the sharp one, since
 #     the server would happily bootstrap with a password that sits in a
 #     public git repo.
-#   - **init is idempotent**: a rerun (every Arcane redeploy) logs zero
+#   - **init is idempotent**: a rerun (every Komodo redeploy) logs zero
 #     CHANGE lines. Deliberately NOT re-verifying the password on rerun —
 #     an in-app password change is legitimate and must not fail deploys.
 #   - **OIDC is really off**: the fixture carries ACTUAL_OPENID_CLIENT_*
@@ -113,7 +113,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -139,10 +139,8 @@ pkgs.testers.runNixOSTest {
           # 🚨 1001:1001, matching production's DIR_NOTES entry: the compose
           # file pins `user: "1001:1001"` (the published image creates uid
           # 1001 but ships NO USER instruction — measured, see the compose
-          # header) and the create-folders migration mkdirs under /data
-          # before the server ever binds. Root-owned, the container exits at
-          # start — which is the failure this rule's production twin exists
-          # to prevent.
+          # header); root-owned, the create-folders migration fails and the
+          # container exits at start.
           "d /mnt/fast/actual 0755 1001 1001 -"
         ];
 

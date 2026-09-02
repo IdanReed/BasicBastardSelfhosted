@@ -3,20 +3,16 @@
 # Fed to `manage.py shell` on stdin, so this file is a Django shell script, not
 # a standalone program — the ORM and settings are already loaded when it runs.
 #
-# WHY IT EXISTS: Tandoor has no env-var path and no REST path to a first
-# superuser. `/setup/` (cookbook/urls.py) renders a plain Django form, refuses
-# to run once `User.objects.count() > 0`, and refuses to run at all if
-# RemoteUserBackend is in AUTHENTICATION_BACKENDS. There is no management
-# command for it either — `cookbook/management/commands/` holds only export,
-# import, rebuildindex, fix_duplicate_properties and seed_basic_data.
+# WHY IT EXISTS: Tandoor has no env-var and no REST path to a first
+# superuser — `/setup/` is a browser form that refuses once any user exists,
+# and there is no management command for it.
 #
-# ⚠ AND NOT `seed_basic_data`. Its --help reads "Seeds some basic data (space,
-# account, food)" and it looks exactly like the tool for this job. It is a
-# DEVELOPER FIXTURE: `User.objects.get_or_create(username='test')` followed by
-# `user.set_password('test')`, and a Space literally named "Test Space".
+# ⚠ NOT `seed_basic_data`: it looks exactly like the tool for this job but
+# is a DEVELOPER FIXTURE — user `test` with password 'test' and a "Test
+# Space".
 #
-# Every mutation prints "tandoor-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must print ZERO change lines.
+# Every mutation prints "tandoor-init: CHANGE: ...". A second run — every
+# redeploy reruns this container — must print ZERO change lines.
 
 import os
 import sys
@@ -39,9 +35,8 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly. An unset variable here means the .env did not decrypt,
-        # and an unprovisioned Tandoor serves its /setup/ wizard to whoever
-        # reaches it first.
+        # Fail loudly: unset means the .env did not decrypt, and an
+        # unprovisioned Tandoor serves /setup/ to whoever reaches it first.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -91,14 +86,10 @@ with scopes_disabled():
             user.save()
             log(f"CHANGE: repaired {username}: {', '.join(changed)}")
 
-    # The Space. At 2.6.13 this is NOT a second wizard — `/space-overview/` is
-    # commented out in cookbook/urls.py and the view is dead code. ScopeMiddleware
-    # materialises a Space on the first authenticated request instead.
-    #
-    # Calling the app's OWN create_space_for_user here rather than waiting for
-    # that request is deliberate: it makes the post-deploy state assertable
-    # without driving a login, and because it is the same function the
-    # middleware calls, it cannot drift from upstream's behaviour.
+    # The Space: at 2.6.13 ScopeMiddleware materialises one on the first
+    # authenticated request. Calling the app's OWN create_space_for_user
+    # instead makes post-deploy state assertable without driving a login,
+    # and (same function the middleware calls) cannot drift from upstream.
     if not user.userspace_set.filter(active=True).exists():
         create_space_for_user(user)
         log(f"CHANGE: created the space for {username}")

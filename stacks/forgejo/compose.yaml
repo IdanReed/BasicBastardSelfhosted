@@ -1,22 +1,23 @@
 # Forgejo — the git ROOT for everything in this homelab. GitHub is only a
 # push mirror for select public repos (LONGRUN decision); this instance is
-# the source of truth, including the remote Arcane's GitOps sync pulls from.
+# the source of truth, including the remote the stack git sync pulls from.
 #
 # Access is HTTPS-ONLY in v1: web UI and git-over-https both ride Caddy at
 # forgejo.svc.idanreed.com (token auth for git). SSH is deliberately
 # DEFERRED — it would need a second published port plus key management, and
-# https+token already covers every current consumer (Arcane's pull, human
-# pushes, future CI checkout). DISABLE_SSH below keeps the container's sshd
-# off and stops the UI from advertising ssh:// clone URLs it cannot honour.
+# https+token already covers every current consumer (the stack git sync's
+# pull, human pushes, future CI checkout). DISABLE_SSH below keeps the
+# container's sshd off and stops the UI from advertising ssh:// clone URLs
+# it cannot honour.
 #
 # NO .sops.env for v1, on purpose: Forgejo self-generates all of its private
 # material — SECRET_KEY, INTERNAL_TOKEN, the JWT secrets — into
 # /data/gitea/conf/app.ini (i.e. /mnt/fast/forgejo/data) on first start and
-# reuses it thereafter. Nothing secret needs to travel through git, so there
-# is nothing to encrypt, no env_file to declare, and (unlike finding #11's
-# stacks) no staging-validation dance for the GitOps sync to trip over. The
-# consequence is that app.ini is STATE and lives in the volume — which the
-# fast-volume Backrest plan already covers (see designs/dev-forgejo.md).
+# reuses it thereafter. Nothing secret travels through git, so there is
+# nothing to encrypt, no env_file to declare, and (unlike finding #11's
+# stacks) no decrypt race to cover. The consequence is that app.ini is STATE
+# and lives in the volume — which the fast-volume Backrest plan already
+# covers (see designs/dev-forgejo.md).
 services:
   forgejo:
     image: codeberg.org/forgejo/forgejo:16.0

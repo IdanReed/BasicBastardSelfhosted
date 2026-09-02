@@ -1,17 +1,15 @@
 #!/bin/sh
 # Headless first-run for Windmill (annex §3.4).
 #
-# WHY THIS EXISTS: upstream's documented setup is "deploy, log in as
-# admin@windmill.dev / changeme, then use the Instance Settings UI". There is
-# no forced password change, so the published default credential is live from
-# the moment the server starts until a human intervenes.
+# WHY THIS EXISTS: upstream's documented setup is "log in as
+# admin@windmill.dev / changeme, then use the UI" — no forced password
+# change, so the published default is live until a human intervenes.
+# SUPERADMIN_SECRET is the way out (the binary's --help: "virtual superadmin
+# token"): presented as a bearer token it authenticates against the ordinary
+# API without ever using `changeme`.
 #
-# SUPERADMIN_SECRET is the documented way out — the binary's own --help calls
-# it a "virtual superadmin token (server)" — and presenting it as a bearer
-# token authenticates against the ordinary API without ever using `changeme`.
-#
-# Every mutation logs "windmill-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must log ZERO change lines.
+# Every mutation logs "windmill-init: CHANGE: ...". A second run — every
+# redeploy reruns this container — must log ZERO change lines.
 set -eu
 
 python3 - <<'PY'
@@ -38,9 +36,9 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly. An unset variable here means the .env did not decrypt,
-        # and "unprovisioned" for Windmill means admin@windmill.dev / changeme
-        # stays live on a service that runs arbitrary code.
+        # Fail loudly: unset means the .env did not decrypt, and
+        # "unprovisioned" means admin@windmill.dev / changeme stays live on
+        # a service that runs arbitrary code.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -107,9 +105,8 @@ else:
 # ---------------------------------------------------------------------------
 # 2. Log in AS that user for everything else
 # ---------------------------------------------------------------------------
-# Not the superadmin token: whether the virtual-superadmin bearer can complete
-# workspace creation is not something this script should bet on, and a real
-# session is the path the UI uses anyway. If login fails, step 1 lied.
+# Not the superadmin token: a real session is the path the UI uses, and if
+# login fails, step 1 lied.
 code, body = request(
     f"{WM}/api/auth/login",
     method="POST",
@@ -161,15 +158,12 @@ else:
 # ---------------------------------------------------------------------------
 # 4. Retire the default account
 # ---------------------------------------------------------------------------
-# ⚠ The verb is DELETE. The openapi operation is `globalUserDelete` and a POST
-# to the same path 405s — an easy way to "retire" an account that is still
-# live, since a 405 in a script nobody reads looks like any other line.
-#
-# 🚨 AND THE DELETE IS NOT DISTINGUISHABLE: it returns 2xx whether or not the
-# account existed. Deleting unconditionally and logging a CHANGE on success
-# therefore prints a change line on EVERY run and breaks the idempotency
-# contract — which is exactly what the suite caught. So look first, and only
-# claim a change when there was one.
+# ⚠ The verb is DELETE — a POST to the same path 405s, an easy way to
+# "retire" an account that is still live.
+# 🚨 THE DELETE IS NOT DISTINGUISHABLE: 2xx whether or not the account
+# existed, so deleting unconditionally + logging CHANGE prints a change line
+# EVERY run and breaks the idempotency contract (the suite caught exactly
+# this). Look first; claim a change only when there was one.
 def default_admin_exists():
     """None when the answer cannot be determined."""
     code, body = request(

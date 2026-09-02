@@ -1,36 +1,30 @@
 # Headless first-run for Mealie — retires the boot-time default admin.
 #
-# WHY IT EXISTS (all verified in the v3.24.0 source, not the docs):
-#   - db/init_db.py -> repos/seed/init_users.py: an EMPTY database gets an
-#     ADMIN user at boot — email settings._DEFAULT_EMAIL, password
-#     settings._DEFAULT_PASSWORD, username `admin`, full name "Change Me".
-#   - core/settings/settings.py: those two are `_DEFAULT_EMAIL: str =
-#     "changeme@example.com"` and `_DEFAULT_PASSWORD: str = "MyPassword"` —
-#     pydantic PRIVATE attrs, docstring "it should no longer be set by end
-#     users". The DEFAULT_EMAIL/DEFAULT_PASSWORD env vars of the v1 era are
-#     GONE (the current backend-config docs no longer list them), so every
-#     fresh v3 instance boots with a published admin credential and no
-#     env-var path to change it. Same class as wger's admin/adminadmin,
-#     minus wger's excuse of at least documenting it loudly.
+# WHY (verified in the v3.24.0 source, not the docs): an EMPTY database gets
+# an ADMIN at boot — changeme@example.com / MyPassword, username `admin`
+# (init_users.py). Both are pydantic PRIVATE attrs in settings.py; the v1-era
+# DEFAULT_EMAIL/DEFAULT_PASSWORD env vars are GONE, so every fresh v3 boots
+# with a published admin credential and no env-var path to change it. Same
+# class as wger's admin/adminadmin.
 #
 # WHAT IT DOES, through the app's own REST API (no ORM reach-around):
 #   1. try the REAL admin's login — if it works, this ran before;
-#   2. otherwise log in as changeme@example.com / MyPassword, create the real
-#      admin (POST /api/admin/users hashes the password server-side);
-#   3. log in as the REAL admin — proving the new credential works BEFORE the
+#   2. else log in as the default, create the real admin (password hashed
+#      server-side);
+#   3. log in as the REAL admin — proving the new credential BEFORE the
 #      fallback is destroyed;
 #   4. delete the default user with the real admin's token (also heals a
-#      previous half-run that died between create and delete);
-#   5. assert the app agrees: /api/app/about/startup-info answers
-#      isFirstLogin=false only once no changeme@example.com user exists.
+#      half-run that died between create and delete);
+#   5. assert the app agrees: startup-info answers isFirstLogin=false only
+#      once no changeme@example.com user exists.
 #
-# Every mutation prints "mealie-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must print ZERO change lines.
+# Every mutation prints "mealie-init: CHANGE: ...". A second run — every
+# redeploy reruns this container — must print ZERO change lines.
 #
 # ⚠ Idempotent repair, not a reset: if the real admin exists but its password
-# no longer matches .env (operator changed it in the UI), step 1 fails, step 2
-# finds the default admin already deleted, and this script FAILS LOUDLY rather
-# than guess. Update .env or the UI password — never clobber from here.
+# no longer matches .env (changed in the UI), step 1 fails, step 2 finds the
+# default already deleted, and this script FAILS LOUDLY rather than guess.
+# Update .env or the UI password — never clobber from here.
 
 import json
 import os
@@ -56,9 +50,8 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly. Unset here means the .env did not decrypt — and an
-        # unprovisioned Mealie keeps serving admin login as
-        # changeme@example.com / MyPassword to whoever reaches it first.
+        # Fail loudly: unset means the .env did not decrypt, and an
+        # unprovisioned Mealie keeps serving the published default admin.
         fatal(f"{name} is unset or empty")
     return v
 

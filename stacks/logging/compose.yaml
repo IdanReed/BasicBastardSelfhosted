@@ -193,9 +193,8 @@ services:
       # datasource lives only in grafana.db, i.e. only in the backup.
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/loki.yaml:ro
 
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
-    # sync validation runs where the decrypted .env cannot exist, and the plain
-    # form aborts the whole stack's sync.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt, and the plain form aborts the whole stack.
     env_file:
       - path: .env
         required: false

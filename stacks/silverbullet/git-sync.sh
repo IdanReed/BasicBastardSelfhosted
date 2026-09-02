@@ -3,63 +3,40 @@
 # (through a Forgejo repo) on the other.
 #
 # ---------------------------------------------------------------------------
-# THE CONFLICT STORY, STATED BEFORE THE CODE
+# THE CONFLICT STORY: REMOTE WINS, and it says so out loud when it fires.
 # ---------------------------------------------------------------------------
-# There is no way to merge two simultaneous edits of the same markdown line
-# without either a human or a lie. This script picks a rule, applies it every
-# time, and SAYS SO OUT LOUD when it fires:
+# On a conflicting hunk the Obsidian/Forgejo side is kept. Why: SilverBullet
+# commits every cycle, so its version is seconds old and easy to retype; an
+# Obsidian edit is a deliberate push from a device possibly offline for days
+# — silently discarding it is the worse loss.
 #
-#   REMOTE WINS. On a conflicting hunk the Obsidian/Forgejo side is kept and
-#   the SilverBullet side is dropped from the working tree.
+# What is lost when it fires — two cases; A would otherwise be silent:
+#   A. `-X ours` RESOLVED it (common): no git error, the page comes out as
+#      the remote's version. The local version is kept on a LOCAL branch
+#      `git-sync-superseded-<timestamp>` and named in an ntfy alert.
+#   B. `-X ours` could NOT resolve it (delete/modify, unmergeable add/add):
+#      rebase aborted, local commit kept on `git-sync-conflict-<timestamp>`
+#      (pushed to Forgejo when reachable), tree hard-reset to the remote,
+#      ntfy told.
+# Both lose conflicting content from the WORKING TREE only, never history;
+# non-conflicting local changes replay intact.
 #
-# Why that way round: SilverBullet is the always-on server and its edits are
-# taken continuously (a commit every cycle), so its version of a page is
-# usually seconds old and easy to retype. An Obsidian edit arrives as a
-# deliberate push from a device that may have been offline for days; silently
-# discarding it is the worse loss.
+# ⚠ `-X ours` looks backwards and is not a typo: during a rebase the local
+# commits are replayed ONTO the upstream, so git calls the REMOTE side
+# "ours". `-X ours` is remote-wins; inverting it would silently prefer the
+# server on every conflict forever.
 #
-# WHAT IS ACTUALLY LOST WHEN IT FIRES — two cases, and the first one is the
-# one that would otherwise happen in silence:
-#
-#   A. `-X ours` RESOLVED it (the common case). No git error is produced at
-#      all: the page simply comes out as the remote's version. The local
-#      version is kept on a LOCAL branch `git-sync-superseded-<timestamp>`
-#      and named in an ntfy alert. Nothing is deleted from history.
-#   B. `-X ours` could NOT resolve it (delete/modify, unmergeable add/add).
-#      The rebase is aborted, the local commit is kept on
-#      `git-sync-conflict-<timestamp>` — pushed to Forgejo when reachable —
-#      the tree is hard-reset to the remote, and ntfy is told.
-#
-# In both cases what is lost is the conflicting content from the WORKING TREE,
-# never from history, and non-conflicting local changes are replayed intact.
-#
-# TWO LAYERS, because git has two different resolution points:
-#   1. `git rebase -X ours FETCH_HEAD` resolves overlapping CONTENT hunks.
-#      ⚠ `ours` looks backwards and is not a typo: during a rebase the local
-#      commits are replayed ONTO the upstream, so git calls the upstream
-#      (remote) side "ours" and the commit being replayed "theirs". `-X ours`
-#      is therefore remote-wins. Getting this inverted is silent — it would
-#      quietly prefer the server on every conflict forever.
-#   2. Anything -X cannot decide (delete/modify, add/add of unmergeable
-#      content, a corrupt rebase state) aborts the rebase, saves the local
-#      commit on a rescue branch, hard-resets to the remote, and alerts.
-#
-# ---------------------------------------------------------------------------
-# DESIGN RULES THIS FILE KEEPS ON PURPOSE
-# ---------------------------------------------------------------------------
-#   - It is dumb and it alerts. A cleverer loop that can wedge is worse than
-#     a simple one that says it is stuck (the same argument that killed
-#     modules/stack-sync.nix).
-#   - It never blocks the wiki. Every failure path returns to the loop; the
-#     container's healthcheck reports the LOOP being alive, never sync
-#     success, so a dead Forgejo does not take SilverBullet down with it.
-#   - No `origin` remote is ever configured. The URL carries a PAT and
-#     `git remote add` would persist it in /space/.git/config — which is
-#     inside backrest's fast-volume plan, i.e. in every backup. Passing the
-#     URL per command keeps it in the container's environment only. (Root on
-#     the host can still read it from /proc or from the decrypted .env; the
-#     point is not to multiply the copies.)
-#   - `set -e` is deliberately NOT used: every git call is checked, and one
+# DESIGN RULES, kept on purpose:
+#   - Dumb and it alerts: a cleverer loop that can wedge is worse than a
+#     simple one that says it is stuck (what killed modules/stack-sync.nix).
+#   - Never blocks the wiki: every failure path returns to the loop; the
+#     healthcheck reports the LOOP alive, never sync success.
+#   - No `origin` remote is ever configured: the URL carries a PAT and
+#     `git remote add` would persist it in /space/.git/config — inside
+#     backrest's fast-volume plan, i.e. every backup. Per-command URLs keep
+#     it in the environment only (not fewer copies for host root; just not
+#     multiplied).
+#   - `set -e` deliberately NOT used: every git call is checked, and one
 #     failed fetch must not kill the loop.
 
 SPACE="${GIT_SYNC_SPACE:-/space}"
