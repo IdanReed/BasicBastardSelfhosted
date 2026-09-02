@@ -70,7 +70,7 @@ services:
     labels:
       komodo.skip:
     # ferretdb's own healthcheck gates Core, so first connect finds a live DB
-    # (see postgres cold-boot note). No first_server here — registered by sync.
+    # (see postgres cold-boot note).
     depends_on:
       ferretdb:
         condition: service_healthy
@@ -80,15 +80,23 @@ services:
       - '127.0.0.1:10000:9120'
     environment:
       # Non-secret config. Headless: no browser wizard. Secrets (INIT_ADMIN_*,
-      # PASSKEY, WEBHOOK, DATABASE_*) arrive via env_file below.
+      # WEBHOOK, JWT, DATABASE password) arrive via env_file below.
       KOMODO_HOST: https://komodo.svc.idanreed.com
       KOMODO_LOCAL_AUTH: 'true' # password login; default off
       KOMODO_DISABLE_USER_REGISTRATION: 'true' # single admin
       KOMODO_DATABASE_ADDRESS: ferretdb:27017
       KOMODO_DATABASE_USERNAME: komodo # literal, matches postgres role; pw via env_file
+      # v2 auth model — NOT the deprecated shared passkey. Core auto-creates an
+      # ENABLED server named "Local" on first boot; Periphery dials Core
+      # (ws://core:9120) and attaches AS it, authenticating with the Noise
+      # keypair both write into the shared /config/keys volume. No CreateServer
+      # API call, no inbound Periphery port. (Verified against komodo 2.1.0:
+      # ListServers shows "Local" state Ok, offline. Passkey path is v1-legacy.)
+      KOMODO_FIRST_SERVER_NAME: Local
+      KOMODO_PERIPHERY_PUBLIC_KEY: file:/config/keys/periphery.pub
     volumes:
-      # Noise handshake keypairs, shared with periphery. Regenerable — not
-      # backed up (named volume under /var/lib/docker).
+      # Noise keypairs, shared with periphery (core.key/pub + periphery.key/pub).
+      # Regenerable — not backed up (named volume under /var/lib/docker).
       - komodo_keys:/config/keys
     # Long form, required:false (finding #11): decrypt writes /srv/komodo/.env
     # host-side; a plain `env_file: .env` would hard-fail before first decrypt.
@@ -100,9 +108,9 @@ services:
       - homelab # reach forgejo for Resource-Sync polling
     restart: unless-stopped
 
-  # The socket-toucher. No published port — only Core reaches it on the private
-  # komodo net at https://periphery:8120. A published :8120 would be a
-  # root-equivalent interface on the trusted tailnet.
+  # The socket-toucher. No published port — Periphery DIALS OUT to Core
+  # (ws://core:9120) and holds the connection open, so it needs no listener at
+  # all. A published :8120 would be a root-equivalent interface on the tailnet.
   periphery:
     image: ghcr.io/moghtech/komodo-periphery:2.1.0
     container_name: komodo_periphery
@@ -113,14 +121,21 @@ services:
       - core
     volumes:
       - komodo_keys:/config/keys
-      # Socket + stack files. /srv/stacks same path in/out so run_directory
-      # paths resolve identically on the host daemon (upstream discussion #180).
+      # Socket + stack files. /srv/stacks same path in/out so files_on_host
+      # run_directory paths resolve identically on the host daemon (upstream
+      # discussion #180) and are children of PERIPHERY_ROOT_DIRECTORY below.
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/stacks:/srv/stacks
     environment:
-      # Shared secret gating Core->Periphery. Interpolated from .env; must equal
-      # Core's KOMODO_PASSKEY (same file).
-      PERIPHERY_PASSKEYS: ${KOMODO_PASSKEY}
+      # v2 keypair model (NOT the deprecated PERIPHERY_PASSKEYS): Periphery
+      # dials Core and registers as the "Local" first-server, trusting Core's
+      # pubkey from the shared /config/keys volume.
+      PERIPHERY_CORE_ADDRESS: ws://core:9120
+      PERIPHERY_CONNECT_AS: Local
+      PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
+      # files_on_host reads compose files from here; run_directory must be a
+      # CHILD of this root. Same path in/out (see the /srv/stacks bind).
+      PERIPHERY_ROOT_DIRECTORY: /srv/stacks
     networks:
       - komodo
     restart: unless-stopped
