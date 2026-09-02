@@ -73,8 +73,8 @@ in
       # container runtime from the LABELS: an empty label list, or any label
       # containing ":docker:", sets wantsContainerRuntime, which adds the
       # runner's DynamicUser to the `docker` group. That group is
-      # root-equivalent on this host — it is the same socket Arcane holds and
-      # the reason Arcane is the only thing allowed to have it. A future edit
+      # root-equivalent on this host — it is the same socket Komodo's Periphery
+      # holds and the reason Periphery is the only thing allowed to have it. A future edit
       # that adds a convenience `ubuntu-latest:docker://…` label would grant
       # it silently; this fails the build instead.
       assertion = labels != [ ] && lib.all (l: lib.hasSuffix ":host" l) labels;

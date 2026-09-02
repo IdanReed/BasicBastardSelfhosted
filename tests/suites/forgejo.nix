@@ -76,7 +76,9 @@ pkgs.testers.runNixOSTest {
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
         # bootstrap-arcane chain and Arcane itself — checks.services covers
         # the chain, checks.gitops covers Arcane driving THIS forgejo.
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         # decrypt-sops-envs.service `requires = srv.mount`; without a real
         # mount unit it never starts. tmpfs gives a genuine .mount unit, and

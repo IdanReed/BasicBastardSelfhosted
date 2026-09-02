@@ -12,7 +12,7 @@
 # Usage:
 #   ./tests/run.sh lints           # pure contract checks, seconds
 #   ./tests/run.sh vps             # VPS: caddy + headscale + real tailnet
-#   ./tests/run.sh services        # services VM: arcane + stacks
+#   ./tests/run.sh services        # services VM: komodo + stacks
 #   ./tests/run.sh tailnet         # both hosts, one tailnet, end to end
 #   ./tests/run.sh all
 #

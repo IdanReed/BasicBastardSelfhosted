@@ -617,39 +617,39 @@ entries:
       meta_description: "Client-side developer utilities"
 
   # ===========================================
-  # Infra: arcane and mazanoke
+  # Infra: komodo and mazanoke
   # ===========================================
-  # 🚨 arcane is the highest-privilege entry in this file. It mounts the Docker
-  # socket, so its web UI is root-equivalent on the services VM, and its
-  # _overview.md row has claimed FwdAuth since before the route existed — the
-  # `auth-column-parity` lint is what finally caught the gap. Deploy this file
-  # and rebuild the VPS BEFORE the Caddy route syncs: the tool you would
-  # normally use to fix a bad deploy IS Arcane.
+  # 🚨 komodo is the highest-privilege entry in this file. Its Core UI drives
+  # Periphery, which mounts the Docker socket, so the UI is root-equivalent on
+  # the services VM, and its _overview.md row has claimed FwdAuth since before
+  # the route existed — the `auth-column-parity` lint is what finally caught the
+  # gap. Deploy this file and rebuild the VPS BEFORE the Caddy route syncs: the
+  # tool you would normally use to fix a bad deploy IS Komodo.
   #
   # mazanoke is the mundane other half of the same lint failure: a client-side
   # image optimiser with no auth of its own, marked FwdAuth and not protected.
   - model: authentik_providers_proxy.proxyprovider
-    id: arcane-provider
+    id: komodo-provider
     state: present
     identifiers:
-      name: arcane
+      name: komodo
     attrs:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       mode: forward_single
-      external_host: https://arcane.svc.idanreed.com
+      external_host: https://komodo.svc.idanreed.com
       access_token_validity: hours=24
 
   - model: authentik_core.application
-    id: arcane-app
+    id: komodo-app
     state: present
     identifiers:
-      slug: arcane
+      slug: komodo
     attrs:
-      name: Arcane
-      provider: !KeyOf arcane-provider
+      name: Komodo
+      provider: !KeyOf komodo-provider
       policy_engine_mode: any
-      meta_description: "Container and stack management (ROOT-EQUIVALENT: mounts the Docker socket)"
+      meta_description: "Container and stack management (ROOT-EQUIVALENT: Periphery mounts the Docker socket)"
 
   - model: authentik_providers_proxy.proxyprovider
     id: mazanoke-provider
@@ -889,7 +889,7 @@ entries:
         - !KeyOf syncthing-provider
         - !KeyOf glance-provider
         - !KeyOf it-tools-provider
-        - !KeyOf arcane-provider
+        - !KeyOf komodo-provider
         - !KeyOf mazanoke-provider
         - !KeyOf windmill-provider
         - !KeyOf wger-provider

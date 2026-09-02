@@ -342,7 +342,7 @@ pkgs.runCommand "proxmox-boot"
     # and retries against the unreachable production headscale URL in this
     # sandbox, and units that genuinely cannot run here (srv.mount does not
     # exist without hardware-configuration.nix, so decrypt-sops-envs and
-    # bootstrap-arcane never start) would stall any target-based wait forever.
+    # bootstrap-komodo never start) would stall any target-based wait forever.
     # The same is true on a freshly imaged Proxmox VM, incidentally: the image
     # carries no hardware-configuration.nix either.
     wait_qga "guest agent never answered guest-ping on first boot"

@@ -43,22 +43,25 @@ let
     images."redis_7_4-alpine"
     images."apache_tika_3_3_0_0"
     images."gotenberg_gotenberg_8_31"
-    # Not under test here, but bootstrap-arcane is wantedBy multi-user.target
+    # Not under test here, but bootstrap-komodo is wantedBy multi-user.target
     # in nixos/configuration.nix and runs during boot; without its image it
     # crash-loops and pollutes every journal dump with red herrings.
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
   ];
 
   # Seeds /srv the way the real host gets it: Arcane's git sync on the live
   # machine, a store copy here. ONLY the paperless stack is seeded — the other
-  # stacks are the light suite's job — plus /srv/arcane, because
-  # bootstrap-arcane runs unconditionally at boot and `docker compose up`
+  # stacks are the light suite's job — plus /srv/komodo, because
+  # bootstrap-komodo runs unconditionally at boot and `docker compose up`
   # against an absent compose file would leave a failed unit in the chain
   # decrypt-sops-envs participates in.
   seedSrv = pkgs.runCommand "srv-seed-paperless" { } ''
-    mkdir -p $out/arcane $out/stacks/paperless
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks/paperless
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     cp -r ${../../stacks/paperless}/. $out/stacks/paperless/
     chmod -R u+w $out/stacks/paperless
@@ -96,17 +99,19 @@ pkgs.testers.runNixOSTest {
           # migrations, OCR toolchain startup and the JVM in tika all fight
           # for memory, and five images plus a docker volume live on disk.
           (profiles.sized {
-            memoryMB = 6144;
+            memoryMB = 7168;
             diskMB = 16384;
           })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
+          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
         # /mnt/fast is where the compose file bind-mounts everything.
         # Coverage lost: nothing — the real partitions are just ext4 mounts.
@@ -131,7 +136,7 @@ pkgs.testers.runNixOSTest {
         systemd.tmpfiles.rules = [
           # Copied from nixos/hardware-configuration.nix, which cannot be
           # imported here because it mounts real partitions by partlabel.
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Bind-mount roots from stacks/paperless/compose.yaml. root-owned is
@@ -158,8 +163,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -197,9 +202,9 @@ pkgs.testers.runNixOSTest {
     # (a) Secret decryption
     # -----------------------------------------------------------------------
     with subtest("decrypt-sops-envs produced a 0600 .env for paperless"):
-        # Transient oneshot (re-armed by a timer); bootstrap-arcane
+        # Transient oneshot (re-armed by a timer); bootstrap-komodo
         # Requires+After it, so arcane up proves the decrypt pass ran.
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/paperless/.env")
         mode = services_vm.succeed("stat -c '%a' /srv/stacks/paperless/.env").strip()
         assert mode == "600", f"/srv/stacks/paperless/.env is mode {mode}, expected 600"
@@ -209,11 +214,11 @@ pkgs.testers.runNixOSTest {
             "grep -q '^PAPERLESS_ADMIN_PASSWORD=' /srv/stacks/paperless/.env"
         )
 
-    # Images are loaded before bootstrap-arcane, which the compose run below
+    # Images are loaded before bootstrap-komodo, which the compose run below
     # must not race — an `up` while `docker load` still runs pulls nothing
     # (offline) and fails confusingly.
     services_vm.wait_for_unit("load-test-images.service")
-    services_vm.wait_for_unit("bootstrap-arcane.service")
+    services_vm.wait_for_unit("bootstrap-komodo.service")
 
     # -----------------------------------------------------------------------
     # (b) The stack comes up

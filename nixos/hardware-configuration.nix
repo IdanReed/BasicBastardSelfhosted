@@ -72,11 +72,14 @@
   # the moment the stack moved, which is the failure this whole split exists
   # to end.
   systemd.tmpfiles.rules = [
-    "d /srv/arcane 0755 root root -"
-    # 1000:1000 = the PUID/PGID Arcane runs as. Root-owned, its git sync can
-    # never create a project directory here and its deploys cannot read the
-    # 0600 .env files — GitOps delivery silently dead (caught by
-    # tests/suites/gitops.nix).
+    # The Komodo deploy plane's compose dir (Core/Periphery/FerretDB/Postgres).
+    # root:root — it holds compose + the decrypted .env, no non-root owner.
+    "d /srv/komodo 0755 root root -"
+    # 1000:1000: stack-git-sync (host) writes project directories here as 1000,
+    # and decrypt-sops-envs chowns the .env to 1000. Root-owned, the sync could
+    # never create a project directory here — GitOps delivery silently dead
+    # (caught by tests/suites/gitops.nix). Periphery runs as root and reads the
+    # 0600 .env regardless, so 1000 no longer strictly binds but is preserved.
     "d /srv/stacks 0755 1000 1000 -"
     # Live-host migration: tmpfiles 'd' only applies its owner when it CREATES
     # the directory — on the real VM /srv/stacks already existed (root-owned,

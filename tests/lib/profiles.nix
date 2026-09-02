@@ -85,7 +85,7 @@ rec {
   # reproducible — so every image must already be in the store.
   #
   # This is ordered before the units under test rather than done from the test
-  # script, because bootstrap-arcane and authentik.service are wantedBy
+  # script, because bootstrap-komodo and authentik.service are wantedBy
   # multi-user.target and therefore run during boot, before the script gets
   # control.
   loadImages =

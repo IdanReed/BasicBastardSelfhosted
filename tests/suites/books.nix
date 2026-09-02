@@ -226,7 +226,9 @@ pkgs.testers.runNixOSTest {
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
         # bootstrap-arcane chain and Arcane itself. checks.services covers
         # exactly that — run it before trusting a change to that chain.
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         # Migrations plus two scans on the sized profile's 2 cores make every
         # healthcheck window a coin toss; 4 keeps it sane.
@@ -444,7 +446,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         # Transient oneshot on a minutely timer, so wait_for_unit would race
