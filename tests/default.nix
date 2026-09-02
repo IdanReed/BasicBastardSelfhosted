@@ -192,7 +192,17 @@ let
     actual = callSuite ./suites/actual.nix { }; # hand-written: restart:"no" init one-shot fails mk-stack-suite's all-running check
     # Hand-written: the argon2 $-quoting trap needs a REAL login; boot-fatal OIDC needs negative containers.
     wealthfolio = callSuite ./suites/wealthfolio.nix { };
+    # Hand-written: the core claim (a named scene persists server-side) is
+    # exactly what a green healthcheck cannot see — STORAGE_URI missing means
+    # silent in-memory storage. Write -> inspect-postgres -> restart -> read
+    # back, plus the keyv-race and P3005/db-push traps pinned.
+    excalidraw = callSuite ./suites/excalidraw.nix { };
     gatus = callSuite ./suites/gatus.nix { };
+    # Hand-written though the shape fits mk-stack-suite: the contract is
+    # no-creds/no-egress behaviour — bannered listeners, a clean login
+    # refusal, the export loop failing calmly — protocol dialogues the
+    # generic suite structurally cannot make.
+    proton = callSuite ./suites/proton.nix { };
     beszel = callSuite ./suites/beszel.nix { };
     samba = callSuite ./suites/samba.nix { };
     docspace = callSuite ./suites/docspace.nix { };
@@ -201,6 +211,13 @@ let
     # 131 call sites across tests/ rely on. Cheap (~20 s of test script) and
     # the only place rateLimitBurst = 0 is actually proven to take effect.
     journald-logging = callSuite ./suites/journald-logging.nix { };
+    # Hand-written: the INGEST contract — a container writes a marker line and
+    # the suite polls VictoriaLogs' query API until it arrives, closing the
+    # healthy-collector-shipping-nothing gap the Loki era only documented.
+    # Also pins the 100GiB retention flag in the live argv, the empty-result
+    # semantics the gatus ingest probe depends on, and grafana staying
+    # healthy offline with the datasource plugin absent.
+    victorialogs = callSuite ./suites/victorialogs.nix { };
   };
 
   # One fast suite per stack, for iterating on a single stack without booting
@@ -228,7 +245,8 @@ let
     # host.
     "ghostfolio"
     # logging fits the generic harness exactly: no `restart: "no"` one-shot
-    # (finding #39), and although loki carries no healthcheck at all, a
+    # (finding #39), and although victorialogs carries no healthcheck at all
+    # (distroless — no shell), a
     # project-wide `up -d --wait` tolerates that and waits for `running` —
     # it is only NAMING a healthcheck-less service that errors (finding #42),
     # and this harness names none. What the generic suite then buys is real:
@@ -238,6 +256,10 @@ let
     # carries the journald log driver, so it also exercises the switch.
     "logging"
     "ntfy"
+    # Two long-running containers, no restart:"no" oneshot; `--wait`
+    # tolerates the healthcheck-less export sidecar (the logging precedent).
+    # The bespoke no-creds protocol dialogues live in suites/proton.nix.
+    "proton"
     # Also an evaluation stack, and the generic suite is a genuinely good fit:
     # one container, no secrets, no volume, no init oneshot. What it proves
     # that a lint cannot is that the VERSIONED tag really does carry its
@@ -263,6 +285,10 @@ let
     #                  the sync path.
     "outline"
     "silverbullet"
+    # Four services, all restart: unless-stopped, all healthchecked, no
+    # oneshots — generic-suite-shaped. What it cannot see (silent in-memory
+    # storage when STORAGE_URI is lost) is suites/excalidraw.nix's job.
+    "excalidraw"
   ] (name: mkStackSuite { stack = name; });
 in
 rec {
