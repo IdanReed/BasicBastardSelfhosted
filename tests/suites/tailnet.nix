@@ -72,7 +72,7 @@ let
             sys.exit(1)
 
         # trust_pool: verify the VPS's pebble cert on the forward_auth hop
-        # (same injection as forward-auth.nix; arcane is `import protected`)
+        # (same injection as forward-auth.nix; komodo is `import protected`)
         fa = re.compile(
             r"(\n\t\ttransport http \{\n"
             r"\t\t\ttls_server_name auth\.idanreed\.com\n)")
@@ -379,7 +379,7 @@ pkgs.testers.runNixOSTest {
       with subtest("Caddy binds only the tailnet IP"):
           # TAILNET_IP is a secret on the real host because it is not known
           # until the node has joined. Same thing here: rewrite it, then bring
-          # the stack up as Arcane would.
+          # the stack up as Komodo would.
           services_vm.succeed(
               f"sed -i 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
           )
@@ -506,8 +506,8 @@ pkgs.testers.runNixOSTest {
           # "tailnet down".
           client.succeed(f"nc -z -w 5 {svc_ip} 443")
 
-          # Arcane (docker socket = root-equivalent) and ntfy must not answer
-          # on the tailnet IP.
+          # Komodo Core (root-equivalent via Periphery's docker socket) and
+          # ntfy must not answer on the tailnet IP.
           client.fail(f"nc -z -w 5 {svc_ip} 10000")
           client.fail(f"curl -sf --max-time 5 http://{svc_ip}:10000/ -o /dev/null")
           client.fail(f"nc -z -w 5 {svc_ip} 10001")

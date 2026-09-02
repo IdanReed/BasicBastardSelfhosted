@@ -62,9 +62,8 @@ let
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
-    # util is `up`'d whole, so ALL FOUR of its services need preloading —
-    # glance and it-tools were missing, and the offline VM surfaced it as a
-    # registry pull attempt (same omission as forward-auth.nix had).
+    # util is `up`'d whole, so ALL FOUR of its services need preloading — a
+    # missing one surfaces offline as a registry pull attempt.
     images."glanceapp_glance_v0_8_5"
     images."ghcr_io_sharevb_it-tools_2026_7_11"
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
@@ -463,8 +462,7 @@ pkgs.testers.runNixOSTest {
 
         # Poll ntfy for the CONTENT rather than gating on the notifier unit:
         # `systemctl show -p Result` reports "success" for a unit that has not
-        # finished (or even started) yet, so it cannot synchronise anything —
-        # it let the first version of this subtest race the delivery and lose.
+        # finished (or even started) yet, so it cannot synchronise anything.
         # since=all matters too: without it the poll endpoint only returns
         # messages that arrive after the request.
         try:

@@ -19,7 +19,7 @@
 #   - media-init end to end: health-gated reconciliation (root folders,
 #     download client at gluetun:8080 via forceSave while the tunnel is down,
 #     TRaSH naming, Prowlarr application push) and IDEMPOTENCE — a second run
-#     logs zero "CHANGE:" lines (what protects Arcane redeploys)
+#     logs zero "CHANGE:" lines (what protects Komodo redeploys)
 #   - x265 ENFORCEMENT, mechanically and BOTH-SIDED: a TRaSH-style
 #     "x265 (HD)" custom format scored -10000 AND an "x264" one scored
 #     +10000 are injected into BOTH arrs via the API — the two artifacts an
@@ -260,8 +260,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/books/drop 0755 1000 1000 -"
         ];
 
-        # Populate /srv before anything reads it — the stand-in for Arcane's
-        # git sync having already run.
+        # Populate /srv before anything reads it — the stand-in for
+        # stack-git-sync having already run.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
@@ -998,10 +998,7 @@ pkgs.testers.runNixOSTest {
         unlinked = [l for l in logs.splitlines() if "scan: UNLINKED" in l]
         # The scanner logs CONTAINER paths — its mount is /mnt/slow/data:/data,
         # so every UNLINKED line reads /data/..., never /mnt/slow/data/....
-        # Translate each library dir before matching. (This guard was invisible
-        # for as long as the suite timed out earlier in the subtest; once Komodo
-        # was masked out of the boot path the scan finished in time and the
-        # host-vs-container path mismatch surfaced.)
+        # Translate each library dir before matching.
         for d in [lib_dir, lib_dir2]:
             cpath = d.replace("/mnt/slow/data", "/data", 1)
             assert any(cpath in l for l in unlinked), (
@@ -1175,8 +1172,7 @@ pkgs.testers.runNixOSTest {
         # than tolerated: gluetun is deliberately unhealthy for this suite's
         # whole duration (the fixture points it at TEST-NET-1), so any tick
         # of its 15-minute timer that lands inside the run alerts — the unit
-        # working, not a regression. It became reachable when this suite grew
-        # past a quarter-hour.
+        # working, not a regression.
         #
         # Allowed NARROWLY: the stamp it wrote must name gluetun and nothing
         # else, so a second container going sick still fails this subtest.

@@ -75,9 +75,9 @@ let
   # /mnt tmpfiles rules, read from the SAME generated file the real host
   # imports (nixos/stack-dirs.nix) rather than hand-copied. The 1000:1000 on
   # .../shared IS the thing the uid subtest measures, so a drifted copy would
-  # make the suite assert its own fixture — the class ledger #77 fixed in
-  # mk-stack-suite; this hand-written suite now derives instead of copying
-  # too. Only the test-only /srv and sops-nix rules stay literal below.
+  # make the suite assert its own fixture (the class ledger #77 fixed in
+  # mk-stack-suite). Only the test-only /srv and sops-nix rules stay literal
+  # below.
   stackMntRoots = [
     "/mnt/fast/samba"
     "/mnt/slow/samba"
@@ -126,7 +126,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -239,9 +239,8 @@ pkgs.testers.runNixOSTest {
             # with no RemainAfterExit (a minutely timer re-fires it), so
             # waiting on the UNIT races its inactive-after-success state and
             # fails with "inactive and there are no pending jobs". The
-            # artifact it must produce is the synchronisation point —
-            # mk-stack-suite already documents this; this suite did not
-            # follow it.
+            # artifact it must produce is the synchronisation point (see
+            # mk-stack-suite).
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/samba/.env", timeout=90
             )

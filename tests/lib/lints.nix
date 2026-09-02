@@ -913,19 +913,13 @@ in
       errs = []
 
       # ---- Named exemptions -------------------------------------------------
-      # A bare (0.0.0.0) publish is normally the exact thing this lint exists to
-      # stop. A protocol whose peers must dial THIS host is the one case it
-      # cannot serve, and the honest way to handle that is a per-entry
-      # allow-list with the argument written down — not a blanket skip and not
-      # a silent exception in one compose file.
+      # A bare (0.0.0.0) publish is the exact thing this lint exists to stop;
+      # the one case it cannot serve is a protocol whose peers must dial THIS
+      # host. Per-entry allow-list only, each entry stating why the publish
+      # grants nobody anything (mutual authentication, not convenience).
       #
-      # An entry must state why publishing that port grants nobody anything.
-      # "It is inconvenient otherwise" is not a reason; "the protocol is
-      # mutually authenticated before it does anything" is.
-      #
-      # Unused entries are an ERROR, not a nicety: a stale exemption is a
-      # standing permission for a port nobody is publishing any more, and it
-      # would silently cover the next stack that happens to reuse the number.
+      # Unused entries are an ERROR: a stale exemption is a standing
+      # permission that would silently cover the next stack to reuse the port.
       EXEMPT = {
           ("notes-sync", "22000:22000/tcp"):
               "Syncthing BEP. Peers dial THIS host; a loopback publish makes "
@@ -1234,11 +1228,8 @@ in
       # with deliberate ownership, not docker's).
       #
       # The enumeration comes from nixos/generate-stack-dirs.py over a
-      # readDir'd manifest — there is NO list to extend. There used to be:
-      # COMPOSE_FILES named 17 of 22 stacks, so backrest, caddy, forgejo,
-      # ntfy and paperless were never checked and 13 bind sources had no rule
-      # at all. A hand-maintained enumeration inside a lint is not a check,
-      # it is a second thing to forget.
+      # readDir'd manifest — there is NO list to extend (see the generator
+      # note above stackDirsGenerator for the 17-of-22 hand-list history).
       #
       # This leg is NOT redundant with stack-dirs-generated (which compares
       # the generator's output to the checked-in file): it measures the other

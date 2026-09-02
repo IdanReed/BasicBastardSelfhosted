@@ -83,7 +83,7 @@ let
   # The one config override this suite makes, isolated so it is impossible to
   # miss in a diff: the CPU detector instead of the Coral.
   #
-  # This is not a convenience. With `type: edgetpu` and no TPU, the delegate
+  # With `type: edgetpu` and no TPU, the delegate
   # raises, Frigate's watchdog sees the dead detector process within 10s and
   # sends SIGTERM to PID 1, and `restart: unless-stopped` turns that into a
   # permanent crash loop — `cameras: {}` does not help, because detectors
@@ -118,7 +118,7 @@ let
     PY
   '';
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here.
   seedSrv = pkgs.runCommand "srv-seed-automation" { } ''
     mkdir -p $out/stacks/automation
@@ -167,13 +167,12 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Keep Arcane out of the boot path (mk-stack-suite's rationale): its
-        # image and bootstrap ordering are irrelevant here and this suite
-        # already loads the fleet's biggest image. Coverage lost — the
-        # decrypt -> docker-network -> bootstrap-komodo chain — is exactly
-        # what checks.services covers.
+        # Keep the deploy plane out of the boot path (mk-stack-suite's
+        # rationale); this suite already loads the fleet's biggest image.
+        # Coverage lost — the decrypt -> docker-network -> bootstrap-komodo
+        # chain — is what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 4;
@@ -671,7 +670,7 @@ pkgs.testers.runNixOSTest {
             services_vm.succeed(f"test -s /tmp/{name}.sqlite")
 
     # -----------------------------------------------------------------------
-    # §6.15 idempotence under Arcane redeploys
+    # §6.15 idempotence under redeploys
     # -----------------------------------------------------------------------
     with subtest("re-running the oneshots is a no-op"):
         # mosquitto-init is deliberately ABSENT from this list: mosquitto_passwd

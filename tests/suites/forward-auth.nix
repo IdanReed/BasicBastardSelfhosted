@@ -73,8 +73,8 @@ let
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
     # The util stack is `up`'d whole, so ALL FOUR of its services need their
-    # images preloaded — glance and it-tools were missing and the sandbox
-    # surfaced it as a pull attempt, not as anything forward-auth-related.
+    # images preloaded — a missing one surfaces as a pull attempt, not as
+    # anything forward-auth-related.
     images."glanceapp_glance_v0_8_5"
     images."ghcr_io_sharevb_it-tools_2026_7_11"
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"

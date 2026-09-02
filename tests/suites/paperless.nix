@@ -1,7 +1,7 @@
 # Paperless heavy suite: the full document pipeline on the services VM.
 #
 # The light services-vm suite proves the boot chain (sops decrypt -> docker
-# network -> arcane) and the small stacks; this one boots the multi-GB
+# network -> komodo) and the small stacks; this one boots the multi-GB
 # Paperless stack for real and pushes a document through it. Genuinely under
 # test:
 #   - decrypt-sops-envs turning stacks/paperless/.sops.env into a 0600 .env
@@ -18,7 +18,7 @@
 # Not covered here (and covered elsewhere or not at all): Caddy routing to
 # paperless.svc.idanreed.com (services-vm suite covers the routing table),
 # OCR of real scans (the fixture document is plain text; tika/gotenberg are
-# only proven reachable), and Arcane actually *managing* this stack — compose
+# only proven reachable), and Komodo actually *managing* this stack — compose
 # is driven directly so a scheduler quirk cannot mask a compose-file bug.
 #
 # hardware-configuration.nix is not imported: it mounts real partitions by
@@ -52,7 +52,7 @@ let
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
   ];
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. ONLY the paperless stack is seeded — the other
   # stacks are the light suite's job — plus /srv/komodo, because
   # bootstrap-komodo runs unconditionally at boot and `docker compose up`
@@ -203,7 +203,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     with subtest("decrypt-sops-envs produced a 0600 .env for paperless"):
         # Transient oneshot (re-armed by a timer); bootstrap-komodo
-        # Requires+After it, so arcane up proves the decrypt pass ran.
+        # Requires+After it, so komodo up proves the decrypt pass ran.
         services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/paperless/.env")
         mode = services_vm.succeed("stat -c '%a' /srv/stacks/paperless/.env").strip()
@@ -223,9 +223,9 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # (b) The stack comes up
     # -----------------------------------------------------------------------
-    # On the real host Arcane brings this up from /srv/stacks. Driving compose
+    # On the real host Komodo brings this up from /srv/stacks. Driving compose
     # directly tests the compose file, the decrypted env and the volumes,
-    # without depending on Arcane's scheduler.
+    # without depending on Komodo's scheduler.
     with subtest("docker compose brings up all five containers"):
         try:
             # --wait blocks on the paperless image's builtin healthcheck, so
