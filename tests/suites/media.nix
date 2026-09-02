@@ -996,10 +996,17 @@ pkgs.testers.runNixOSTest {
         # saying which is unauditable after the fact.
         logs = services_vm.succeed("docker logs clamav_scanner 2>&1")
         unlinked = [l for l in logs.splitlines() if "scan: UNLINKED" in l]
+        # The scanner logs CONTAINER paths — its mount is /mnt/slow/data:/data,
+        # so every UNLINKED line reads /data/..., never /mnt/slow/data/....
+        # Translate each library dir before matching. (This guard was invisible
+        # for as long as the suite timed out earlier in the subtest; once Komodo
+        # was masked out of the boot path the scan finished in time and the
+        # host-vs-container path mismatch surfaced.)
         for d in [lib_dir, lib_dir2]:
-            assert any(d in l for l in unlinked), (
-                f"the scanner unlinked nothing under {d!r} — UNLINKED lines: "
-                f"{unlinked!r}"
+            cpath = d.replace("/mnt/slow/data", "/data", 1)
+            assert any(cpath in l for l in unlinked), (
+                f"the scanner unlinked nothing under {d!r} ({cpath!r} in the "
+                f"container) — UNLINKED lines: {unlinked!r}"
             )
         # Nothing else in the library was touched by the walk: the emptied
         # directories are still there (removing them is the arr's job).
