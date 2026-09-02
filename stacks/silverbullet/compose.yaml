@@ -1,143 +1,105 @@
 # SilverBullet — file-on-disk markdown wiki (Notes/Sync range, port 10202).
 # _overview.md owns the port/auth row.
 #
-# WHY IT EXISTS ALONGSIDE TWO OTHER WIKIS: BookStack (stacks/tracking) and
-# Outline (stacks/outline) run at the same time on purpose — a deliberate,
-# temporary three-way comparison. SilverBullet is the file-on-disk end of that
-# spectrum: the space IS a directory of .md files, which is what makes the
-# git-sync sidecar below possible at all (Obsidian on the desktop/phone edits
-# the same files through a Forgejo repo).
+# Runs alongside BookStack (stacks/tracking) and Outline (stacks/outline) on
+# purpose — a deliberate, temporary three-way comparison. SilverBullet is the
+# file-on-disk end: the space IS a directory of .md files, which is what
+# makes the git-sync sidecar possible (Obsidian edits the same files through
+# a Forgejo repo).
 #
 # ---------------------------------------------------------------------------
-# Three things about this image that are silent traps. All MEASURED against
-# the pinned 2.9.0 (docker run + probe), not read off documentation:
+# Three silent traps, all MEASURED against the pinned 2.9.0 (docker run +
+# probe), not read off documentation:
 # ---------------------------------------------------------------------------
-#   1. 🚨 SHELL EXECUTION IS ON BY DEFAULT. A stock container logs
-#      "Local shell command execution enabled for ALL commands." at start —
-#      i.e. every logged-in wiki user can run arbitrary commands in the
-#      container. SB_SHELL_BACKEND=off below turns it off ("Shell running
-#      disabled." in the log, which is the thing to grep for after a bump).
-#      Do NOT set it to `local`: that is the setting the git plug wanted, and
-#      it is the reason the git plug is not used here.
-#   2. 🚨 SB_READ_ONLY IS PRESENCE-TESTED, NOT VALUE-TESTED. Setting
-#      `SB_READ_ONLY=false` puts SilverBullet into READ-ONLY MODE ("Starting
-#      in read-only mode." — measured). A wiki that silently refuses every
-#      edit while reporting healthy is the worst possible failure here, so the
-#      variable is NOT SET AT ALL, and must not be "documented" by setting it
-#      to a falsy string.
-#   3. 🚨 /space/CONTAINER_BOOT.md IS EXECUTED AS BASH AT EVERY START by
-#      /docker-entrypoint.sh. The space is populated from a git remote, so
-#      anyone who can push to that repo can run code in this container on the
-#      next restart. git-sync.sh alerts (ntfy) if that file ever appears; it
-#      deliberately does not delete it, because silently reverting a file the
-#      operator may have added on purpose is worse than telling them about it.
+#   1. 🚨 SHELL EXECUTION IS ON BY DEFAULT ("Local shell command execution
+#      enabled for ALL commands." at start) — every logged-in wiki user can
+#      run arbitrary commands. SB_SHELL_BACKEND=off disables it ("Shell
+#      running disabled." is the line to grep for after a bump). Do NOT set
+#      `local`: that is what the git plug wanted, and why it is not used.
+#   2. 🚨 SB_READ_ONLY IS PRESENCE-TESTED: `SB_READ_ONLY=false` puts the wiki
+#      in READ-ONLY MODE (measured). A wiki silently refusing every edit
+#      while healthy is the worst failure here, so the variable is NOT SET
+#      AT ALL — do not "document" it with a falsy string.
+#   3. 🚨 /space/CONTAINER_BOOT.md IS EXECUTED AS BASH AT EVERY START. The
+#      space is populated from a git remote, so push access = code execution
+#      on next restart. git-sync.sh alerts if the file appears; it does not
+#      delete it (silently reverting an operator-added file is worse).
 #
-# Backup contract: the space is /mnt/fast/silverbullet/space, inside
-# backrest's fast-volume plan (no exclude matches it), and there is no
-# database engine — so this stack carries a STACKS_WITHOUT_DUMPS entry in
-# tests/lib/lints.nix rather than a dump line. The git mirror in Forgejo is a
-# SECOND copy, not the backup: it only holds what has been committed and
-# pushed, and Forgejo lives on the same host.
+# Backup contract: the space is inside backrest's fast-volume plan and there
+# is no database — a STACKS_WITHOUT_DUMPS entry in tests/lib/lints.nix, no
+# dump line. The Forgejo mirror is a SECOND copy, not the backup: it holds
+# only what was committed and pushed, and Forgejo lives on the same host.
 
 services:
   # ---------------------------------------------------------------------------
-  # silverbullet — the server.
-  #
-  # Runs as ROOT initially and drops: the entrypoint reads the OWNER of
-  # $SB_FOLDER and re-execs `su silverbullet` at that uid unless PUID is set
-  # ("Will run SilverBullet with UID 1000, inferred from the owner of /space"
-  # — measured). /mnt/fast/silverbullet/space is declared 1000:1000 by
-  # nixos/generate-stack-dirs.py, so this lands on uid 1000, which is also
-  # what the git-sync sidecar writes as. Getting that wrong does not crash
-  # anything — it silently runs the wiki as root and leaves root-owned files
-  # the sidecar (uid 1000) then cannot commit.
+  # silverbullet — the server. Starts as ROOT and drops to the OWNER of
+  # $SB_FOLDER unless PUID is set ("Will run SilverBullet with UID 1000,
+  # inferred from the owner of /space" — measured). The space is declared
+  # 1000:1000 by nixos/generate-stack-dirs.py — the same uid the git-sync
+  # sidecar writes as. Getting that wrong does not crash: it silently runs
+  # the wiki as root and leaves root-owned files the sidecar cannot commit.
   # ---------------------------------------------------------------------------
   silverbullet:
-    # 2.9.0, ONE RELEASE BEHIND ON PURPOSE — and the campaign brief's reason
-    # ("2.10.0 has no container tag, latest is an untagged 2.10.0") is wrong,
-    # checked against the registry:
-    #   - ghcr.io/silverbulletmd/silverbullet:2.10.0 EXISTS, properly
-    #     labelled, built 2026-07-28.
-    #   - `latest` is NOT that image. It is a separate build with a different
-    #     digest labelled `2.10.0-runtime-api`, i.e. a branch build. Never
-    #     follow `latest` here.
-    #   - `v2` is the edge channel, rebuilt from main.
-    # The real reason to sit on 2.9.0 is that 2.10.0 is a different runtime
-    # generation and every trap documented below was measured on 2.9.0:
-    # 2.10.0 moved its own healthcheck to `/.instance`, replaced the log
-    # format wholesale, and — the one that matters — says NOTHING about the
-    # shell backend at start, so the "Local shell command execution enabled
-    # for ALL commands." / "Shell running disabled." signal that proves trap 1
-    # is handled does not exist there. SB_SHELL_BACKEND is still a variable in
-    # the 2.10.0 binary; whether it still defaults to on is unverifiable from
-    # the outside.
-    # TO BUMP: re-run the three measurements below against 2.10.0 (shell
-    # default, SB_READ_ONLY presence-test, CONTAINER_BOOT.md execution), point
-    # the healthcheck at /.instance, then run ./tests/update-images.sh.
+    # 2.9.0, ONE RELEASE BEHIND ON PURPOSE. (The campaign brief's reason was
+    # wrong: 2.10.0 EXISTS as a tag; `latest` is a DIFFERENT branch build
+    # labelled 2.10.0-runtime-api — never follow it; `v2` is the edge
+    # channel.) The real reason: every trap above was measured on 2.9.0, and
+    # 2.10.0 is a different runtime generation — healthcheck moved to
+    # /.instance, new log format, and NO shell-backend line at start, so the
+    # signal proving trap 1 is handled does not exist there.
+    # TO BUMP: re-run the three measurements against 2.10.0, point the
+    # healthcheck at /.instance, then ./tests/update-images.sh.
     image: ghcr.io/silverbulletmd/silverbullet:2.9.0
     container_name: silverbullet
     ports:
       # Loopback only: Caddy is the sole path in (loopback-binding lint).
       - '127.0.0.1:10202:3000'
     volumes:
-      # THE space. Plain .md files plus SilverBullet's own dotfiles; the
-      # sidecar below is a git working tree over exactly this directory.
+      # THE space: plain .md files plus SilverBullet's dotfiles; the sidecar
+      # is a git working tree over exactly this directory.
       - /mnt/fast/silverbullet/space:/space
     environment:
       - TZ=America/Chicago
-      # All three are the image's own defaults, restated because they are
-      # load-bearing elsewhere: SB_FOLDER decides the uid the server drops to
-      # (see above), and SB_PORT is the container-side port the loopback
-      # publish maps to. The healthcheck below uses a LITERAL 3000 rather than
-      # $SB_PORT — compose would try to interpolate the `$` out of the string
-      # before docker ever saw it.
+      # All three are image defaults, restated because they are load-bearing
+      # elsewhere: SB_FOLDER decides the uid drop (above); SB_PORT is what
+      # the loopback publish maps to. The healthcheck uses a LITERAL 3000,
+      # not $SB_PORT — compose would interpolate the `$` first.
       - SB_FOLDER=/space
       - SB_PORT=3000
       - SB_HOSTNAME=0.0.0.0
       # See trap 1. `off` is the only value that disables it.
       - SB_SHELL_BACKEND=off
-      # The service worker is turned OFF rather than carved out of forward
-      # auth. Reasoning, in order:
-      #   - Everything SilverBullet serves unauthenticated is a browser
-      #     same-origin request that carries the Authentik cookie: measured on
-      #     2.9.0 with SB_USER set, only `/`, `/.ping`, `/.client/*`,
-      #     `/service_worker.js` and `/.auth` answer 200 without a session;
-      #     `/index.md` and `/.fs/*` 401 to `/.auth`. Nothing dials this vhost
-      #     non-interactively, so there is no API client to exempt and the
-      #     provider carries NO skip_path_regex (unlike Firefly's ^/api/.*).
+      # Service worker OFF rather than carved out of forward auth:
+      #   - Nothing dials this vhost non-interactively (measured on 2.9.0
+      #     with SB_USER set: only /, /.ping, /.client/*, /service_worker.js
+      #     and /.auth answer 200 without a session), so the provider
+      #     carries NO skip_path_regex (unlike Firefly's ^/api/.*).
       #   - What forward auth genuinely breaks is the PWA: a service worker
-      #     that caches an Authentik 302 for a JS URL leaves the app wedged
-      #     until a hard reload, and offline use is impossible behind forward
-      #     auth anyway (every request needs the outpost). Removing the worker
-      #     removes that whole class instead of carving a hole for it.
-      # If offline PWA use is ever wanted, the trade is: drop this line AND
-      # add `skip_path_regex: "^/(service_worker\\.js|\\.client/.*)$"` to the
+      #     caching an Authentik 302 for a JS URL wedges the app until a
+      #     hard reload, and offline use is impossible behind forward auth
+      #     anyway. Removing the worker removes the whole class.
+      # For offline PWA use, the trade is: drop this line AND add
+      # `skip_path_regex: "^/(service_worker\\.js|\\.client/.*)$"` to the
       # blueprint provider — both, or neither.
       - SB_DISABLE_SERVICE_WORKER=1
       # ⚠ SB_READ_ONLY is deliberately ABSENT — see trap 2.
       #
-      # SB_USER (user:password) arrives from .env. It is a SECOND lock under
-      # forward auth, not the primary one: Caddy's `import protected` gates
-      # the vhost, and this keeps the service closed if a route is ever
-      # flipped or the outpost is down/misconfigured. SilverBullet has no
-      # concept of the X-Authentik-* headers, so this is two logins
-      # permanently — the same posture Windmill's row documents.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
-    # sync validation runs where the decrypted .env cannot exist, and the
-    # plain form aborts the whole stack's sync.
+      # SB_USER (user:password) arrives from .env — a SECOND lock under
+      # forward auth: keeps the service closed if a route is flipped or the
+      # outpost is down. SilverBullet ignores X-Authentik-* headers, so this
+      # is two logins permanently (the Windmill posture).
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships this exact command with NO interval and NO
-      # start_period, so docker's defaults (30s interval, 0s start period)
-      # apply and a slow first index reports unhealthy before it has had a
-      # chance. Overridden, not replaced: /.ping is the right endpoint (it is
-      # served unauthenticated even with SB_USER set — measured).
-      #
-      # What it does NOT prove: that the space is WRITABLE. SilverBullet in
-      # read-only mode answers /.ping with a cheerful 200 (trap 2). The only
-      # honest signal for that is the log line at start.
+      # The image ships this exact command with NO interval/start_period, so
+      # a slow first index reports unhealthy. Overridden, not replaced:
+      # /.ping is right (unauthenticated even with SB_USER — measured).
+      # Does NOT prove the space is WRITABLE: read-only mode answers /.ping
+      # 200 (trap 2); the only honest signal is the log line at start.
       test: ['CMD-SHELL', 'curl -fsS http://localhost:3000/.ping >/dev/null || exit 1']
       interval: 30s
       timeout: 5s
@@ -146,28 +108,23 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # silverbullet_gitsync — the two-writer story, and the hard part of this
-  # stack.
+  # silverbullet_gitsync — the two-writer story (see git-sync.sh's header).
   #
-  # WHY A SIDECAR AND NOT THE GIT PLUG: SilverBullet's native git plug is
-  # deprecated; its replacement has no conflict handling, its auto-sync is
-  # broken on v2, and it works by SHELLING OUT — which needs
-  # SB_SHELL_BACKEND=local, i.e. turning trap 1 back on for every wiki user.
-  # Trading arbitrary code execution for a git commit is not a trade.
+  # WHY A SIDECAR, NOT THE GIT PLUG: the plug is deprecated, its replacement
+  # has no conflict handling and broken v2 auto-sync, and it SHELLS OUT —
+  # i.e. needs SB_SHELL_BACKEND=local, turning trap 1 back on. Trading
+  # arbitrary code execution for a git commit is not a trade.
   #
   # WHY network_mode: host — it pushes to Forgejo's LOOPBACK publish
-  # (127.0.0.1:10550), so the PAT never leaves the host, no DNS is involved,
-  # no TLS to verify, and nothing depends on Caddy or the tailnet being up. A
-  # bridged container cannot reach a loopback-bound host port (the same
-  # constraint that makes stacks/gatus host-networked). It LISTENS on nothing,
-  # so host networking grants it no exposure — see its host-network-declared
-  # entry in tests/lib/lints.nix.
+  # (127.0.0.1:10550): the PAT never leaves the host, no DNS/TLS, nothing
+  # depends on Caddy or the tailnet. A bridged container cannot reach a
+  # loopback-bound host port (the gatus constraint). It LISTENS on nothing,
+  # so host networking grants no exposure — host-network-declared entry in
+  # tests/lib/lints.nix.
   # ---------------------------------------------------------------------------
   silverbullet_gitsync:
-    # git baked into the image, deliberately: `alpine:3.21` + `apk add git` at
-    # container start is finding #4 (a container that needs the network to
-    # become functional breaks when the network does), and this one runs on a
-    # host whose whole point is surviving that.
+    # git baked into the image: `apk add git` at container start is finding
+    # #4, and this host's whole point is surviving a dead network.
     image: alpine/git:v2.54.0
     container_name: silverbullet_gitsync
     network_mode: host
@@ -212,16 +169,13 @@ services:
       - path: .env
         required: false
     healthcheck:
-      # 🚨 THIS PROVES THE LOOP IS ALIVE, NOT THAT SYNC WORKS. The heartbeat
-      # is touched at the top of every cycle, before any git command, on
-      # purpose: an unreachable Forgejo, an expired PAT and a conflict all
-      # leave this container HEALTHY and alert through ntfy instead. Tying
-      # health to sync success would mean a Forgejo restart flaps the
-      # container, and would make `docker compose up --wait` fail in every
-      # environment where the remote does not exist (the offline test VM,
-      # first deploy before the repo is created).
-      # (No command substitution in this string on purpose: compose reads a
-      # bare `$` as the start of an interpolation.)
+      # 🚨 PROVES THE LOOP IS ALIVE, NOT THAT SYNC WORKS: the heartbeat is
+      # touched before any git command, so unreachable Forgejo / expired PAT
+      # / conflict all stay HEALTHY and alert via ntfy instead. Tying health
+      # to sync success would flap on a Forgejo restart and fail `up --wait`
+      # wherever the remote does not exist (offline test VM, first deploy).
+      # (No command substitution here: compose reads a bare `$` as
+      # interpolation.)
       test: ['CMD-SHELL', 'find /tmp/git-sync.alive -mmin -5 2>/dev/null | grep -q .']
       interval: 60s
       timeout: 5s

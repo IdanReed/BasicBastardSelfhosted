@@ -3,48 +3,38 @@
 # ServerNotes/designs/service-tracking-stack-research.md (the annex).
 # _overview.md owns the port/auth rows.
 #
-# THIS IS ONE OF THREE STACKS IN THE TRACKING RANGE (annex §1). Firefly III
-# (10303/10305) and Dawarich (10304) are separate compose projects, because
-# thirteen containers and ~6 GB of images do not fit the generic suite's
-# 3 GB/8 GB budget, and because one `.sops.env` key set spanning five
-# unrelated apps would make rotating any one secret touch every other app's
-# fixture. All three stay inside 10300-10349 — the lints key on ports, not
-# stack names.
+# ONE OF THREE STACKS IN THE TRACKING RANGE (annex §1): Firefly III
+# (10303/10305) and Dawarich (10304) are separate projects — thirteen
+# containers and ~6 GB of images do not fit the generic suite's 3 GB/8 GB
+# budget, and one `.sops.env` spanning five unrelated apps would make every
+# rotation touch every fixture. All three stay inside 10300-10349 (lints key
+# on ports, not stack names).
 #
 # Shape (annex §2, §8):
-#   - Three apps, all with native OIDC, shipping OIDC-READY and OIDC-OFF: the
-#     Authentik client secrets need the production age key to reach the VPS
-#     secrets.sops.yaml, so each app runs on its local account until the
-#     operator lands them. Same posture as the books stack.
-#   - FOUR different uid conventions live in this file, and normalising any
-#     one of them breaks it. See each service.
-#   - Karakeep's meilisearch and chrome sidecars are both optional upstream;
-#     they are here because search and crawling are the point of the app, but
-#     nothing gates on chrome (see its block).
+#   - Three apps, all native OIDC, shipping OIDC-READY and OFF: local
+#     accounts until the operator lands the Authentik client secrets (the
+#     books-stack posture).
+#   - FOUR different uid conventions live in this file; normalising any one
+#     breaks it. See each service.
+#   - meilisearch and chrome sidecars are optional upstream; here because
+#     search and crawling are the point, but nothing gates on chrome.
 #
-# Backup contract (annex §0.1): bookstack is MariaDB and is dumped by
-# backup-prepare.sh's `mysqldump` branch, which requires `container_name:
-# bookstack_db` and MYSQL_ROOT_PASSWORD in that container's environment.
-# Homebox and Karakeep are SQLite and go through `sqlite_backup` — note the
-# committed Karakeep path was WRONG (it pointed at /mnt/fast/karakeep/data.db;
-# the app writes ${DATA_DIR}/db.db and queue.db) and is corrected alongside
-# this stack. MariaDB's datadir matches none of backrest's `**/pgdata/**`
-# style excludes, so it gets an explicit one — raw live InnoDB files are
-# unrestorable noise next to a working mysqldump.
+# Backup contract (annex §0.1): bookstack is MariaDB, dumped by
+# backup-prepare.sh's mysqldump branch (requires `container_name:
+# bookstack_db` + MYSQL_ROOT_PASSWORD in that container's env). Homebox and
+# Karakeep are SQLite via `sqlite_backup` — ⚠ the Karakeep path is
+# ${DATA_DIR}/db.db and queue.db, NOT data.db (a committed path was wrong
+# once). MariaDB's datadir gets an explicit backrest exclude (no
+# `**/pgdata/**`-style match) — raw live InnoDB files are unrestorable noise
+# next to a working mysqldump.
 
 services:
   # ---------------------------------------------------------------------------
-  # bookstack — personal wiki.
-  #
-  # The only service in this domain with NO HTTP PATH TO A FIRST ADMIN: its
-  # initial migration seeds admin@admin.com / password, there is no env var to
-  # change that, and its REST API needs a token that can only be minted in the
-  # UI. The tool that exists is an artisan command — and rather than mount the
-  # docker socket into an init container (which would add a second
-  # socket-mounting container to the fleet, exactly what CLAUDE.md's
-  # keep-decryption-on-the-host rule exists to avoid) or add a host-side
-  # systemd unit, it runs INSIDE this container through LSIO's supported
-  # /custom-cont-init.d hook. See bookstack-admin-init.sh.
+  # bookstack — personal wiki. NO HTTP PATH TO A FIRST ADMIN: the initial
+  # migration seeds admin@admin.com / password (no env override), and the
+  # REST API needs a UI-minted token. The fix is an artisan command run
+  # INSIDE this container via LSIO's /custom-cont-init.d hook (see
+  # bookstack-admin-init.sh) — not a socket-mounting init container.
   # ---------------------------------------------------------------------------
   bookstack:
     image: lscr.io/linuxserver/bookstack:version-v26.05.4
@@ -56,62 +46,49 @@ services:
       - '127.0.0.1:10300:80'
     volumes:
       - /mnt/fast/bookstack/config:/config
-      # Runs as root inside the container during s6 init, before the app
-      # starts. LSIO documents this hook; it is how the first admin gets
-      # created without a docker socket anywhere.
+      # Runs as root during s6 init, before the app starts (LSIO-documented
+      # hook) — first admin created without a docker socket anywhere.
       - ./bookstack-admin-init.sh:/custom-cont-init.d/10-admin:ro
     environment:
-      # s6 drops to `abc` per PUID/PGID and runs `lsiown -R abc:abc /config`
-      # on every start — this image FIXES ITS OWN bind-mount ownership, which
-      # is why /mnt/fast/bookstack/config is declared 1000:1000 and why the
-      # finding-#14 crash-loop class does not apply here.
+      # s6 runs `lsiown -R abc:abc /config` every start — this image FIXES
+      # ITS OWN bind-mount ownership, so the finding-#14 crash-loop class
+      # does not apply here.
       - PUID=1000
       - PGID=1000
       - TZ=America/Chicago
-      # LOAD-BEARING, and its failure is silent: config/session.php derives
-      # the session cookie PATH from APP_URL, and `secure` from whether it
-      # starts with https. A wrong value produces an infinite login redirect
-      # loop with no error message anywhere. No trailing slash. If it ever
-      # changes, `artisan bookstack:update-url <old> <new>`.
+      # LOAD-BEARING, silent failure: the session cookie path and `secure`
+      # flag derive from APP_URL — wrong value = infinite login redirect
+      # loop, no error anywhere. No trailing slash. If it changes:
+      # `artisan bookstack:update-url <old> <new>`.
       - APP_URL=https://bookstack.svc.idanreed.com
       - APP_PROXIES=*
       - DB_HOST=bookstack_db
       - DB_PORT=3306
       - DB_DATABASE=bookstack
       - DB_USERNAME=bookstack
-      # APP_KEY and DB_PASSWORD arrive from .env. A MISSING APP_KEY makes the
-      # init script `sleep infinity` rather than exit — the container reports
-      # "running" forever, restart policies never fire, and there is no crash
-      # to alert on. The healthcheck below is what actually catches it.
+      # APP_KEY and DB_PASSWORD arrive from .env. A MISSING APP_KEY makes
+      # the init script `sleep infinity` — "running" forever, no crash to
+      # alert on; the healthcheck below is what catches it.
       #
-      # Kills Gravatar and the drawio integration; also the only egress this
-      # image would otherwise make.
+      # Kills Gravatar and drawio; also the only egress this image makes.
       - DISABLE_EXTERNAL_SERVICES=true
-      # OIDC ships READY and OFF (annex §4). AUTH_METHOD stays `standard`
-      # until the Authentik client secret exists; flipping it to `oidc` plus
-      # the three OIDC_* values is the whole change.
-      #
+      # OIDC ships READY and OFF (annex §4): flipping to `oidc` plus three
+      # OIDC_* values is the whole change.
       # ⚠ When that happens, set OIDC_ISSUER_DISCOVER EXPLICITLY: the code
-      # (app/Config/oidc.php) defaults it to FALSE while the official docs say
-      # true, so trusting the docs yields a provider that cannot discover its
-      # endpoints.
+      # defaults it FALSE while the docs say true — trusting the docs yields
+      # a provider that cannot discover its endpoints.
       - AUTH_METHOD=standard
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync VALIDATES the compose in a staging directory before copying, where
-    # the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery).
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships NO healthcheck. /status is the right probe and a
-      # genuinely good one — it returns 200 only if database, cache AND
-      # session are all healthy, so it catches the `sleep infinity` state
-      # above and the "nginx is up serving a broken app" state that the
-      # image's own 30-second DB wait can produce (it runs `migrate` anyway,
-      # with no `set -e`).
+      # No builtin. /status returns 200 only if database, cache AND session
+      # are healthy — catches the `sleep infinity` state above and "nginx up,
+      # app broken" (the image's 30s DB wait runs `migrate` anyway, no
+      # `set -e`).
       test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:80/status']
       interval: 30s
       timeout: 10s
@@ -120,17 +97,13 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # bookstack_db — MariaDB. BookStack supports MySQL/MariaDB only; there is no
-  # SQLite driver and no Postgres driver in the image.
+  # bookstack_db — MariaDB (BookStack supports MySQL/MariaDB only).
   #
   # container_name and MYSQL_ROOT_PASSWORD are BOTH load-bearing for
-  # nixos/backup-prepare.sh, which runs
-  #   docker exec bookstack_db sh -c \
-  #     'MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; export MYSQL_PWD; exec mariadb-dump -u root --all-databases'
-  # — it reads that variable from the container's own environment, so the
-  # MYSQL_ spelling is required even though MariaDB also accepts MARIADB_.
-  # (MYSQL_PWD, not -p on argv: the argv form was host-visible in
-  # /proc/<pid>/cmdline.)
+  # nixos/backup-prepare.sh's mariadb-dump: it reads that variable from the
+  # container's environment, so the MYSQL_ spelling is required even though
+  # MariaDB also accepts MARIADB_. (MYSQL_PWD, not -p on argv: argv was
+  # host-visible in /proc/<pid>/cmdline.)
   # ---------------------------------------------------------------------------
   bookstack_db:
     # NOT `mariadb:lts` and NOT `mariadb:latest` — both resolve to the same
@@ -151,10 +124,9 @@ services:
       - path: .env
         required: false
     healthcheck:
-      # The image ships `healthcheck.sh`, which is the upstream-blessed probe.
-      # --connect proves the server accepts connections; --innodb_initialized
-      # proves it finished recovery, which matters on the first boot where
-      # BookStack's own 30s wait would otherwise expire and let it migrate
+      # Upstream-blessed probe: --connect proves connections accepted;
+      # --innodb_initialized proves recovery finished — matters on first
+      # boot, where BookStack's 30s wait would otherwise expire and migrate
       # against a half-open server.
       test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
       interval: 15s
@@ -164,17 +136,13 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # homebox — home inventory. SQLite, single container.
+  # homebox — home inventory. SQLite, single container. sysadminsmedia is
+  # the maintained successor (hay-kot/homebox archived June 2024).
   #
-  # Upstream MOVED: hay-kot/homebox was archived in June 2024 and every other
-  # GitHub result is a fork rather than a successor. This is the maintained
-  # one.
-  #
-  # Runs as ROOT in the default variant, with no PUID/PGID and no chown at
-  # start — so /mnt/fast/homebox is declared root:root. (The -rootless and
-  # -hardened variants need 65532:65532 pre-owned or they crash-loop on the
-  # SQLite open; -hardened is distroless with no shell and drops the image
-  # codec libraries. Use the plain tag.)
+  # Runs as ROOT in the default variant, no PUID/PGID, no chown at start —
+  # so /mnt/fast/homebox is declared root:root. (-rootless/-hardened need
+  # 65532:65532 pre-owned or crash-loop on the SQLite open; -hardened is
+  # distroless, no shell, no codec libs. Use the plain tag.)
   # ---------------------------------------------------------------------------
   homebox:
     image: ghcr.io/sysadminsmedia/homebox:0.26.2
@@ -186,53 +154,41 @@ services:
     environment:
       - TZ=America/Chicago
       - HBOX_MODE=production
-      # Registration is OPEN until tracking-init has used it: the first user
-      # to register with an empty group token becomes the group owner, which
-      # is the entire headless bootstrap. tracking-init then flips this to
-      # false via... nothing — it cannot, it is an env var. So this stays
-      # true, and the SUITE asserts the owner exists; closing it is a
-      # deliberate operator step after first deploy, documented in the annex.
+      # Registration OPEN: the first register with an empty group token
+      # becomes the group owner — the entire headless bootstrap.
+      # tracking-init cannot flip an env var, so this stays true; closing it
+      # is a deliberate operator step after first deploy (annex).
       - HBOX_OPTIONS_ALLOW_REGISTRATION=true
-      # BOTH of these, not just TRUST_PROXY. Homebox computes its OIDC
-      # redirect URI per-request from headers, so behind Caddy it sees plain
-      # HTTP and builds an http:// callback that Authentik rejects. HOSTNAME
-      # overrides the headers entirely and makes the URI deterministic.
+      # BOTH, not just TRUST_PROXY: Homebox builds its OIDC redirect URI
+      # per-request from headers — behind Caddy that is an http:// callback
+      # Authentik rejects. HOSTNAME overrides the headers entirely.
       - HBOX_OPTIONS_TRUST_PROXY=true
       - HBOX_OPTIONS_HOSTNAME=homebox.svc.idanreed.com
       # Hourly failed egress from a tailnet-only host. Non-fatal, just noise.
       - HBOX_OPTIONS_GITHUB_RELEASE_CHECK=false
-      # ⚠ OIDC OFF, and this one is not merely "not configured yet": Homebox
-      # resolves OIDC discovery EAGERLY at container start, with a retry
-      # ladder totalling about 7.5 seconds. That is tuned for a sibling
-      # compose service, not a cross-tailnet dependency on the Hetzner VPS —
-      # so with it enabled, a tailnet blip during `docker compose up`
-      # restart-loops this container. Turning it on is an operator decision
-      # with that cost attached (annex §7).
+      # ⚠ OIDC OFF, not merely "unconfigured": Homebox resolves discovery
+      # EAGERLY at start (retry ladder ~7.5s, tuned for a sibling service,
+      # not a cross-tailnet VPS) — enabled, a tailnet blip during `up`
+      # restart-loops this container. Turning it on carries that cost
+      # (annex §7).
       - HBOX_OIDC_ENABLED=false
-      # HBOX_AUTH_API_KEY_PEPPER arrives from .env and is REQUIRED — the app
-      # refuses to boot if it is under 32 bytes. It is absent from
-      # essentially every compose example online, so a copied blog post
-      # produces a container that will not start.
+      # HBOX_AUTH_API_KEY_PEPPER arrives from .env, REQUIRED (boot refuses
+      # under 32 bytes) — absent from essentially every compose example
+      # online, so a copied blog post will not start.
     # Long form with required:false ON PURPOSE (finding #11): see bookstack.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image HAS a builtin healthcheck and it is worthless: the handler
-      # is wired `ReadyFunc = func() bool { return true }`, so it returns 200
-      # unconditionally and a Homebox with a dead SQLite database reports
-      # healthy. Overridden here only to make the interval sane and to put
-      # this comment somewhere — the probe is a liveness check either way,
-      # and no better endpoint exists. The SUITE is what proves the app
-      # works, by asserting on /api/v1/status's CONTENT.
+      # The builtin is worthless: `ReadyFunc = func() bool { return true }` —
+      # 200 unconditionally, dead SQLite included. Liveness either way; no
+      # better endpoint exists. The SUITE proves the app works by asserting
+      # /api/v1/status CONTENT.
       #
-      # 🚨 `-O /dev/null`, NOT `--spider`. `wget --spider` issues a HEAD, and
-      # Homebox registers /api/v1/status for GET only — so it answers 405 and
-      # the container sits unhealthy FOREVER while the application is
-      # perfectly fine and logging `request finished ... status=405` for every
-      # probe. Verified: this exact probe failed for 152s in the suite against
-      # a Homebox that had finished its migrations and was serving. Do not
-      # "simplify" this back to --spider without checking the route's methods.
+      # 🚨 `-O /dev/null`, NOT `--spider`: --spider issues a HEAD and
+      # /api/v1/status is GET-only — 405, unhealthy FOREVER while the app
+      # serves fine (verified: 152s in the suite). Do not "simplify" back to
+      # --spider without checking the route's methods.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:7745/api/v1/status']
       interval: 30s
       timeout: 10s
@@ -241,21 +197,19 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # karakeep — bookmark everything. SQLite for both the main DB and the job
-  # queue (liteque); no Postgres, no Redis.
+  # karakeep — bookmark everything. SQLite for main DB and job queue
+  # (liteque); no Postgres, no Redis.
   #
-  # 🚨 NEVER set a compose `user:` on this service. A non-root uid dies with
-  # EACCES on /app/apps/web/.next/cache, which is INSIDE THE IMAGE — chowning
-  # the host bind mount cannot fix it (upstream #1324, closed unfixed). So
-  # /mnt/fast/karakeep must be ROOT-owned, which is the inverse of the
-  # /srv/stacks 1000:1000 convention and therefore exactly the thing a
-  # reviewer will "fix" incorrectly.
+  # 🚨 NEVER set a compose `user:` here: a non-root uid dies with EACCES on
+  # /app/apps/web/.next/cache, INSIDE THE IMAGE — chowning the bind mount
+  # cannot fix it (upstream #1324, closed unfixed). /mnt/fast/karakeep must
+  # be ROOT-owned — the inverse of the 1000:1000 convention, i.e. exactly
+  # what a reviewer will "fix" incorrectly.
   # ---------------------------------------------------------------------------
   karakeep:
-    # `latest` is the NIGHTLY build of main, not the newest release — those
-    # images self-report SERVER_VERSION=nightly. The release-tracking alias is
-    # `release`. The suite asserts /api/version equals this pin, which is the
-    # only way an accidental `latest` becomes visible.
+    # `latest` is the NIGHTLY build of main (SERVER_VERSION=nightly); the
+    # release alias is `release`. The suite asserts /api/version equals this
+    # pin — the only way an accidental `latest` becomes visible.
     image: ghcr.io/karakeep-app/karakeep:0.33.2
     container_name: karakeep
     depends_on:
@@ -267,53 +221,45 @@ services:
       - /mnt/fast/karakeep/data:/data
     environment:
       - TZ=America/Chicago
-      # MUST be set explicitly: the schema default is the EMPTY STRING, which
-      # puts db.db in the container's working directory and loses it on every
-      # recreate.
+      # MUST be explicit: the schema default is the EMPTY STRING — db.db in
+      # the working directory, lost on every recreate.
       - DATA_DIR=/data
       - NEXTAUTH_URL=https://karakeep.svc.idanreed.com
       - MEILI_ADDR=http://meilisearch:7700
       - BROWSER_WEB_URL=http://chrome:9222
-      # Defaults to TRUE, and worker init AWAITS a fetch of EasyList from
-      # raw.githubusercontent.com — cached to /tmp, so re-downloaded on every
-      # restart. Non-fatal, but on a blackholed network it stalls worker boot
-      # on TCP timeouts, and the cache never persists anyway.
+      # Defaults TRUE; worker init AWAITS an EasyList fetch (cached only to
+      # /tmp, so every restart) — on a blackholed network it stalls worker
+      # boot on TCP timeouts.
       - CRAWLER_ENABLE_ADBLOCKER=false
       # Client-side check that hangs the UI when there is no egress.
       - DISABLE_NEW_RELEASE_CHECK=true
-      # OIDC ships OFF: the provider is enabled purely by the PRESENCE of
-      # OAUTH_WELLKNOWN_URL, so leaving it unset is the off state.
-      #
-      # ⚠ ORDERING when it is turned on: DISABLE_PASSWORD_AUTH=true disables
-      # BOTH users.create AND apiKeys.exchange, which is how tracking-init
-      # provisions. Bootstrap first, lock down second — and note
-      # OAUTH_AUTO_REDIRECT silently does nothing unless DISABLE_PASSWORD_AUTH
-      # is also true.
+      # OIDC ships OFF: enabled purely by the PRESENCE of
+      # OAUTH_WELLKNOWN_URL, so unset is the off state.
+      # ⚠ ORDERING when enabling: DISABLE_PASSWORD_AUTH=true disables BOTH
+      # users.create AND apiKeys.exchange (how tracking-init provisions).
+      # Bootstrap first, lock down second — and OAUTH_AUTO_REDIRECT silently
+      # does nothing unless DISABLE_PASSWORD_AUTH is also true.
       #
       # NEXTAUTH_SECRET and MEILI_MASTER_KEY arrive from .env.
     # Long form with required:false ON PURPOSE (finding #11): see bookstack.
     env_file:
       - path: .env
         required: false
-    # NO healthcheck stanza ON PURPOSE: the image's builtin is correct
-    # (`wget --spider /api/health`) — the rare case in this domain. It is a
-    # liveness probe and does not touch the DB or Meili, which is what the
-    # suite's own assertions are for.
+    # NO healthcheck stanza ON PURPOSE: the builtin (`wget --spider
+    # /api/health`) is correct — rare here. Liveness only; DB/Meili are the
+    # suite's job.
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # meilisearch — Karakeep's search index.
   #
-  # 🚨 VERSION-LOCKED to 1.41.0 by Karakeep. Upstream's troubleshooting doc
-  # says not to upgrade it without good reason: a newer engine REFUSES to open
-  # an existing data.ms, and recovery is destructive (delete the index, then
-  # "Reindex All Bookmarks" from the admin UI). Current upstream Meili is
-  # 1.53.x, so a version float PASSES the registry check and then bricks
-  # search on the next restart. Do not let update-images.sh move this one
-  # without also checking what Karakeep expects.
+  # 🚨 VERSION-LOCKED to 1.41.0 by Karakeep: a newer engine REFUSES to open
+  # an existing data.ms and recovery is destructive (delete the index,
+  # "Reindex All Bookmarks"). A version float PASSES the registry check and
+  # bricks search on the next restart — do not let update-images.sh move
+  # this without checking what Karakeep expects.
   #
-  # Note the `v` prefix — karakeep and karakeep-chrome have none. Three
-  # images, two opposite conventions, one compose file.
+  # Note the `v` prefix — karakeep and karakeep-chrome have none.
   # ---------------------------------------------------------------------------
   meilisearch:
     image: getmeili/meilisearch:v1.41.0
@@ -340,15 +286,12 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # chrome — Karakeep's crawler browser. A first-party image now; it is no
-  # longer zenika-hub/alpine-chrome or browserless.
+  # chrome — Karakeep's crawler browser (first-party image now).
   #
-  # DELIBERATELY has no healthcheck and nothing depends_on it: Karakeep is
-  # explicitly designed to tolerate its absence (it logs "Running in
-  # browserless mode" and retries every 5s forever, never fatally), so a
-  # `service_healthy` dependency would gate the app on a component it does not
-  # need to start. The image also contains NEITHER curl NOR wget
-  # (debian-slim + socat), so there is no probe to write.
+  # DELIBERATELY no healthcheck and nothing depends_on it: Karakeep
+  # tolerates its absence ("Running in browserless mode", retries forever,
+  # never fatal), so gating on it would be wrong — and the image has NEITHER
+  # curl NOR wget (debian-slim + socat), so there is no probe to write.
   # ---------------------------------------------------------------------------
   chrome:
     image: ghcr.io/karakeep-app/karakeep-chrome:151.0.7922.47-r1
@@ -356,8 +299,8 @@ services:
     # Chrome spawns a process tree; without an init it leaks zombies.
     init: true
     # Upstream's command verbatim. Do NOT add --remote-debugging-port (the
-    # entrypoint runs chrome on 9223 and socat-forwards 9222) and do NOT add
-    # --no-sandbox (already supplied).
+    # entrypoint runs chrome on 9223, socat-forwards 9222) or --no-sandbox
+    # (already supplied).
     command:
       - --headless
       - --no-pdf-header-footer
@@ -369,11 +312,11 @@ services:
 
   # ---------------------------------------------------------------------------
   # tracking-init — headless first-run for Homebox and Karakeep (annex §3).
-  # BookStack is NOT here: it has no HTTP path to a first admin, so it is
-  # handled inside its own container by bookstack-admin-init.sh.
+  # BookStack is NOT here: no HTTP path to a first admin — handled inside its
+  # own container by bookstack-admin-init.sh.
   #
   # Every mutation logs "tracking-init: CHANGE: ...". A second run — every
-  # Arcane redeploy reruns this container — must log ZERO change lines.
+  # redeploy reruns this container — must log ZERO change lines.
   # ---------------------------------------------------------------------------
   tracking-init:
     image: python:3.13-alpine

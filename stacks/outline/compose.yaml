@@ -1,59 +1,47 @@
 # Outline — DB-backed team wiki (Notes/Sync range, port 10203).
 # _overview.md owns the port/auth row.
 #
-# THIRD OF THREE WIKIS, ON PURPOSE. BookStack (stacks/tracking, 10301) and
-# SilverBullet (stacks/silverbullet, 10202) run at the same time; this is a
-# deliberate, temporary comparison of a database-backed wiki against a
-# file-on-disk one. Nothing here is shared with either of them.
+# THIRD OF THREE WIKIS, ON PURPOSE — a deliberate, temporary comparison
+# against BookStack (stacks/tracking) and SilverBullet (stacks/silverbullet).
+# Nothing here is shared with either.
 #
-# ---------------------------------------------------------------------------
-# AUTHENTICATION IS THE WHOLE DESIGN CONSTRAINT
-# ---------------------------------------------------------------------------
-# Outline has NO local accounts of any kind — no admin bootstrap, no password
-# form, no CLI user-create. The only way in is an external identity provider,
-# so the Authentik OIDC provider is not a hardening step, it is the login.
+# AUTHENTICATION IS THE WHOLE DESIGN CONSTRAINT: Outline has NO local
+# accounts — no admin bootstrap, no password form, no CLI user-create. The
+# Authentik OIDC provider is not a hardening step, it IS the login.
 #
-# ⚠ CORRECTION TO THE RESEARCH BRIEF, MEASURED against this exact pin: "it
-# will not start without a reachable OIDC provider" is FALSE for 1.9.2. With
-# the endpoints configured MANUALLY (as below) the container boots, migrates,
-# logs `OIDC endpoints mounted with manual configuration`, serves, and reports
-# HEALTHY with the issuer pointed at a host that does not resolve. It also
-# boots with no OIDC variables at all. What fails without a working IdP is
-# LOGGING IN, which no container healthcheck can see. Two consequences:
-#   - `./tests/run.sh stack outline` needs no stub issuer and no expectation
-#     override. The stack comes up green with an unreachable Authentik, which
-#     is exactly what the offline test VM is.
-#   - The Gatus path probe is the only automated signal that the login flow
-#     works at all, and even it only proves the redirect happens.
+# ⚠ MEASURED against this exact pin: "will not start without a reachable
+# OIDC provider" is FALSE for 1.9.2. With manual endpoints (below) it boots,
+# migrates, serves and reports HEALTHY with an unresolvable issuer. What
+# fails without a working IdP is LOGGING IN, which no healthcheck can see:
+# the offline stack suite needs no stub issuer, and the Gatus path probe is
+# the only automated signal the login flow works (it only proves the
+# redirect happens).
 #
-# 🚨 FIRST LOGIN CREATES THE TEAM AND OWNS IT. Whoever authenticates first
-# becomes the workspace owner (the rmfakecloud/Firefly shape). Since the vhost
-# is behind Authentik that means the first Authentik user to visit — so visit
-# it yourself once the blueprint is applied, before telling anyone else it
-# exists.
+# 🚨 FIRST LOGIN CREATES THE TEAM AND OWNS IT (the rmfakecloud/Firefly
+# shape). Behind Authentik that means the first Authentik user to visit —
+# visit it yourself once the blueprint is applied.
 #
-# Backup contract: outline_db is dumped by nixos/backup-prepare.sh's pg_dumpall
-# loop, which builds `container_name` as "<svc>_db" and runs
-# `pg_dumpall -U <svc>` — both `container_name: outline_db` and
-# POSTGRES_USER=outline below are load-bearing, and `outline` must be in that
-# loop's service list or the database is in NO backup (the plans exclude
-# **/pgdata/**). Attachments are files under /mnt/fast/outline/data and are
-# covered by the fast-volume plan.
+# Backup contract: outline_db is dumped by nixos/backup-prepare.sh's
+# pg_dumpall loop (`docker exec <svc>_db pg_dumpall -U <svc>`) — both
+# `container_name: outline_db` and POSTGRES_USER=outline are load-bearing,
+# and `outline` must be in that loop's service list or the database is in NO
+# backup (the plans exclude **/pgdata/**). Attachments under
+# /mnt/fast/outline/data ride the fast-volume plan.
 
 services:
   # ---------------------------------------------------------------------------
   # outline — the application (web + websockets + worker in one process).
   #
-  # Runs as uid 1001 (`USER nodejs` in the image; VERIFIED with `id` inside
-  # the pinned image) and its entrypoint does NOT chown anything, so
-  # /mnt/fast/outline/data must be pre-owned 1001:1001 — see
-  # nixos/generate-stack-dirs.py. Root-owned, uploads fail at runtime with no
-  # startup symptom: finding #14 with the crash-loop replaced by silence.
+  # Runs as uid 1001 (VERIFIED in the pinned image) and the entrypoint does
+  # NOT chown, so /mnt/fast/outline/data must be pre-owned 1001:1001
+  # (nixos/generate-stack-dirs.py). Root-owned = uploads fail at runtime
+  # with no startup symptom: finding #14 with the crash-loop replaced by
+  # silence.
   # ---------------------------------------------------------------------------
   outline:
-    # 1.9.2. The version numbering IS the trap here: Outline went 0.82 -> 0.87
-    # -> 1.0, so "1.9.2" is NEWER than "0.87", not older, and a tag sorted as
-    # a string looks like a downgrade. Docker Hub only; no ghcr mirror.
+    # Version numbering IS the trap: Outline went 0.82 -> 0.87 -> 1.0, so
+    # "1.9.2" is NEWER than "0.87" while a string sort calls it a downgrade.
+    # Docker Hub only; no ghcr mirror.
     image: outlinewiki/outline:1.9.2
     container_name: outline
     depends_on:
@@ -73,84 +61,63 @@ services:
       - NODE_ENV=production
       - PORT=3000
       # Browser-facing origin. Outline builds its OIDC callbackURL from this
-      # (`${URL}/auth/oidc.callback`, read out of the image's
-      # plugins/oidc/server/auth/oidcRouter.js), so it must match the
-      # blueprint's redirect_uri byte for byte — the oidc-contract lint ties
-      # the two together.
+      # (`${URL}/auth/oidc.callback`), so it must match the blueprint's
+      # redirect_uri byte for byte — the oidc-contract lint ties them.
       - URL=https://outline.svc.idanreed.com
       # ---- Storage -------------------------------------------------------
-      # S3 IS NOT REQUIRED. An older note in _todo.md said it was; local file
-      # storage has been supported for years and is what a single-tenant
-      # tailnet instance wants. The path is the image's own default, set
-      # explicitly because it is also the bind-mount target above.
+      # S3 is NOT required (contra an older _todo.md note). The path is the
+      # image's default, set explicitly because it is the bind-mount target.
       - FILE_STORAGE=local
       - FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
       - FILE_STORAGE_UPLOAD_MAX_SIZE=26214400
       # ---- Database ------------------------------------------------------
-      # 🚨 PGSSLMODE=disable is MANDATORY here, not tidiness. Without it
-      # Sequelize demands TLS and the container dies at start with
-      # "The server does not support SSL connections" (measured). The
-      # connection is container-to-container on the compose bridge, on one
-      # host, so there is nothing to protect in transit.
+      # 🚨 MANDATORY: without it Sequelize demands TLS and the container dies
+      # at start with "The server does not support SSL connections"
+      # (measured). Container-to-container on one host — nothing to protect.
       - PGSSLMODE=disable
-      # DATABASE_URL arrives from .env (it carries the password) and must
-      # agree with POSTGRES_PASSWORD below — same two-names-one-value shape as
-      # stacks/windmill.
+      # DATABASE_URL arrives from .env (carries the password) and must agree
+      # with POSTGRES_PASSWORD below — the stacks/windmill shape.
       #
       # ---- Redis ---------------------------------------------------------
       - REDIS_URL=redis://outline_redis:6379
       # ---- OIDC (the only way to log in) ---------------------------------
-      # ENDPOINTS ARE SET MANUALLY rather than with OIDC_ISSUER_URL discovery.
-      # Manual endpoints keep the IdP entirely out of the boot path — the
-      # container comes up whether or not Authentik is reachable, which is
-      # what makes the offline stack suite meaningful and what stops a VPS
-      # outage from turning into a crash-looping wiki.
-      #
-      # Authentik's authorize/token/userinfo endpoints are GLOBAL; only the
-      # issuer and end-session paths carry the application slug. Slug
-      # `outline` is defined in
-      # headscale-vps/authentik/blueprints/custom/outline-oidc.yaml.
+      # ENDPOINTS SET MANUALLY, not OIDC_ISSUER_URL discovery: keeps the IdP
+      # out of the boot path — the container comes up with Authentik
+      # unreachable (offline suite; a VPS outage cannot crash-loop the wiki).
+      # Authentik's authorize/token/userinfo endpoints are GLOBAL; only
+      # issuer and end-session carry the app slug (`outline`, defined in
+      # headscale-vps/authentik/blueprints/custom/outline-oidc.yaml).
       - OIDC_CLIENT_ID=outline
       - OIDC_AUTH_URI=https://auth.idanreed.com/application/o/authorize/
       - OIDC_TOKEN_URI=https://auth.idanreed.com/application/o/token/
       - OIDC_USERINFO_URI=https://auth.idanreed.com/application/o/userinfo/
       - OIDC_LOGOUT_URI=https://auth.idanreed.com/application/o/outline/end-session/
       - OIDC_DISPLAY_NAME=Authentik
-      # The claim Outline uses as the account's username. Authentik's default
-      # `profile` scope emits preferred_username; `email` is what identifies
-      # the account itself.
+      # Authentik's default `profile` scope emits preferred_username; `email`
+      # identifies the account itself.
       - OIDC_USERNAME_CLAIM=preferred_username
       - OIDC_SCOPES=openid profile email
       # OIDC_CLIENT_SECRET, SECRET_KEY and UTILS_SECRET arrive from .env.
       #
       # ---- Deliberately unset --------------------------------------------
-      # FORCE_HTTPS is left at its default (true). Measured on this pin: with
-      # it on, `/` 301s a plain-http request to https, but `/_health` answers
-      # 200 regardless — so the container healthcheck and the Gatus service
-      # probe both keep working, and the redirect is the correct behaviour
-      # for the browser path (Caddy sets X-Forwarded-Proto: https, which
-      # Outline trusts). This is the util-stack's https-redirect healthcheck
-      # trap, checked rather than assumed.
-      # SMTP_* are unset: there is no mail server on this host, and Outline's
-      # invite/notification mail is optional. Invitations are moot anyway —
-      # every account arrives through Authentik.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's staged
-    # sync validation runs where the decrypted .env cannot exist, and the
-    # plain form aborts the whole stack's sync.
+      # FORCE_HTTPS stays default (true). Measured on this pin: `/` 301s
+      # plain http, but `/_health` answers 200 regardless — healthcheck and
+      # Gatus keep working (the util-stack's https-redirect healthcheck trap,
+      # checked rather than assumed).
+      # SMTP_* unset: no mail server here, and invitations are moot — every
+      # account arrives through Authentik.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships this same wget on /_health with an interval and
-      # NOTHING ELSE — no start_period, no retries, no timeout (upstream
-      # #7547). Migrations on a cold database take well over the default
-      # 0-second grace, so the container is marked unhealthy during a
-      # perfectly normal first start and `up --wait` gives up on it.
-      # Overridden, never disabled; the endpoint is the same one.
-      #
-      # What it proves: the web service answers and the process is up. What it
-      # does NOT prove: that anyone can log in (see the OIDC note above) — for
-      # that there is only the Gatus path probe.
+      # The image ships this same wget with an interval and NOTHING ELSE — no
+      # start_period/retries/timeout (upstream #7547); cold-DB migrations
+      # outrun the 0s grace and `up --wait` gives up on a normal first start.
+      # Overridden, never disabled; same endpoint. Proves the process
+      # answers; does NOT prove anyone can log in (only Gatus covers that).
       test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/_health | grep -q OK || exit 1']
       interval: 30s
       timeout: 10s
@@ -165,12 +132,11 @@ services:
   # nixos/backup-prepare.sh (`docker exec outline_db pg_dumpall -U outline`).
   # ---------------------------------------------------------------------------
   outline_db:
-    # The same patch-pinned tag paperless, firefly and windmill use, so all
-    # four share one entry in tests/lib/images.nix and one image on the host.
-    # Upstream's own compose says postgres:18; stay on 17 — 18-alpine moved
-    # PGDATA to /var/lib/postgresql/18/docker while 17 uses
-    # /var/lib/postgresql/data, so following upstream would silently
-    # initialise an empty database beside the real one.
+    # Same patch-pinned tag as paperless/firefly/windmill (one entry in
+    # tests/lib/images.nix, one image on the host). Upstream says postgres:18;
+    # stay on 17 — 18-alpine moved PGDATA to /var/lib/postgresql/18/docker,
+    # so following upstream would silently initialise an empty database
+    # beside the real one.
     image: postgres:17.9-alpine
     container_name: outline_db
     volumes:
@@ -197,24 +163,19 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # outline_redis — the websocket/queue backend.
-  #
-  # NO VOLUME, and persistence is off. Outline uses redis for the BullMQ job
-  # queue and websocket fan-out; everything in it is derived from Postgres and
-  # is re-created on demand, so an empty redis after a restart costs at most
-  # some in-flight background jobs. That also keeps it out of the backup
-  # conversation entirely rather than adding a directory whose contents are
-  # worth nothing (the same argument tests/lib/lints.nix already makes for the
-  # other redis instances, which do have volumes for historical reasons).
+  # outline_redis — BullMQ queue + websocket fan-out. NO VOLUME, persistence
+  # off: everything in it is derived from Postgres and re-created on demand
+  # (an empty redis after restart costs at most some in-flight jobs), which
+  # also keeps it out of the backup conversation (the tests/lib/lints.nix
+  # argument).
   # ---------------------------------------------------------------------------
   outline_redis:
-    # The tag the rest of the fleet uses (dawarich, paperless, wger), so it is
-    # one entry in tests/lib/images.nix and one image on the host.
+    # The fleet tag (dawarich, paperless, wger): one entry in
+    # tests/lib/images.nix, one image on the host.
     image: redis:7.4-alpine
     container_name: outline_redis
-    # --save "" disables RDB snapshots; without it redis writes dump.rdb into
-    # the container's writable layer on a timer, which is a slow leak with no
-    # reader.
+    # --save "" disables RDB snapshots; otherwise redis writes dump.rdb into
+    # the writable layer on a timer — a slow leak with no reader.
     command: ['redis-server', '--save', '', '--appendonly', 'no', '--loglevel', 'warning']
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']

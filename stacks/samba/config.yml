@@ -1,67 +1,58 @@
 # Samba configuration — consumed by crazymax/samba's entrypoint, which renders
 # it into smb.conf and creates the users.
 #
-# 🚨 ${VAR} here is interpolated by the IMAGE (an envsubst pass over every
-# string node), not by Compose. Two consequences:
-#
-#   - An UNSET variable becomes "" SILENTLY. For a password that produces a
-#     user whose `smbpasswd -a -s` fails, a container that stays HEALTHY (the
-#     probe is anonymous), and a share nobody can log into. samba-init.sh's
-#     non-empty/changeme_ gate is what turns that into a refusal to start —
-#     NOT a `${SAMBA_IDAN_PASSWORD:?}` in compose.yaml, which compose.yaml
-#     explains is WRONG there (it would abort Arcane's staged sync,
-#     finding #11); do not add one.
+# 🚨 ${VAR} here is interpolated by the IMAGE (envsubst over every string
+# node), not by Compose. Two consequences:
+#   - An UNSET variable becomes "" SILENTLY: a user whose `smbpasswd -a -s`
+#     fails, a HEALTHY container (anonymous probe), a share nobody can log
+#     into. samba-init.sh's non-empty/changeme_ gate is the refusal to
+#     start — NOT a `${SAMBA_IDAN_PASSWORD:?}` in compose.yaml, which is
+#     WRONG there (aborts a deploy racing the decrypt, finding #11); do not
+#     add one.
 #   - A password containing `$` must be SINGLE-QUOTED in the plaintext .env
-#     before encryption, or the decrypt-and-source path expands it (CLAUDE.md,
-#     and finding #30 for the Compose half).
+#     before encryption (CLAUDE.md; finding #30 for the Compose half).
 #
 # `interfaces` and `bind interfaces only` are NOT here on purpose: they come
 # from the SAMBA_INTERFACES env var, which emits both. Setting them in both
 # places is a duplicated directive that `testparm` does not flag.
 
 auth:
-  # Username MIRRORS the Authentik username deliberately — that is the whole
-  # mitigation for not having LDAP (see compose.yaml's header). Offboarding is
-  # `sopsedit stacks/samba/.sops.env` plus a restart, because users are
-  # re-created from this file on every start.
+  # Username MIRRORS the Authentik username deliberately — the whole
+  # mitigation for not having LDAP (compose.yaml header). Users are
+  # re-created from this file every start, so offboarding is `sopsedit` +
+  # restart.
   - user: idan
     group: idan
-    # 🚨 These numbers are a CONTRACT with the host, and nothing enforces it.
-    # adduser -u creates them INSIDE the container; the files land on
-    # /mnt/slow/samba/shared, whose ownership comes from a tmpfiles rule in
-    # the generated nixos/stack-dirs.nix (edit the DIR_NOTES entry in
-    # nixos/generate-stack-dirs.py, then rerun the generator). A mismatch is
-    # not a crash — it is files nothing else in the fleet can read. The suite
-    # measures it (write over SMB, stat on the host) rather than reasoning
-    # about it.
+    # 🚨 A CONTRACT with the host, enforced only by samba-init: adduser -u
+    # creates the user IN the container; the files land on
+    # /mnt/slow/samba/shared, owned via a tmpfiles rule (DIR_NOTES in
+    # nixos/generate-stack-dirs.py — rerun the generator). A mismatch is
+    # files nothing else in the fleet can read, not a crash. The suite
+    # measures it (write over SMB, stat on the host).
     #
-    # If a second SMB user is ever added, give it a DISTINCT uid and a shared
-    # group. Reusing 1000 makes per-user ownership a fiction.
+    # A second SMB user gets a DISTINCT uid and a shared group — reusing
+    # 1000 makes per-user ownership a fiction.
     uid: 1000
     gid: 1000
     password: ${SAMBA_IDAN_PASSWORD}
 
 global:
   # Appended AFTER the image's hardcoded heredoc; last value wins.
-  #
-  # SMB1 is not merely legacy, it is the protocol every ransomware worm of the
-  # last decade travelled on. There is no client in this fleet that needs it.
+  # SMB1 is the ransomware-worm protocol; no client here needs it.
   - "server min protocol = SMB3_00"
   - "smb encrypt = required"
-  # The tailnet is already encrypted, but this covers the LAN case if the
-  # firewall is ever opened, and costs nothing on modern clients.
+  # Covers the LAN case if the firewall is ever opened; free on modern clients.
 
 share:
   - name: shared
     path: /mnt/slow/samba/shared
     browsable: yes
     readonly: no
-    # 🚨 Both of these are load-bearing, and for a reason that is not obvious.
-    # The generated [global] carries `map to guest = bad user` with
-    # `guest account = nobody`, and "bad user" means *not in the passdb*. So a
-    # user whose seeding silently failed is not REJECTED — it is mapped to
-    # guest. These two lines are what stop it there. Removing either turns a
-    # failed user-creation into anonymous access rather than a login failure.
+    # 🚨 Both load-bearing, non-obviously: the generated [global] carries
+    # `map to guest = bad user` (= *not in the passdb*), so a user whose
+    # seeding silently failed is mapped to GUEST, not rejected. These two
+    # lines stop it there — removing either turns a failed user-creation
+    # into anonymous access.
     guestok: no
     validusers: idan
     veto: no

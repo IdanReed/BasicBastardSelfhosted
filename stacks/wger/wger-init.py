@@ -5,23 +5,17 @@
 # PYTHONPATH=/home/wger/src are baked into the image, so the container needs
 # nothing but the env_file.
 #
-# WHY IT EXISTS: Wger creates an admin account FOR you and does not let you
-# choose its password. The entrypoint runs `wger bootstrap`, which on a fresh
-# database calls `create_or_reset_admin` — a `loaddata` of
-# wger/core/fixtures/users.json pinning pk 1, username `admin`, is_staff true,
-# **is_superuser FALSE**, and the literal pbkdf2 hash for `adminadmin`. Its own
-# log line is:
-#     *** Password for user admin was reset to 'adminadmin'
-# There is no env var for it. Not DJANGO_SUPERUSER_*, not anything. And
-# `load_fixtures` loads the same users.json in the same fresh-database branch,
-# so blocking only `create_or_reset_admin` would achieve nothing.
+# WHY IT EXISTS: Wger creates the admin FOR you with no password choice —
+# `wger bootstrap` on a fresh DB loaddata's users.json: pk 1, username
+# `admin`, is_staff true, **is_superuser FALSE**, and the literal pbkdf2
+# hash for `adminadmin`. No env var exists (not DJANGO_SUPERUSER_*, not
+# anything), and `load_fixtures` loads the same users.json, so blocking only
+# `create_or_reset_admin` would achieve nothing. The API is no option
+# either: password changes need an authenticated allauth session, and the
+# DRF user endpoints are read-only.
 #
-# The API is not an option either: password changes go through
-# allauth.headless and need an authenticated session, and the DRF user
-# endpoints are read-only.
-#
-# Every mutation prints "wger-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must print ZERO change lines.
+# Every mutation prints "wger-init: CHANGE: ...". A second run — every
+# redeploy reruns this container — must print ZERO change lines.
 
 import os
 import sys
