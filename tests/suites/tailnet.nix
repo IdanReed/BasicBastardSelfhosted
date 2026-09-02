@@ -41,7 +41,10 @@ let
   ];
 
   stackImages = [
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
@@ -85,9 +88,9 @@ let
       '';
 
   seedSrv = pkgs.runCommand "srv-seed" { } ''
-    mkdir -p $out/arcane $out/stacks
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
       cp -r ${../../stacks + "/${s}"}/. $out/stacks/${s}/
@@ -129,7 +132,7 @@ pkgs.testers.runNixOSTest {
           })
           (profiles.sopsFixture ../fixtures/vps.sops.yaml)
           (profiles.sized {
-            memoryMB = 4096;
+            memoryMB = 6144;
             diskMB = 16384;
           })
           (profiles.loadImages {
@@ -171,14 +174,16 @@ pkgs.testers.runNixOSTest {
           })
           (profiles.sopsFixture ../fixtures/services-vm.sops.yaml)
           (profiles.sized {
-            memoryMB = 4096;
+            memoryMB = 6144;
             diskMB = 12288;
           })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
+          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
         ];
 
         security.pki.certificateFiles = [ nodes.acme.test-support.acme.caCert ];
@@ -206,7 +211,7 @@ pkgs.testers.runNixOSTest {
         };
 
         systemd.tmpfiles.rules = [
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           "d /mnt/fast/caddy 0755 root root -"
@@ -233,8 +238,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -336,7 +341,7 @@ pkgs.testers.runNixOSTest {
       # Both hosts join the tailnet
       # -----------------------------------------------------------------------
       with subtest("the services VM joins the tailnet via --login-server"):
-          services_vm.wait_for_unit("bootstrap-arcane.service")
+          services_vm.wait_for_unit("bootstrap-komodo.service")
           svc_ip = join(services_vm,
                         "${nodes.services.sops.secrets.TAILSCALE_AUTH_KEY.path}")
           assert svc_ip.startswith("100."), f"services-vm got {svc_ip!r}"
@@ -395,10 +400,10 @@ pkgs.testers.runNixOSTest {
       # -----------------------------------------------------------------------
       # The production path, from a client
       # -----------------------------------------------------------------------
-      with subtest("a tailnet client reaches Arcane through Caddy by hostname"):
-          services_vm.wait_for_unit("bootstrap-arcane.service")
+      with subtest("a tailnet client reaches Komodo through Caddy by hostname"):
+          services_vm.wait_for_unit("bootstrap-komodo.service")
           services_vm.wait_until_succeeds(
-              "curl -sf --max-time 5 http://127.0.0.1:10000/ -o /dev/null", timeout=180
+              "curl -sf --max-time 5 http://127.0.0.1:10000/ -o /dev/null", timeout=300
           )
 
           # *.svc.idanreed.com is a public A record pointing at the tailnet IP
@@ -409,8 +414,8 @@ pkgs.testers.runNixOSTest {
           # http_code curl "succeeds" on a 503, so poll on the code itself.
           client.wait_until_succeeds(
               f"test $(curl -sk --max-time 10 "
-              f"--resolve arcane.svc.idanreed.com:443:{svc_ip} "
-              "https://arcane.svc.idanreed.com/ "
+              f"--resolve komodo.svc.idanreed.com:443:{svc_ip} "
+              "https://komodo.svc.idanreed.com/ "
               "-o /dev/null -w '%{http_code}') -lt 400", timeout=180
           )
 

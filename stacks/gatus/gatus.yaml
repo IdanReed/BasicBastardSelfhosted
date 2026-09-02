@@ -103,9 +103,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: "arcane (path: caddy -> authentik outpost)"
+  - name: "komodo (path: caddy -> authentik outpost)"
     group: "path"
-    url: "https://arcane.svc.idanreed.com/"
+    url: "https://komodo.svc.idanreed.com/"
     interval: 2m
     client:
       ignore-redirect: true
@@ -116,7 +116,7 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: "arcane (service)"
+  - name: "komodo (service)"
     group: "service"
     url: "http://127.0.0.1:10000/"
     interval: 1m

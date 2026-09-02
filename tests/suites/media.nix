@@ -102,9 +102,10 @@
 
 let
   stackImages = [
-    # The boot chain: bootstrap-arcane is wantedBy multi-user.target, so its
-    # image must be loadable before the script gets control.
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    # The deploy plane (Komodo) is MASKED in this suite — media does not test
+    # it, and its 4 containers (Core/Periphery/FerretDB/Postgres) starved the
+    # timing-sensitive clamav quarantine-inode test under the 3-concurrent
+    # sweep. So no komodo images here; the mask is in the node config below.
     # The stack, every pinned ref from stacks/media/compose.yaml:
     images."qmcgaw_gluetun_v3_41_3"
     images."alpine_3_21" # qbit-init
@@ -121,14 +122,12 @@ let
     images."python_3_13-alpine" # media-init
   ];
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Only the media stack is seeded — the other
-  # stacks are the light suite's job — plus /srv/arcane for bootstrap-arcane.
+  # stacks are the light suite's job; komodo is masked, so /srv/komodo is not
+  # needed.
   seedSrv = pkgs.runCommand "srv-seed-media" { } ''
-    mkdir -p $out/arcane $out/stacks/media
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
-
+    mkdir -p $out/stacks/media
     cp -r ${../../stacks/media}/. $out/stacks/media/
     chmod -R u+w $out/stacks/media
     # The working-tree cp -r can capture a developer's locally-decrypted
@@ -171,15 +170,24 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            # Komodo masked below, so nothing container-shaped runs at boot;
+            # the only contract is "loaded before the test script's compose up".
+            beforeUnits = [ "multi-user.target" ];
           })
+          {
+            # Keep the deploy plane out of the boot path — media does not test
+            # it, and its containers starve the quarantine-inode timing. The
+            # stack-git-sync timer would also fail its clone (no Forgejo here).
+            systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         # This many containers on the sized profile's 2 cores makes every
         # healthcheck window a coin toss; 4 keeps startup contention sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
         # /mnt/fast holds every config volume, /mnt/slow the /data tree.
         virtualisation.fileSystems = {
@@ -204,8 +212,7 @@ pkgs.testers.runNixOSTest {
           # Mirrors nixos/hardware-configuration.nix, which cannot be
           # imported here because it mounts real partitions by partlabel.
           # The media rules below are the SAME set production declares —
-          # keep the two lists in sync by hand.
-          "d /srv/arcane 0755 root root -"
+          # keep the two lists in sync by hand. (No /srv/komodo: masked here.)
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Bind-mount roots from stacks/media/compose.yaml. root-owned is
@@ -267,8 +274,7 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/stacks
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -380,12 +386,14 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # Boot chain: sops fixture -> decrypted .env -> homelab network -> arcane
+    # Boot chain: sops fixture -> decrypted .env -> homelab network -> stack
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-arcane.service")
-        services_vm.succeed("test -s /srv/stacks/media/.env")
+        # Komodo is masked here, so decrypt runs via its minutely timer, not
+        # bootstrap-komodo's Requires — wait the .env out (mk-stack-suite pattern).
+        services_vm.wait_for_unit("multi-user.target")
+        services_vm.wait_until_succeeds("test -s /srv/stacks/media/.env", timeout=90)
         stat = services_vm.succeed(
             "stat -c '%a %u:%g' /srv/stacks/media/.env"
         ).strip()
@@ -396,7 +404,7 @@ pkgs.testers.runNixOSTest {
                   "VPN_SERVICE_PROVIDER"]:
             services_vm.succeed(f"grep -q '^{k}=' /srv/stacks/media/.env")
 
-    # Images are loaded before bootstrap-arcane; the compose runs below must
+    # Images are loaded before multi-user.target; the compose runs below must
     # not race the load (an `up` mid-load pulls nothing offline).
     services_vm.wait_for_unit("load-test-images.service")
 
@@ -988,10 +996,17 @@ pkgs.testers.runNixOSTest {
         # saying which is unauditable after the fact.
         logs = services_vm.succeed("docker logs clamav_scanner 2>&1")
         unlinked = [l for l in logs.splitlines() if "scan: UNLINKED" in l]
+        # The scanner logs CONTAINER paths — its mount is /mnt/slow/data:/data,
+        # so every UNLINKED line reads /data/..., never /mnt/slow/data/....
+        # Translate each library dir before matching. (This guard was invisible
+        # for as long as the suite timed out earlier in the subtest; once Komodo
+        # was masked out of the boot path the scan finished in time and the
+        # host-vs-container path mismatch surfaced.)
         for d in [lib_dir, lib_dir2]:
-            assert any(d in l for l in unlinked), (
-                f"the scanner unlinked nothing under {d!r} — UNLINKED lines: "
-                f"{unlinked!r}"
+            cpath = d.replace("/mnt/slow/data", "/data", 1)
+            assert any(cpath in l for l in unlinked), (
+                f"the scanner unlinked nothing under {d!r} ({cpath!r} in the "
+                f"container) — UNLINKED lines: {unlinked!r}"
             )
         # Nothing else in the library was touched by the walk: the emptied
         # directories are still there (removing them is the arr's job).

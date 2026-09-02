@@ -14,7 +14,7 @@ today passes identically next month.
 ```bash
 ./tests/run.sh              # lints only — seconds
 ./tests/run.sh vps          # VPS: caddy + headscale + a real tailnet
-./tests/run.sh services     # services VM: sops -> arcane -> stacks
+./tests/run.sh services     # services VM: sops -> komodo -> stacks
 ./tests/run.sh tailnet      # both hosts on one tailnet, end to end
 ./tests/run.sh stack <name> # one stack alone — the fast loop for stack work
 ./tests/run.sh <suite>      # one named suite — 29 exist, authentik through
@@ -107,9 +107,9 @@ Beyond "it parses":
 - **A real tailnet**: both hosts join via `tailscale-autoconnect` — including
   `--login-server`, whose absence makes a node register against Tailscale's
   SaaS and silently never appear — then peers ping over 100.64/10 and a client
-  reaches Arcane through Caddy by hostname.
+  reaches Komodo through Caddy by hostname.
 - **Boot ordering**: `docker-network-homelab` really does activate before
-  `bootstrap-arcane`, compared by timestamp rather than by reading the unit.
+  `bootstrap-komodo`, compared by timestamp rather than by reading the unit.
 - **The failure signal**: a unit is deliberately failed and the harness asserts
   the alert arrives in Ntfy. If that path is broken every other failure on the
   host is silent.
@@ -221,7 +221,7 @@ So the stacks could never have started:
 
 | Reference | Problem |
 |---|---|
-| `ghcr.io/getarcaneapp/arcane:1.17.4` | Upstream tags with a leading `v`. Fixed to `v1.17.4`. |
+| `ghcr.io/getarcaneapp/arcane:1.17.4` | (historical — Arcane was the deploy plane then) Upstream tags with a leading `v`; was fixed to `v1.17.4`. Its replacement `ghcr.io/moghtech/komodo-core:2.1.0` uses the OPPOSITE convention — no `v` — which is exactly why `update-images.sh` resolves against the registry rather than guessing. |
 | `ghcr.io/civilblur/mazanoke:1.1.5` | Same. Fixed to `v1.1.5`. Note `bentopdf` does *not* use a `v`, which is why `update-images.sh` resolves every reference against the registry rather than trusting it. |
 | `ghcr.io/idanreed/caddy-cloudflare:2.11.2` | Never published — `.github/workflows/build-caddy.yml` has not been run. Substituted with upstream `caddy:2.11.2` in the suites. **Run that workflow before deploying the caddy stack.** |
 
@@ -280,28 +280,36 @@ independent ways to silently not exist.
 
 ### 10. GitOps delivery was dead on arrival — ownership
 
-Arcane runs as PUID 1000; `/srv/stacks` was root-owned. Its sync could never
+`/srv/stacks` was root-owned. Under Arcane (PUID 1000) its sync could never
 `mkdir` a project directory and its deploys could not read the root-0600
-`.env` files — the GitOps model was inert on the production host. Fixed:
-`/srv/stacks` is 1000:1000 (tmpfiles) and `decrypt-sops-envs` chowns each
-`.env` to 1000. The gitops suite now runs the full loop (push → sync with
-`syncDirectory` → decrypt → deploy → update) against the real Arcane API.
-Two adjacent doc corrections: v1.17.4's `syncDirectory` defaults OFF per
-sync, and sync never deploys — that is a separate API/UI action.
-Corollary caught by the sweep: with sync-delivered files owned 1000, mounting
+`.env` files — the GitOps model was inert on the production host. Under Komodo
+the delivery moved off the socket container to the host `stack-git-sync` unit
+(writes as 1000) and Periphery reads as root, so 1000 no longer strictly binds
+— but the world is preserved anyway: `/srv/stacks` is 1000:1000 (tmpfiles) and
+`decrypt-sops-envs` chowns each `.env` to 1000. The gitops suite runs the full
+loop (push → `stack-git-sync` delivery → decrypt → `CreateStack`/`DeployStack`
+→ update) against the real Komodo API. Komodo's `RunSync` only *registers*
+resources — deploy-on-sync is upstream-broken (#1120), so a deploy is always a
+separate action (the API call here, or the Stack's `/listener` webhook).
+Corollary caught by the sweep: with delivered files owned 1000, mounting
 `ssh_config` at `/root/.ssh/config` breaks — root's ssh refuses non-root-owned
 config. It now mounts at `/etc/ssh/ssh_config`, which has no ownership check.
 
-### 11. `env_file: .env` made every stack unsyncable
+### 11. `env_file: .env` and the staging-validate window
 
-Arcane's gitops sync validates the compose file in a staging directory
-*before* copying it in; the host-side decrypted `.env` cannot exist there, so
-a plain `env_file: .env` fails validation and the whole stack's sync aborts —
-for **every** stack in the fleet, deterministically. Fixed with the long form
-(`path: .env, required: false`): staging validates, deploys still load the
-decrypted file. Residual window (documented in each compose): a deploy racing
-the first decrypt starts with unset vars; services' own healthchecks are the
-loud guard. Caught when the gitops suite's test project gained an `env_file`.
+Under Arcane the plain form was *fatal*: its sync validated the compose in a
+staging directory where the host-decrypted `.env` could not exist, so
+`env_file: .env` failed validation and the whole stack's sync aborted, for
+**every** stack, deterministically. Komodo's `files_on_host` mode STRUCTURALLY
+removes that failure — there is no staging clone/validate step; Periphery just
+runs `docker compose up` in the run_directory where the `.env` already exists.
+The long form (`path: .env, required: false`) is retained anyway, because it is
+honoured by `docker compose` itself and covers the residual window (documented
+in each compose): a deploy racing the first decrypt starts with unset vars, and
+services' own healthchecks are the loud guard. The gitops suite proves the
+Komodo half empirically — a deployed container reads the host-decrypted secret
+from a `.env` Komodo never wrote, with `environment=""` so Komodo writes no
+env file of its own (the clobber-hazard defence).
 
 ### 12. Forward auth through the public vhost could never work
 
@@ -616,7 +624,7 @@ health status of the thing it depends on.
 
 The mirror image is in the same stack and just as instructive:
 `config.host_authorization` explicitly **excludes** the health endpoint, so a
-wrong `APPLICATION_HOSTS` yields a healthy container, a happy Arcane, a happy
+wrong `APPLICATION_HOSTS` yields a healthy container, a happy Komodo, a happy
 Uptime Kuma — and a 403 "Blocked hosts" on every browser request. Any smoke
 test of a reverse-proxy route must fetch `/` with the real `Host:` header;
 the health endpoint is exactly the one path that cannot detect that class of
@@ -731,7 +739,7 @@ IdP, which keeps offboarding to one edit without pretending to be SSO.
 
 `ServerNotes/designs/_overview.md`'s Auth column is the only written record of
 what is supposed to guard each service, and it was wrong in both directions at
-once. **Arcane** — which mounts the Docker socket, making its web UI
+once. **Komodo** — whose Periphery mounts the Docker socket, making its Core UI
 root-equivalent on this host — was marked `FwdAuth` while its Caddy route
 imported nothing, so the only thing in front of it was its own login.
 Mazanoke had the same gap with far lower stakes. In the other direction,
@@ -874,7 +882,7 @@ suspicious of a new lint that passes on the first run, which this one did.
 `tracking-init` provisions Homebox through `POST /api/v1/users/register`, and
 handled an already-registered email by accepting 400/409/422 and confirming the
 credentials still work. The first run was green. The second run — which is what
-every Arcane redeploy does — exited 1:
+every Komodo redeploy does — exited 1:
 
     tracking-init: FATAL: homebox register HTTP 500:
     {"error":"ent: constraint failed: constraint failed:
@@ -1292,7 +1300,7 @@ contains `gitea.db` beside a 4 MB `gitea.db-wal`. Measured against the pinned
 auth tables lived in the WAL. "The file is in the backup set" and "the
 database is in the backup" are different claims for any WAL database, and the
 gap has no symptom until a restore. `backup-prepare.sh` now dumps forgejo,
-ntfy, gatus, and arcane with `.backup`; `backup-coverage`'s reverse legs make
+ntfy and gatus with `.backup` (Komodo is a `pg_dumpall` of its FerretDB Postgres, above); `backup-coverage`'s reverse legs make
 the next WAL-shaped omission a lint failure instead of a quiet one.
 
 ### 53. OnFailure never fires on a unit that retries slower than the start limit — FIXED
@@ -1589,7 +1597,7 @@ tmpfiles rule and nothing noticed); `backup-coverage` also gained three
 REVERSE legs (every bind source, every stack, and every postgres/mysql
 container must be either backed up or exempted BY NAME) — the earlier four:
 `auth-column-parity`, a `_overview.md` row claiming FwdAuth must have a Caddy
-handle that imports `protected` (it caught Arcane, the socket-mounting UI,
+handle that imports `protected` (it caught Komodo, whose Periphery mounts the Docker socket,
 guarded by nothing but its own login — finding 32); `backup-coverage`, every
 `sqlite_backup` path must live inside a **service-specific** bind mount some
 compose file declares and every service in the `pg_dumpall` loop must have the
@@ -1616,7 +1624,7 @@ generated from the Caddyfile before that vhost existed). A monitoring gap has
 no symptom until the outage it would have caught, which is why this is a lint
 and not a checklist), vps, services, tailnet,
 authentik, paperless, backrest, **rotation** (the restartUnits contract),
-**gitops** (the full Arcane push→sync→decrypt→deploy loop, against a REAL
+**gitops** (the full Komodo push→sync→decrypt→deploy loop, against a REAL
 in-VM Forgejo remote over http — the git-daemon transport substitution is
 retired), **forgejo** (healthz, headless admin seed, API repo, credentialed
 push + clone-back), **forward-auth** (redirect/spoof/no-lockout + API

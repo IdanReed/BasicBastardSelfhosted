@@ -98,7 +98,9 @@ pkgs.testers.runNixOSTest {
 
       # Nothing container-shaped needs to run at boot: this suite starts its
       # own throwaway containers and never touches /srv.
-      systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+      systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+      # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+      systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
       systemd.tmpfiles.rules = [ "d /var/lib/sops-nix 0700 root root -" ];
     };
 

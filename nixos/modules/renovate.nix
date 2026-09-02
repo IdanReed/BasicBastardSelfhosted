@@ -12,7 +12,7 @@
 # ---------------------------------------------------------------------------
 # Every containerised Renovate recipe upstream publishes mounts the docker
 # socket so the "docker" binarySource can run sidecar toolchains. This fleet's
-# hard rule is no socket anywhere but Arcane, and none of it is needed: the
+# hard rule is no socket anywhere but Komodo's Periphery, and none of it is needed: the
 # managers enabled in renovate.json (docker-compose, dockerfile, custom.regex)
 # are pure text extraction plus registry HTTP. pkgs.renovate is 41.169.3 in
 # nixos-25.11, and nixpkgs already ships a hardened service module for it

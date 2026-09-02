@@ -1,7 +1,7 @@
 # GENERATED FILE — DO NOT EDIT BY HAND.
 #
 #   Regenerate:  nixos/generate-stack-dirs.sh
-#   Source:      stacks/*/compose.yaml + arcane/compose.yaml
+#   Source:      stacks/*/compose.yaml + komodo/compose.yaml
 #   Generator:   nixos/generate-stack-dirs.py (ownership table + prose live there)
 #
 # One `d` rule per /mnt bind-mount source named by a compose file, plus its
@@ -36,16 +36,6 @@
     # This IS the backup payload; no backup-prepare.sh line yet (evaluation
     # stack) — raw fast-volume include set only.
     "d /mnt/fast/actual 0755 1001 1001 -"
-    # === arcane (bind sources in its compose.yaml) ===
-    # 1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
-    # reason /srv/stacks is 1000:1000, finding #10) and writes its own SQLite
-    # DB into /app/data; root-owned it cannot. The directory exists at all
-    # because Arcane's state moved OUT of the arcane_data named volume, which
-    # lived under /var/lib/docker and was excluded from every backup by
-    # **/docker/** — a restore would have come up with no GitOps sync
-    # definitions, and hand-recreated syncs default syncDirectory OFF, which
-    # silently stops delivering .sops.env.
-    "d /mnt/fast/arcane 0755 1000 1000 -"
     # === automation (bind sources in its compose.yaml) ===
     # Ownership, VERIFIED per image (annex §2.3):
     #   - home assistant runs as ROOT and has no PUID/PGID mechanism at all.
@@ -259,8 +249,9 @@
     #
     # Never had a rule before the generator: stacks/forgejo was missing from the
     # tmpfiles-ownership lint's COMPOSE_FILES list, so this — the git ROOT for the
-    # homelab, including the remote Arcane's GitOps sync pulls from — was left to
-    # docker to create root-owned.
+    # homelab, including the compose repo the deploy-plane manager (Komodo, via the
+    # host stack-git-sync unit) pulls from — was left to docker to create
+    # root-owned.
     "d /mnt/fast/forgejo 0755 1000 1000 -"
     "d /mnt/fast/forgejo/data 0755 1000 1000 -"
     # === gatus (bind sources in its compose.yaml) ===
@@ -300,6 +291,27 @@
     # The photo originals tree (UPLOAD_LOCATION). Slow tier per the overview's
     # volume column: bulk, sequential.
     "d /mnt/slow/photos 0755 root root -"
+    # === komodo (bind sources in its compose.yaml) ===
+    # All root:root. Komodo is the deploy-plane manager that replaced Arcane and
+    # splits across four containers, none needing a non-root /mnt owner:
+    #   - Core holds ALL its state in the Mongo-wire DB and touches no /mnt — it
+    #     has no bind source here at all.
+    #   - Periphery mounts /var/run/docker.sock and /srv/stacks (neither a /mnt
+    #     source) and runs as root, so it reads the 0600 decrypted .env files.
+    #   - FerretDB is stateless — every document lives in its Postgres.
+    #   - Postgres is the only stateful component; /mnt/fast/komodo/pgdata is the
+    #     whole backup payload, and the postgres image chowns its own datadir to
+    #     uid 999 from a root entrypoint (the ghostfolio/outline/paperless pgdata
+    #     precedent) — so root:root is correct and self-healing.
+    # The age key never enters any of them: decrypt-sops-envs (host) writes .env
+    # and stack-git-sync (host) delivers the files; Periphery only runs compose.
+    "d /mnt/fast/komodo 0755 root root -"
+    # The FerretDB backend datastore — Komodo's ENTIRE state as JSONB, so the
+    # whole backup payload (captured by the pg_dumpall loop in backup-prepare.sh,
+    # not a new mongodump path). root:root because the postgres image chowns its
+    # own datadir to uid 999 before initdb drops privileges, the same reasoning
+    # that makes the ghostfolio/outline/paperless pgdata roots root:root.
+    "d /mnt/fast/komodo/pgdata 0755 root root -"
     # === logging (bind sources in its compose.yaml) ===
     # THREE CONTAINERS, THREE DIFFERENT ANSWERS, and each one was read out of the
     # pinned image rather than assumed (`docker inspect --format '{{.Config.User}}'`

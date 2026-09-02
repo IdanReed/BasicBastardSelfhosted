@@ -110,7 +110,9 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         virtualisation.emptyDiskImages = [ 8192 ];
@@ -220,7 +222,7 @@ pkgs.testers.runNixOSTest {
 
     start_all()
 
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         # NOT wait_for_unit on decrypt-sops-envs: it is a transient oneshot

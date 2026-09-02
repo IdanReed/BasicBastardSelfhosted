@@ -80,17 +80,16 @@ DEFAULT_OWNER = ("root", "root")
 # by that four times. An empty string is a legitimate entry — it means "every
 # directory here is root:root and the image runs as root".
 #
-# ⚠ ARCANE: arcane/compose.yaml is scanned by this generator even though it
-# lives outside stacks/, and it now contributes /mnt/fast/arcane — its state
-# moved off the arcane_data NAMED VOLUME (campaign item 1c: named volumes live
-# under /var/lib/docker, which every Backrest plan excludes via **/docker/**,
-# so its GitOps sync definitions were in no backup).
+# ⚠ KOMODO: komodo/compose.yaml is scanned by this generator even though it
+# lives outside stacks/, because it is bootstrapped onto the same host — the
+# deploy-plane manager that replaced arcane/. It contributes the Postgres
+# datadir /mnt/fast/komodo/pgdata (the FerretDB backend), the ONLY stateful
+# part of the Komodo stack; Core, Periphery and FerretDB keep no /mnt state.
 #
-# That move is a TWO-FILE change and the halves landed a campaign apart, which
-# is worth remembering because the failure was loud in one direction and silent
-# in the other: with the STACK_NOTES/DIR_NOTES entries present and the compose
-# file still on the named volume, this script exits nonzero with "DIR_NOTES has
-# an entry for /mnt/fast/arcane, which no compose file bind-mounts" and the
+# The tables below are the tripwire the generator exists for: with a
+# STACK_NOTES/DIR_NOTES entry present but the compose not yet mounting the
+# path, this script exits nonzero with "DIR_NOTES has an entry for
+# /mnt/fast/komodo/pgdata, which no compose file bind-mounts" and the
 # stack-dirs-generated lint goes red. The reverse — compose mounting a path
 # this table says nothing about — is the case the table exists to catch.
 STACK_NOTES = {
@@ -104,15 +103,6 @@ container chowns, and the create-folders migration mkdirs server-files/
 and user-files/ under /data before the server ever binds — so a
 root-owned bind mount plus the pinned uid is a container that exits at
 start (the seerr crash-loop class, finding #14).""",
-    "arcane": """\
-1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
-reason /srv/stacks is 1000:1000, finding #10) and writes its own SQLite
-DB into /app/data; root-owned it cannot. The directory exists at all
-because Arcane's state moved OUT of the arcane_data named volume, which
-lived under /var/lib/docker and was excluded from every backup by
-**/docker/** — a restore would have come up with no GitOps sync
-definitions, and hand-recreated syncs default syncDirectory OFF, which
-silently stops delivering .sops.env.""",
     "automation": """\
 Ownership, VERIFIED per image (annex §2.3):
   - home assistant runs as ROOT and has no PUID/PGID mechanism at all.
@@ -219,8 +209,9 @@ Forgejo's identity and state.
 
 Never had a rule before the generator: stacks/forgejo was missing from the
 tmpfiles-ownership lint's COMPOSE_FILES list, so this — the git ROOT for the
-homelab, including the remote Arcane's GitOps sync pulls from — was left to
-docker to create root-owned.""",
+homelab, including the compose repo the deploy-plane manager (Komodo, via the
+host stack-git-sync unit) pulls from — was left to docker to create
+root-owned.""",
     "gatus": "",
     "ghostfolio": """\
 One directory, root:root, and that is VERIFIED rather than inherited: the
@@ -280,6 +271,20 @@ the 0600 immich.json into the config dir. The seerr uid-1000 crash-loop class
 (finding #14) therefore does not apply, but the 'd' rules still must exist:
 docker creates missing bind sources at container start with no say over the
 parent /mnt/fast/immich.""",
+    "komodo": """\
+All root:root. Komodo is the deploy-plane manager that replaced Arcane and
+splits across four containers, none needing a non-root /mnt owner:
+  - Core holds ALL its state in the Mongo-wire DB and touches no /mnt — it
+    has no bind source here at all.
+  - Periphery mounts /var/run/docker.sock and /srv/stacks (neither a /mnt
+    source) and runs as root, so it reads the 0600 decrypted .env files.
+  - FerretDB is stateless — every document lives in its Postgres.
+  - Postgres is the only stateful component; /mnt/fast/komodo/pgdata is the
+    whole backup payload, and the postgres image chowns its own datadir to
+    uid 999 from a root entrypoint (the ghostfolio/outline/paperless pgdata
+    precedent) — so root:root is correct and self-healing.
+The age key never enters any of them: decrypt-sops-envs (host) writes .env
+and stack-git-sync (host) delivers the files; Periphery only runs compose.""",
     "mealie": """\
 root:root is fine and ANY hand-fix is futile: the image's entry.sh starts
 as root, runs `chown -R $PUID:$PGID /app` — which INCLUDES the bind-mounted
@@ -448,8 +453,15 @@ SimpleFIN credential once bank sync is set up) plus every budget file.
 This IS the backup payload; no backup-prepare.sh line yet (evaluation
 stack) — raw fast-volume include set only.""",
     },
-    # --- arcane --------------------------------------------------------
-    "/mnt/fast/arcane": {"owner": ("1000", "1000")},
+    # --- komodo --------------------------------------------------------
+    "/mnt/fast/komodo/pgdata": {
+        "note": """\
+The FerretDB backend datastore — Komodo's ENTIRE state as JSONB, so the
+whole backup payload (captured by the pg_dumpall loop in backup-prepare.sh,
+not a new mongodump path). root:root because the postgres image chowns its
+own datadir to uid 999 before initdb drops privileges, the same reasoning
+that makes the ghostfolio/outline/paperless pgdata roots root:root.""",
+    },
     # --- media ---------------------------------------------------------
     "/mnt/slow/data": {"owner": ("1000", "1000")},
     "/mnt/slow/data/downloads": {
@@ -698,17 +710,18 @@ def discover(repo: str) -> list[dict]:
     """Every compose file whose bind mounts land on the services VM.
 
     Globbed, never listed: a new stack directory is covered the moment it
-    exists. arcane/ rides along because it is bootstrapped outside stacks/ but
-    onto the same host. headscale-vps/authentik/ deliberately does NOT — it is
-    a different machine with different filesystems.
+    exists. komodo/ rides along because it is bootstrapped outside stacks/ but
+    onto the same host (the deploy-plane manager, as arcane/ was before it).
+    headscale-vps/authentik/ deliberately does NOT — it is a different machine
+    with different filesystems.
     """
     entries = [
         {"stack": os.path.basename(os.path.dirname(p)), "path": p}
         for p in sorted(glob.glob(os.path.join(repo, "stacks", "*", "compose.yaml")))
     ]
-    arcane = os.path.join(repo, "arcane", "compose.yaml")
-    if os.path.exists(arcane):
-        entries.append({"stack": "arcane", "path": arcane})
+    komodo = os.path.join(repo, "komodo", "compose.yaml")
+    if os.path.exists(komodo):
+        entries.append({"stack": "komodo", "path": komodo})
     return entries
 
 
@@ -818,7 +831,7 @@ HEADER = """\
 # GENERATED FILE — DO NOT EDIT BY HAND.
 #
 #   Regenerate:  nixos/generate-stack-dirs.sh
-#   Source:      stacks/*/compose.yaml + arcane/compose.yaml
+#   Source:      stacks/*/compose.yaml + komodo/compose.yaml
 #   Generator:   nixos/generate-stack-dirs.py (ownership table + prose live there)
 #
 # One `d` rule per /mnt bind-mount source named by a compose file, plus its
