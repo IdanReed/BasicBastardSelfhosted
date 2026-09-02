@@ -102,9 +102,12 @@
 
 let
   stackImages = [
-    # The boot chain: bootstrap-arcane is wantedBy multi-user.target, so its
+    # The boot chain: bootstrap-komodo is wantedBy multi-user.target, so its
     # image must be loadable before the script gets control.
-    images."ghcr_io_getarcaneapp_arcane_v1_17_4"
+    images."ghcr_io_moghtech_komodo-core_2_1_0"
+    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_ferretdb_ferretdb_2_7_0"
+    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     # The stack, every pinned ref from stacks/media/compose.yaml:
     images."qmcgaw_gluetun_v3_41_3"
     images."alpine_3_21" # qbit-init
@@ -123,11 +126,11 @@ let
 
   # Seeds /srv the way the real host gets it: Arcane's git sync on the live
   # machine, a store copy here. Only the media stack is seeded — the other
-  # stacks are the light suite's job — plus /srv/arcane for bootstrap-arcane.
+  # stacks are the light suite's job — plus /srv/komodo for bootstrap-komodo.
   seedSrv = pkgs.runCommand "srv-seed-media" { } ''
-    mkdir -p $out/arcane $out/stacks/media
-    cp ${../../arcane/compose.yaml} $out/arcane/compose.yaml
-    cp ${../fixtures/arcane.sops.env} $out/arcane/.sops.env
+    mkdir -p $out/komodo $out/stacks/media
+    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
+    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     cp -r ${../../stacks/media}/. $out/stacks/media/
     chmod -R u+w $out/stacks/media
@@ -171,15 +174,17 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-arcane.service" ];
+            beforeUnits = [ "bootstrap-komodo.service" ];
           })
+          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
+          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
         ];
 
         # This many containers on the sized profile's 2 cores makes every
         # healthcheck window a coin toss; 4 keeps startup contention sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service and bootstrap-arcane.service both
+        # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
         # /mnt/fast holds every config volume, /mnt/slow the /data tree.
         virtualisation.fileSystems = {
@@ -205,7 +210,7 @@ pkgs.testers.runNixOSTest {
           # imported here because it mounts real partitions by partlabel.
           # The media rules below are the SAME set production declares —
           # keep the two lists in sync by hand.
-          "d /srv/arcane 0755 root root -"
+          "d /srv/komodo 0755 root root -"
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Bind-mount roots from stacks/media/compose.yaml. root-owned is
@@ -267,8 +272,8 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/arcane /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/arcane/. /srv/arcane/
+            mkdir -p /srv/komodo /srv/stacks
+            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -382,9 +387,9 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # Boot chain: sops fixture -> decrypted .env -> homelab network -> arcane
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by arcane's uid"):
+    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-arcane.service")
+        services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/media/.env")
         stat = services_vm.succeed(
             "stat -c '%a %u:%g' /srv/stacks/media/.env"
@@ -396,7 +401,7 @@ pkgs.testers.runNixOSTest {
                   "VPN_SERVICE_PROVIDER"]:
             services_vm.succeed(f"grep -q '^{k}=' /srv/stacks/media/.env")
 
-    # Images are loaded before bootstrap-arcane; the compose runs below must
+    # Images are loaded before bootstrap-komodo; the compose runs below must
     # not race the load (an `up` mid-load pulls nothing offline).
     services_vm.wait_for_unit("load-test-images.service")
 

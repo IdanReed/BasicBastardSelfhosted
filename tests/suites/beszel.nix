@@ -135,7 +135,9 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        systemd.services.bootstrap-arcane.wantedBy = lib.mkForce [ ];
+        systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         # 🚨 TWO EXTRA DISKS, and this is the whole reason this suite does not

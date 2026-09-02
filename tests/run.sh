@@ -4,13 +4,13 @@
 #
 #   ./tests/run.sh                # lints only — seconds, run this constantly
 #   ./tests/run.sh vps            # VPS: caddy + headscale + a real tailnet
-#   ./tests/run.sh services       # services VM: sops -> arcane -> stacks
+#   ./tests/run.sh services       # services VM: sops -> komodo -> stacks
 #   ./tests/run.sh tailnet        # both hosts on one tailnet, end to end
 #   ./tests/run.sh authentik      # heavy: blueprint + OIDC secret contract
 #   ./tests/run.sh paperless      # heavy: full stack, document pipeline
 #   ./tests/run.sh backrest       # heavy: config seeding + the key gate
 #   ./tests/run.sh rotation       # heavy: secret rotation restarts both consumers
-#   ./tests/run.sh gitops         # arcane: push -> sync -> deploy -> update
+#   ./tests/run.sh gitops         # komodo: push -> sync -> decrypt -> deploy -> update
 #   ./tests/run.sh forwardauth    # heavy: forward-auth pilot (bentopdf) end to end
 #   ./tests/run.sh forgejo        # heavy: healthz, admin seed, API repo, push/clone
 #   ./tests/run.sh media          # heavy: gluetun kill-switch, x265 guard, EICAR chain
