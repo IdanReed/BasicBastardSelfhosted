@@ -2,7 +2,8 @@
 #
 # Entry point for the test harness. See ./README.md.
 #
-#   ./tests/run.sh                # lints only — seconds, run this constantly
+#   ./tests/run.sh                # structural lints only — seconds, run this constantly (always green)
+#   ./tests/run.sh deploy-check   # structural + deploy-readiness (sops-declared) + operator to-dos
 #   ./tests/run.sh vps            # VPS: caddy + headscale + a real tailnet
 #   ./tests/run.sh services       # services VM: sops -> arcane -> stacks
 #   ./tests/run.sh tailnet        # both hosts on one tailnet, end to end
@@ -94,6 +95,29 @@ case "$TARGET" in
       fi
     fi
     exec nix-build tests "${NIX_ARGS[@]}" -A checks.lints --no-out-link
+    ;;
+
+  deploy-check)
+    # Intentional pre-deploy verification: the structural gate PLUS the
+    # deploy-readiness lints (sops-declared) PLUS the operator to-do scan.
+    # A RED here does not mean the code is broken — it means the live host is
+    # not yet ready to activate. Run it when heading toward a deploy.
+    echo "==> deploy-check: structural + deploy-readiness lints"
+    nix-build tests "${NIX_ARGS[@]}" -A checks.deploy-check --no-out-link || rc=1
+    echo
+    echo "==> operator readiness (informational — not part of the exit code)"
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      root=$(git rev-parse --show-toplevel)
+      # Secrets still holding the committed changeme_ placeholder. Real
+      # .sops.env values are encrypted, so a decrypted changeme_ cannot leak
+      # here — only the .example/committed-placeholder lines match.
+      pending=$(git -C "$root" grep -lE 'changeme_' -- 'stacks/**/.sops.env.example' 'headscale-vps/**/*.example' 2>/dev/null || true)
+      [ -n "$pending" ] && { echo "  .sops.env still on placeholders (fill before deploy):"; echo "$pending" | sed 's/^/    /'; } || echo "  .sops.env placeholders: none flagged"
+      # ssh-pubkeys entries still null (identity not yet generated).
+      nulls=$(git -C "$root" grep -n '= null' -- 'nixos-de/ssh-pubkeys.nix' 2>/dev/null || true)
+      [ -n "$nulls" ] && { echo "  ssh-pubkeys.nix null entries (generate keypairs before deploy):"; echo "$nulls" | sed 's/^/    /'; } || echo "  ssh-pubkeys null entries: none"
+    fi
+    exit "${rc:-0}"
     ;;
 
   stack)
