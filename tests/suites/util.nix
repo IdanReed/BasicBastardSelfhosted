@@ -14,7 +14,7 @@
 #   - **The stack needs no secrets at all**, asserted rather than assumed. It
 #     HAD a `.sops.env` while ExcaliDash was in it, and dropping the last
 #     stateful service is exactly the moment a leftover `env_file` would start
-#     failing Arcane's staged sync for bentopdf and mazanoke too (finding #11).
+#     failing the deploy for bentopdf and mazanoke too (finding #11).
 #   - every published port is loopback-only, with a positive control.
 #   - **The unhealthy-container alert**, exercised here because this is the
 #     cheapest suite with a host, docker, and containers. Nothing else in the
@@ -94,7 +94,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -177,8 +177,8 @@ pkgs.testers.runNixOSTest {
         services_vm.wait_for_unit("docker-network-homelab.service")
         # Asserted rather than assumed: this stack HAD a .sops.env while
         # ExcaliDash was in it, and dropping the last stateful service is
-        # exactly the moment a leftover env_file would start failing Arcane's
-        # staged sync for bentopdf and mazanoke too.
+        # exactly the moment a leftover env_file would start failing the
+        # deploy for bentopdf and mazanoke too.
         services_vm.fail("test -e /srv/stacks/util/.sops.env")
         services_vm.fail("grep -q env_file /srv/stacks/util/compose.yaml")
 

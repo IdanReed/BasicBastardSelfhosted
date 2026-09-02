@@ -2,33 +2,27 @@
 # Design: ServerNotes/designs/service-util-stack-research.md.
 # _overview.md owns the port/auth rows.
 #
-# Published ports are bound to 127.0.0.1 so Caddy (network_mode: host) is the
-# only way in. Publishing on 0.0.0.0 made every service reachable directly from
-# the tailnet — tailscale0 is a trusted interface, so the host firewall does
-# not filter it — which would let anyone on the tailnet skip forward auth
-# entirely by using the port number.
+# Ports bound to 127.0.0.1 so Caddy (host network) is the only way in: on
+# 0.0.0.0 anyone on the tailnet (tailscale0 is a trusted interface) could
+# skip forward auth by using the port number.
 #
-# NOT IN THIS STACK, and both absences are deliberate:
-#   - **Vaultwarden (10400)** has its own stack. Three independent reasons, any
-#     one sufficient: Arcane deploys per PROJECT, so an IT-Tools tag bump here
-#     would restart the password manager; stack-env-drift enforces key sets per
-#     stack, and folding ADMIN_TOKEN in would put the fleet's most sensitive
-#     rotation beside a static PDF toolkit; and it is the only Util service
-#     with a dump line, an attachments tree and a non-database artifact that
-#     must travel with the database.
-#   - **TeXlyre (10405)** is DEFERRED: no image exists for it, and even with
-#     one it would not work here — LaTeX compiles in the browser via WASM but
-#     the TeX Live packages are fetched on demand from upstream-hosted
-#     servers, and collaboration needs their y-webrtc and PeerJS signalling.
-#     A self-hosted TeXlyre with no egress is an editor that cannot compile.
+# NOT IN THIS STACK, both deliberate:
+#   - **Vaultwarden (10400)** has its own stack — any one reason suffices:
+#     the deploy plane deploys per PROJECT (an IT-Tools tag bump would
+#     restart the password manager); stack-env-drift keys per stack (the
+#     fleet's most sensitive rotation beside a static PDF toolkit); and it
+#     is the only Util service with a dump line and an attachments tree
+#     that must travel with the database.
+#   - **TeXlyre (10405)** DEFERRED: no image, and TeX Live packages are
+#     fetched on demand + collaboration needs upstream signalling — with no
+#     egress it is an editor that cannot compile.
 #
-# Backup contract: NOTHING. Every service here is stateless — Glance's config
-# is a read-only file, and the other three are static SPAs. None must ever
-# acquire a `sqlite_backup` line: that helper returns 0 for a MISSING source,
-# so a speculative entry is a permanently-silent no-op that looks exactly like
-# a working backup (finding #25's class, and what the uptimekuma line turned
-# out to be). ExcaliDash would have been the one stateful service here; it is
-# deferred, see below.
+# Backup contract: NOTHING — everything here is stateless. None may ever
+# acquire a `sqlite_backup` line: the helper returns 0 for a MISSING source,
+# so a speculative entry is a permanently-silent no-op that looks like a
+# working backup (finding #25's class; what the uptimekuma line turned out
+# to be). ExcaliDash would have been the one stateful service; deferred, see
+# below.
 services:
   bentopdf:
     image: ghcr.io/alam00000/bentopdf:1.16.1
@@ -49,17 +43,9 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # glance — feed and service-link dashboard.
-  #
-  # Its own auth stays OFF and Caddy's (protected) does the work instead: one
-  # login rather than two, and the dashboard is browser-only so forward auth
-  # costs nothing. That also sidesteps a sharp edge — Glance blocks an IP after
-  # 5 failed logins in 5 minutes, and behind a loopback publish EVERY request
-  # arrives from the docker bridge gateway, so without `server.proxied: true`
-  # the first five typos would lock out everyone at once.
-  #
-  # Stateless: the config is a read-only file and the container writes nothing,
-  # so there is no volume and no backup line.
+  # glance — feed and service-link dashboard. Own auth OFF, Caddy's
+  # (protected) does the work — see glance.yml's rule 2 for the lockout
+  # sharp edge. Stateless: read-only config, no volume, no backup line.
   # ---------------------------------------------------------------------------
   glance:
     # `v` prefix REQUIRED — `glanceapp/glance:0.8.5` is a 404. Note bentopdf
@@ -70,30 +56,23 @@ services:
     ports:
       - '127.0.0.1:10402:8080'
     volumes:
-      # Shipped in the stack directory rather than /mnt/fast so Arcane's
-      # syncDirectory delivers it with the compose file. The ENTRYPOINT
-      # hardcodes --config /app/config/glance.yml, so the mount path is fixed.
-      # :ro is safe — Glance never writes it, and its file watcher works fine
-      # on a read-only bind.
+      # Shipped in the stack directory so the git sync delivers it with the
+      # compose file. The ENTRYPOINT hardcodes --config /app/config/glance.yml.
+      # :ro is safe — Glance never writes it; the file watcher works on a
+      # read-only bind.
       - ./glance.yml:/app/config/glance.yml:ro
     environment:
       - TZ=America/Chicago
     healthcheck:
-      # The image ships no HEALTHCHECK. /api/healthz is
-      # `func(w, _) { w.WriteHeader(http.StatusOK) }` — an UNCONDITIONAL 200,
-      # so be clear about what this buys: Glance exits at startup on an invalid
-      # config, so "the process is listening" really does imply "a valid config
-      # parsed at boot". What it cannot detect is a failed hot RELOAD, which
-      # leaves the old config running and healthz still 200.
-      #
-      # ⚠ Never probe /api/pages/{page}/content/ instead: widget fetches happen
-      # in the content handler and wg.Wait() on every widget goroutine, so with
-      # no egress that endpoint stalls until each widget's HTTP client times
-      # out. The shell and healthz are unaffected.
-      # -O /dev/null, NOT --spider: --spider issues a HEAD, and a route
-      # registered GET-only answers 405, which leaves the container
-      # permanently unhealthy while the app is fine. That is exactly what
-      # happened to Homebox in the tracking stack. A GET costs nothing here.
+      # No builtin. /api/healthz is an UNCONDITIONAL 200 — but Glance exits
+      # at startup on an invalid config, so "listening" does imply "a valid
+      # config parsed at boot". It cannot detect a failed hot RELOAD (old
+      # config keeps running, healthz still 200).
+      # ⚠ Never probe /api/pages/{page}/content/: widget fetches happen in
+      # that handler (wg.Wait on every widget), so with no egress it stalls
+      # until every widget times out.
+      # -O /dev/null, NOT --spider: --spider is a HEAD, a GET-only route
+      # answers 405 = permanently unhealthy while fine (the Homebox lesson).
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8080/api/healthz']
       interval: 30s
       timeout: 10s
@@ -102,18 +81,15 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # it-tools — 80+ client-side developer utilities. A static nginx SPA: no
-  # accounts, no state, no config, and no auth possible. (protected) in Caddy
-  # is the only lock it can ever have, exactly like bentopdf.
-  #
-  # Fork of dead upstream: corentinth last released 2024-10-22. Adopted by the
-  # bake-off (designs/service-bakeoff.md); sharevb is a strict superset.
+  # it-tools — 80+ client-side developer utilities. Static nginx SPA: no
+  # accounts, no state, no auth possible — Caddy's (protected) is the only
+  # lock it can ever have. sharevb fork (strict superset; corentinth dead
+  # since 2024-10-22, adopted by the bake-off).
   # ---------------------------------------------------------------------------
   it-tools:
-    # Tag trap: dated tags ONLY. `latest` and `stable` are two different
-    # moving digests, and the parallel `-baseurl-it-tools` axis 404s assets
-    # under a root-path vhost like ours.
-    # sharevb fork serves on 8080 (upstream corentinth was 80)
+    # Tag trap: dated tags ONLY — `latest` and `stable` are two different
+    # moving digests, and the `-baseurl-it-tools` axis 404s assets under a
+    # root-path vhost. sharevb serves on 8080 (corentinth was 80).
     image: ghcr.io/sharevb/it-tools:2026.7.11
     container_name: it-tools
     ports:
@@ -121,9 +97,7 @@ services:
     environment:
       - TZ=America/Chicago
     healthcheck:
-      # No HEALTHCHECK in the Dockerfile (production stage is
-      # nginx:stable-alpine with a bare CMD). This is a liveness probe and
-      # nothing more — there is nothing else to probe on a static SPA.
+      # No builtin. Liveness only — nothing else to probe on a static SPA.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8080/']
       interval: 30s
       timeout: 10s
@@ -133,32 +107,19 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # 🚨 ExcaliDash (10406) is DEFERRED, and it is not a configuration problem.
+  # 🚨 ExcaliDash (10406) is DEFERRED — not a configuration problem: its
+  # entrypoint runs `npx prisma generate` UNCONDITIONALLY at start, and the
+  # image bakes only its own arch's binaryTargets, so generate always dials
+  # binaries.prisma.sh for the other one and dies (EAI_AGAIN on a
+  # tailnet-only host — a crash loop, not "slow without egress"; no skip
+  # flag). Deferred until upstream stops downloading at runtime.
   #
-  # Its entrypoint runs `npx prisma generate` UNCONDITIONALLY at container
-  # start, and prisma/schema.prisma hardcodes
-  #     binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x",
-  #                      "linux-musl-openssl-3.0.x"]
-  # The image bakes only the targets for its OWN architecture, so `generate`
-  # always reaches for the other one and dies:
-  #     Error: request to https://binaries.prisma.sh/.../
-  #       linux-musl-arm64-openssl-3.0.x/libquery_engine.so.node.gz.sha256
-  #       failed, reason: getaddrinfo EAI_AGAIN binaries.prisma.sh
-  # On an amd64 host it needs the arm64 engine; on arm64 it would need the
-  # other. There is no skip flag in the entrypoint.
-  #
-  # So it cannot start on a tailnet-only host at all — this is not "slow
-  # without egress", it is a crash loop. Same category as TeXlyre above:
-  # deferred until upstream stops downloading at runtime, or until someone
-  # builds an image with both engines baked in.
-  #
-  # Found by tests/suites/util.nix on its first run. The same run also caught
-  # that the secrets had been named EXCALIDASH_JWT_SECRET and
-  # EXCALIDASH_CSRF_SECRET while the app reads the BARE names — finding #25
-  # recurring, and the container had been quietly auto-generating both into
-  # its volume. Worth knowing if this is ever revived.
+  # Found by tests/suites/util.nix on its first run — which also caught the
+  # secrets named EXCALIDASH_JWT_SECRET/_CSRF_SECRET while the app reads the
+  # BARE names (finding #25 recurring; the container quietly auto-generated
+  # both). Worth knowing if this is ever revived.
   #
   # Slot unwound: the 10406 row is DELETED from _overview.md (bake-off
-  # 2026-09-01) — no whiteboarding service is planned; 10406 is free. The
-  # findings above are kept because tests/ and the README still cite them.
+  # 2026-09-01); 10406 is free. Findings kept — tests/ and the README cite
+  # them.
   # ---------------------------------------------------------------------------

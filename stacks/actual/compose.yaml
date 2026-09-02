@@ -3,60 +3,43 @@
 # Budget) and ServerNotes/designs/custom-finance.md. _overview.md owns the
 # port/auth row.
 #
-# ⚠ THIS IS AN EVALUATION STACK — the bake-off's contested rival to
-# stacks/firefly (10303/10305), run side by side so Idan can compare hands-on.
-# The pitch that earned it the trial: native SimpleFIN and native OIDC in ONE
-# SQLite container, versus Firefly's three containers, no OIDC until v9, and
-# an importer that holds a full-privilege PAT behind no auth of its own.
+# ⚠ EVALUATION STACK — the bake-off rival to stacks/firefly (10303/10305),
+# run side by side: native SimpleFIN + native OIDC in one SQLite container.
 # Deliberately lean: no SimpleFIN credential seeded, OIDC ready-and-off, no
-# linkage to anything else in the fleet.
+# linkage to the rest of the fleet.
 #
-# The bake-off flagged Actual's first run as "sets a password IN-BROWSER" and
-# marked the POST /account/bootstrap headless path UNVERIFIED. It is now
-# verified in the v26.9.0 source (src/app-account.js: POST /bootstrap accepts
-# {password}, refuses with reason "already-bootstrapped" once the auth table
-# is non-empty) — actual_init below drives it, so this ships headless and
-# never briefly-open.
+# Headless bootstrap verified in the v26.9.0 source (src/app-account.js:
+# POST /bootstrap accepts {password}, refuses with "already-bootstrapped"
+# once the auth table is non-empty) — actual_init drives it, so first-run is
+# never briefly-open in a browser.
 #
-# Backup contract: NONE YET, honestly. This stack has no line in
-# nixos/backup-prepare.sh; /mnt/fast/actual is covered only by the raw
-# fast-volume include set. account.sqlite is written by a live server, so a
-# raw copy can catch a torn write. If the stack graduates, add
+# Backup contract: NONE YET — no line in nixos/backup-prepare.sh;
+# /mnt/fast/actual is covered only by the raw fast-volume include set, and
+# account.sqlite is written by a live server, so a raw copy can catch a torn
+# write. If the stack graduates, add
 #   sqlite_backup actual /mnt/fast/actual/server-files/account.sqlite
-# (server password, sessions, file index, and — see SimpleFIN below — the
-# bank credential). The per-budget files under user-files/ are binary blobs
-# rewritten wholesale on sync; the raw include set is the right tool there.
+# (password, sessions, file index, SimpleFIN credential). user-files/ blobs
+# are rewritten wholesale on sync; the raw include set is right for those.
 
 services:
   # ---------------------------------------------------------------------------
-  # actual — the sync server. Express + better-sqlite3, one container: every
-  # byte of state is under /data (account.sqlite in server-files/, budget
-  # files in user-files/), which is the bind mount below.
+  # actual — the sync server. One container; all state under /data.
   #
-  # 🚨 RUNS AS UID 1001 BECAUSE THE `user:` LINE BELOW SAYS SO — the image
-  # does not. MEASURED against the published 26.9.0 (skopeo inspect --config:
-  # `"User": null`, and the suite's first run wrote account.sqlite as 0:0):
-  # the Dockerfile CREATES `actual` uid 1001 for exactly this purpose and
-  # then never issues a USER instruction, so the shipped container is root.
-  # Pinning 1001:1001 here is safe because the entrypoint is bare tini +
-  # `node app.js` — no chown step, no root-only setup (NOT the seerr/
-  # ExcaliDash root-that-fixes-permissions class) — and correct because
-  # nothing in the container chowns: the very first thing the process does is
-  # run migrations, and 1694360000000-create-folders mkdirs server-files/
-  # and user-files/ under /data, so /mnt/fast/actual must be pre-owned
-  # 1001:1001 by tmpfiles (nixos/generate-stack-dirs.py) either way. A
-  # future image that gains the missing USER instruction changes nothing.
+  # 🚨 RUNS AS UID 1001 ONLY BECAUSE `user:` SAYS SO — the image creates uid
+  # 1001 but ships no USER instruction (measured on 26.9.0: skopeo inspect
+  # --config shows "User": null; the suite's first unpinned run wrote
+  # account.sqlite as 0:0). Pinning is safe: entrypoint is bare tini +
+  # `node app.js`, no chown or root-only setup, and /mnt/fast/actual is
+  # pre-owned 1001:1001 by tmpfiles (nixos/generate-stack-dirs.py) either way.
   # ---------------------------------------------------------------------------
   actual:
-    # Docker Hub `actualbudget/actual-server`; ghcr.io mirrors it. The docker
-    # tag is BARE (`26.9.0` — the git tag v26.9.0 has a `v`, the image tag
-    # does not; the `v`-or-not question has burned two stacks already), and
-    # the `-alpine` suffixed tags are a parallel variant, not newer builds.
-    # Calendar versioning, monthly: expect this pin to look stale fast.
+    # Docker Hub (ghcr.io mirrors it). Bare docker tag — `26.9.0`: the git
+    # tag has a `v`, the image tag does not (the v-or-not trap has burned two
+    # stacks). `-alpine` tags are a parallel variant, not newer builds.
+    # CalVer, monthly: expect the pin to look stale fast.
     image: actualbudget/actual-server:26.9.0
     container_name: actual
-    # See the header: the published image creates uid 1001 but ships with no
-    # USER instruction, so without this line a finance server runs as root.
+    # See header: without this a finance server runs as root.
     user: "1001:1001"
     ports:
       # Loopback only: the way in is Caddy at actual.svc.idanreed.com.
@@ -65,75 +48,58 @@ services:
       - /mnt/fast/actual:/data
     environment:
       - TZ=America/Chicago
-      # Default today; pinned because the published port above is a separate
-      # file's decision (the ghostfolio PORT precedent).
+      # Pinned: the published port above depends on it (ghostfolio PORT
+      # precedent).
       - ACTUAL_PORT=5006
-      # ACTUAL_TRUSTED_PROXIES is deliberately UNSET: its default already
-      # covers the private ranges Caddy and the docker bridge arrive from,
-      # and it feeds only rate-limit IP resolution — there is no
-      # header-trusting auth guard here to get wrong (that is Firefly).
+      # ACTUAL_TRUSTED_PROXIES deliberately UNSET: the default already covers
+      # the ranges Caddy and the docker bridge arrive from, and it feeds only
+      # rate-limit IP resolution — no header-trusting auth guard here (that
+      # is Firefly).
       #
-      # ---- First run is headless: see actual_init below. ----
-      # ACTUAL_INIT_PASSWORD arrives via .env; this server ignores the
-      # unknown name, only the init container reads it.
+      # First run is headless: see actual_init below. ACTUAL_INIT_PASSWORD
+      # arrives via .env; this server ignores the unknown name.
       #
-      # ---- OIDC ships READY and OFF (native, Authentik explicitly on
-      # ---- upstream's tested-provider list) ----
-      # OFF is the true default: after the password bootstrap the login
-      # method lives in the DATABASE (auth table), and the two ACTUAL_OPENID_*
-      # credentials arriving from .env are inert config values until an
-      # explicit enable — nothing is fetched at boot, so unlike Homebox and
-      # Ghostfolio there is no eager-discovery hazard in the off state.
-      #
-      # To turn it on, when the Authentik client secret lands:
+      # ---- OIDC ships READY and OFF (native; Authentik on upstream's
+      # tested-provider list). OFF is the true default: after bootstrap the
+      # login method lives in the DATABASE, and the two ACTUAL_OPENID_*
+      # values from .env are inert until an explicit enable — nothing is
+      # fetched at boot, so no eager-discovery hazard (unlike Homebox and
+      # Ghostfolio).
+      # To enable, when the Authentik client secret lands:
       #   1. Register redirect https://actual.svc.idanreed.com/openid/callback
-      #      in Authentik; put the real client id/secret in .sops.env.
+      #      in Authentik; real client id/secret into .sops.env.
       #   2. Uncomment both lines below and redeploy.
       #   3. docker exec actual node scripts/enable-openid.js
-      #      (it refuses if the password bootstrap never ran — actual_init
-      #      guarantees it did — and converts the login method in the DB).
+      #      (refuses if bootstrap never ran — actual_init guarantees it did).
       # 🚨 Then LOG IN THROUGH AUTHENTIK IMMEDIATELY: the first OIDC login
-      # becomes the server OWNER, permanently — upstream says ownership
-      # cannot be reassigned from the UI. On a tailnet "whoever clicks first"
-      # is every enrolled device.
+      # becomes the server OWNER, permanently — not reassignable from the UI;
+      # on a tailnet "whoever clicks first" is every enrolled device.
       # ⚠ ACTUAL_OPENID_ENFORCE=true (kills the password fallback) only
       # AFTER a verified OIDC login, or it is a lockout.
       # - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
       # - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
       #
-      # ---- SimpleFIN: native, and NO wiring here — that is the feature. ----
-      # The credential is pasted once in the client UI (Settings -> Bank
-      # Sync); the server stores it in account.sqlite's secret table
-      # (migration 1694362247011). Contrast stacks/firefly: no one-time claim
-      # URL in a sops file, no plaintext config JSON on whatever machine
-      # downloaded it, and the credential is inside the backup payload.
-      # Sync is manual-click in the client; core has no scheduler — the
-      # bake-off's open question, now re-checked: upstream's bank-sync doc
-      # still says "Actual does not sync bank data automatically". Anything
-      # that adds a schedule is a third-party sidecar and NOT part of this
-      # trial.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the host-side
-    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts
-    # the sync of the whole stack.
+      # SimpleFIN: native, and NO wiring here — that is the feature. The
+      # credential is pasted once in the client UI and stored in
+      # account.sqlite (secret table, migration 1694362247011) — inside the
+      # backup payload, no claim URL in sops. No scheduler: upstream's doc
+      # still says Actual does not sync bank data automatically; a scheduling
+      # sidecar is NOT part of this trial.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written), and the plain form
+    # aborts the whole stack.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships NO healthcheck (verified: neither Dockerfile has a
-      # HEALTHCHECK line — upstream puts this same probe in its example
-      # compose instead), so this stanza is required, not an override.
-      #
-      # `node`, and ONLY node: the final stage installs tini and nothing
-      # else — no curl, no wget (a probe execing either would fail forever
-      # against a healthy server, finding #34's failure mode). The script is
-      # upstream's own: fetch /health via config (honors ACTUAL_PORT) and
-      # exit 1 unless the body is {"status":"UP"}.
-      #
-      # ⚠ HONESTY LIMIT: /health is a bare express 200 with no storage
-      # check behind it (src/app.ts). Liveness only — SQLite is in-process,
-      # so there is no dead-database state to probe for; what it cannot see
-      # is a full or read-only /data. The suite asserts the real contract
+      # Image ships NO healthcheck (verified: no HEALTHCHECK line in either
+      # Dockerfile; upstream puts this probe in its example compose). `node`
+      # and ONLY node: the final stage has no curl/wget (finding #34's
+      # failure mode). The script is upstream's own: GET /health (honors
+      # ACTUAL_PORT), exit 1 unless {"status":"UP"}.
+      # ⚠ HONESTY LIMIT: /health is a bare express 200 — liveness only.
+      # SQLite is in-process so there is no dead-DB state to probe; a full or
+      # read-only /data is invisible. The suite asserts the real contract
       # (bootstrap + login); Gatus watches the running one.
       test: ['CMD', 'node', 'scripts/health-check.js']
       interval: 30s
@@ -143,30 +109,22 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # actual_init — headless first-run. Bootstraps the server password over the
-  # project network via POST /account/bootstrap, which the in-browser
-  # first-run form itself calls; there is no env var and no CLI for it.
-  #
-  # Same image ON PURPOSE: node with global fetch is already in it, the pin
-  # moves in one place, and the suite's offline image set stays at one entry.
-  # The image's tini entrypoint is kept; only the command changes.
-  #
-  # Fails CLOSED (exit 1, loud) if ACTUAL_INIT_PASSWORD is empty or still a
-  # changeme_ placeholder — bootstrapping with a placeholder would be a
-  # finance server whose password is in a public git repo, reachable by every
-  # tailnet device. Idempotent: once bootstrapped it logs no CHANGE line and
-  # exits 0 (every Arcane redeploy reruns it). See actual-init.js.
+  # actual_init — headless first-run: POST /account/bootstrap over the
+  # project network (the endpoint the in-browser form itself calls; no env
+  # var, no CLI exists). Same image ON PURPOSE: node+fetch already in it, the
+  # pin moves in one place, the suite's offline image set stays at one entry.
+  # Fails CLOSED (exit 1) on empty or changeme_ password; idempotent — every
+  # redeploy reruns it, no CHANGE line and exit 0 once bootstrapped. See
+  # actual-init.js.
   # ---------------------------------------------------------------------------
   actual_init:
     image: actualbudget/actual-server:26.9.0
     container_name: actual_init
-    # Same uid as the server (see its header: the image ships no USER
-    # instruction, so unpinned this would be root). The script only makes
-    # HTTP calls; least privilege costs nothing here.
+    # Same uid as the server (image ships no USER — unpinned would be root).
     user: "1001:1001"
     depends_on:
-      # service_healthy: bootstrap is an HTTP call, so the server must be
-      # serving — the reverse of the usual seed-files-then-start init shape.
+      # service_healthy: bootstrap is an HTTP call — the reverse of the usual
+      # seed-files-then-start init shape.
       actual:
         condition: service_healthy
     volumes:

@@ -16,9 +16,11 @@
 #   (b) headscale.service RESTARTED (restartUnits on the secret)
 #   (c) authentik.service RESTARTED (restartUnits on the rendered template)
 #       and the re-rendered EnvironmentFile carries the rotated value
-#   (d) what the WORKER environment sees after the restart — which answers,
-#       with evidence either way, whether a rotation reaches the blueprint's
-#       !Env without a manual blueprint re-apply
+#   (d) what the WORKER environment sees after the restart — the container
+#       boundary. Whether the provider ROW re-reads the blueprint's !Env
+#       after a rotation is answered by NEITHER suite: it needs the API
+#       surface (checks.authentik's world) plus a rotation (this one's),
+#       and the two never meet — recorded in README's not-covered table.
 #
 # Deliberately NOT covered here: the full blueprint/API surface (that is
 # checks.authentik's job); this suite keeps Authentik because its unit is one

@@ -22,7 +22,7 @@
 #     secrets empty, Kavita must report OIDC disabled and audiobookshelf must
 #     advertise local auth only — i.e. the off state is deliberate and
 #     complete, not a half-configured login page that 500s
-#   - headless seeding of BOTH apps in one oneshot, idempotent under Arcane
+#   - headless seeding of BOTH apps in one oneshot, idempotent under Komodo
 #     redeploys (books-init's CHANGE: contract), including the two
 #     audiobookshelf hazards the annex flags: /init is guarded by GET /status
 #     (a second POST returns 500, a malformed one kills the server), and an
@@ -84,8 +84,8 @@
 
 let
   stackImages = [
-    # Every pinned ref from stacks/books/compose.yaml. Arcane's image is NOT
-    # here — bootstrap-komodo is masked below.
+    # Every pinned ref from stacks/books/compose.yaml. Komodo's images are
+    # NOT here — bootstrap-komodo is masked below.
     images."jvmilazz0_kavita_0_9_1"
     images."ghcr_io_calibrain_shelfmark_1_3_13"
     images."ghcr_io_advplyr_audiobookshelf_2_36_0"
@@ -166,7 +166,7 @@ let
       -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -c:a flac -f flac "$out"
   '';
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Only the books stack — bootstrap-komodo is
   # masked, so /srv/komodo is not needed.
   seedSrv = pkgs.runCommand "srv-seed-books" { } ''
@@ -219,15 +219,12 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Keep Arcane out of the boot path: its multi-hundred-MB image and
-        # bootstrap ordering are irrelevant here and would dominate the
-        # runtime of a suite that already loads a Chromium-bearing image.
-        #
-        # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-komodo chain and Arcane itself. checks.services covers
-        # exactly that — run it before trusting a change to that chain.
+        # Keep the deploy plane out of the boot path: this suite already
+        # loads a Chromium-bearing image. Coverage lost — the
+        # decrypt-sops-envs -> docker-network-homelab -> bootstrap-komodo
+        # chain — is what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         # Migrations plus two scans on the sized profile's 2 cores make every
@@ -236,7 +233,7 @@ pkgs.testers.runNixOSTest {
 
         # decrypt-sops-envs.service `requires = srv.mount`; the tmpfs gives it
         # a genuine .mount unit. /srv stays tmpfs ON PURPOSE: its post-reboot
-        # re-seed + re-decrypt is itself the production shape (Arcane sync +
+        # re-seed + re-decrypt is itself the production shape (git sync +
         # the decrypt timer).
         #
         # /mnt is a real ext4 on a persistent qcow (auto-formatted on first
@@ -288,8 +285,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/books/drop 0755 1000 1000 -"
         ];
 
-        # Populate /srv before anything reads it — the stand-in for Arcane's
-        # git sync having already run. Re-runs on every boot (tmpfs /srv),
+        # Populate /srv before anything reads it — the stand-in for
+        # stack-git-sync having already run. Re-runs on every boot (tmpfs /srv),
         # which the reboot subtest depends on.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
@@ -309,7 +306,7 @@ pkgs.testers.runNixOSTest {
             # read-only), but it sets every regular file to 0644 — and this is
             # the first stack with a file that MUST be executable: shelfmark
             # execs post-download.sh directly, so a 0644 copy fails with exit
-            # 126 and every download would be marked Error. Arcane's git sync
+            # 126 and every download would be marked Error. stack-git-sync
             # delivers the git mode on the real host; restore it here.
             chmod 0755 /srv/stacks/books/post-download.sh
             chown -R 1000:1000 /srv/stacks
@@ -734,7 +731,7 @@ pkgs.testers.runNixOSTest {
         )
 
         # ... and the run after that is a no-op, which is the CHANGE:
-        # contract every Arcane redeploy depends on.
+        # contract every Komodo redeploy depends on.
         out = services_vm.succeed("docker start -a books_init 2>&1")
         assert "CHANGE:" not in out, (
             f"a books-init run against a reconciled library was not a no-op:\n{out}"
@@ -946,7 +943,7 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("test -s /tmp/shelfmark.sqlite")
 
     # -----------------------------------------------------------------------
-    # §6.16 idempotence under Arcane redeploys
+    # §6.16 idempotence under redeploys
     # -----------------------------------------------------------------------
     with subtest("re-running both oneshots is a no-op"):
         for service, container in [("kavita-config-init", "books_config_init"),
@@ -974,8 +971,8 @@ pkgs.testers.runNixOSTest {
         services_vm.shutdown()
         services_vm.start()
         services_vm.wait_for_unit("multi-user.target")
-        # /srv is tmpfs: the seed + decrypt path runs again, exactly as Arcane
-        # sync + the decrypt timer would on the real host.
+        # /srv is tmpfs: the seed + decrypt path runs again, exactly as the
+        # git sync + decrypt timer would on the real host.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/books/.env", timeout=120
         )

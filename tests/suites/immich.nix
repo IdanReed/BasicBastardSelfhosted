@@ -18,7 +18,7 @@
 #     secret rotates back
 #   - the full first boot: schema migrations + vchord/vector extension
 #     creation inside the healthcheck budget, admin seeded headlessly
-#     (POST /api/auth/admin-sign-up), idempotent under Arcane redeploys
+#     (POST /api/auth/admin-sign-up), idempotent under Komodo redeploys
 #   - the v3 API shapes the annex warns about (§0.4/§0.7): multipart upload
 #     with assetData/fileCreatedAt/fileModifiedAt only (no deviceId), API
 #     keys minted with a `permissions` array
@@ -80,7 +80,7 @@ let
     images."python_3_13-alpine" # immich-init (+ the suite's ML /ping probe)
   ];
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Only the immich stack is seeded — the other
   # stacks are the light suite's job — plus /srv/komodo for bootstrap-komodo.
   seedSrv = pkgs.runCommand "srv-seed-immich" { } ''
@@ -143,7 +143,7 @@ pkgs.testers.runNixOSTest {
         # decrypt-sops-envs.service and bootstrap-komodo.service both
         # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
         # /srv stays tmpfs ON PURPOSE: its post-reboot re-seed + re-decrypt is
-        # itself the production shape (Arcane sync + the decrypt timer).
+        # itself the production shape (git sync + the decrypt timer).
         #
         # /mnt is DIFFERENT from the media suite: a real ext4 on a persistent
         # qcow (auto-formatted on first boot only), because the reboot subtest
@@ -187,8 +187,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/photos 0755 root root -"
         ];
 
-        # Populate /srv before anything reads it — the stand-in for Arcane's
-        # git sync having already run. Re-runs on every boot (tmpfs /srv),
+        # Populate /srv before anything reads it — the stand-in for
+        # stack-git-sync having already run. Re-runs on every boot (tmpfs /srv),
         # which the reboot subtest depends on.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
@@ -430,7 +430,7 @@ pkgs.testers.runNixOSTest {
         assert code == "401", f"wrong-password login returned {code}"
 
     with subtest("immich-init is idempotent: a re-run logs zero CHANGE lines"):
-        # Every Arcane redeploy re-runs the oneshot; "already onboarded" must
+        # Every Komodo redeploy re-runs the oneshot; "already onboarded" must
         # be success, not failure, and must not claim a change.
         out = services_vm.succeed("docker start -a immich_init 2>&1")
         assert "CHANGE:" not in out, f"second immich-init run mutated:\n{out}"

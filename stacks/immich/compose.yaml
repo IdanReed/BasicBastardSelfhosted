@@ -26,7 +26,7 @@
 #     must reach the rendered file on the next stack up (annex §3 rotation
 #     coupling — the VPS secrets.sops.yaml copy rotates in the same motion).
 #   - immich-init seeds the admin headlessly (POST /api/auth/admin-sign-up,
-#     works exactly once) — no wizard, idempotent under Arcane redeploys.
+#     works exactly once) — no wizard, idempotent under redeploys.
 #
 # Backup contract (annex §5): container_name immich_db + POSTGRES_USER=immich
 # are LOAD-BEARING — nixos/backup-prepare.sh loops `docker exec ${svc}_db
@@ -64,12 +64,9 @@ services:
       - TZ=America/Chicago
       - IMMICH_CONFIG_FILE=/config/immich.json
       # DB_PASSWORD arrives from .env.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written; timer lands it ≤~1min
+    # after delivery), and the plain form aborts the whole stack. Residual
     # window: a deploy racing the first decrypt starts with unset vars — the
     # loud guard is each service's own healthcheck/startup failure.
     env_file:
@@ -209,7 +206,7 @@ services:
           echo "immich-config-init: CHANGE: rendered immich.json"
         fi
     volumes:
-      # Template rides Arcane's whole-directory sync (syncDirectory ON).
+      # Template rides the stack git sync with the compose file.
       - ./immich.json.template:/template/immich.json.template:ro
       - /mnt/fast/immich/config:/config
     # Long form with required:false ON PURPOSE (finding #11): see immich-server.

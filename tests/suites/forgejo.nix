@@ -6,8 +6,8 @@
 #
 # Boots ONLY the forgejo stack on the real services-VM config —
 # bootstrap-komodo is taken out of the boot path, the same trade
-# lib/mk-stack-suite.nix makes (the arcane boot chain is checks.services'
-# job, and the Arcane-driven GitOps loop against this same Forgejo is
+# lib/mk-stack-suite.nix makes (the komodo boot chain is checks.services'
+# job, and the Komodo-driven GitOps loop against this same Forgejo is
 # checks.gitops' job).
 #
 # Deliberately NOT covered here:
@@ -70,12 +70,12 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Keep Arcane out of the boot path: its multi-hundred-MB image and
-        # bootstrap ordering are irrelevant to proving the forgejo stack.
+        # Keep Komodo out of the boot path: its images and bootstrap
+        # ordering are irrelevant to proving the forgejo stack.
         #
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-komodo chain and Arcane itself — checks.services covers
-        # the chain, checks.gitops covers Arcane driving THIS forgejo.
+        # bootstrap-komodo chain and Komodo itself — checks.services covers
+        # the chain, checks.gitops covers Komodo driving THIS forgejo.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
         # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
@@ -111,8 +111,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/forgejo 0755 1000 1000 -"
         ];
 
-        # Populate /srv before anything reads it; on the real host Arcane's
-        # git sync plays this role.
+        # Populate /srv before anything reads it; on the real host
+        # stack-git-sync plays this role.
         systemd.services.seed-srv = {
           description = "Seed /srv with the forgejo stack (test only)";
           after = [ "srv.mount" ];
@@ -255,7 +255,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("git push over http WITH credentials lands the content"):
         # Token as the basic-auth password — the v1 access mode, and exactly
-        # what Arcane/CI will do against forgejo.svc.idanreed.com.
+        # what the git sync/CI will do against forgejo.svc.idanreed.com.
         push_url = f"http://{ADMIN}:{TOKEN}@127.0.0.1:{PORT}/{ADMIN}/proof.git"
         services_vm.succeed(
             "cd /root && rm -rf work && mkdir work && cd work && "
@@ -306,6 +306,9 @@ pkgs.testers.runNixOSTest {
             assert line.startswith("3000/tcp -> 127.0.0.1:"), (
                 f"unexpected published port: {line!r}"
             )
+        # Positive control first (immich/books precedent): without it a
+        # node-naming or routing regression makes both fail()s pass vacuously.
+        outsider.succeed("nc -z -w 5 services-vm 22")
         outsider.fail(f"nc -z -w 5 services-vm {PORT}")
         outsider.fail("nc -z -w 5 services-vm 3000")
 

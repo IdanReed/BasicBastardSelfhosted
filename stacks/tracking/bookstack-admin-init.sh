@@ -2,26 +2,17 @@
 # bookstack-admin-init — replaces BookStack's seeded admin, from INSIDE the
 # bookstack container (annex §3).
 #
-# Why it lives here rather than in an init container:
+# Why here rather than an init container: BookStack's initial migration
+# seeds `admin@admin.com` / `password` (no env override), its REST API needs
+# a UI-minted token, and the only tool is an artisan command — so something
+# must run inside this container. The alternatives were worse: a
+# socket-mounting oneshot widens socket access (the exact thing
+# keep-decryption-on-the-host exists to avoid), and a host-side `docker
+# exec` unit puts a piece of this stack outside the deploy plane.
 #
-# BookStack is the only service in this domain with no HTTP path to a first
-# admin. Its initial migration seeds `admin@admin.com` / `password` with no
-# env var to change it, and its REST API needs a token that can only be minted
-# through the UI. The only tool is an artisan command — which means running
-# something inside this container.
-#
-# The obvious options were both worse. A oneshot with the docker socket
-# mounted would add a SECOND socket-mounting container to the fleet, and
-# keeping the age key out of the one container that mounts the socket is
-# exactly why CLAUDE.md puts decryption on the host — widening socket access
-# to save a unit is a bad trade. A host-side systemd unit doing `docker exec`
-# works, but puts a piece of this stack outside the stack, where Arcane cannot
-# deploy it.
-#
-# LSIO images run every script in /custom-cont-init.d as root during s6 init,
-# before the application starts. That is a documented, supported extension
-# point, it needs no socket, and it ships with the stack. `with-contenv` in
-# the shebang is what gives the script the container's environment.
+# LSIO runs every script in /custom-cont-init.d as root during s6 init,
+# before the app — documented extension point, no socket, ships with the
+# stack. `with-contenv` gives it the container's environment.
 #
 # Contract:
 #   - `--initial` is what makes this idempotent: it UPDATES the seeded admin
@@ -52,22 +43,19 @@ esac
 # The app root is fixed by the image layout.
 cd /app/www || { log "FATAL: /app/www missing — image layout changed"; exit 0; }
 
-# Migrations have not necessarily run on a truly fresh volume, in which case
-# there is no users table yet and the command fails harmlessly; the next boot
-# picks it up. Deliberately not retried in a loop: s6 init blocking on a
-# database is how a container never starts.
+# On a truly fresh volume there may be no users table yet — the command
+# fails harmlessly and the next boot picks it up. Deliberately not retried
+# in a loop: s6 init blocking on a database is how a container never starts.
 #
-# ACCEPTED argv exposure: --password= is visible in /proc/<pid>/cmdline, which
-# is world-readable in the host PID namespace, for as long as this runs on each
-# boot. bookstack:create-admin takes the password only as a CLI option — no env
-# var, no file — and its fallback prompt needs a TTY that s6 init does not
-# give it, so there is nothing to move the secret into.
+# ACCEPTED argv exposure: --password= is visible in /proc/<pid>/cmdline
+# (world-readable in the host PID namespace) while this runs.
+# create-admin takes the password only as a CLI option — no env var, no
+# file — and its fallback prompt needs a TTY s6 init does not give it.
 # ServerNotes/issues/code-review-2026-08-31.md, "Accepted".
 #
 # Captured rather than piped through sed in the `if`: without pipefail the
-# pipeline's status is sed's (always 0), which logged CHANGE on every boot
-# and made the exit-2 branch unreachable. Capturing also lets exit 2 be told
-# apart from a real failure.
+# pipeline's status is sed's (always 0) — CHANGE logged every boot, exit-2
+# branch unreachable. Capturing also tells exit 2 from a real failure.
 out=$(php artisan bookstack:create-admin \
         --initial \
         --email="$BOOKSTACK_ADMIN_EMAIL" \

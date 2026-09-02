@@ -1,17 +1,12 @@
 #!/bin/bash
 #
-# Deploys NixOS to a Hetzner VPS using nixos-anywhere.
-# The AGE key is injected via --extra-files so sops-nix can decrypt secrets at boot.
+# DESTRUCTIVE: nixos-anywhere WIPES the target and installs NixOS.
+# The AGE key is injected via --extra-files so sops-nix can decrypt at boot.
 #
-# Prerequisites:
-#   1. Create Hetzner Cloud VPS (Ubuntu 22.04, add your SSH key)
-#   2. Note the public IP address
-#   3. Ensure sops_age_key.txt exists in parent directory
+# Prerequisites: Hetzner Cloud VPS (Ubuntu, your SSH key added), its public
+# IP, and the age key (workspace ../sops_age_key.txt or /var/lib/sops-nix).
 #
 # Usage: ./deploy.sh <VPS_IP>
-#
-# Example:
-#   ./deploy.sh 65.108.xx.xx
 
 set -euo pipefail
 
@@ -25,12 +20,10 @@ trap "rm -rf $EXTRA_FILES_DIR" EXIT
 echo "=== Headscale VPS Deployment ==="
 echo ""
 
-# The canonical copy of the key is root-only at /var/lib/sops-nix (the
-# sopsedit convention: it never moves into the workspace, each use costs a
-# sudo). A workspace-level ../sops_age_key.txt still wins if present, for
-# running this from a machine that is not the desktop. The temp copy lives
-# OUTSIDE $EXTRA_FILES_DIR on purpose — that whole directory ships to the
-# VPS filesystem root via --extra-files.
+# Canonical key is root-only at /var/lib/sops-nix (sopsedit convention:
+# never in the workspace, each use costs a sudo); a workspace copy wins if
+# present. The temp copy lives OUTSIDE $EXTRA_FILES_DIR on purpose — that
+# whole directory ships to the VPS filesystem root via --extra-files.
 if [[ ! -f "$AGE_KEY_FILE" && -e /var/lib/sops-nix/sops_age_key.txt ]]; then
     echo "> No workspace key; reading /var/lib/sops-nix (sudo)"
     AGE_KEY_TMP=$(mktemp)
@@ -40,7 +33,6 @@ if [[ ! -f "$AGE_KEY_FILE" && -e /var/lib/sops-nix/sops_age_key.txt ]]; then
     AGE_KEY_FILE="$AGE_KEY_TMP"
 fi
 
-# Check age key exists
 if [[ ! -f "$AGE_KEY_FILE" ]]; then
     echo "Error: AGE key not found at ../sops_age_key.txt or /var/lib/sops-nix/"
     echo ""
@@ -51,7 +43,6 @@ if [[ ! -f "$AGE_KEY_FILE" ]]; then
     exit 1
 fi
 
-# Validate age key format
 if ! grep -q "^AGE-SECRET-KEY-" "$AGE_KEY_FILE"; then
     echo "Error: $AGE_KEY_FILE doesn't look like an AGE private key"
     echo "It should start with: AGE-SECRET-KEY-"
@@ -60,7 +51,6 @@ fi
 
 echo "> AGE key found: $AGE_KEY_FILE"
 
-# Check SSH connectivity
 echo "> Testing SSH connection to $VPS_IP..."
 if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$VPS_IP" "echo ok" &>/dev/null; then
     echo "Error: Cannot SSH to root@$VPS_IP"
@@ -73,14 +63,12 @@ if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$VPS_IP" "echo ok" &>/dev/nu
 fi
 echo "> SSH connection OK"
 
-# Create extra-files directory structure
 echo "> Preparing AGE key for injection..."
 mkdir -p "$EXTRA_FILES_DIR/var/lib/sops-nix"
 cp "$AGE_KEY_FILE" "$EXTRA_FILES_DIR/var/lib/sops-nix/sops_age_key.txt"
 chmod 700 "$EXTRA_FILES_DIR/var/lib/sops-nix"
 chmod 600 "$EXTRA_FILES_DIR/var/lib/sops-nix/sops_age_key.txt"
 
-# Check if nix is available
 if ! command -v nix &>/dev/null; then
     echo "Error: nix command not found"
     echo "Install Nix: https://nixos.org/download.html"
@@ -99,10 +87,9 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# Run nixos-anywhere. Pinned to a release tag: this tool runs locally with
-# the age master key staged in $EXTRA_FILES_DIR and as root on the target,
-# so a floating ref would hand upstream's default branch both. Every image
-# in the fleet is pinned for the same reason. Bump deliberately.
+# Pinned to a release tag: this tool runs locally with the age master key
+# staged and as root on the target — a floating ref would hand upstream's
+# default branch both. Bump deliberately.
 nix run github:nix-community/nixos-anywhere/1.13.0 -- \
     --flake ".#headscale-vps" \
     --extra-files "$EXTRA_FILES_DIR" \

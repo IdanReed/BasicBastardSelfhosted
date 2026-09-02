@@ -62,9 +62,8 @@ let
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
-    # util is `up`'d whole, so ALL FOUR of its services need preloading —
-    # glance and it-tools were missing, and the offline VM surfaced it as a
-    # registry pull attempt (same omission as forward-auth.nix had).
+    # util is `up`'d whole, so ALL FOUR of its services need preloading — a
+    # missing one surfaces offline as a registry pull attempt.
     images."glanceapp_glance_v0_8_5"
     images."ghcr_io_sharevb_it-tools_2026_7_11"
     images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
@@ -463,8 +462,7 @@ pkgs.testers.runNixOSTest {
 
         # Poll ntfy for the CONTENT rather than gating on the notifier unit:
         # `systemctl show -p Result` reports "success" for a unit that has not
-        # finished (or even started) yet, so it cannot synchronise anything —
-        # it let the first version of this subtest race the delivery and lose.
+        # finished (or even started) yet, so it cannot synchronise anything.
         # since=all matters too: without it the poll endpoint only returns
         # messages that arrive after the request.
         try:
@@ -608,9 +606,11 @@ pkgs.testers.runNixOSTest {
             "mkdir -p /srv/stacks/latestack && "
             "cp /srv/stacks/ntfy/.sops.env /srv/stacks/latestack/.sops.env"
         )
-        # 150s, not one 60s tick: OnCalendar=minutely plus systemd's default
-        # AccuracySec=1min means a tick can land up to ~120s after the copy in
-        # the worst case; the slack on top keeps a slow VM from flaking.
+        # 150s: the unit pins AccuracySec=1s (nixos/configuration.nix), so
+        # the worst case is one ~60s tick + the decrypt itself; the slack on
+        # top keeps a slow VM from flaking. If that AccuracySec ever reverts
+        # to systemd's 1min default a tick can slip ~120s — the
+        # timer-accuracy lint holds the pin.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/latestack/.env", timeout=150
         )
@@ -626,10 +626,12 @@ pkgs.testers.runNixOSTest {
             f"late .env is owned {owner}, expected 1000:1000 (/srv/stacks world)"
 
         # And no mtime churn for everyone else: a tick that changes nothing
-        # must rewrite nothing (compose watches these files).
-        before = services_vm.succeed("stat -c '%Y' /srv/stacks/ntfy/.env").strip()
+        # must rewrite nothing (compose watches these files). %y, not %Y:
+        # nanosecond precision, so a rewrite landing in the same second as
+        # the before-read cannot hide.
+        before = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
         services_vm.succeed("systemctl start decrypt-sops-envs.service")
-        after = services_vm.succeed("stat -c '%Y' /srv/stacks/ntfy/.env").strip()
+        after = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
         assert before == after, "an unchanged .env was rewritten by a re-run"
 
     # -----------------------------------------------------------------------
@@ -645,7 +647,7 @@ pkgs.testers.runNixOSTest {
         outsider.succeed(f"{SSH} -i /etc/test-ssh-key idan@services-vm sudo -n true")
         methods = outsider.succeed(
             f"{SSH} -v -o PubkeyAuthentication=no idan@services-vm true 2>&1 "
-            "| grep 'Authentications that can continue' | head -1 || true"
+            "| grep 'Authentications that can continue' | head -1"
         )
         assert "publickey" in methods, f"never saw the auth offer: {methods!r}"
         assert "password" not in methods, f"sshd offers passwords: {methods!r}"

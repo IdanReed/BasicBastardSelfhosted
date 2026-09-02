@@ -1,6 +1,6 @@
 # Mounted at /etc/ssh/ssh_config (system-wide) inside the Backrest container
-# — NOT /root/.ssh/config, which ssh refuses unless root-owned; Arcane's sync
-# delivers files owned by PUID 1000.
+# — NOT /root/.ssh/config, which ssh refuses unless root-owned; the stack git
+# sync delivers files owned by PUID 1000.
 # Referenced by the repo URI "sftp:storagebox:/home/restic".
 #
 # Replace uXXXXXX with the Hetzner Storage Box sub-account username. Use a
@@ -16,13 +16,12 @@ Host storagebox
     User uXXXXXX
     IdentityFile /root/.ssh/id_ed25519
     IdentitiesOnly yes
-    # PINNED, not trust-on-first-use. `accept-new` (what this was until
-    # 2026-08-31) plus a known_hosts in the container's WRITABLE LAYER meant a
-    # fresh TOFU on every container recreate — an image bump, a compose edit,
-    # an Arcane redeploy — and each of those first uses would accept whatever
-    # answered, for a peer holding credentials that can `forget --prune` every
-    # backup. `yes` also closes the accept-new hole where a MITM simply offers
-    # a key TYPE the file has no entry for: all three of Hetzner's are listed.
+    # PINNED, not trust-on-first-use. `accept-new` plus a known_hosts in the
+    # container's WRITABLE LAYER means a fresh TOFU on every recreate (image
+    # bump, compose edit, redeploy), each accepting whatever answered — for a
+    # peer holding credentials that can `forget --prune` every backup. `yes`
+    # also closes the accept-new hole where a MITM offers a key TYPE the file
+    # has no entry for: all three of Hetzner's are listed.
     StrictHostKeyChecking yes
     # The pin itself, mounted read-only from ./known_hosts. GLOBAL rather than
     # the per-user file precisely because the per-user file is the ephemeral

@@ -1,57 +1,45 @@
 # Media stack — Jellyfin + *arr suite + qBittorrent-behind-Gluetun + ClamAV +
-# Cleanuparr. Design: ServerNotes/designs/service-media-stack.md, updated by
-# the research annex service-media-stack-research.md (the annex wins where
-# they disagree — ports come from _overview.md, which is authoritative).
+# Cleanuparr. Design: ServerNotes/designs/service-media-stack.md + research
+# annex service-media-stack-research.md (annex wins; ports from _overview.md).
 #
-# LOCKED DECISIONS (recorded in LONGRUN.md — do not revisit here):
-#   - x265/H265 is ENFORCED. Quality profiles come from Profilarr syncing the
-#     Dictionarry database ONLY ('1080p Efficient' default, '2160p Efficient'
-#     for 4K). Never link trash-pcd — it reintroduces TRaSH's x264 bias
-#     (their "golden rule" scores the 'x265 (HD)' custom format at -10000).
-#     media-init.sh additionally zeroes any negative x265/HEVC score it finds.
-#   - Gluetun is fully PROVIDER-AGNOSTIC: this file hardcodes nothing about
-#     any VPN provider. Provider choice, credentials, server selection and
-#     port-forwarding on/off all flow from .sops.env — gluetun receives the
-#     whole decrypted .env, so any gluetun variable can be added there without
-#     touching this file (add it to .sops.env.example and the test fixture
-#     too: the stack-env-drift lint keeps the three key sets identical).
-#   - DEFERRED services and the cost of deferring them:
-#       flaresolverr — some Cloudflare-protected indexers will not resolve in
-#                      Prowlarr until it exists;
-#       unpackerr    — RAR'd releases will not import (mitigate by preferring
-#                      non-scene releases);
-#       qbit_manage  — no automated orphan/share-limit/tag hygiene yet
-#                      (_overview.md keeps its row for the follow-up).
-#   - Seerr stays on stable v3.4.1 with Jellyfin-account auth. The
-#     preview-new-oidc tag lacks the CVE-2026-40175 patch from v3.1.1 —
-#     security call, re-evaluate when OIDC lands in a stable tag. Seerr is
-#     session-authed (NOT forward-authed): its mobile/API clients
+# LOCKED DECISIONS (LONGRUN.md — do not revisit here):
+#   - x265/H265 is ENFORCED. Profiles come from Profilarr syncing Dictionarry
+#     ONLY ('1080p Efficient' default, '2160p Efficient' for 4K). Never link
+#     trash-pcd — TRaSH's "golden rule" scores 'x265 (HD)' at -10000;
+#     media-init.sh additionally zeroes any negative x265/HEVC score.
+#   - Gluetun is fully PROVIDER-AGNOSTIC: provider, credentials, server
+#     selection and port-forwarding all flow from .sops.env (gluetun gets the
+#     whole decrypted .env). New gluetun vars also go in .sops.env.example and
+#     the test fixture — the stack-env-drift lint keeps the key sets identical.
+#   - DEFERRED, with costs: flaresolverr (some Cloudflare-protected indexers
+#     will not resolve), unpackerr (RAR'd releases will not import),
+#     qbit_manage (no orphan/share-limit/tag hygiene; _overview.md keeps its
+#     row for the follow-up).
+#   - Seerr stays on stable v3.4.1 + Jellyfin-account auth: preview-new-oidc
+#     lacks the CVE-2026-40175 patch — re-evaluate when OIDC lands in a
+#     stable tag. Session-authed, NOT forward-authed: its mobile/API clients
 #     authenticate themselves.
 #
-# Layout (hardlink requirement — ONE filesystem, /mnt/slow):
+# Layout (hardlink requirement — ONE filesystem, /mnt/slow; media-init
+# creates the skeleton, owned 1000:1000):
 #   /mnt/slow/data/downloads/{movies,tv}   qBittorrent categories
 #   /mnt/slow/data/downloads/audiobooks    qBittorrent category, NOT arr-imported
 #   /mnt/slow/data/downloads/.incomplete   qBittorrent temp path
 #   /mnt/slow/data/downloads/.quarantine   ClamAV quarantine (scan-downloads.sh)
 #   /mnt/slow/data/media/{movies,tv}       Radarr/Sonarr roots, Jellyfin libraries
 #   /mnt/slow/books/drop                   audiobook hand-off to the books stack
-# media-init creates this skeleton (owned 1000:1000) on first run.
 #
-# AUDIOBOOKS (Option C — ServerNotes/designs/audiobook-acquisition.md). The
-# books stack has no way to acquire an audiobook (Shelfmark's source is
-# ebook-only), and the answer is deliberately NOT to let it reach in here:
-# acquisition happens on this side, in qBittorrent, under the `audiobooks`
-# category, and scan-downloads.sh MOVES a clean entry into
-# /mnt/slow/books/drop once it has a verdict. What that buys is that the
-# books stack needs no network path to qBittorrent and no mount of this
-# download tree; what it costs, accepted explicitly, is that audiobooks are
-# requested from here rather than from Shelfmark's UI, and that a promoted
-# entry stops seeding because it leaves the download tree.
+# Audiobooks (Option C — ServerNotes/designs/audiobook-acquisition.md):
+# acquisition happens HERE, in qBittorrent's `audiobooks` category, and
+# scan-downloads.sh MOVES a clean entry into /mnt/slow/books/drop after its
+# verdict. Buys: the books stack needs no network path to qBittorrent and no
+# mount of the download tree. Costs, accepted: requests happen here (not
+# Shelfmark's UI) and a promoted entry stops seeding.
 #
-# Wiring (headless, no UI clicks — nixflix pattern): all API keys are
-# pre-determined secrets pushed DOWN via the Servarr {APP}__AUTH__APIKEY env
-# overrides; media-init.sh (oneshot) reconciles the rest over REST. Its log is
-# the audit trail — "CHANGE:" lines on first run, zero on the second.
+# Wiring (headless, nixflix pattern): API keys are pushed DOWN via the
+# Servarr {APP}__AUTH__APIKEY env overrides; media-init.sh (oneshot)
+# reconciles the rest over REST — "CHANGE:" lines on first run, zero on the
+# second (the audit trail).
 #
 # Ports 10050-10058 per _overview.md, all loopback-bound (Caddy on the host
 # network is the only path in). qBittorrent publishes NOTHING itself: its UI
@@ -68,46 +56,43 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    # qBittorrent's WebUI, published from the shared netns. Loopback-bound like
-    # every other stack port; the kill-switch never applies to this path
-    # (docker's DNAT + gluetun's FIREWALL_INPUT_PORTS below).
+    # qBittorrent's WebUI, published from the shared netns; loopback-bound.
+    # The kill-switch never applies to this path (docker DNAT +
+    # FIREWALL_INPUT_PORTS below).
     ports:
       - '127.0.0.1:10057:8080'
     volumes:
       - /mnt/fast/gluetun:/gluetun
     environment:
       - TZ=America/Chicago
-      # The qbit WebUI port inside the netns — without this gluetun's firewall
-      # drops the published-port traffic and the UI is dead even on loopback.
+      # Without this gluetun's firewall drops the published-port traffic —
+      # UI dead even on loopback.
       - FIREWALL_INPUT_PORTS=8080
-      # Provider-agnostic port-forwarding hook: only runs when the .env sets
-      # VPN_PORT_FORWARDING=on (provider must support it). Posts the forwarded
-      # port straight into qbit's API; needs WebUI\LocalHostAuth=false, which
-      # qbit-init seeds. {{PORTS}} is gluetun's placeholder (v3.39+); the old
-      # /tmp/gluetun/forwarded_port file polling is deprecated.
+      # Port-forwarding hook: runs only when .env sets VPN_PORT_FORWARDING=on.
+      # Posts the forwarded port into qbit's API; needs WebUI\LocalHostAuth=false
+      # (qbit-init seeds it). {{PORTS}} is gluetun's v3.39+ placeholder; the
+      # /tmp/gluetun/forwarded_port polling is deprecated.
       - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'''
       # Everything provider-specific (VPN_SERVICE_PROVIDER, VPN_TYPE,
       # credentials, server selection, VPN_PORT_FORWARDING) comes from .env.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
-    # window: a deploy racing the first decrypt starts with unset vars — the
-    # loud guard is each service's own healthcheck/startup failure.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (timer, ≤~1min), and the plain form aborts
+    # the whole stack when .env is absent. Long form is docker compose's own
+    # contract, so it holds under either deploy plane. Residual window: a
+    # deploy racing the first decrypt starts with unset vars — the loud guard
+    # is each service's own healthcheck/startup failure.
     env_file:
       - path: .env
         required: false
-    # Healthcheck: the image's own (dials through the tunnel). While the VPN is
-    # unreachable gluetun stays UNHEALTHY with the firewall UP — that is the
-    # offline-testable kill-switch condition the media suite asserts.
+    # Healthcheck: the image's own (dials through the tunnel). VPN unreachable
+    # = UNHEALTHY with the firewall UP — the offline-testable kill-switch
+    # condition the media suite asserts.
     restart: unless-stopped
 
   # Seeds qBittorrent.conf ONCE, before qbit's first start — the LSIO image
-  # otherwise prints a random temporary password on every start and there is
-  # no env override for WebUI credentials. qBittorrent owns the file
-  # afterwards (it rewrites it on shutdown); to re-seed, delete it.
+  # otherwise prints a random temporary password every start (no env override
+  # for WebUI credentials). qBittorrent owns the file afterwards (rewrites it
+  # on shutdown); to re-seed, delete it.
   qbit-init:
     image: alpine:3.21
     container_name: media_qbit_init
@@ -122,15 +107,13 @@ services:
           echo "qbit-init: $$conf exists — qBittorrent owns it, not touching"
           exit 0
         fi
-        # Hard error on unset/empty, like backrest's config-init: an empty
-        # PBKDF2 hash would seed a WebUI nobody can ever log in to.
+        # Hard error on unset/empty: an empty PBKDF2 hash would seed a WebUI
+        # nobody can ever log in to.
         [ -n "$${QBIT_WEBUI_USER:-}" ] || { echo "qbit-init: FATAL: QBIT_WEBUI_USER unset (decrypt race? finding #11)" >&2; exit 1; }
         [ -n "$${QBIT_WEBUI_PASSWORD_PBKDF2:-}" ] || { echo "qbit-init: FATAL: QBIT_WEBUI_PASSWORD_PBKDF2 unset" >&2; exit 1; }
         mkdir -p "$$conf_dir"
-        # Tmpfile+rename, not a direct write: the -f guard above is
-        # touch-once, so a crash mid-write would otherwise leave a partial
-        # conf no later run repairs (qBittorrent then runs on a random temp
-        # password until someone deletes the file by hand).
+        # Tmpfile+rename: the -f guard above is touch-once, so a crash
+        # mid-write would leave a partial conf no later run repairs.
         {
           printf '%s\n' '[AutoRun]'
           printf '%s\n' 'enabled=false'
@@ -146,15 +129,13 @@ services:
           printf '%s\n' '[Preferences]'
           printf '%s\n' "WebUI\\Username=$$QBIT_WEBUI_USER"
           printf '%s\n' "WebUI\\Password_PBKDF2=\"$$QBIT_WEBUI_PASSWORD_PBKDF2\""
-          # qBittorrent's host-header validation 401s any Host whose PORT
-          # differs from its own listen port (found by the media suite: it
-          # rejects both the 127.0.0.1:10057 publish and Caddy's
-          # qbit.svc.idanreed.com vhost — production access would be dead,
-          # with nothing in the logs). It is a DNS-rebinding defense, moot
-          # here: the UI is loopback-bound and Caddy is the only path in.
+          # Host-header validation 401s any Host whose PORT differs from the
+          # listen port (found by the media suite: rejects both the :10057
+          # publish and Caddy's vhost, nothing in the logs). DNS-rebinding
+          # defense, moot here: loopback-bound, Caddy is the only path in.
           printf '%s\n' 'WebUI\HostHeaderValidation=false'
-          # Localhost bypass is what lets gluetun's port-forward UP_COMMAND
-          # post the listen port without credentials (same netns = localhost).
+          # Lets gluetun's port-forward UP_COMMAND post the listen port
+          # without credentials (same netns = localhost).
           printf '%s\n' 'WebUI\LocalHostAuth=false'
           printf '%s\n' 'WebUI\Port=8080'
         } > "$$conf.tmp"
@@ -172,16 +153,14 @@ services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:5.2.3
     container_name: qbittorrent
-    # Shares gluetun's network namespace: no ports of its own, no DNS of its
-    # own (gluetun's DNS-over-TLS through the tunnel), and ZERO egress when
-    # the tunnel is down — gluetun's firewall default-drops from process
-    # start. The arrs reach it at http://gluetun:8080 (compose DNS name).
+    # Shares gluetun's netns: no ports or DNS of its own, ZERO egress when
+    # the tunnel is down (gluetun's firewall default-drops from process
+    # start). The arrs reach it at http://gluetun:8080.
     network_mode: 'service:gluetun'
     depends_on:
       gluetun:
         # restart: true is load-bearing: a gluetun restart re-creates the
-        # netns, and without it qbit keeps a dead namespace (classic failure
-        # mode — no network until someone notices).
+        # netns; without it qbit keeps a dead namespace.
         condition: service_healthy
         restart: true
       qbit-init:
@@ -195,8 +174,7 @@ services:
       - /mnt/fast/qbittorrent/config:/config
       - /mnt/slow/data/downloads:/data/downloads
     healthcheck:
-      # The WebUI answering on the shared netns' loopback. Deliberately NOT a
-      # connectivity check — tunnel state is gluetun's healthcheck's job.
+      # Deliberately NOT a connectivity check — tunnel state is gluetun's job.
       test: ['CMD-SHELL', 'curl -sf http://localhost:8080 >/dev/null']
       interval: 30s
       timeout: 10s
@@ -216,18 +194,16 @@ services:
       - /mnt/fast/jellyfin/config:/config
       - /mnt/fast/jellyfin/cache:/cache
       - /mnt/slow/data/media:/data/media:ro
-      # GPU passthrough, GUARDED so it degrades in VMs: a `devices:` stanza
-      # hard-fails container creation when the node is absent, so the Arc
-      # A380's render node rides a bind mount (docker creates an empty dir if
-      # /dev/dri is missing) plus the cgroup rule below, which is valid
-      # whether or not the device exists. No /dev/dri -> software transcode,
-      # container still starts. The media suite asserts this stanza EXISTS
-      # (drift guard); actual HW transcode is untestable in a VM — documented
-      # in the research annex (§8.18).
+      # GPU passthrough, GUARDED to degrade in VMs: a `devices:` stanza
+      # hard-fails creation when the node is absent, so the render node rides
+      # a bind mount (docker makes an empty dir if /dev/dri is missing) plus
+      # the cgroup rule below (valid either way). No /dev/dri -> software
+      # transcode, container still starts. The media suite asserts the stanza
+      # EXISTS; HW transcode is untestable in a VM (annex §8.18).
       - /dev/dri:/dev/dri
     device_cgroup_rules:
-      # 226 = DRM major (card*/renderD*): allow read/write/mknod so VA-API
-      # can open the render node through the bind mount above.
+      # 226 = DRM major (card*/renderD*): rmw so VA-API can open the render
+      # node through the bind mount above.
       - 'c 226:* rmw'
     environment:
       - TZ=America/Chicago
@@ -241,11 +217,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # The arrs. API keys arrive via the Servarr {APP}__AUTH__APIKEY env
-  # overrides from .env — pushed down, never scraped up, so every consumer
-  # (media-init, Prowlarr, the future suite) knows them a priori.
-  # AUTH__METHOD=External because Caddy's forward auth (Authentik) is the
-  # login in front of these; the API still requires the key.
+  # The arrs. API keys arrive via the Servarr {APP}__AUTH__APIKEY overrides
+  # from .env — pushed down, never scraped up, so every consumer knows them a
+  # priori. AUTH__METHOD=External: Caddy's forward auth (Authentik) is the
+  # login in front; the API still requires the key.
   # ---------------------------------------------------------------------------
   radarr:
     image: lscr.io/linuxserver/radarr:6.3.0
@@ -254,8 +229,8 @@ services:
       - '127.0.0.1:10051:7878'
     volumes:
       - /mnt/fast/radarr/config:/config
-      # Whole /data on purpose: downloads AND library on one mount is what
-      # makes imports hardlinks instead of copies.
+      # Whole /data on purpose: downloads AND library on one mount = hardlink
+      # imports, not copies.
       - /mnt/slow/data:/data
     environment:
       - PUID=1000
@@ -302,8 +277,8 @@ services:
     restart: unless-stopped
 
   prowlarr:
-    # NOT behind gluetun on purpose (nixflix's default, citing TRaSH):
-    # indexers dialled through VPN exit IPs attract Cloudflare blocks.
+    # NOT behind gluetun on purpose: indexers dialled through VPN exit IPs
+    # attract Cloudflare blocks.
     image: lscr.io/linuxserver/prowlarr:2.5.2
     container_name: prowlarr
     ports:
@@ -330,14 +305,13 @@ services:
 
   # ---------------------------------------------------------------------------
   # Seerr — request UI. Stable tag + Jellyfin-account auth (locked decision,
-  # see header). First-run setup (Jellyfin + arr connections) is currently a
-  # UI step; headless settings.json seeding is an open annex question (§6).
+  # see header). First-run setup is a UI step; headless settings.json seeding
+  # is an open annex question (§6).
   # ---------------------------------------------------------------------------
-  # Seerr's image runs as USER node (uid 1000) and cannot chown its own
-  # config dir — unlike the LSIO images (PUID entrypoint runs as root) and
-  # jellyfin (runs as root). docker creates bind-mount sources root-owned, so
-  # without this oneshot seerr crash-loops on EACCES mkdir /app/config/logs
-  # on ANY first deploy (found by the media suite, not just a test artifact).
+  # Seerr runs as USER node (uid 1000) and cannot chown its own config dir;
+  # docker creates bind-mount sources root-owned, so without this oneshot
+  # seerr crash-loops on EACCES mkdir /app/config/logs on ANY first deploy
+  # (found by the media suite, not just a test artifact).
   seerr-init:
     image: alpine:3.21
     container_name: media_seerr_init
@@ -372,9 +346,9 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Bazarr — subtitles. Arr connections are seeded via its config file/API on
-  # first login for now (annex §6: which of config.yaml/config.ini Bazarr 1.6
-  # reads is UNCERTAIN — verify before scripting it into media-init).
+  # Bazarr — subtitles. Arr connections seeded on first login for now (annex
+  # §6: which of config.yaml/config.ini Bazarr 1.6 reads is UNCERTAIN —
+  # verify before scripting it into media-init).
   # ---------------------------------------------------------------------------
   bazarr:
     image: lscr.io/linuxserver/bazarr:1.6.0
@@ -417,8 +391,8 @@ services:
       - path: .env
         required: false
     healthcheck:
-      # The image's toolset is not pinned down (python base): try curl, then
-      # busybox wget, then python itself. Any 2xx/3xx on the SPA root is up.
+      # Toolset not pinned down (python base): try curl, wget, then python.
+      # Any 2xx/3xx on the SPA root is up.
       test:
         - CMD-SHELL
         - >-
@@ -432,10 +406,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Cleanuparr — strike system for stalled/failed queue items and the
-  # pre-download malware blocker. v2 is configured through its web UI into
-  # /config (EF-Core/SQLite), NOT env vars (annex §0.2); point the malware
-  # blocker at a LOCAL blocklist file under /config so it works offline.
+  # Cleanuparr — strike system for stalled/failed queue items + pre-download
+  # malware blocker. v2 is configured through its web UI into /config, NOT
+  # env vars (annex §0.2); point the malware blocker at a LOCAL blocklist
+  # under /config so it works offline.
   # ---------------------------------------------------------------------------
   cleanuparr:
     image: ghcr.io/cleanuparr/cleanuparr:2.10.5
@@ -459,25 +433,23 @@ services:
 
   # ---------------------------------------------------------------------------
   # ClamAV — clamd on the stack-internal network (:3310, never published).
-  # Post-download content scanning; Cleanuparr's malware blocker is the
-  # pre-download pattern layer, and the two meet indirectly: a quarantined
-  # payload fails arr import, Cleanuparr strikes it out and blocklists the
-  # release. No custom glue needed (annex §5).
+  # Post-download scanning; Cleanuparr is the pre-download layer, and the two
+  # meet indirectly: a quarantined payload fails arr import, Cleanuparr
+  # strikes it out and blocklists the release. No custom glue (annex §5).
   # ---------------------------------------------------------------------------
   clamav:
     image: clamav/clamav:1.5
     container_name: clamav
     volumes:
-      # freshclam state — the image ships a database (the _base variant does
-      # not, which is why the plain tag is pinned), freshclam updates it when
-      # egress exists.
+      # freshclam state — the plain tag ships a database (the _base variant
+      # does not, hence the pin); freshclam updates it when egress exists.
       - /mnt/fast/clamav/db:/var/lib/clamav
-      # Read-only: clamd only ever reads scan targets. Same path as qbit and
-      # the scanner see, so path-based clamdscan requests resolve.
+      # Read-only: clamd only reads scan targets. Same path the scanner sees,
+      # so path-based clamdscan requests resolve.
       - /mnt/slow/data/downloads:/data/downloads:ro
     healthcheck:
-      # Self-contained PING/PONG over clamd's TCP socket (busybox nc is in the
-      # alpine-based image) — no dependence on helper-script paths.
+      # PING/PONG over clamd's TCP socket (busybox nc is in the image) — no
+      # dependence on helper-script paths.
       test: ['CMD-SHELL', 'echo PING | nc -w 5 127.0.0.1 3310 | grep -q PONG']
       interval: 60s
       timeout: 10s
@@ -486,11 +458,11 @@ services:
       start_period: 300s
     restart: unless-stopped
 
-  # Poll-watcher (annex §5 recommended shape): scans completed downloads via
-  # clamd-over-TCP, moves infected files to .quarantine/, pings ntfy. Runs in
-  # a SECOND container from the same pinned image — the scan loop stays out
-  # of qbit's gluetun-firewalled netns, so no FIREWALL_OUTBOUND_SUBNETS
-  # widening, and clamdscan ships in the image (no apk at boot, finding #4).
+  # Poll-watcher (annex §5): scans completed downloads via clamd-over-TCP,
+  # quarantines infected files, pings ntfy. A SECOND container from the same
+  # pinned image — keeps the scan loop out of qbit's gluetun-firewalled netns
+  # (no FIREWALL_OUTBOUND_SUBNETS widening), and clamdscan ships in the image
+  # (no apk at boot, finding #4).
   clamav-scanner:
     image: clamav/clamav:1.5
     container_name: clamav_scanner
@@ -504,25 +476,20 @@ services:
       - AUDIOBOOK_DROP_DIR=/drop
     volumes:
       - ./scan-downloads.sh:/scan/scan-downloads.sh:ro
-      # The WHOLE /data tree, read-write, and BOTH halves of that are
-      # load-bearing:
-      #   - write, because quarantining is not a rename. /mnt/slow is one
-      #     filesystem on purpose (hardlink imports, see the layout header),
-      #     so `mv` into .quarantine moves a directory entry and leaves the
-      #     inode — and every hardlink an *arr already made into
-      #     /data/media still resolved to the infected content. The scanner
-      #     unlinks those links itself.
-      #   - /data rather than /data/downloads, because those links live in
-      #     /data/media and a container cannot unlink what it cannot see.
-      # clamd's own mount stays narrow and read-only (see the clamav
-      # service): it is handed paths under /data/downloads and nothing else.
+      # The WHOLE /data tree, read-write — BOTH halves load-bearing:
+      #   - write: quarantining is not a rename. /mnt/slow is one filesystem
+      #     (hardlink imports), so `mv` into .quarantine leaves the inode and
+      #     every *arr hardlink in /data/media still resolves to the infected
+      #     content — the scanner unlinks those itself.
+      #   - /data, not /data/downloads: those links live in /data/media and a
+      #     container cannot unlink what it cannot see.
+      # clamd's own mount stays narrow and read-only (see the clamav service).
       - /mnt/slow/data:/data
-      # The books stack's drop directory — the ONE thing the two stacks
-      # share (Option C, ServerNotes/designs/audiobook-acquisition.md). A
-      # clean `audiobooks` download is moved in here after its scan verdict;
-      # audiobookshelf has it read-only as a folder of its Audiobooks
-      # library. No network path between the stacks, and the books stack
-      # never sees the download tree.
+      # The books stack's drop directory — the ONE thing the two stacks share
+      # (Option C, ServerNotes/designs/audiobook-acquisition.md). Clean
+      # `audiobooks` entries are moved in after their verdict; audiobookshelf
+      # reads it read-only. No network path between the stacks, and the books
+      # stack never sees the download tree.
       - /mnt/slow/books/drop:/drop
       - /mnt/fast/clamav/scanner:/state
     networks:
@@ -531,11 +498,10 @@ services:
       - default
       - homelab
     healthcheck:
-      # MUST override the image's inherited healthcheck: it probes a LOCAL
-      # clamd, which this container deliberately does not run, so the scanner
-      # would sit permanently unhealthy (and fail any `up --wait`). Healthy
-      # here means the path the scan loop actually depends on: clamd over TCP
-      # in the clamav service.
+      # MUST override the inherited healthcheck: it probes a LOCAL clamd this
+      # container deliberately does not run — permanently unhealthy, fails
+      # any `up --wait`. Healthy = the path the loop depends on: clamd over
+      # TCP in the clamav service.
       test: ['CMD-SHELL', 'echo PING | nc -w 5 clamav 3310 | grep -q PONG']
       interval: 30s
       timeout: 10s
@@ -545,30 +511,27 @@ services:
 
   # ---------------------------------------------------------------------------
   # media-init — idempotent oneshot reconciler (nixflix pattern, annex §6):
-  # /data skeleton, root folders, qbit download client (host gluetun:8080),
-  # the `audiobooks` qbit category (nothing *arr-shaped owns that one),
-  # TRaSH naming (codec tokens kept — the on-disk x265 audit trail), Prowlarr
-  # -> arr application push-sync, Dictionarry link into Profilarr, and the
-  # x265 scoring guard. Safe under Arcane redeploys: second run logs zero
-  # CHANGE lines (the suite greps for exactly that).
+  # /data skeleton, root folders, qbit download client, the `audiobooks` qbit
+  # category, TRaSH naming (codec tokens = on-disk x265 audit trail),
+  # Prowlarr -> arr push-sync, Dictionarry link into Profilarr, x265 scoring
+  # guard. Redeploy-safe: second run logs zero CHANGE lines (the suite greps
+  # for exactly that).
   #
   # python3-alpine rather than curl+jq: no official image ships both, apk at
   # container start is banned (finding #4 — registry outage = stack outage,
-  # and the offline suite could never pass), and the naming/profile merges
-  # need real JSON manipulation anyway.
+  # offline suite could never pass), and the merges need real JSON anyway.
   # ---------------------------------------------------------------------------
   media-init:
     image: python:3.13-alpine
     container_name: media_init
     entrypoint: ['/bin/sh', '/init/media-init.sh']
     depends_on:
-      # Deliberately NOT gluetun/qbittorrent: with the tunnel down gluetun
-      # never turns healthy and qbittorrent never starts, and media-init must
-      # still reconcile everything else. The download-client POST is the one
-      # step that needs qbit answering (the arrs' connection test runs even
-      # with forceSave=true — severity:error failures are not overridable);
-      # media-init retries it for ~2min, then degrades to a loud WARN that
-      # the next run (any Arcane redeploy) reconciles.
+      # Deliberately NOT gluetun/qbittorrent: tunnel down = gluetun never
+      # healthy = qbit never starts, and media-init must still reconcile the
+      # rest. The download-client POST is the one step that needs qbit
+      # (forceSave=true does not override severity:error connection failures);
+      # media-init retries ~2min, then degrades to a loud WARN the next run
+      # (any redeploy) reconciles.
       radarr:
         condition: service_healthy
       sonarr:

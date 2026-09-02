@@ -81,7 +81,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -181,10 +181,9 @@ pkgs.testers.runNixOSTest {
         assert any("(path:" in n for n in names), sorted(names)[:5]
 
     with subtest("🚨 an EMPTY config directory is a hard startup failure"):
-        # ErrNoEndpointOrSuiteInConfig. This is the right behaviour — a config
-        # that syncs empty must not come up monitoring nothing and reporting
-        # green — and it is worth pinning, because "starts with no endpoints"
-        # is exactly the silent-success shape this whole campaign keeps finding.
+        # ErrNoEndpointOrSuiteInConfig: a config that syncs empty must not
+        # come up monitoring nothing and reporting green — pinned so that
+        # silent-success shape cannot regress.
         services_vm.succeed("mkdir -p /tmp/emptycfg && : > /tmp/emptycfg/config.yaml")
         services_vm.fail(
             "docker run --rm --name bkg-gatus-empty "

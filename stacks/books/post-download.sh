@@ -23,7 +23,7 @@
 #
 # THIS FILE MUST BE MODE 755 (unlike the other init scripts in the fleet,
 # which compose invokes as `/bin/sh <script>` and can stay 644): shelfmark
-# execs it directly. If Arcane's gitops sync ever fails to preserve the
+# execs it directly. If the stack git sync ever fails to preserve the
 # executable bit, the hook stops firing AND — because the exec failure is a
 # non-zero result — every completed download is marked Error. The books suite
 # invokes it exactly the way shelfmark does, so a lost bit fails a test here

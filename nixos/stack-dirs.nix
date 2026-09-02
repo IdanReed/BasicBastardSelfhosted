@@ -65,12 +65,8 @@
     # none — it must run as root to read every service's data through the
     # /mnt/{fast,slow}:ro mounts — and config-init is plain alpine, also root.
     # config/ must stay WRITABLE (:ro breaks it): Backrest rewrites config.json
-    # whenever anything changes in the UI.
-    #
-    # These had NO rule at all until the generator landed: stacks/backrest was
-    # never in the tmpfiles-ownership lint's hand-maintained COMPOSE_FILES list.
-    # tests/suites/backrest.nix has run green against exactly this ownership
-    # since it was written (backrest.nix, systemd.tmpfiles.rules).
+    # whenever anything changes in the UI. tests/suites/backrest.nix runs green
+    # against exactly this ownership.
     "d /mnt/fast/backrest 0755 root root -"
     "d /mnt/fast/backrest/cache 0755 root root -"
     "d /mnt/fast/backrest/config 0755 root root -"
@@ -154,12 +150,8 @@
     # root:root. The official caddy image runs as root (it binds 80/443 and here
     # network_mode: host), so the ACME account key and the issued certificates
     # under data/ are written as root. Nothing else on the host reads them.
-    #
-    # This stack was never in the tmpfiles-ownership lint's COMPOSE_FILES list
-    # either, so both directories were left to docker to create. That happened to
-    # be harmless — docker's default IS root:root — but it was luck, not a
-    # decision: tests/suites/services-vm.nix and tailnet.nix pre-create
-    # /mnt/fast/caddy root-owned and have run green throughout.
+    # tests/suites/services-vm.nix and tailnet.nix pre-create /mnt/fast/caddy
+    # root-owned and run green.
     "d /mnt/fast/caddy 0755 root root -"
     "d /mnt/fast/caddy/config 0755 root root -"
     "d /mnt/fast/caddy/data 0755 root root -"
@@ -205,12 +197,8 @@
     # 104:107 = the image's `USER onlyoffice`. NOT load-bearing: the compose
     # file sets `user: root` following upstream, because the entrypoint edits
     # /etc/nginx and /app/onlyoffice/config before dropping into supervisord.
-    # These are declared anyway so that dropping `user: root` later degrades
-    # rather than breaking, and so the ownership matches what the app expects
-    # if it ever drops privileges internally. (An earlier version of this
-    # comment claimed root ownership was what broke the first suite run. It
-    # was not — that was mysqldata below. Corrected rather than left to be
-    # believed.)
+    # Declared anyway so that dropping `user: root` later degrades rather than
+    # breaking. (The first suite run broke on mysqldata below, not on this.)
     "d /mnt/fast/docspace/app 0755 104 107 -"
     "d /mnt/fast/docspace/ds-data 0755 root root -"
     "d /mnt/fast/docspace/ds-lib 0755 root root -"
@@ -243,15 +231,10 @@
     #
     # /data holds app.ini — which carries the SECRET_KEY, INTERNAL_TOKEN and JWT
     # secrets Forgejo self-generates on first start — plus gitea.db and every
-    # repository. There is no .sops.env for this stack precisely because that
-    # material lives here instead, which makes this directory the whole of
-    # Forgejo's identity and state.
-    #
-    # Never had a rule before the generator: stacks/forgejo was missing from the
-    # tmpfiles-ownership lint's COMPOSE_FILES list, so this — the git ROOT for the
-    # homelab, including the compose repo the deploy-plane manager (Komodo, via the
-    # host stack-git-sync unit) pulls from — was left to docker to create
-    # root-owned.
+    # repository, including the compose repo the deploy plane (Komodo, via the
+    # host stack-git-sync unit) pulls from. There is no .sops.env for this stack
+    # precisely because that material lives here instead, which makes this
+    # directory the whole of Forgejo's identity and state.
     "d /mnt/fast/forgejo 0755 1000 1000 -"
     "d /mnt/fast/forgejo/data 0755 1000 1000 -"
     # === gatus (bind sources in its compose.yaml) ===
@@ -469,13 +452,11 @@
     # root:root. The ntfy image declares no USER and the compose sets none, so
     # `ntfy serve` runs as root and owns both trees. lib/ holds the auth database
     # (user.db) and the attachment store; cache/ holds cache.db, the recent-message
-    # buffer, which is deliberately transient — see the backup-coverage allowlist.
+    # buffer, deliberately transient — see the backup-coverage allowlist.
     #
-    # Another stack that was missing from the tmpfiles-ownership lint's
-    # COMPOSE_FILES list. It is the single place every failure in the fleet gets
-    # reported, so it silently failing to start would take the alert path with it;
-    # tests/suites/backrest.nix and services-vm.nix both pre-create these
-    # root-owned and have run green throughout.
+    # The single place every failure in the fleet gets reported: silently failing
+    # to start would take the alert path with it. tests/suites/backrest.nix and
+    # services-vm.nix pre-create these root-owned and run green.
     "d /mnt/fast/ntfy 0755 root root -"
     "d /mnt/fast/ntfy/cache 0755 root root -"
     "d /mnt/fast/ntfy/lib 0755 root root -"
@@ -508,9 +489,6 @@
     # before dropping privileges, and the postgres image chowns pgdata itself from
     # its root entrypoint. tests/suites/paperless.nix creates exactly these six
     # directories root-owned and runs the whole document pipeline against them.
-    #
-    # Missing from the tmpfiles-ownership lint's COMPOSE_FILES list until the
-    # generator landed — five bind sources with no rule.
     "d /mnt/fast/paperless 0755 root root -"
     "d /mnt/fast/paperless/consume 0755 root root -"
     "d /mnt/fast/paperless/data 0755 root root -"

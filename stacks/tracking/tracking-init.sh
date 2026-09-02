@@ -2,17 +2,16 @@
 # tracking-init — headless first-run for Homebox and Karakeep (annex §3).
 # Runs in python:3.13-alpine as a oneshot once both are healthy.
 #
-# BookStack is deliberately NOT handled here: it has no HTTP path to a first
-# admin at all, so it is provisioned from inside its own container by
-# bookstack-admin-init.sh.
+# BookStack is deliberately NOT handled here (no HTTP path to a first
+# admin) — see bookstack-admin-init.sh.
 #
 # Contract (media-init pattern):
 #   - Every mutation logs "tracking-init: CHANGE: ...". A second run — every
-#     Arcane redeploy reruns this container — must log ZERO change lines.
+#     redeploy reruns this container — must log ZERO change lines.
 #   - Unset credentials are a HARD error (decrypt race, finding #11).
 #
-# Both apps have the same pleasant property: the FIRST user created becomes
-# the owner/admin, with no separate promotion step.
+# Both apps: the FIRST user created becomes the owner/admin, no promotion
+# step.
 set -eu
 
 exec python3 - <<'PY'
@@ -92,19 +91,12 @@ try:
     change(f"homebox owner {os.environ['HOMEBOX_ADMIN_EMAIL']} registered")
 except urllib.error.HTTPError as e:
     body = detail(e)
-    # 🚨 Homebox answers **500**, not a 4xx, for an already-registered email:
-    #     {"error":"ent: constraint failed: constraint failed: UNIQUE
-    #      constraint failed: users.email (2067)"}
-    # The ent constraint violation is not translated into a client error at
-    # all. Verified from a suite run — the second pass of this script exited 1
-    # and broke the idempotency contract, which is exactly the failure that
-    # every Arcane redeploy would have hit.
-    #
-    # So the accepted set includes 500, and a UNIQUE-constraint body is treated
-    # as "already exists". That is deliberately narrow: a 500 for any OTHER
-    # reason must still be fatal, because "the server broke" and "the user is
-    # already there" are not the same thing and only the body distinguishes
-    # them here.
+    # 🚨 Homebox answers **500**, not 4xx, for an already-registered email
+    # ("UNIQUE constraint failed: users.email") — verified from a suite run
+    # where the second pass exited 1, exactly what every redeploy would hit.
+    # So 500 + UNIQUE-constraint body = "already exists", deliberately
+    # narrow: any OTHER 500 stays fatal — only the body distinguishes "the
+    # server broke" from "the user is already there".
     already_exists = (
         e.code in (400, 409, 422)
         or (e.code == 500 and "UNIQUE constraint failed: users.email" in body)
@@ -163,19 +155,13 @@ except urllib.error.HTTPError as e:
 # browser cookie.
 #
 # 🚨 THE KEY NAME MUST BE UNIQUE PER RUN. A fixed name works exactly once:
-# the second call returns
-#   500 {"code":"INTERNAL_SERVER_ERROR","path":"apiKeys.exchange"}
-# — a unique-constraint violation surfaced as a generic 500, with nothing in
-# the body to distinguish it from a real fault. An earlier version of this
-# script used the fixed name "tracking-init" and a comment claiming the cost
-# was "one key accumulates per redeploy". That was wrong in the worse
-# direction: it did not accumulate, it made every redeploy exit 1. Found by
-# the suite rerunning this container, which is the only way to find it.
-#
-# So: mint under a nonce name, verify, then revoke it again. That keeps the
-# credential check on EVERY run — silent password drift is what it exists for,
-# and `users.create` returning a duplicate error says nothing about the
-# password — without leaving a key behind each time.
+# the second call returns 500 INTERNAL_SERVER_ERROR (a unique-constraint
+# violation surfaced generically, indistinguishable from a real fault), so
+# a fixed name made every redeploy exit 1 (found by the suite rerunning
+# this container). Mint under a nonce name, verify, revoke — the credential
+# check runs EVERY time (silent password drift is what it exists for;
+# users.create's duplicate error says nothing about the password) without
+# leaving a key behind.
 nonce = str(int(time.time()))
 key_name = f"tracking-init-{nonce}"
 try:
@@ -195,11 +181,9 @@ if not key.get("key"):
     sys.exit(f"tracking-init: FATAL: apiKeys.exchange returned no key: {res!r}")
 log("karakeep credentials verified (api key mintable)")
 
-# Best-effort cleanup, deliberately NOT fatal. The verification above has
-# already done its job by this point, and failing the whole provisioning run
-# over a leftover verification key would be the wrong trade — but say so out
-# loud, because a key nobody knows about is worse than one they were told to
-# revoke.
+# Best-effort cleanup, deliberately NOT fatal: failing provisioning over a
+# leftover verification key is the wrong trade — but say so out loud; a key
+# nobody knows about is worse than one they were told to revoke.
 if key.get("id"):
     try:
         call(f"{KARAKEEP}/api/trpc/apiKeys.revoke", "POST",

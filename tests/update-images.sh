@@ -143,25 +143,15 @@ for pin in "${PINS[@]}"; do
   # them. Computing the hash without them and retagging in Nix yields a
   # fixed-output hash mismatch at build time.
   #
-  # RETRIED, and the stderr is KEPT. This used to be a single attempt with
-  # `2>/dev/null` and the message "no such tag in the registry" — which is a
-  # claim the script had not actually checked. nix-prefetch-docker exits
-  # non-zero for a manifest 404, a registry 5xx, a rate limit, a TLS reset and
-  # a mid-pull disconnect alike, and the big multi-hundred-megabyte images
-  # (immich-machine-learning is the repeat offender) hit the transient ones
-  # often enough that a full run kept coming back with a "deploy-blocking"
-  # finding for a tag that resolved fine on the next attempt. Blaming the
-  # compose file for a network blip is worse than useless: it sends you
-  # looking for a tag-shape bug that does not exist.
-  #
-  # Independently confirmed by the operator on main, whose own fix noted TWO
-  # consecutive full runs each producing exactly ONE phantom "missing" image
-  # (prowlarr, then immich-ml) that skopeo found present moments later. That
-  # version kept `2>/dev/null` and the "no such tag in the registry" wording,
-  # so it still asserted a cause it had discarded the evidence for; this one
-  # keeps the stderr and says only what it can support. Backoff is 10s/20s
-  # rather than 5s/10s for the same reason — the failures are transient and
-  # worth waiting out.
+  # RETRIED, and the stderr is KEPT: nix-prefetch-docker exits non-zero for a
+  # manifest 404, a registry 5xx, a rate limit, a TLS reset and a mid-pull
+  # disconnect alike, and the big images (immich-machine-learning is the
+  # repeat offender) hit the transient ones often enough to produce phantom
+  # "deploy-blocking" findings — operator-confirmed on main: TWO consecutive
+  # full runs each flagged exactly ONE "missing" image (prowlarr, then
+  # immich-ml) that skopeo found present moments later. So keep the stderr,
+  # claim only what it supports, and back off 10s/20s — the failures are
+  # transient and worth waiting out.
   errfile=$(mktemp)
   meta=""
   for attempt in 1 2 3; do

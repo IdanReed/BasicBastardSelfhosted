@@ -99,9 +99,11 @@ Beyond "it parses":
   not `0.0.0.0`; metrics on loopback only; every stack port loopback-only;
   Caddy on the services VM bound to the tailnet IP alone.
 - **Firewall negatives**: the off-tailnet `outsider` node can reach 22/80/443
-  on the VPS and nothing else — 9000 and 9443 in particular, which were open
-  before `modules/caddy.nix` landed and exposed Authentik's admin interface
-  over plain HTTP.
+  on the VPS while a curated sweep of the ports that matter is refused (the
+  vps suite itself is explicit that this is a sweep, not literally "nothing
+  else") — 9000 and 9443 in particular, which were open before
+  `modules/caddy.nix` landed and exposed Authentik's admin interface over
+  plain HTTP.
 - **ACME for real**: Caddy runs its actual ACME client through a real HTTP-01
   challenge against Pebble. Only the CA differs from production.
 - **A real tailnet**: both hosts join via `tailscale-autoconnect` — including
@@ -146,10 +148,11 @@ Honest list; do not read a green suite as covering these.
 | Hetzner / Proxmox provisioning | `nixos-anywhere`, `qmrestore`, cloud-init. |
 | The literal `/dev/sda` in `disk-config.nix` | The `disko` suite (disko's own `makeDiskoTest`) formats, mounts, and legacy-boots the config — but rewrites the device to the runner's virtio disk, and overrides disko's own `boot.loader.grub.devices` derivation with its test scaffolding's. |
 | The production secret *values* decrypting | Needs the production key. The `sops-declared` lint verifies the real files' key sets (sops-yaml keys are plaintext). |
-| Caddy's cloudflare-dns plugin at work | Since 2026-08-30 the suites load the REAL published fork image (a broken xcaddy build fails caddy startup and the services suite with it), but they force `tls internal`, so the plugin's DNS-01 flow against Cloudflare is never exercised. |
+| Caddy's cloudflare-dns plugin at work | The fork image is NOT yet published, so `update-images.sh` substitutes upstream `caddy:2.11.2` re-tagged under the fork's name (the `SUBSTITUTES` list there, recorded in `images.nix`'s header) — a broken xcaddy fork build fails **nothing** in the harness. The suites also force `tls internal`, so the plugin's DNS-01 flow is never exercised either way. Once the fork is published, drop the substitution so a broken build fails caddy startup here. |
 | Hetzner Storage Box itself | The backrest suite runs a real in-VM SFTP endpoint instead — key, sftp, restic, snapshots all real; only the endpoint's address is substituted. |
 | **The Storage Box leg of a restore** | `restore` now closes the local loop for real (2026-09-01): `restic init` → snapshot of `/mnt/fast/_dumps` + the vaultwarden identity canary → destroy → `restic restore` → sha256 **and** mode/owner verification → the service starts on the restored key → `check --read-data`, plus two hardened negative controls (wrong password; byte-flipped pack on a copy checked clean first). `RESTIC_PASSWORD` arrives through the real sops→`.env` path. What is STILL not proven: the sftp/Hetzner leg end to end (`backrest` proves init+snapshot over sftp but never restores from it), forward-compat against a repo older than the VM that reads it, and reading the *production* password out of a burning building. So the **twice-yearly manual ritual in `ServerNotes/designs/core-disaster-recovery.md` remains the real control** — narrower now, not replaced. |
-| Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. |
+| Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. Likewise forward-auth: the suite proves the gate redirects, is scoped to bentopdf, and rejects spoofed `X-Forwarded-Host` — but no authenticated request ever passes THROUGH the gate to the app. |
+| A rotation reaching the blueprint's `!Env` provider row | `rotation` stops at the worker's container environment; `authentik` reads the provider rows but never rotates. Whether Authentik re-reads `!Env` into the provider row after a rotation is asserted by neither — a manual check after the first real rotation. |
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
 | A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
 | Immich ML inference / live OIDC login | The immich suite runs offline: model download and every inference *result* (smart search hits, faces, duplicates) need egress — the suite pins the degraded-but-healthy state instead (ML answers `/ping`, smart search errors, server stays up). The OIDC browser + `app.immich:///oauth-callback` flow is doubly uncoverable (needs a browser AND v3's secure-OAuth default vs the suite's plain-HTTP loopback); the rendered config contract and the authentik-side provider are asserted instead. |
@@ -1693,8 +1696,16 @@ rate limit measured: ~10k of a 30k-line burst survived the default with NO
 "Suppressed" note, 30k/30k with `rateLimitBurst=0` — see findings 74–76),
 **proxmox-boot**
 (image boots, cloud-init key, sops decrypt), disko,
-stackChecks (which alone cover the four newest stacks — silverbullet,
-outline, ghostfolio, owl — no dedicated suites yet), and the proxmox image
+**silverbullet** (the git-sync path against a REAL in-VM Forgejo: seed,
+mirror round-trip on a page name with a space, PAT hygiene, the finding-#66
+remote-wins reconcile with its superseded branch and alert, the
+CONTAINER_BOOT.md canary, and healthy-through-a-dead-remote — the legs the
+generic stackCheck structurally cannot see), **outline** (everything provable
+without an IdP: the locally-built OIDC redirect leg parsed and matched
+byte-for-byte against the compose/blueprint contract, migrations + the
+zero-users first-login pin, uid-1001 data-volume writes, the pg_dumpall
+backup contract, stateless redis), stackChecks (generic coverage for
+ghostfolio, logging, ntfy, owl, util and both wikis), and the proxmox image
 build gate (`run.sh all` covers the lot).
 **`gatus` is green on its FIRST run** — the only suite in this campaign to
 manage that. **`docspace`** is green at 12 subtests after two real failures

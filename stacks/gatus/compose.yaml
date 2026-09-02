@@ -34,9 +34,10 @@ services:
       # A single-file ro bind, named by GATUS_CONFIG_PATH below. An EMPTY
       # config is a hard startup failure (ErrNoEndpointOrSuiteInConfig)
       # rather than a silent no-op — the right behaviour, and the suite pins
-      # it. Same caveat as backrest's config bind: Arcane sync delivers via
-      # rename-replace, which never reaches the mounted inode, so a synced
-      # gatus.yaml change needs a container recreate to take effect.
+      # it. Same caveat as backrest's config bind: the stack git sync
+      # delivers via rename-replace, which never reaches the mounted inode,
+      # so a synced gatus.yaml change needs a container recreate to take
+      # effect.
       - ./gatus.yaml:/config/config.yaml:ro
       - /mnt/fast/gatus:/data
     environment:

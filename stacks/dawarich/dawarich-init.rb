@@ -21,7 +21,7 @@
 # same reason decrypt-sops-envs lives on the host (CLAUDE.md).
 #
 # Every mutation logs "dawarich-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must log ZERO change lines.
+# redeploy reruns this container — must log ZERO change lines.
 
 DEMO_EMAIL = 'demo@dawarich.app'
 

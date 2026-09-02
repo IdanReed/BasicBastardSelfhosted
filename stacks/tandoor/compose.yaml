@@ -2,43 +2,30 @@
 # Design: ServerNotes/designs/service-food-stack-research.md.
 # _overview.md owns the port/auth row.
 #
-# SEPARATE FROM WGER, and the reason is a real collision rather than tidiness.
-# Both are Django apps and both read the BARE name `SECRET_KEY` out of their
-# environment — and `env_file` hands every service in a project the whole .env.
-# In one stack, whichever value that key held would silently become both apps'
-# session-signing key. `POSTGRES_PASSWORD` collides the same way between the
-# two databases. Prefixing one of them does not help: that is finding #25 in
-# reverse — a prefixed name is invisible to the app, and a bare name is
-# invisible to the OTHER app's need for a different value. Two stacks, two
-# .env files, no collision.
+# SEPARATE FROM WGER — a real collision, not tidiness: both Django apps read
+# the BARE name `SECRET_KEY` (and `POSTGRES_PASSWORD`), and `env_file` hands
+# every service the whole .env — one stack would silently share one
+# session-signing key. Prefixing does not help (finding #25 in reverse).
+# Two stacks, two .env files, no collision.
 #
-# Backup contract: `tandoor` is already named in nixos/backup-prepare.sh's
-# pg_dumpall loop, so `container_name: tandoor_db` and `POSTGRES_USER=tandoor`
-# below are load-bearing.
+# Backup contract: `tandoor` is named in nixos/backup-prepare.sh's pg_dumpall
+# loop, so `container_name: tandoor_db` and `POSTGRES_USER=tandoor` are
+# load-bearing.
 
 services:
   # ---------------------------------------------------------------------------
   # tandoor — recipe manager.
   #
-  # 🚨 THE DATABASE SETTINGS ARE IN THIS FILE, NOT IN .env, AND THAT IS THE
-  # WHOLE POINT. recipes/settings.py reads
-  #     'ENGINE': DB_ENGINE if DB_ENGINE else 'django.db.backends.sqlite3'
-  #     'NAME':   POSTGRES_DB if POSTGRES_DB else 'db.sqlite3'
-  # with no error, no warning and no log line when they are absent — and
-  # boot.sh's Postgres wait loop is itself guarded on DB_ENGINE being set, so
-  # the container does not even wait for the database it is not going to use.
-  #
-  # Line that up with finding #11: `env_file` is `required: false`, and
-  # CLAUDE.md names the residual window — a deploy racing the first decrypt
-  # starts with unset vars, and "each service's own healthcheck is the loud
-  # guard". For Tandoor it is NOT a loud guard. A deploy that wins that race
-  # gets a green healthcheck, an ephemeral SQLite file inside the container's
-  # writable layer, a working setup wizard, and an idle tandoor_db. Recipes
-  # entered in that window vanish on the next `up`, while backup-prepare.sh
-  # dumps the real (empty) Postgres nightly with rc=0.
-  #
-  # None of these five is a secret, so putting them here costs nothing and
-  # turns that silent failure into a Postgres authentication error.
+  # 🚨 DATABASE SETTINGS LIVE HERE, NOT IN .env — THE WHOLE POINT.
+  # settings.py falls back to sqlite when DB_ENGINE/POSTGRES_DB are absent,
+  # with no error, warning, or log line (boot.sh's Postgres wait is itself
+  # gated on DB_ENGINE). So finding #11's residual window is NOT a loud
+  # guard for Tandoor: a deploy that races the decrypt gets a green
+  # healthcheck, an ephemeral SQLite in the writable layer, a working setup
+  # wizard, and an idle tandoor_db — recipes vanish on the next `up` while
+  # backup-prepare.sh dumps the real (empty) Postgres nightly with rc=0.
+  # None of the five is a secret; pinning them here turns that silent
+  # failure into a Postgres authentication error.
   # ---------------------------------------------------------------------------
   tandoor:
     # No `v` prefix.
@@ -65,10 +52,9 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=tandoor
       - POSTGRES_USER=tandoor
-      # ⚠ DATABASE_URL is deliberately UNSET and must stay that way.
-      # setup_database() checks `if DATABASE_URL:` BEFORE the POSTGRES_* branch,
-      # so setting it for any reason silently overrides everything above and
-      # defeats the mitigation. It also accepts a sqlite:// scheme.
+      # ⚠ DATABASE_URL is deliberately UNSET and must stay that way: it is
+      # checked BEFORE the POSTGRES_* branch, so setting it silently
+      # overrides everything above (and accepts sqlite://).
       - ALLOWED_HOSTS=tandoor.svc.idanreed.com,127.0.0.1,localhost
       - CSRF_TRUSTED_ORIGINS=https://tandoor.svc.idanreed.com
       # Nginx inside the container serves media; gunicorn should not.
@@ -77,38 +63,26 @@ services:
       - ENABLE_SIGNUP=0
       # POSTGRES_PASSWORD and SECRET_KEY arrive from .env.
       # ⚠ An unset SECRET_KEY does NOT crash: settings.py falls back to the
-      # literal 'INSECURE_STANDARD_KEY_SET_IN_ENV', which is in the public
-      # repository, and boot.sh prints a [WARNING] and carries on. Every session
-      # cookie and password-reset token would then be signed with a published
-      # key — and because the fallback is CONSTANT, nothing looks wrong across
-      # restarts. Same class as finding #17 (Kavita's placeholder TokenKey).
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync validates the compose in a staging directory where the host-side
-    # decrypted .env cannot exist yet, and a plain `env_file: .env` aborts the
-    # sync of the whole stack.
+      # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a
+      # [WARNING] — every session cookie signed with a public, CONSTANT key,
+      # so nothing looks wrong across restarts. Same class as finding #17.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the first host-side decrypt, and the plain form aborts the whole
+    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # ⚠ `wget`, not `curl`: the image installs curl as part of a
-      # `--virtual .build-deps` package and `apk --purge del`s it in the same
-      # layer. Busybox wget is what is left (base is python:3.13-alpine).
-      #
-      # /openapi/ is drf-spectacular's schema view, mounted at the root and
-      # served with AllowAny. It introspects every serializer, so it is not
-      # free — keep the interval at 30s and do not lower it.
-      #
-      # ⚠ A `/`-shaped probe would prove nothing: cookbook.urls ends in a
-      # CATCH-ALL to the Vue frontend, so a nonexistent path returns 200 with
-      # the SPA shell rather than 404. Any assertion of the form "path → 200"
-      # is meaningless here unless it also checks the body.
-      #
-      # What this does NOT cover: a Postgres that dies AFTER start. boot.sh's
-      # pg_isready loop kills the container loudly if the database is dead at
-      # start; a later failure leaves this green. The honest mitigation is
-      # Gatus on a real page (stacks/gatus/gatus.yaml probes both the Caddy
-      # vhost and loopback with the real Host:), not a cleverer probe. Kuma
-      # was rejected and never built.
+      # ⚠ `wget`, not `curl`: the image apk-dels curl with its build-deps;
+      # busybox wget is what is left.
+      # /openapi/ is drf-spectacular's schema view, AllowAny. It introspects
+      # every serializer — not free; keep the interval at 30s.
+      # ⚠ A `/`-shaped probe proves nothing: cookbook.urls ends in a
+      # CATCH-ALL to the Vue frontend, so any path returns 200 with the SPA
+      # shell — "path → 200" is meaningless without checking the body.
+      # NOT covered: a Postgres that dies AFTER start (boot.sh only gates
+      # start). The honest mitigation is Gatus on a real page, not a
+      # cleverer probe.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '10', 'http://127.0.0.1:80/openapi/']
       interval: 30s
       timeout: 15s
@@ -140,13 +114,10 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # tandoor_init — headless first-run (annex §3.1). See tandoor-init.py for why
-  # it exists; in short, Tandoor's only path to a first superuser is a browser
-  # form, and there is no management command for it.
-  #
-  # Runs from the SAME image so the ORM, the settings and django-scopes are the
-  # ones the app actually uses — a python:alpine sidecar could not import
-  # cookbook at all.
+  # tandoor_init — headless first-run (annex §3.1; see tandoor-init.py):
+  # Tandoor's only path to a first superuser is a browser form, no management
+  # command. Runs from the SAME image so the ORM/settings/django-scopes are
+  # the app's own — a python:alpine sidecar could not import cookbook.
   # ---------------------------------------------------------------------------
   tandoor_init:
     image: ghcr.io/tandoorrecipes/recipes:2.6.13

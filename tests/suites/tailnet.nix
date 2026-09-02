@@ -72,7 +72,7 @@ let
             sys.exit(1)
 
         # trust_pool: verify the VPS's pebble cert on the forward_auth hop
-        # (same injection as forward-auth.nix; arcane is `import protected`)
+        # (same injection as forward-auth.nix; komodo is `import protected`)
         fa = re.compile(
             r"(\n\t\ttransport http \{\n"
             r"\t\t\ttls_server_name auth\.idanreed\.com\n)")
@@ -105,6 +105,10 @@ let
 in
 pkgs.testers.runNixOSTest {
   name = "tailnet";
+
+  # Three nodes and a real tailnet formation; the 3600s default is tight on
+  # a loaded runner (wait iterations cost command duration + 1s each).
+  globalTimeout = 7200;
 
   nodes = {
     vps =
@@ -379,7 +383,7 @@ pkgs.testers.runNixOSTest {
       with subtest("Caddy binds only the tailnet IP"):
           # TAILNET_IP is a secret on the real host because it is not known
           # until the node has joined. Same thing here: rewrite it, then bring
-          # the stack up as Arcane would.
+          # the stack up as Komodo would.
           services_vm.succeed(
               f"sed -i 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
           )
@@ -412,11 +416,15 @@ pkgs.testers.runNixOSTest {
           # retry until 2xx/3xx: a cold embedded outpost 503s the first
           # protected requests while it loads applications, and the bare
           # http_code curl "succeeds" on a 503, so poll on the code itself.
+          # case-matched, NOT `-lt 400`: a refused/dead connection prints
+          # 000 and `test 000 -lt 400` is true, so the old form passed with
+          # nothing answering at all (the forward-auth.nix idiom).
           client.wait_until_succeeds(
-              f"test $(curl -sk --max-time 10 "
+              f"c=$(curl -sk --max-time 10 "
               f"--resolve komodo.svc.idanreed.com:443:{svc_ip} "
               "https://komodo.svc.idanreed.com/ "
-              "-o /dev/null -w '%{http_code}') -lt 400", timeout=180
+              "-o /dev/null -w '%{http_code}'); "
+              "case $c in 2??|3??) true ;; *) false ;; esac", timeout=180
           )
 
       with subtest("unknown subdomains 404 rather than returning a blank 200"):
@@ -506,8 +514,8 @@ pkgs.testers.runNixOSTest {
           # "tailnet down".
           client.succeed(f"nc -z -w 5 {svc_ip} 443")
 
-          # Arcane (docker socket = root-equivalent) and ntfy must not answer
-          # on the tailnet IP.
+          # Komodo Core (root-equivalent via Periphery's docker socket) and
+          # ntfy must not answer on the tailnet IP.
           client.fail(f"nc -z -w 5 {svc_ip} 10000")
           client.fail(f"curl -sf --max-time 5 http://{svc_ip}:10000/ -o /dev/null")
           client.fail(f"nc -z -w 5 {svc_ip} 10001")

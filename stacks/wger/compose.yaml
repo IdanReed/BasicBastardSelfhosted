@@ -2,17 +2,15 @@
 # Design: ServerNotes/designs/service-food-stack-research.md.
 # _overview.md owns the port/auth row.
 #
-# SEPARATE FROM TANDOOR — see stacks/tandoor/compose.yaml's header. Both read
-# the bare `SECRET_KEY` from their environment, and `env_file` gives every
-# service in a project the whole .env, so one stack would have silently shared
-# one signing key between two applications.
+# SEPARATE FROM TANDOOR — see stacks/tandoor/compose.yaml's header (bare
+# `SECRET_KEY` collision through env_file).
 #
-# THREE containers plus a cache, and the nginx one is not optional: wger/server
+# THREE containers plus a cache; the nginx one is not optional — wger/server
 # serves no static files at all.
 #
-# Backup contract: `wger` is already named in nixos/backup-prepare.sh's
-# pg_dumpall loop, so `container_name: wger_db` and `POSTGRES_USER=wger` below
-# are load-bearing.
+# Backup contract: `wger` is named in nixos/backup-prepare.sh's pg_dumpall
+# loop, so `container_name: wger_db` and `POSTGRES_USER=wger` are
+# load-bearing.
 
 services:
   # ---------------------------------------------------------------------------
@@ -70,27 +68,23 @@ services:
       - DJANGO_CACHE_CLIENT_CLASS=django_redis.client.DefaultClient
       - DJANGO_MEDIA_ROOT=/home/wger/media
       - DJANGO_STATIC_ROOT=/home/wger/static
-      # 🚨 EVERY ONE OF THESE IS EGRESS AT STARTUP (finding #4's class). The
-      # entrypoint reads all five, and with any of them true a tailnet-only
-      # host spends its boot trying to reach the internet — and an offline VM
-      # suite hangs. They are named explicitly rather than left to their
-      # defaults precisely because "what does this container fetch at start"
-      # should be answerable by reading the compose file.
+      # 🚨 EVERY ONE OF THESE IS EGRESS AT STARTUP (finding #4's class): any
+      # true and a tailnet-only boot hangs on the internet (and the offline
+      # suite with it). Named explicitly so "what does this fetch at start"
+      # is answerable from the compose file.
       - LOAD_ONLINE_FIXTURES_ON_STARTUP=False
       - DOWNLOAD_EXERCISE_IMAGES_ON_STARTUP=False
       - DOWNLOAD_EXERCISE_VIDEOS_ON_STARTUP=False
       - SYNC_EXERCISES_ON_STARTUP=False
       - SYNC_INGREDIENTS_ON_STARTUP=False
-      # No celery, no beat container. Everything the periodic tasks do here is
-      # an ingredient/exercise sync against the internet, which this host does
-      # not have.
+      # No celery/beat: the periodic tasks are all internet syncs this host
+      # cannot make.
       - USE_CELERY=False
       - ENABLE_EMAIL=False
       - EXPOSE_PROMETHEUS_METRICS=False
-      # Behind Caddy AND the nginx sidecar. django-axes locks an account after
-      # repeated failures and keys on the client IP; with a loopback publish
-      # every request arrives from the docker bridge gateway, so without a
-      # correct proxy count the first few typos would lock out everyone.
+      # Behind Caddy AND the nginx sidecar. django-axes keys lockouts on
+      # client IP; every request arrives from the bridge gateway, so a wrong
+      # proxy count = a few typos lock out everyone.
       - AXES_IPWARE_PROXY_COUNT=2
       - NUMBER_OF_PROXIES=2
       # SECRET_KEY and DJANGO_DB_PASSWORD arrive from .env — bare names,
@@ -136,11 +130,9 @@ services:
     environment:
       - TZ=America/Chicago
     healthcheck:
-      # Probes THROUGH nginx to the app, not nginx itself. Upstream's sidecar
-      # healthcheck is `service nginx status` — no HTTP at all, so it cannot
-      # detect a broken proxy_pass or an unresolvable upstream, which is the
-      # only interesting way this container fails. Sixth instance of finding
-      # #16 in this campaign.
+      # Probes THROUGH nginx to the app: upstream's `service nginx status`
+      # cannot detect a broken proxy_pass or unresolvable upstream — the
+      # only interesting way this container fails (finding #16).
       test: ['CMD-SHELL', 'wget -q -O /dev/null -T 10 http://127.0.0.1:80/api/v2/version/']
       interval: 30s
       timeout: 15s

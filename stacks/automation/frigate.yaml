@@ -1,18 +1,17 @@
 # Frigate config (annex §3.3). Git-managed, mounted read-only at
 # /config/config.yml.
 #
-# Read this before editing: FrigateBaseModel sets ConfigDict(extra="forbid"),
-# so ONE unknown or stale key is a hard ValidationError — and Frigate does not
-# crash on that, it starts in SAFE MODE with zero cameras and MQTT off, while
-# the container reports healthy. `--validate-config` is checked after that
-# fallback and prints "your config file is valid" regardless, so it cannot be
-# used to check this file. The automation suite asserts
-# `/api/config` -> safe_mode == false; that is the only reliable signal.
+# FrigateBaseModel sets ConfigDict(extra="forbid"): ONE unknown or stale key
+# is a hard ValidationError — and Frigate does not crash on that, it starts
+# in SAFE MODE (zero cameras, MQTT off) while reporting healthy.
+# `--validate-config` runs after that fallback and exits 0 regardless, so it
+# cannot check this file; the suite's `/api/config` -> safe_mode == false is
+# the only reliable signal.
 #
-# Keys deleted in recent majors, listed because the previous design doc used
-# one of them: record.retain (-> record.continuous + record.motion, 0.17-0),
-# record.events (-> record.alerts + record.detections, 0.15-0),
-# live.stream_name (-> live.streams, 0.16-0).
+# Keys deleted in recent majors (the previous design doc used one):
+# record.retain (-> record.continuous + record.motion, 0.17-0), record.events
+# (-> record.alerts + record.detections, 0.15-0), live.stream_name
+# (-> live.streams, 0.16-0).
 
 # Pinned so the config migrator has nothing to do. Without this Frigate would
 # try to rewrite this file on every boot and log a benign failure, because the
@@ -25,21 +24,15 @@ mqtt:
   host: mosquitto
   port: 1883
   user: frigate
-  # SINGLE braces: this is python str.format over the FRIGATE_-prefixed
-  # environment, not shell interpolation. It works on exactly six fields
-  # (mqtt.host/user/password, proxy.auth_secret, camera ffmpeg input paths,
-  # genai.api_key) — which is why this stack needs no config-init container.
-  # A literal { or } anywhere in one of those values raises, and lands you in
-  # safe mode.
+  # SINGLE braces: python str.format over the FRIGATE_-prefixed environment,
+  # not shell. Works on exactly six fields (see compose). A literal { or } in
+  # one of those values raises — and lands you in safe mode.
   password: "{FRIGATE_MQTT_PASSWORD}"
 
 detectors:
-  # PRODUCTION VALUE. A missing Coral is a crash LOOP, not a degradation: the
-  # edgetpu delegate re-raises, and Frigate's watchdog notices the dead
-  # detector process within 10s and sends SIGTERM to PID 1. The test suite
-  # therefore overrides this one block with `type: cpu` — the tested config
-  # differs from the deployed config in exactly the block that fails hardest
-  # if it is wrong, which is stated plainly in the annex rather than hidden.
+  # PRODUCTION VALUE. A missing Coral is a crash LOOP, not a degradation (see
+  # the compose header); the suite overrides this one block with `type: cpu`,
+  # so the tested config differs from the deployed one exactly here.
   coral:
     type: edgetpu
     device: usb
