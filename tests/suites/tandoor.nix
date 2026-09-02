@@ -89,7 +89,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -273,11 +273,9 @@ pkgs.testers.runNixOSTest {
         assert status("/openapi/") == 200, "the schema view should be AllowAny"
         # NOT `== 200`. The catch-all hands the request to the Vue frontend,
         # which for an unauthenticated caller redirects to the login page — so
-        # the observable fact is "never 404", not "always 200". The first
-        # version of this assertion said 200 and failed against a 302, which is
-        # itself the lesson: the point is that Tandoor's router does not 404, so
-        # no assertion of the form "unknown path -> 404" can work here and no
-        # "path -> 200" proves a route exists.
+        # the observable fact is "never 404", not "always 200": no assertion
+        # of the form "unknown path -> 404" can work here and no "path -> 200"
+        # proves a route exists.
         code = status("/this-path-does-not-exist-" + "x" * 12)
         assert code != 404, (
             f"an unknown path returned {code}; the Vue catch-all appears to be "

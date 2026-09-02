@@ -19,7 +19,7 @@
 #     in Redis, and separately pins the 301 that makes the header necessary.
 #   - **The mirror image: APPLICATION_HOSTS.** config.host_authorization
 #     explicitly EXCLUDES /api/v1/health, so a typo'd hostname yields a healthy
-#     container, a happy Arcane, a happy Uptime Kuma — and a 403 "Blocked
+#     container, a happy deploy plane, a happy Uptime Kuma — and a 403 "Blocked
 #     hosts" on every browser request. The suite fetches `/` with the real Host
 #     header and, as the control, with a wrong one.
 #   - **The seeded admin is GONE.** db/seeds.rb creates
@@ -31,7 +31,7 @@
 #     authenticates AND that the seeded credentials no longer do. The second
 #     half is the one that matters.
 #   - dawarich_init's idempotency: a second run logs ZERO "CHANGE:" lines,
-#     which is what every Arcane redeploy will do.
+#     which is what every Komodo redeploy will do.
 #   - the backup contract by executing it: `pg_dumpall -U dawarich` inside
 #     `dawarich_db`, exactly as nixos/backup-prepare.sh builds it.
 #   - the OIDC-ready-but-OFF shipping state.
@@ -107,10 +107,10 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Arcane stays out of the boot path (mk-stack-suite's rationale);
-        # checks.services covers that chain.
+        # The deploy plane stays out of the boot path (mk-stack-suite's
+        # rationale); checks.services covers that chain.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 4;
@@ -412,7 +412,7 @@ pkgs.testers.runNixOSTest {
         )
 
     with subtest("dawarich_init is idempotent — a redeploy changes nothing"):
-        # Every Arcane redeploy reruns this container.
+        # Every Komodo redeploy reruns this container.
         services_vm.succeed("docker rm -f dawarich_init")
         services_vm.succeed(f"{DAWARICH} up -d dawarich_init")
         services_vm.wait_until_succeeds(

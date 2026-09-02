@@ -136,7 +136,7 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
@@ -283,9 +283,8 @@ pkgs.testers.runNixOSTest {
             # with no RemainAfterExit (a minutely timer re-fires it), so
             # waiting on the UNIT races its inactive-after-success state and
             # fails with "inactive and there are no pending jobs". The
-            # artifact it must produce is the synchronisation point —
-            # mk-stack-suite already documents this; this suite did not
-            # follow it.
+            # artifact it must produce is the synchronisation point (see
+            # mk-stack-suite).
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/beszel/.env", timeout=90
             )
@@ -329,7 +328,7 @@ pkgs.testers.runNixOSTest {
             assert "CHANGE: wrote /beszel_data/id_ed25519" in logs, logs
 
         with subtest("beszel-init is idempotent (a second run changes nothing)"):
-            # Every Arcane redeploy reruns it. House rule: a second run against
+            # Every Komodo redeploy reruns it. House rule: a second run against
             # unchanged input logs ZERO "CHANGE:" lines.
             out = services_vm.succeed(f"{BZ} run --rm --no-deps beszel-init 2>&1")
             assert "CHANGE:" not in out, out
