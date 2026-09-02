@@ -280,16 +280,39 @@ rec {
     services = servicesConfig;
   };
 
-  checks = suites // {
-    # One derivation that fails if any lint fails, so the fast gate is a single
-    # build. Named entries stay individually buildable for a targeted re-run.
-    lints = pkgs.runCommand "lints" { } ''
-      ${lib.concatMapStringsSep "\n" (d: "echo '--- ${d.name}'; cat ${d} >/dev/null") (
-        lib.attrValues lints
-      )}
-      touch $out
-    '';
-  };
+  checks =
+    suites
+    // (
+      let
+        # Two honestly-different jobs. STRUCTURAL lints assert the code/config
+        # is internally coherent (fixtures, pins, port bindings) — they must be
+        # green always. DEPLOY-READINESS lints assert a real `nixos-rebuild` on
+        # the live host would activate — they go RED purely because an operator
+        # has not yet supplied a real production value (e.g. a secret declared
+        # in Nix but not yet in the encrypted secrets.sops.yaml). That is a
+        # pre-deploy checklist item, NOT a "the code is broken" signal, so it is
+        # kept OUT of the default gate and surfaced by `./tests/run.sh deploy-check`.
+        deployLintNames = [ "sops-declared" ];
+        structuralLints = builtins.removeAttrs lints deployLintNames;
+        mkAgg =
+          name: set:
+          pkgs.runCommand name { } ''
+            ${lib.concatMapStringsSep "\n" (d: "echo '--- ${d.name}'; cat ${d} >/dev/null") (
+              lib.attrValues set
+            )}
+            touch $out
+          '';
+      in
+      {
+        # The always-green gate (default `./tests/run.sh`). Named entries stay
+        # individually buildable for a targeted re-run.
+        lints = mkAgg "lints" structuralLints;
+        # Superset for intentional pre-deploy verification: structural + the
+        # deploy-readiness lints. run.sh's deploy-check target also reports the
+        # operator to-dos (changeme_ .sops.env, null ssh-pubkeys) alongside it.
+        deploy-check = mkAgg "deploy-check" lints;
+      }
+    );
 
   inherit stackChecks;
 
