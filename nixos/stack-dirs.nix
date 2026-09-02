@@ -213,6 +213,20 @@
     # (seerr) in a second image — root-owned bind mounts are the default
     # docker would have chosen, which is exactly why these rules exist.
     "d /mnt/fast/docspace/mysqldata 0755 999 999 -"
+    # === excalidraw (bind sources in its compose.yaml) ===
+    # Only the pgdata root. The three app containers are stateless by design —
+    # scene blobs live in Postgres (STORAGE_BACKEND=keyv, a second database in
+    # the same cluster; see stacks/excalidraw/keyv-init.sql) precisely so this
+    # stack has ONE stateful directory. Postgres starts as root and chowns its
+    # own datadir, as everywhere else here.
+    "d /mnt/fast/excalidraw 0755 root root -"
+    # Both AstraDraw databases: `excalidraw` (Prisma — users, workspaces, scene
+    # metadata) and `excalidraw_storage` (keyv — the scene payloads themselves).
+    # The whole backup payload, captured by the pg_dumpall loop in
+    # backup-prepare.sh. root:root because the postgres image chowns its own
+    # datadir before initdb drops privileges, the same reasoning as the
+    # komodo/ghostfolio/outline pgdata roots.
+    "d /mnt/fast/excalidraw/pgdata 0755 root root -"
     # === firefly (bind sources in its compose.yaml) ===
     # A convention of its own: the image ends on `USER www-data` at BUILD time and
     # never invokes an id-remap entrypoint, so PUID/PGID are inert and the upload
@@ -300,20 +314,21 @@
     # pinned image rather than assumed (`docker inspect --format '{{.Config.User}}'`
     # on the exact tags in stacks/logging/compose.yaml):
     #
-    #   loki     uid 10001  the image sets USER 10001. /mnt/slow/loki is its whole
-    #                       world — chunks, the tsdb index, the WAL and the
-    #                       compactor's working directory — and it is written
-    #                       continuously. Root-owned it does not degrade: Loki exits
-    #                       at startup unable to create its path_prefix, which
-    #                       presents as the collector's pushes failing and is
-    #                       diagnosed three containers away. This is finding #14
-    #                       (seerr) in a fourth image.
+    #   victorialogs  ROOT  the image sets User "0" — NOT the old loki's 10001.
+    #                       /mnt/slow/victorialogs is its whole world: per-day
+    #                       partitions written continuously, trimmed by the
+    #                       native 100GiB cap. root:root is both correct and
+    #                       docker's create-on-mount default, so the finding #14
+    #                       restart-loop class does not apply here — the rule
+    #                       documents rather than fixes.
     #   grafana  uid 472    the image sets USER 472, with gid 0 — the OpenShift
     #                       convention. 472:472 is right anyway: owner-write is what
     #                       /var/lib/grafana needs, and grafana.db is created there
     #                       on first start. A root-owned directory here means an
     #                       unhealthy container rather than a silent one, because
-    #                       /api/health reports the database.
+    #                       /api/health reports the database. The plugins/
+    #                       subdirectory is where the one-time datasource-plugin
+    #                       install lands; it rides this same rule.
     #   alloy    ROOT       and that is not a default anyone declined to change: the
     #                       grafana/alloy image sets NO USER, and root is exactly
     #                       what lets it read the journal. Journal files are
@@ -334,7 +349,7 @@
     # sets no USER, so the collector runs as uid 0 — which is the mechanism
     # that lets it read the host journal at all (root:systemd-journal 0640).
     # This directory holds only the journal positions file and the write-ahead
-    # log that buffers pushes across a Loki restart; both are regenerable, and
+    # log that buffers pushes across a store restart; both are regenerable, and
     # both are written as root.
     #
     # ⚠ If anyone ever adds `user:` to the alloy service, this rule and the
@@ -353,20 +368,22 @@
     # table: Grafana's /api/health reports {"database":"ok"} from a real query,
     # so an unwritable directory shows up as an unhealthy container.
     "d /mnt/fast/grafana 0755 472 472 -"
-    # 🚨 10001:10001, NOT root — grafana/loki:3.7.7 sets USER 10001 in the
-    # image. This one directory is the whole store: chunks/, tsdb-index/,
-    # tsdb-cache/, wal/, compactor/ and rules/ are all created under it on
-    # first start (verified by booting the pinned image against
-    # stacks/logging/loki.yaml). Root-owned, Loki cannot create any of them
-    # and exits during startup — and because Loki has no healthcheck the
-    # first visible symptom is Alloy's pushes failing, one container away.
+    # root:root, matching the image: victoriametrics/victoria-logs:v1.52.0 runs
+    # as User "0" (read from the pinned image config — NOT the old loki's
+    # 10001, and worth re-reading on every upgrade: the two vendors chose
+    # opposite conventions). This one directory is the whole store: per-day
+    # partitions carrying their own indexes appear under partitions/ on first
+    # start, and the native cap (-retention.maxDiskSpaceUsageBytes=100GiB in
+    # stacks/logging/compose.yaml) trims the oldest when the total exceeds it.
     #
-    # On /mnt/slow rather than /mnt/fast because log chunks are append-mostly
+    # On /mnt/slow rather than /mnt/fast because log data is append-mostly
     # and query-rarely, which is what _overview.md's hardware section says
     # belongs on the 80 TB tier. It is also the reason this path needs a
     # NOT_BACKED_UP entry in tests/lib/lints.nix: the slow-volume plan is an
-    # explicit include list and this is deliberately not on it.
-    "d /mnt/slow/loki 0755 10001 10001 -"
+    # explicit include list and this is deliberately not on it. The old
+    # /mnt/slow/loki store is abandoned — no rule, no migration, delete at
+    # will.
+    "d /mnt/slow/victorialogs 0755 root root -"
     # === mealie (bind sources in its compose.yaml) ===
     # root:root is fine and ANY hand-fix is futile: the image's entry.sh starts
     # as root, runs `chown -R $PUID:$PGID /app` — which INCLUDES the bind-mounted
@@ -495,6 +512,29 @@
     "d /mnt/fast/paperless/export 0755 root root -"
     "d /mnt/fast/paperless/media 0755 root root -"
     "d /mnt/fast/paperless/pgdata 0755 root root -"
+    # === proton (bind sources in its compose.yaml) ===
+    # Two containers, two answers, both read out of the images rather than assumed:
+    #   - hydroxide runs as USER hydroxide — alpine `adduser -D`, first uid, 1000 —
+    #     with no chown-on-start (its entrypoint is overridden to the bare binary),
+    #     so /mnt/fast/proton/hydroxide must be pre-owned 1000:1000 or the one-time
+    #     `auth` can never write auth.json. Finding #14's class with the crash-loop
+    #     replaced by silence: serve stays green, every login fails.
+    #   - the isync image (proton-export) sets no USER and runs as root, so the
+    #     maildir archive stays root:root — docker's default, chosen deliberately.
+    #     No database anywhere; backup is the slow-volume-selective plan, not a
+    #     dump.
+    "d /mnt/fast/proton 0755 root root -"
+    # auth.json — the Proton refresh token and passwords, ENCRYPTED with a key
+    # derived from the bridge password (which lives in .sops.env, not here):
+    # neither half is useful alone. Written by the one-time interactive
+    # `hydroxide auth` as uid 1000; nothing in-container repairs a wrong owner.
+    "d /mnt/fast/proton/hydroxide 0755 1000 1000 -"
+    # The automated mail export — a full-mailbox maildir, append-only by
+    # construction (mbsyncrc: Sync Pull + Expunge None). Slow tier: bulk,
+    # append-mostly, read-rarely — the old Loki-chunk reasoning, except unlike
+    # the log store it IS backed up (slow-volume-selective names it): the
+    # archive is the entire point of the export sidecar.
+    "d /mnt/slow/proton-mail-archive 0755 root root -"
     # === samba (bind sources in its compose.yaml) ===
     # smbd runs as ROOT and must — it needs to setuid per connection — so /data is
     # root-owned.

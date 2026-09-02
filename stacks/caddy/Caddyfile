@@ -208,6 +208,32 @@
 		reverse_proxy localhost:10407
 	}
 
+	@excalidraw host excalidraw.svc.idanreed.com
+	handle @excalidraw {
+		# NO forward auth — the outline/tandoor posture: AstraDraw has real
+		# auth of its own (seeded local admin, registration OFF in its
+		# compose) and native OIDC against Authentik, ready-but-off until
+		# the client secret lands. An outpost in front would add a second
+		# login and 302 the collab websocket's reconnect on session expiry
+		# (the grafana/owl interplay) for no auth gain. The room relay is
+		# unauthenticated BY DESIGN, as upstream excalidraw-room is: joining
+		# needs the room id AND its E2E key, which travels in the URL
+		# fragment and never reaches any server.
+		# One origin, three upstreams — mirrors upstream's Traefik layout.
+		@excalidraw-collab path /socket.io/*
+		handle @excalidraw-collab {
+			# Websockets: Caddy upgrades automatically, nothing extra.
+			reverse_proxy localhost:10408
+		}
+		@excalidraw-api path /api/v2/*
+		handle @excalidraw-api {
+			reverse_proxy localhost:10409
+		}
+		handle {
+			reverse_proxy localhost:10406
+		}
+	}
+
 	@forgejo host forgejo.svc.idanreed.com
 	handle @forgejo {
 		# Web UI AND git-over-https (the v1 access mode — ssh is deferred, see

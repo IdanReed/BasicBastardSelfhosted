@@ -108,14 +108,15 @@ finish_dump() {
 # a file-level copy of a live pgdata directory generally is not, which is why
 # the Backrest plans exclude **/pgdata/**.
 #
-# komodo is the deploy plane's OWN state (Resource-Sync defs, stack
-# registrations, users) — FerretDB stores it all as JSONB in this Postgres,
-# so one pg_dumpall captures Komodo entirely. Expects container komodo_db +
-# superuser komodo (POSTGRES_USER), like every entry here. Komodo lives at
-# /srv/komodo, not /srv/stacks/komodo, so require_running's $STACKS/<name>
-# check never matches it: a fully-removed komodo silently skips, while a
-# stopped-but-present komodo_db still FAILS loudly via the exists() branch.
-for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo; do
+# komodo is the manager's OWN state (Resource-Sync defs, stack registrations,
+# users), not a managed stack — FerretDB stores it all as JSONB in this
+# Postgres, so one pg_dumpall captures Komodo entirely. Replaces the arcane
+# sqlite line removed below. Expects container komodo_db + superuser komodo
+# (POSTGRES_USER), like every entry here. Komodo lives at /srv/komodo, not
+# /srv/stacks/komodo, so require_running's $STACKS/<name> presence check never
+# matches it: a fully-removed komodo silently skips (as arcane did before it),
+# while a stopped-but-present komodo_db still FAILS loudly via the exists() branch.
+for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo excalidraw; do
     container="${svc}_db"
     # Every service in this loop is also its own stack directory name.
     require_running "$container" "$svc" || continue
@@ -309,18 +310,24 @@ sqlite_backup ntfy           /mnt/fast/ntfy/lib/auth.db
 # live-writer situation as the rest of this section.
 sqlite_backup gatus          /mnt/fast/gatus/gatus.db
 
-# Grafana's own state (stacks/logging): sqlite at /var/lib/grafana/grafana.db
-# over the /mnt/fast/grafana bind, WAL-mode with a live writer. Only what a
-# human made is unreproducible here (dashboards, users, API keys) — the Loki
-# datasource and admin credential are re-applied from git/.sops.env on every
-# deploy.
+# Grafana's own state (stacks/logging). Its default database is sqlite at
+# /var/lib/grafana/grafana.db over the /mnt/fast/grafana bind, and it is
+# WAL-mode with a live writer — the same raw-copy trap as forgejo above.
 #
-# 🚨 LOKI'S CHUNK STORE IS DELIBERATELY NOT DUMPED AND NOT BACKED UP AT ALL.
-# /mnt/slow/loki is on no Backrest plan and has a NOT_BACKED_UP entry in
-# tests/lib/lints.nix carrying the reasoning: up to 100 GB of observations
-# about a fleet whose actual state lives elsewhere, and a restore replaying 30
-# days of old logs would be actively misleading. This line is the whole of
-# the logging stack's backup, on purpose.
+# What is genuinely only here is small but not reproducible: dashboards, saved
+# Explore queries, users, API keys and preferences. Everything else that makes
+# this stack work is declared in git and re-applied on every deploy — the
+# VictoriaLogs datasource comes from stacks/logging/grafana-datasource.yaml
+# (provisioned read-only, `editable: false`) and the admin credential from
+# stacks/logging/.sops.env — so a restore that lost this file would come back
+# working, just empty of anything a human made.
+#
+# 🚨 VICTORIALOGS' STORE IS DELIBERATELY NOT DUMPED AND NOT BACKED UP AT ALL.
+# /mnt/slow/victorialogs is on no Backrest plan and has a NOT_BACKED_UP entry
+# in tests/lib/lints.nix carrying the reasoning: it is up to 100 GiB of
+# observations about a fleet whose actual state lives elsewhere, and a restore
+# that replays months of old logs into a rebuilt host would be actively
+# misleading. This line is the whole of the logging stack's backup, on purpose.
 sqlite_backup grafana        /mnt/fast/grafana/grafana.db
 
 # ---------------------------------------------------------------------------

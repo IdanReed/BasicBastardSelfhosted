@@ -76,8 +76,11 @@ in
     # -------------------------------------------------------------------------
     # Log driver: journald, fleet-wide, SERVICES VM ONLY
     # -------------------------------------------------------------------------
-    # stacks/logging reads the HOST JOURNAL: Alloy gets two :ro bind mounts and
-    # NO docker socket — the point of the driver switch.
+    # stacks/logging (VictoriaLogs + Alloy + Grafana) reads the HOST JOURNAL. Alloy
+    # gets two read-only bind mounts (/var/log/journal, /etc/machine-id) and NO
+    # docker socket — that is the whole point of routing container stdout
+    # through journald rather than running a log collector with root-equivalent
+    # access to the daemon.
     #
     # 🚨 `docker logs` KEEPS WORKING — a contract (131 call sites in tests/).
     # Measured on docker 29.4.3: 202/202 lines readable, streams stay separate,
@@ -89,9 +92,13 @@ in
     # journald tag that fail2ban matches (fail2ban-journal-contract lint reads
     # the YAML; a daemon default is invisible to it). No fail2ban here.
     #
-    # tag={{.Name}}: without it CONTAINER_TAG is the truncated container ID
-    # (verified), so every Loki stream label would churn on each compose up.
-    # Per-service `logging:` blocks still override.
+    # tag={{.Name}} is what makes the journal legible. With no tag, docker sets
+    # CONTAINER_TAG (and SYSLOG_IDENTIFIER) to the TRUNCATED CONTAINER ID —
+    # verified: a container run without the option logged CONTAINER_TAG
+    # "931e9b6a5ce8". Every log stream label and every future journalmatch
+    # would then be a value that changes on each `docker compose up`.
+    # Per-service `logging:` blocks in a compose file override this default,
+    # which is exactly how the VPS keeps its own pinned tag.
     #
     # Bonus: json-file had no max-size anywhere; journald is bounded by
     # SystemMaxUse below.
@@ -121,11 +128,20 @@ in
     storage = "persistent";
 
     extraConfig = ''
-      # Journal is a BUFFER (Loki holds 30 days; this covers Alloy downtime).
-      # Lives on `/`: the cap keeps the log fleet from filling the root fs.
-      # SystemKeepFree above systemd's 15% default because the test VMs run
-      # an 8 GB disk (mk-stack-suite) where a 2 GB journal is a quarter of
-      # it; journald honours whichever binds first.
+      # SIZING. The journal is a BUFFER, not the archive — VictoriaLogs holds
+      # up to 100 GiB (retention flags in stacks/logging/compose.yaml), Alloy
+      # ships continuously, and the journal only has to cover the window in
+      # which Alloy is down. 2 GB of it is days at this fleet's volume.
+      #
+      # It lives on `/` (the OS disk), NOT on /mnt/fast — the sized log tier
+      # is VictoriaLogs' store on /mnt/slow, and this cap exists so
+      # the log fleet can never fill the root filesystem and take the host
+      # down with it. That is also why SystemKeepFree is set ABOVE systemd's
+      # 15% default rather than left alone: the test VMs get an 8 GB disk
+      # (tests/lib/mk-stack-suite.nix), where 15% is 1.2 GB and a 2 GB journal
+      # would be a quarter of the disk. journald honours whichever of the two
+      # binds first, so the pair is safe on both the 8 GB test VM and the real
+      # host.
       SystemMaxUse=2G
       SystemKeepFree=2G
 
@@ -765,24 +781,32 @@ in
   # ---------------------------------------------------------------------------
   # Loki disk budget
   # ---------------------------------------------------------------------------
-  # 🚨 LOKI HAS NO SIZE-BASED RETENTION — time only (retention_period = 720h
-  # in stacks/logging/loki.yaml), so the 100 GB budget in _overview.md cannot
-  # be a setting anywhere. This unit measures the real number and pages when
-  # the estimate was wrong; the response is lowering retention_period — a
-  # human decision, never automated. Not gatus (no filesystem notion) and not
-  # beszel (statfs on 80 TB /mnt/slow can't see one directory grow).
+  # 🚨 THIS IS NOW A FAILSAFE, NOT THE ENFORCEMENT. VictoriaLogs — unlike the
+  # Loki it replaced — HAS native size-based retention:
+  # -retention.maxDiskSpaceUsageBytes=100GiB in stacks/logging/compose.yaml
+  # drops the oldest per-day partitions at the cap. But upstream documents the
+  # cap as soft (it always keeps the last two days, even over budget), and a
+  # typo'd flag is a silent keep-everything-forever — so the du check stays,
+  # remeaning as "the native cap is not holding", with the threshold ABOVE the
+  # budget rather than below it: 110 GiB fires only when the cap has already
+  # failed to do its job, not while it is routinely working near the line.
   #
-  # ⚠ Threshold 80 GiB, not the budget: an alarm AT the budget fires after
-  # the decision window has closed.
-  systemd.services.loki-retention-check = {
-    description = "Alert when Loki's chunk store approaches its disk budget";
+  # Why not gatus: gatus probes HTTP endpoints and has no notion of a
+  # filesystem. Why not beszel: its agent reports the whole /mnt/slow
+  # filesystem via statfs on the fsprobe marker directory, which is genuinely
+  # useful for the tier but says nothing about which directory grew — and
+  # /mnt/slow is 80 TB, so the store could be 40x over budget without moving
+  # that gauge perceptibly. A per-directory number needs a per-directory check.
+  systemd.services.victorialogs-quota-check = {
+    description = "Alert when VictoriaLogs' store exceeds its disk budget (native cap failsafe)";
     onFailure = [ "notify-failure@%n.service" ];
     path = with pkgs; [ coreutils ];
     serviceConfig.Type = "oneshot";
     script = ''
-      store=/mnt/slow/loki
-      # 80 GiB in bytes — no rounding argument about which "GB" is meant.
-      limit=85899345920
+      store=/mnt/slow/victorialogs
+      # 110 GiB, above the 100 GiB native cap on purpose (see header). In
+      # bytes so there is no rounding argument about which "GB" is meant.
+      limit=118111600640
 
       # Not deployed is not a failure (backup-prepare's require_running
       # distinction).
@@ -792,16 +816,19 @@ in
       fi
 
       used=$(du -sb "$store" | cut -f1)
-      echo "loki store: $(( used / 1024 / 1024 / 1024 )) GiB used at $store"
+      echo "victorialogs store: $(( used / 1024 / 1024 / 1024 )) GiB used at $store"
 
-      # Alert on state CHANGE (the decrypt-sops-envs pattern). /run, cleared
-      # by reboot.
-      stamp=/run/loki-retention.over
+      # Alert on state CHANGE, not on every tick — the same pattern
+      # unhealthy-containers and decrypt-sops-envs use, and for the same
+      # reason: this runs on a timer with OnFailure wired to ntfy, so exiting
+      # nonzero for as long as the store is oversized would be a daily phone
+      # push forever. The stamp lives in /run and is cleared by a reboot.
+      stamp=/run/victorialogs-quota.over
 
       if [ "$used" -gt "$limit" ]; then
-        echo "OVER BUDGET: $(( used / 1024 / 1024 / 1024 )) GiB exceeds the 80 GiB alarm threshold (100 GB budget)."
-        echo "Lower limits_config.retention_period in stacks/logging/loki.yaml and redeploy;"
-        echo "the compactor deletes on its next compaction_interval (10m)."
+        echo "OVER BUDGET: $(( used / 1024 / 1024 / 1024 )) GiB exceeds the 110 GiB failsafe (100 GiB native cap)."
+        echo "The native cap is not holding: check -retention.maxDiskSpaceUsageBytes in"
+        echo "stacks/logging/compose.yaml is present in the running container's argv."
         if [ -e "$stamp" ]; then
           echo "(already notified; see the journal above)"
           exit 0
@@ -817,15 +844,17 @@ in
     '';
   };
 
-  systemd.timers.loki-retention-check = {
-    description = "Timer for the Loki disk-budget check";
+  systemd.timers.victorialogs-quota-check = {
+    description = "Timer for the VictoriaLogs disk-budget failsafe";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      # Daily; 04:30 clears the backup window (02:45 prepare, 03:00 plan) so
-      # the du never contends with it.
+      # Daily, and deliberately not more often: `du` over a 100 GiB tree is
+      # cheap but not free, and the quantity it measures moves over days.
+      # 04:30 is after the backup window (02:45 prepare, 03:00 fast plan) so
+      # the two never contend for the disk.
       OnCalendar = "*-*-* 04:30:00";
       Persistent = true;
-      Unit = "loki-retention-check.service";
+      Unit = "victorialogs-quota-check.service";
     };
   };
 

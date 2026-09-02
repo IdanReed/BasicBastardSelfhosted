@@ -38,6 +38,9 @@
 #   ./tests/run.sh journald-logging # the log driver + the `docker logs` contract
 #   ./tests/run.sh silverbullet   # heavy: git-sync vs a real Forgejo — mirror, remote-wins, canary
 #   ./tests/run.sh outline        # migrations, the local OIDC redirect leg, uid-1001 writes, backup
+#   ./tests/run.sh victorialogs   # heavy: journald -> alloy -> VictoriaLogs ingest + retention flags
+#   ./tests/run.sh proton         # bannered listeners sans creds + the calm no-login export loop
+#   ./tests/run.sh excalidraw     # heavy: named-scene persistence through Postgres + the keyv/P3005 traps
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh proxmox        # image build gate (also part of all)
 #   ./tests/run.sh proxmox-boot   # boots the image: cloud-init key -> sops decrypt
@@ -138,7 +141,7 @@ case "$TARGET" in
     exec nix-build tests "${NIX_ARGS[@]}" -A proxmoxBoot --no-out-link
     ;;
 
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging | silverbullet | outline)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 

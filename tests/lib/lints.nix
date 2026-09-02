@@ -1831,13 +1831,14 @@ in
               "reindexing it.",
           "/mnt/fast/docspace/logs":
               "Log output from the monolith's supervisord children.",
-          "/mnt/slow/loki":
-              "Loki's entire store — chunks, tsdb index, WAL and compactor "
-              "state — capped at 100 GB by a 720h retention_period plus the "
-              "loki-retention-check alarm. Not backed up on purpose, and the "
+          "/mnt/slow/victorialogs":
+              "VictoriaLogs' entire store — per-day partitions, indexes and "
+              "all — capped natively at 100GiB by "
+              "-retention.maxDiskSpaceUsageBytes plus the du quota alarm as "
+              "failsafe. Not backed up on purpose, and the "
               "reason is stronger than 'it is big': these are OBSERVATIONS "
               "ABOUT a fleet whose real state is backed up elsewhere. A "
-              "restore replaying 30 days of logs from a host that no longer "
+              "restore replaying months of logs from a host that no longer "
               "exists is not neutral, it is misleading — every dashboard "
               "would show a period the rebuilt system did not live through. "
               "The slow-volume plan is an explicit include list and this is "
@@ -1923,6 +1924,13 @@ in
               "No database — it is a file share. Its tree is "
               "/mnt/slow/samba/shared, which slow-volume-selective includes "
               "by name.",
+          "proton":
+              "No database engine. The archive is a maildir (one file per "
+              "message, append-only — Sync Pull + Expunge None), consistent "
+              "as a raw copy inside the slow-volume-selective plan; "
+              "auth.json is a small, rarely-rewritten JSON raw-copied by the "
+              "fast plan, restorable only together with the bridge password "
+              "in the encrypted .sops.env.",
       }
       stacks_with_dumps = {s for src in dump_covered
                            for s in enum["sources"].get(src, [])}

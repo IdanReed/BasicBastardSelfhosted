@@ -161,6 +161,12 @@ compose mounts the same volume into both (/app/onlyoffice/data and
 /var/www/onlyoffice/Data) — two different applications' state sharing one
 namespace. Separating them is what makes the Backrest exclude list for
 the document cache expressible at all.""",
+    "excalidraw": """\
+Only the pgdata root. The three app containers are stateless by design —
+scene blobs live in Postgres (STORAGE_BACKEND=keyv, a second database in
+the same cluster; see stacks/excalidraw/keyv-init.sql) precisely so this
+stack has ONE stateful directory. Postgres starts as root and chowns its
+own datadir, as everywhere else here.""",
     "firefly": """\
 A convention of its own: the image ends on `USER www-data` at BUILD time and
 never invokes an id-remap entrypoint, so PUID/PGID are inert and the upload
@@ -199,20 +205,21 @@ THREE CONTAINERS, THREE DIFFERENT ANSWERS, and each one was read out of the
 pinned image rather than assumed (`docker inspect --format '{{.Config.User}}'`
 on the exact tags in stacks/logging/compose.yaml):
 
-  loki     uid 10001  the image sets USER 10001. /mnt/slow/loki is its whole
-                      world — chunks, the tsdb index, the WAL and the
-                      compactor's working directory — and it is written
-                      continuously. Root-owned it does not degrade: Loki exits
-                      at startup unable to create its path_prefix, which
-                      presents as the collector's pushes failing and is
-                      diagnosed three containers away. This is finding #14
-                      (seerr) in a fourth image.
+  victorialogs  ROOT  the image sets User "0" — NOT the old loki's 10001.
+                      /mnt/slow/victorialogs is its whole world: per-day
+                      partitions written continuously, trimmed by the
+                      native 100GiB cap. root:root is both correct and
+                      docker's create-on-mount default, so the finding #14
+                      restart-loop class does not apply here — the rule
+                      documents rather than fixes.
   grafana  uid 472    the image sets USER 472, with gid 0 — the OpenShift
                       convention. 472:472 is right anyway: owner-write is what
                       /var/lib/grafana needs, and grafana.db is created there
                       on first start. A root-owned directory here means an
                       unhealthy container rather than a silent one, because
-                      /api/health reports the database.
+                      /api/health reports the database. The plugins/
+                      subdirectory is where the one-time datasource-plugin
+                      install lands; it rides this same rule.
   alloy    ROOT       and that is not a default anyone declined to change: the
                       grafana/alloy image sets NO USER, and root is exactly
                       what lets it read the journal. Journal files are
@@ -327,7 +334,21 @@ paperless entrypoint runs as root, maps its `paperless` user onto
 USERMAP_UID/USERMAP_GID (1000 here) and chowns data/media/consume/export
 before dropping privileges, and the postgres image chowns pgdata itself from
 its root entrypoint. tests/suites/paperless.nix creates exactly these six
-directories root-owned and runs the whole document pipeline against them.""",
+directories root-owned and runs the whole document pipeline against them.
+
+Missing from the tmpfiles-ownership lint's COMPOSE_FILES list until the
+generator landed — five bind sources with no rule.""",
+    "proton": """\
+Two containers, two answers, both read out of the images rather than assumed:
+  - hydroxide runs as USER hydroxide — alpine `adduser -D`, first uid, 1000 —
+    with no chown-on-start (its entrypoint is overridden to the bare binary),
+    so /mnt/fast/proton/hydroxide must be pre-owned 1000:1000 or the one-time
+    `auth` can never write auth.json. Finding #14's class with the crash-loop
+    replaced by silence: serve stays green, every login fails.
+  - the isync image (proton-export) sets no USER and runs as root, so the
+    maildir archive stays root:root — docker's default, chosen deliberately.
+    No database anywhere; backup is the slow-volume-selective plan, not a
+    dump.""",
     "samba": """\
 smbd runs as ROOT and must — it needs to setuid per connection — so /data is
 root-owned.""",
@@ -415,6 +436,16 @@ account.sqlite (server password, sessions, file index — and the
 SimpleFIN credential once bank sync is set up) plus every budget file.
 This IS the backup payload; no backup-prepare.sh line yet (evaluation
 stack) — raw fast-volume include set only.""",
+    },
+    # --- excalidraw ----------------------------------------------------
+    "/mnt/fast/excalidraw/pgdata": {
+        "note": """\
+Both AstraDraw databases: `excalidraw` (Prisma — users, workspaces, scene
+metadata) and `excalidraw_storage` (keyv — the scene payloads themselves).
+The whole backup payload, captured by the pg_dumpall loop in
+backup-prepare.sh. root:root because the postgres image chowns its own
+datadir before initdb drops privileges, the same reasoning as the
+komodo/ghostfolio/outline pgdata roots.""",
     },
     # --- komodo --------------------------------------------------------
     "/mnt/fast/komodo/pgdata": {
@@ -595,22 +626,23 @@ the same numbers a wholesale /mnt/fast:ro bind would, without handing a
 monitoring container a readable copy of every service's data.""",
     },
     # --- logging -------------------------------------------------------
-    "/mnt/slow/loki": {
-        "owner": ("10001", "10001"),
+    "/mnt/slow/victorialogs": {
         "note": """\
-🚨 10001:10001, NOT root — grafana/loki:3.7.7 sets USER 10001 in the
-image. This one directory is the whole store: chunks/, tsdb-index/,
-tsdb-cache/, wal/, compactor/ and rules/ are all created under it on
-first start (verified by booting the pinned image against
-stacks/logging/loki.yaml). Root-owned, Loki cannot create any of them
-and exits during startup — and because Loki has no healthcheck the
-first visible symptom is Alloy's pushes failing, one container away.
+root:root, matching the image: victoriametrics/victoria-logs:v1.52.0 runs
+as User "0" (read from the pinned image config — NOT the old loki's
+10001, and worth re-reading on every upgrade: the two vendors chose
+opposite conventions). This one directory is the whole store: per-day
+partitions carrying their own indexes appear under partitions/ on first
+start, and the native cap (-retention.maxDiskSpaceUsageBytes=100GiB in
+stacks/logging/compose.yaml) trims the oldest when the total exceeds it.
 
-On /mnt/slow rather than /mnt/fast because log chunks are append-mostly
+On /mnt/slow rather than /mnt/fast because log data is append-mostly
 and query-rarely, which is what _overview.md's hardware section says
 belongs on the 80 TB tier. It is also the reason this path needs a
 NOT_BACKED_UP entry in tests/lib/lints.nix: the slow-volume plan is an
-explicit include list and this is deliberately not on it.""",
+explicit include list and this is deliberately not on it. The old
+/mnt/slow/loki store is abandoned — no rule, no migration, delete at
+will.""",
     },
     "/mnt/fast/alloy": {
         "note": """\
@@ -618,7 +650,7 @@ root:root, and DELIBERATELY so rather than by default. grafana/alloy
 sets no USER, so the collector runs as uid 0 — which is the mechanism
 that lets it read the host journal at all (root:systemd-journal 0640).
 This directory holds only the journal positions file and the write-ahead
-log that buffers pushes across a Loki restart; both are regenerable, and
+log that buffers pushes across a store restart; both are regenerable, and
 both are written as root.
 
 ⚠ If anyone ever adds `user:` to the alloy service, this rule and the
@@ -639,6 +671,23 @@ nixos/backup-prepare.sh with `sqlite3 .backup` because it is WAL-mode.
 Root-owned this fails visibly rather than silently, unusually for this
 table: Grafana's /api/health reports {"database":"ok"} from a real query,
 so an unwritable directory shows up as an unhealthy container.""",
+    },
+    # --- proton --------------------------------------------------------
+    "/mnt/fast/proton/hydroxide": {
+        "owner": ("1000", "1000"),
+        "note": """\
+auth.json — the Proton refresh token and passwords, ENCRYPTED with a key
+derived from the bridge password (which lives in .sops.env, not here):
+neither half is useful alone. Written by the one-time interactive
+`hydroxide auth` as uid 1000; nothing in-container repairs a wrong owner.""",
+    },
+    "/mnt/slow/proton-mail-archive": {
+        "note": """\
+The automated mail export — a full-mailbox maildir, append-only by
+construction (mbsyncrc: Sync Pull + Expunge None). Slow tier: bulk,
+append-mostly, read-rarely — the old Loki-chunk reasoning, except unlike
+the log store it IS backed up (slow-volume-selective names it): the
+archive is the entire point of the export sidecar.""",
     },
     # --- wealthfolio ---------------------------------------------------
     "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},

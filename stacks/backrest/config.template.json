@@ -122,6 +122,7 @@
       "paths": [
         "/mnt/slow/books",
         "/mnt/slow/photos",
+        "/mnt/slow/proton-mail-archive",
         "/mnt/slow/samba"
       ],
       "excludes": [

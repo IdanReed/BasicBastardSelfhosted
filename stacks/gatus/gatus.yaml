@@ -363,6 +363,55 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # AstraDraw is NOT behind forward auth (native login + OIDC-ready), so the
+  # path probe expects the SPA shell, not a 302 — the `actual` pattern.
+  - name: "excalidraw (path: caddy -> service)"
+    group: "path"
+    url: "https://excalidraw.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # Static SPA shell from nginx; nothing deeper to ask it.
+  - name: "excalidraw-app (service)"
+    group: "service"
+    url: "http://127.0.0.1:10406/"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  # Engine.IO handshake — socket.io answering, not merely a TCP accept.
+  - name: "excalidraw-room (service)"
+    group: "service"
+    url: "http://127.0.0.1:10408/socket.io/?EIO=4&transport=polling"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  # /api/v2/auth/status is liveness + "auth config parsed" — it touches no
+  # table (a dead Postgres leaves it green; the api PROCESS exits on db loss,
+  # so container state is that signal). The body pins keep the auth posture
+  # from drifting: registration must stay closed.
+  - name: "excalidraw-api (service)"
+    group: "service"
+    url: "http://127.0.0.1:10409/api/v2/auth/status"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].localAuthEnabled == true"
+      - "[BODY].registrationEnabled == false"
+    alerts:
+      - type: ntfy
+
   - name: "firefly (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://firefly.svc.idanreed.com/"
@@ -737,35 +786,71 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # 🚨 THE ONLY LIVENESS SIGNAL LOKI HAS. Its image is a single binary with no
-  # shell, so the container carries no healthcheck at all (see
-  # stacks/logging/compose.yaml) and the host-side unhealthy-containers timer
-  # is therefore blind to it. Nothing routes to Loki through Caddy either — no
-  # vhost, so no path probe and none possible. This one endpoint is the whole
-  # of Loki's monitoring.
-  #
-  # /ready, not /metrics or /: it reports 503 with a body naming what is not
-  # ready until the ingester has joined the ring and replayed its WAL — which
-  # is exactly the window in which pushes are being rejected. That makes the
-  # status code alone meaningful here, unlike the `< 400` probes elsewhere in
-  # this file, so no body condition is needed.
-  #
-  # ⚠ What it cannot see is whether anything is ARRIVING, and NOTHING ELSE
-  # CURRENTLY DOES EITHER. A Loki with a broken Alloy — wrong journal path,
-  # lost bind mount, a `user:` added to the alloy service — answers /ready
-  # perfectly, and Alloy's own healthcheck only proves its config parsed. The
-  # generic `run.sh stack logging` suite asserts health and publishes, not
-  # ingest. The honest signal is a Grafana query returning recent lines, and
-  # the honest statement is that it is a human check today. Written down
-  # rather than papered over; the fix is a probe that asserts a non-empty
-  # {job="systemd-journal"} result over the last few minutes, which needs a
-  # LogQL-aware prober gatus is not.
-  - name: "loki (service)"
+  # 🚨 THE ONLY LIVENESS SIGNAL VICTORIALOGS HAS. Its image is distroless —
+  # one static binary, no shell — so the container carries no healthcheck at
+  # all (see stacks/logging/compose.yaml) and the host-side
+  # unhealthy-containers timer is therefore blind to it. Nothing routes to it
+  # through Caddy either — no vhost, so no path probe and none possible.
+  # /health answers a literal "OK" with 200.
+  - name: "victorialogs (service)"
     group: "service"
-    url: "http://127.0.0.1:10456/ready"
+    url: "http://127.0.0.1:10456/health"
     interval: 1m
     conditions:
       - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  # 🚨 THE INGEST PROBE THE LOKI ERA COULD NOT HAVE: any {job="systemd-journal"}
+  # line from the last 15 minutes (URL-encoded LogsQL `_time:15m
+  # {job="systemd-journal"}`, limit=1). The Loki-era comment here said this
+  # needed "a LogQL-aware prober gatus is not"; VL's query API answers plain
+  # GETs, and an empty result is 200 with a ZERO-BYTE body — pinned by the
+  # victorialogs suite — so len([BODY]) > 0 means "the pipeline shipped
+  # something recently". A healthy-but-collecting-nothing Alloy (wrong journal
+  # path, lost bind mount, a stray `user:`) fails THIS while passing every
+  # healthcheck.
+  - name: "victorialogs (ingest)"
+    group: "service"
+    url: "http://127.0.0.1:10456/select/logsql/query?query=_time%3A15m%20%7Bjob%3D%22systemd-journal%22%7D&limit=1"
+    interval: 5m
+    conditions:
+      - "[STATUS] == 200"
+      - "len([BODY]) > 0"
+    alerts:
+      - type: ntfy
+
+  # Proton bridge (10003-10005): liveness only — a TCP accept proves `serve`
+  # is up, NEVER that anyone is logged in or Proton is reachable (the stack's
+  # compose header carries that gap). The first non-http probes in this file:
+  # SMTP/IMAP have no path to GET, and gatus's tcp:// scheme with
+  # [CONNECTED] == true is the upstream-documented idiom for them.
+  - name: "proton-smtp (service)"
+    group: "service"
+    url: "tcp://127.0.0.1:10003"
+    interval: 1m
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+
+  - name: "proton-imap (service)"
+    group: "service"
+    url: "tcp://127.0.0.1:10004"
+    interval: 1m
+    conditions:
+      - "[CONNECTED] == true"
+    alerts:
+      - type: ntfy
+
+  # CardDAV is HTTP; an anonymous request is ALWAYS a 401 challenge, so 401
+  # is the healthy status — a 200 here would mean auth vanished.
+  - name: "proton-carddav (service)"
+    group: "service"
+    url: "http://127.0.0.1:10005/"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 401"
     alerts:
       - type: ntfy
 
