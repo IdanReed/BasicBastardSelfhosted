@@ -14,7 +14,7 @@
 # pinned yet, evaluation throws and tells you to run tests/update-images.sh.
 #
 # What this deliberately does NOT cover (see ../suites/services-vm.nix for
-# all of it): the arcane boot chain, Caddy routing, the notify-failure path,
+# all of it): the komodo boot chain, Caddy routing, the notify-failure path,
 # cross-stack interactions, SSH, and reboot convergence. This suite trades
 # that breadth for booting one stack in the time the full suite spends
 # loading images.
@@ -68,12 +68,26 @@ let
   # the firewall here, and the real exposure — 0.0.0.0 reachable through the
   # trusted tailscale0 — is untestable in this suite because the VM never
   # joins a tailnet.
-  hostPorts = map lib.toInt (
+  parsedHostPorts = map lib.toInt (
     lib.unique (
       # trailing comment tolerated (POSIX ERE: plain group, not (?:...))
       matchAll "[[:space:]]*-[[:space:]]*[\"']?(127\\.0\\.0\\.1:)?([0-9]+):([0-9]+)(/tcp|/udp)?[\"']?[[:space:]]*(#.*)?" 1
     )
   );
+
+  # Zero parsed ports would make the publishing subtest below pass vacuously
+  # (empty loop) — every generic stack so far publishes at least one port, so
+  # an empty parse means the compose file strayed from the flat conventions
+  # (long-form ports:, variables) and needs a hand-written suite instead.
+  hostPorts =
+    if parsedHostPorts == [ ] then
+      throw (
+        "stackChecks.${stack}: no host ports parsed from compose.yaml — the "
+        + "publishing subtest would be vacuous. Long-form or variable ports? "
+        + "Write a hand-written suite for this stack."
+      )
+    else
+      parsedHostPorts;
 
   # Bind-mount sources under /mnt. The real host has these created by
   # hardware-configuration.nix tmpfiles / earlier runs; in the VM they must
@@ -87,27 +101,13 @@ let
   # -------------------------------------------------------------------------
   # Volume-root OWNERSHIP, from the generated table — not from root:root
   # -------------------------------------------------------------------------
-  # This used to be `map (p: "d ${p} 0755 root root -") mntPaths`, which is
-  # the one ownership this fleet has been bitten by four times: root:root is
-  # ALSO docker's create-on-mount default, so a suite that hardcodes it is not
-  # neutral — it silently reproduces the bug that nixos/stack-dirs.nix exists
-  # to prevent, and then reports the stack healthy because the two images
-  # already in `stackChecks` happen to run as root.
-  #
-  # Any stack whose image drops privileges (loki 10001, grafana 472,
-  # mosquitto 1883, docspace 104:107, mysql 999 ...) therefore could not pass
-  # this harness at all — measured, not inferred: with root-owned volume roots
-  # loki and grafana both restart-loop within seconds. Reading the SAME
-  # generated file the real host imports fixes that and costs nothing: it is a
-  # plain attrset of rule strings, and `stack-dirs-generated` already
-  # byte-compares it against a fresh run of the generator.
-  #
-  # Parents come along because the generator emits a rule for each one (a
-  # parent tmpfiles creates implicitly gets the DEFAULT ownership, not the
-  # rule's), so `/mnt/slow/books/library` also brings `/mnt/slow/books`.
-  #
-  # Zero behaviour change for the stacks already here: ntfy's three rules are
-  # root:root and util has no /mnt binds at all.
+  # 🚨 Not hardcoded root:root: that is ALSO docker's create-on-mount default,
+  # so a harness hardcoding it silently reproduces the bug stack-dirs.nix
+  # exists to prevent — any image that drops privileges (loki 10001, grafana
+  # 472, ...) restart-loops within seconds (measured). Reading the SAME
+  # generated file the real host imports keeps the suite honest, and
+  # `stack-dirs-generated` byte-compares it against a fresh generator run.
+  # Parents come along because the generator emits a rule for each one.
   stackDirRules = (import ../../nixos/stack-dirs.nix).systemd.tmpfiles.rules;
   rulePath = r: lib.elemAt (lib.splitString " " r) 1;
   # Is `dir` this path or an ancestor of it?
@@ -207,16 +207,12 @@ pkgs.testers.runNixOSTest {
           })
         ];
 
-        # Keep Arcane out of the boot path: its multi-hundred-MB image and
-        # bootstrap ordering are irrelevant to iterating on one stack, and
-        # they dominate this suite's runtime if left in.
-        #
-        # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-komodo chain and Arcane itself. That is exactly what
-        # checks.services exists to cover — run it before trusting a change
-        # to anything in that chain.
+        # Keep the deploy plane out of the boot path: its images and bootstrap
+        # ordering dominate this suite's runtime. Coverage lost — the
+        # decrypt-sops-envs -> docker-network-homelab -> bootstrap-komodo
+        # chain and Komodo itself — is exactly what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
+        # stack-git-sync would fail its clone every tick with no Forgejo here.
         systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
 
         # decrypt-sops-envs.service `requires = srv.mount`; without a real
@@ -252,7 +248,7 @@ pkgs.testers.runNixOSTest {
         ++ checkedMntRules;
 
         # Populate /srv before decrypt-sops-envs reads it; on the real host
-        # Arcane's git sync plays this role.
+        # stack-git-sync plays this role.
         systemd.services.seed-srv = {
           description = "Seed /srv with the ${stack} stack (test only)";
           after = [ "srv.mount" ];
@@ -326,8 +322,9 @@ pkgs.testers.runNixOSTest {
             # Transient oneshot now (a minutely timer re-fires it), so
             # wait_for_unit would race its inactive-after-success state.
             # The artifact it must produce is the synchronisation point.
+            # 120s matches the hand-written suites — two timer ticks of margin.
             services_vm.wait_until_succeeds(
-                "test -s /srv/stacks/${stack}/.env", timeout=90
+                "test -s /srv/stacks/${stack}/.env", timeout=120
             )
         # The compose files attach to the external 'homelab' network; its
         # unit is wantedBy multi-user.target independently of the masked
@@ -351,6 +348,10 @@ pkgs.testers.runNixOSTest {
             )
 
         with subtest("published ports answer on loopback and nowhere else"):
+            # Positive control FIRST (immich/books precedent): without it, a
+            # node-naming or routing regression makes every fail() below pass
+            # vacuously. 22 is the one port the firewall opens.
+            outsider.succeed("nc -z -w 5 services-vm 22")
             for port in ${builtins.toJSON hostPorts}:
                 services_vm.wait_for_open_port(port, addr="127.0.0.1")
                 outsider.fail(f"nc -z -w 5 services-vm {port}")
