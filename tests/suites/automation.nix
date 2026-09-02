@@ -170,7 +170,7 @@ pkgs.testers.runNixOSTest {
         # Keep Arcane out of the boot path (mk-stack-suite's rationale): its
         # image and bootstrap ordering are irrelevant here and this suite
         # already loads the fleet's biggest image. Coverage lost — the
-        # decrypt -> docker-network -> bootstrap-arcane chain — is exactly
+        # decrypt -> docker-network -> bootstrap-komodo chain — is exactly
         # what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
         # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.

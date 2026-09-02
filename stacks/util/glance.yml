@@ -1,8 +1,8 @@
 # Glance dashboard configuration.
 #
-# Shipped in the stack directory rather than /mnt/fast so Arcane's
-# syncDirectory delivers it alongside compose.yaml; the container mounts it
-# read-only at the path its ENTRYPOINT hardcodes.
+# Shipped in the stack directory rather than /mnt/fast so stack-git-sync
+# delivers it alongside compose.yaml; the container mounts it read-only at the
+# path its ENTRYPOINT hardcodes.
 #
 # THREE RULES THIS FILE FOLLOWS, all load-bearing:
 #
@@ -245,8 +245,8 @@ pages:
             groups:
               - title: Infrastructure
                 links:
-                  - title: Arcane — containers
-                    url: https://arcane.svc.idanreed.com
+                  - title: Komodo — containers
+                    url: https://komodo.svc.idanreed.com
                   - title: Forgejo — git
                     url: https://forgejo.svc.idanreed.com
                   - title: Backrest — backups

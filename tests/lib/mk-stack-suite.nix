@@ -200,7 +200,7 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            # Nothing container-shaped runs at boot here (bootstrap-arcane is
+            # Nothing container-shaped runs at boot here (bootstrap-komodo is
             # masked below), so the only contract is "loaded before the test
             # script's compose up", i.e. before the boot finishes.
             beforeUnits = [ "multi-user.target" ];
@@ -212,7 +212,7 @@ pkgs.testers.runNixOSTest {
         # they dominate this suite's runtime if left in.
         #
         # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
-        # bootstrap-arcane chain and Arcane itself. That is exactly what
+        # bootstrap-komodo chain and Arcane itself. That is exactly what
         # checks.services exists to cover — run it before trusting a change
         # to anything in that chain.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
@@ -331,7 +331,7 @@ pkgs.testers.runNixOSTest {
             )
         # The compose files attach to the external 'homelab' network; its
         # unit is wantedBy multi-user.target independently of the masked
-        # bootstrap-arcane (it requires only docker.service).
+        # bootstrap-komodo (it requires only docker.service).
         services_vm.wait_for_unit("docker-network-homelab.service")
 
         if has_fixture:
