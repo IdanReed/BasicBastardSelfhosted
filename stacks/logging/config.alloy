@@ -1,13 +1,19 @@
 // Grafana Alloy — the fleet's only log collector.
 //
+// ⚠ NAMING: the `loki.source.journal` and `loki.write` components below are
+// Alloy's names for the loki PUSH PROTOCOL, not for the store. The store is
+// VictoriaLogs, which natively ingests that protocol at
+// /insert/loki/api/v1/push — swapping Loki out changed ONE url in this file
+// (the sink, at the bottom) and nothing else. Every hard-won journald lesson
+// in here predates the swap and still holds.
+//
 // 🚨 IT READS THE HOST JOURNAL. IT DOES NOT GET THE DOCKER SOCKET, AND IT MUST
 // NEVER GET ONE — not directly and not through a socket proxy. Alloy has
 // `discovery.docker` and `loki.source.docker` components that would be the
 // obvious way to collect container logs, and using either means mounting
 // /var/run/docker.sock into a container that also talks to the network. That
-// socket is root-equivalent on this host (it is exactly why Arcane's UI is
-// loopback-only and behind Caddy). Routing container stdout through journald
-// instead — virtualisation.docker.daemon.settings.log-driver in
+// socket is root-equivalent on this host. Routing container stdout through
+// journald instead — virtualisation.docker.daemon.settings.log-driver in
 // nixos/configuration.nix — gets the same lines with two read-only bind
 // mounts and no privilege at all.
 //
@@ -60,7 +66,7 @@ loki.source.journal "host" {
 
 	// How far back to read on a cold start (no positions file yet). Matches
 	// the order of magnitude of the host's journal buffer; longer would mean
-	// a fresh Alloy replays days of history into Loki on first deploy.
+	// a fresh Alloy replays days of history into the store on first deploy.
 	max_age = "12h"
 
 	// 🚨 NO `labels` ARGUMENT, AND THAT IS A CORRECTION, NOT AN OMISSION.
@@ -68,13 +74,14 @@ loki.source.journal "host" {
 	// and it DOES NOT WORK when relabel_rules are also set: the component's
 	// own default job label wins, and every stream lands with
 	// job="loki.source.journal.host" instead. Measured against v1.19.2 — the
-	// entries arrive, nothing errors, and Loki's /api/v1/label/job/values
-	// answers with the component id. So anyone querying {job="systemd-journal"}
-	// — the name in every Loki tutorial, and the one this fleet's Grafana
-	// panels and gatus comments use — gets an empty result from a pipeline
-	// that is working perfectly. This cost a debugging round before it was
-	// caught, and the only reason it was caught is that the check was "did
-	// this specific line arrive", not "is the container healthy".
+	// entries arrive, nothing errors, and anyone querying
+	// {job="systemd-journal"} — the name this fleet's Grafana panels, the
+	// victorialogs suite and the gatus ingest probe all use — gets an empty
+	// result from a pipeline that is working perfectly. This is an
+	// ALLOY-side gotcha; changing the store did not touch it. It cost a
+	// debugging round before it was caught, and the only reason it was
+	// caught is that the check was "did this specific line arrive", not "is
+	// the container healthy".
 	//
 	// The `job` label is therefore set by a relabel rule below, which runs
 	// last and wins. Verified after the change: a marker line written by a
@@ -82,16 +89,22 @@ loki.source.journal "host" {
 }
 
 // ---------------------------------------------------------------------------
-// Relabelling: which journal fields become Loki STREAM LABELS
+// Relabelling: which journal fields become labels on the pushed streams
 // ---------------------------------------------------------------------------
-// 🚨 EVERY LABEL HERE MULTIPLIES THE INDEX. Loki indexes labels and only
-// labels; a label with unbounded values (a container ID, a PID, a request id)
-// creates a stream per value and is the standard way to make a Loki install
-// unqueryable. Everything below is bounded by the number of things running on
-// one host. limits_config.max_streams_per_user in loki.yaml is the backstop.
+// 🚨 EVERY LABEL HERE IS A CARDINALITY DECISION, in two stages now. A label
+// promoted here rides the push protocol; the sink URL's `_stream_fields`
+// list (bottom of this file) then decides which of them define a
+// VictoriaLogs STREAM. One stream per unique value combination — so a label
+// with unbounded values (a container ID, a PID, a request id) that also
+// reaches `_stream_fields` is the standard way to make a log store
+// unqueryable. Everything below is bounded by the number of things running
+// on one host. Labels promoted here but NOT listed in `_stream_fields`
+// (only `level` today) are stored as plain per-entry fields: filterable
+// (`level:err`), but not stream-defining — that is the safe default for
+// anything per-entry rather than per-source.
 //
-// Note what is NOT promoted: __journal__pid, __journal_container_id (changes
-// on every `docker compose up`), and the message itself.
+// Note what is NOT promoted at all: __journal__pid, __journal_container_id
+// (changes on every `docker compose up`), and the message itself.
 loki.relabel "journal" {
 	forward_to = []
 
@@ -122,13 +135,17 @@ loki.relabel "journal" {
 
 	// Syslog priority as a word (err, warning, info, ...). Bounded to eight
 	// values and it is what every "show me the errors" query filters on.
+	// Deliberately NOT in the sink's `_stream_fields`: it is a per-entry
+	// attribute, not a log source, and VictoriaLogs (vmui and the Grafana
+	// plugin both) recognises a plain `level` field for severity colouring.
+	// Measured: it arrives as a regular field and `level:err` filters on it.
 	rule {
 		source_labels = ["__journal_priority_keyword"]
 		target_label  = "level"
 	}
 
 	// The host. One value today; it stays correct if a second collector is
-	// ever pointed at this Loki.
+	// ever pointed at this store.
 	rule {
 		source_labels = ["__journal__hostname"]
 		target_label  = "host"
@@ -136,27 +153,39 @@ loki.relabel "journal" {
 }
 
 // ---------------------------------------------------------------------------
-// Sink: Loki, over the compose network
+// Sink: VictoriaLogs, over the compose network
 // ---------------------------------------------------------------------------
-// `loki` is the compose service name, resolved on the stack's own bridge
-// network. NOT 127.0.0.1:10456 — a bridged container cannot reach a
+// `victorialogs` is the compose service name, resolved on the stack's own
+// bridge network. NOT 127.0.0.1:10456 — a bridged container cannot reach a
 // loopback-bound host publish (the same constraint that forces gatus onto the
-// host network), and NOT the Caddy vhost, because there is no vhost for Loki
+// host network), and NOT a Caddy vhost, because there is none for the store
 // and a forward-auth 302 would silently swallow every push.
 loki.write "default" {
 	endpoint {
-		url = "http://loki:3100/loki/api/v1/push"
+		// VictoriaLogs' native endpoint for the loki push protocol.
+		//
+		// 🚨 `_stream_fields` IS LOAD-BEARING. It names which pushed labels
+		// define a VictoriaLogs stream; the rest (only `level` today) are
+		// stored as plain per-entry fields. Left OFF, VictoriaLogs would
+		// default to using ALL pushed labels — which works today, but then
+		// a future relabel rule that promotes an unbounded field would
+		// silently become a stream-cardinality bomb. Pinning the list here
+		// makes stream membership a two-file decision (a rule above AND a
+		// name here) instead of an accident. Verified against the pinned
+		// image: a push lands with _stream={container,host,job,unit} and
+		// `level` alongside as a regular field.
+		url = "http://victorialogs:9428/insert/loki/api/v1/push?_stream_fields=job,unit,container,host"
 
-		// Explicit, not defaulted. A 429 from Loki means the ingestion rate
-		// limit in loki.yaml bit — which is a burst to ride out, not a
-		// reason to throw the lines away. Retrying is the difference between
-		// "the incident's logs are delayed" and "the incident's logs are
-		// gone", which is the only moment this stack is worth anything.
+		// Explicit, not defaulted, and kept across the store swap: a 429
+		// from the sink is backpressure — a burst to ride out, not a reason
+		// to throw the lines away. Retrying is the difference between "the
+		// incident's logs are delayed" and "the incident's logs are gone",
+		// which is the only moment this stack is worth anything.
 		retry_on_http_429 = true
 	}
 
 	// The write-ahead log. This — not the retry setting above — is what makes
-	// a Loki restart cost latency rather than data: entries are durable here
+	// a store restart cost latency rather than data: entries are durable here
 	// until they are acknowledged. Backed by /mnt/fast/alloy; see
 	// nixos/generate-stack-dirs.py for why that directory is root-owned (this
 	// image sets no USER and runs as uid 0).
@@ -169,9 +198,9 @@ loki.write "default" {
 // Alloy's own diagnostics
 // ---------------------------------------------------------------------------
 // Alloy logs to stdout, which the journald driver puts back into the journal,
-// which loki.source.journal above then reads — so Alloy's own logs reach Loki
-// by the same path as everything else. No self-scrape component is needed and
-// none is configured.
+// which loki.source.journal above then reads — so Alloy's own logs reach the
+// store by the same path as everything else. No self-scrape component is
+// needed and none is configured.
 logging {
 	level  = "info"
 	format = "logfmt"
