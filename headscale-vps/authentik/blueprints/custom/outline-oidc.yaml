@@ -17,25 +17,20 @@
 # outline.svc.idanreed.com deliberately does not `import protected`.
 #
 # ---------------------------------------------------------------------------
-# 🚨 THE CLIENT SECRET IS NOT SET HERE YET, AND THAT IS A DELIBERATE,
-#    INCOMPLETE STATE — READ THIS BEFORE ROTATING ANYTHING
+# 🚨 THE CLIENT SECRET IS NOT SET HERE YET — DELIBERATE, INCOMPLETE STATE.
+#    READ THIS BEFORE ROTATING ANYTHING
 # ---------------------------------------------------------------------------
-# The fleet's convention (headscale-oidc.yaml, immich-oidc.yaml) is
-# `client_secret: !Env <NAME>`, where the value travels
-# sops -> modules/authentik.nix template -> worker environment -> blueprint.
-# Wiring a new name into that chain touches THREE files outside this
-# directory, and the oidc-contract lint fails the build if a blueprint reads
-# an !Env name that the worker environment and the sops template do not both
-# provide — correctly, because a blueprint applied against an unset variable
-# stores an EMPTY secret and every token exchange 401s at login time,
-# silently.
+# The fleet convention (headscale-oidc, immich-oidc) is `client_secret: !Env
+# <NAME>`: sops -> modules/authentik.nix template -> worker environment ->
+# blueprint. The oidc-contract lint fails the build if a blueprint reads an
+# !Env name the worker environment and sops template do not both provide —
+# correctly: applied against an unset variable it stores an EMPTY secret and
+# every token exchange 401s at login time, silently.
 #
-# So as shipped this provider has no client_secret attribute at all, which
-# means AUTHENTIK GENERATES ONE when it creates the provider, and the
-# operator copies it out of the UI (Applications -> Providers -> outline) into
-# stacks/outline/.sops.env as OIDC_CLIENT_SECRET. That works, and it is
-# honest, but it is a manual step that a `state: present` re-apply will not
-# re-teach you.
+# As shipped this provider has no client_secret attribute, so AUTHENTIK
+# GENERATES ONE and the operator copies it out of the UI (Applications ->
+# Providers -> outline) into stacks/outline/.sops.env as OIDC_CLIENT_SECRET —
+# a manual step that a `state: present` re-apply will not re-teach you.
 #
 # TO PUT IT ON THE FLEET'S NORMAL FOOTING, four changes land together:
 #   1. headscale-vps/secrets.sops.yaml (+ .example, + tests/fixtures/vps*.sops.yaml):

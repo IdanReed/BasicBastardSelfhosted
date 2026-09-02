@@ -5,34 +5,29 @@
 # (identifier, ip) pair, so an attacker rotating source IPs still accumulates
 # score against the username and gets denied.
 #
-# BINDING SHAPE — verified against the 2026.5.6 source in the pinned image
-# (authentik/policies/reputation/models.py): ReputationPolicy.passes() returns
-# True when score <= threshold, i.e. the policy MATCHES BAD REPUTATION. It is
-# a detector, not a gate. Binding it directly to the flow (or to the
-# identification-stage binding) would therefore DENY every normal user
-# (score 0 > threshold -> False) and wave attackers through — a total login
-# lockout, in the wrong direction. The correct idiom — the one upstream's own
-# flows-login-conditional-captcha.yaml example uses — is a conditional stage:
-# bind the policy to a deny-stage FlowStageBinding with evaluate_on_plan:
-# false + re_evaluate_policies: true, so bad reputation includes the deny
-# stage and good reputation skips it.
+# BINDING SHAPE — verified against the 2026.5.6 source
+# (authentik/policies/reputation/models.py): ReputationPolicy.passes()
+# returns True when score <= threshold, i.e. the policy MATCHES BAD
+# REPUTATION — a detector, not a gate. Bound directly to the flow it would
+# DENY every normal user (score 0 -> False) and wave attackers through. The
+# correct idiom — upstream's own flows-login-conditional-captcha.yaml — is a
+# conditional stage: bind the policy to a deny-stage FlowStageBinding with
+# evaluate_on_plan: false + re_evaluate_policies: true, so bad reputation
+# includes the deny stage and good reputation skips it.
 #
 # Order 15 sits between identification (10) and password (20): the
-# re-evaluation runs after identification, when the plan's pending_user is
-# set (flows/markers.py passes it to the PolicyEngine), so check_username
-# actually bites; check_ip works regardless. A policy execution ERROR fails
-# the re-evaluation, which removes the deny stage — fail-open on purpose:
-# fail2ban is the other layer, and failing closed here would make a broken
-# policy a fleet-wide login outage.
+# re-evaluation runs when the plan's pending_user is set (flows/markers.py
+# passes it to the PolicyEngine), so check_username actually bites. A policy
+# execution ERROR removes the deny stage — fail-open on purpose: fail2ban is
+# the other layer, and failing closed would make a broken policy a
+# fleet-wide login outage.
 #
 # Scoring (events signal, not this policy): every failed password AND every
-# unknown-username identification decrements the (identifier, ip) score by 1,
-# expiring after AUTHENTIK_REPUTATION__EXPIRY (default 24h). threshold -10
-# means deny after 10 failures in the window. Suite headroom: no VM suite
-# performs a single failed flow login against authentik (verified by grep —
-# the forward-auth suite cannot complete logins at all, and the immich/media
-# wrong-password legs hit their own apps), so suites sit at 0 of the 10
-# failures needed.
+# unknown-username identification decrements the (identifier, ip) score by
+# 1, expiring after AUTHENTIK_REPUTATION__EXPIRY (default 24h); threshold
+# -10 = deny after 10 failures in the window. Suite headroom: no VM suite
+# performs even one failed flow login against authentik (verified by grep),
+# so suites sit at 0 of the 10 failures needed.
 #
 # NOTE the .yaml extension is load-bearing (finding #7): authentik's blueprint
 # discovery globs **/*.yaml only — as .yml this file would mount, be visible,

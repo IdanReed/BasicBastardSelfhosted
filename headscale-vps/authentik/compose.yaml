@@ -1,12 +1,7 @@
-# Authentik — applied by headscale-vps/modules/authentik.nix, not by any
-# git-sync mechanism. This file ships in the flake and is deployed by
-# `nixos-rebuild switch`.
-#
-# Secrets are interpolated from the systemd EnvironmentFile rendered by
-# sops-nix (see modules/authentik.nix); there is no .env on disk.
-#
-# Bind-mounted paths under /srv/authentik are created by systemd.tmpfiles in
-# configuration.nix. ./blueprints is served read-only from the Nix store.
+# Authentik — ships in the flake, applied by modules/authentik.nix on
+# `nixos-rebuild switch` (no git-sync). Secrets come from the sops-nix
+# rendered EnvironmentFile; there is no .env on disk. /srv/authentik paths
+# are created by systemd.tmpfiles; ./blueprints is read-only from the store.
 
 services:
   postgresql:
@@ -45,15 +40,13 @@ services:
     container_name: authentik_server
     restart: unless-stopped
     command: server
-    # WHY journald: the fail2ban 'authentik' jail (../configuration.nix) reads
-    # login_failed events off the journal by CONTAINER_TAG. With the default
-    # json-file driver those lines live only in a per-container JSON file that
-    # fail2ban's systemd backend cannot see — the jail would silently never
-    # ban. The flow executor (and thus the login_failed event) runs in the
-    # SERVER container, not the worker — verified empirically by driving a
-    # failed API login against the pinned 2026.5.6 image and grepping both
-    # containers (worker emitted zero login_failed lines). Tag must stay
-    # 'authentik-server': the jail's journalmatch pins it.
+    # WHY journald: the fail2ban 'authentik' jail (../configuration.nix)
+    # reads login_failed events off the journal by CONTAINER_TAG — with
+    # json-file the systemd backend sees nothing and the jail silently never
+    # bans. login_failed is emitted by the SERVER container, not the worker
+    # (verified empirically against the pinned 2026.5.6 image; worker emitted
+    # zero). Tag must stay 'authentik-server': the jail's journalmatch pins
+    # it (fail2ban-journal-contract lint).
     logging:
       driver: journald
       options:
@@ -73,14 +66,12 @@ services:
       - /srv/authentik/media:/media
       - /srv/authentik/templates:/templates
       - ./blueprints/custom:/blueprints/custom:ro
-    # Loopback only — Caddy terminates TLS for auth.idanreed.com and is the
-    # sole public path in. 9443 (self-signed) is not published at all.
+    # Loopback only — Caddy terminates TLS and is the sole public path in;
+    # 9443 (self-signed) is not published at all.
     ports:
       - "127.0.0.1:9000:9000"
-    # Without a healthcheck here, `docker compose up -d --wait` in
-    # modules/authentik.nix returns as soon as the container is *running* —
-    # not when Authentik is answering requests — so a deploy still mid-migration
-    # reports success.
+    # Without this, `up -d --wait` returns when the container is *running*,
+    # not when Authentik answers — a deploy mid-migration reports success.
     healthcheck:
       test: ["CMD", "ak", "healthcheck"]
       start_period: 60s
@@ -111,9 +102,9 @@ services:
       # Consumed by the immich-oidc blueprint via its !Env tag; the stack-side
       # copy is stacks/immich/.sops.env (rendered into immich.json).
       IMMICH_OIDC_CLIENT_SECRET: ${IMMICH_OIDC_CLIENT_SECRET:?immich oidc client secret required}
-      # First-start bootstrap of the `akadmin` superuser. Without these there is
-      # no way to log in at all: the blueprint's `idan` user has no credential
-      # and no SMTP is configured for a reset link. Ignored on later starts.
+      # First-start bootstrap of `akadmin` — without these there is no way to
+      # log in at all (blueprint's `idan` has no credential, no SMTP for a
+      # reset). Ignored on later starts.
       AUTHENTIK_BOOTSTRAP_EMAIL: admin@idanreed.com
       AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?bootstrap password required}
       AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:?bootstrap token required}
