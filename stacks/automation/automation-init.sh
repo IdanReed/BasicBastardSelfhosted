@@ -4,8 +4,8 @@
 #
 # HA's onboarding is normally a browser wizard, but it is four plain REST
 # calls and the wizard uses the same ones. Contract (media-init pattern):
-#   - Every mutation logs "automation-init: CHANGE: ...". A second run — every
-#     Arcane redeploy reruns this container — must log ZERO change lines.
+#   - Every mutation logs "automation-init: CHANGE: ...". A second run —
+#     every redeploy reruns this container — must log ZERO change lines.
 #   - Unset credentials are a HARD error (decrypt race, finding #11).
 #
 # Idempotence here has TWO regimes and both mean "already done":

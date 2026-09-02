@@ -1,24 +1,21 @@
 // actual_init — headless first-run for the Actual sync server.
 //
-// Why this exists: Actual's first run is a browser form that sets the server
-// password. There is no env var and no CLI for it; what the form actually
-// does is POST /account/bootstrap, an unauthenticated JSON endpoint that
-// works exactly once (src/app-account.js at v26.9.0: bootstrap() refuses with
-// reason "already-bootstrapped" as soon as the auth table is non-empty).
-// This script drives that same endpoint from inside the project network, so
-// the server is never up-and-passwordless from any operator's point of view.
+// Actual's first run is a browser form; no env var, no CLI. The form POSTs
+// /account/bootstrap, an unauthenticated endpoint that works exactly once
+// (v26.9.0 src/app-account.js: refuses "already-bootstrapped" once the auth
+// table is non-empty). This drives that endpoint from inside the project
+// network, so the server is never up-and-passwordless.
 //
-// House rules it follows (the beszel-init/tandoor-init conventions):
+// House rules (the beszel-init/tandoor-init conventions):
 //   - fails CLOSED: empty or changeme_ password -> exit 1 before any HTTP.
 //   - idempotent: already bootstrapped -> zero "CHANGE:" lines, exit 0.
-//   - verifies its own work: after bootstrapping it logs in once and
-//     requires a token back — "bootstrap returned ok" alone would also be
-//     true of a server that stored a mangled password.
+//   - verifies its own work: after bootstrapping, log in once and require a
+//     token back ("bootstrap ok" alone is also true of a mangled password).
 //
-// ⚠ The verify login happens ONLY on the run that bootstraps. Once the
-// server is bootstrapped the password's source of truth is the DATABASE
-// (change-password in the UI is legitimate), so ACTUAL_INIT_PASSWORD going
-// stale afterwards is expected, not an error — a rerun must not fail on it.
+// ⚠ The verify login runs ONLY on the run that bootstraps. Afterwards the
+// password's source of truth is the DATABASE (in-UI change is legitimate),
+// so a stale ACTUAL_INIT_PASSWORD is expected, not an error — a rerun must
+// not fail on it.
 //
 // ⚠ Rate limit: /account/bootstrap and /account/login share a 5-per-15-min
 // limiter keyed by client IP. This script spends at most 2 of those, once
@@ -36,11 +33,9 @@ function fail(msg) {
   process.exit(1);
 }
 
-// Fail closed. An empty password would be REJECTED server-side anyway
-// (isValidPassword refuses '' — verified), but refusing here keeps the error
-// at the secret, not at a confusing HTTP 400. A changeme_ placeholder would
-// be ACCEPTED server-side, which is precisely the trap: it bootstraps a
-// finance server whose password sits in a public git repo.
+// Fail closed. Empty would be rejected server-side anyway (isValidPassword
+// refuses '' — verified); a changeme_ placeholder would be ACCEPTED — the
+// trap: a finance server whose password sits in a public git repo.
 if (!PASSWORD) fail('ACTUAL_INIT_PASSWORD is empty or unset — refusing to bootstrap');
 if (PASSWORD.startsWith('changeme_'))
   fail('ACTUAL_INIT_PASSWORD is still a changeme_ placeholder — refusing to bootstrap');
@@ -91,9 +86,8 @@ async function main() {
   // separate step (see compose.yaml).
   const boot = await api('POST', '/account/bootstrap', { password: PASSWORD });
   if (boot.json?.status !== 'ok') {
-    // The one benign race: something else bootstrapped between the check
-    // and the POST. On a single-host compose stack that "something" can only
-    // be a concurrent rerun of this script.
+    // Benign race: a concurrent rerun of this script bootstrapped between
+    // the check and the POST.
     if (boot.json?.reason === 'already-bootstrapped') {
       console.log('actual-init: lost a benign race — already bootstrapped; nothing to do');
       return;

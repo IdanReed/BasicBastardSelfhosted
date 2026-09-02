@@ -26,46 +26,30 @@ services:
   # container's filesystem worth keeping, which is why it has no /mnt mount and
   # why the whole stack's backup story is one pg_dumpall.
   #
-  # 🚨 THE ENTRYPOINT RUNS DATABASE MIGRATIONS AT EVERY CONTAINER START:
-  # `npx prisma migrate deploy` before the server boots. Two consequences that
-  # are easy to get wrong:
+  # 🚨 THE ENTRYPOINT RUNS `npx prisma migrate deploy` AT EVERY START, before
+  # the server boots. Two consequences:
   #
-  #   1. It must work with NO NETWORK, and this is the ExcaliDash failure
-  #      (finding #40) asked of a different image — so it was checked by
-  #      unpacking the published layer rather than reasoned about:
-  #        - `node_modules/.bin/prisma` EXISTS in the runtime image, and the
-  #          entrypoint's WORKDIR is that node_modules' package root. `npx`
-  #          only reaches the registry when a package is NOT locally
-  #          resolvable, so it execs the local binary.
-  #        - `@prisma/engines/schema-engine-debian-openssl-3.0.x` is baked in,
-  #          and its binary target is exactly the runtime base (node:22-slim,
-  #          Debian bookworm + OpenSSL 3). `migrate deploy` needs no other.
-  #        - prisma is 7.x, which runs QUERIES through a WASM compiler plus
-  #          @prisma/adapter-pg — there is no `libquery_engine*.node` in the
-  #          image at all, so there is no runtime engine to fetch. This is
-  #          precisely what ExcaliDash could not say: its schema declared an
-  #          arm64 binaryTarget its amd64 image did not carry, and `npx prisma
-  #          generate` at boot went looking for it. Ghostfolio's `generate`
-  #          runs at BUILD time (`RUN npm run database:generate-typings`);
-  #          only `migrate deploy` and an idempotent `db seed` run at start.
-  #      And it is still ASSERTED rather than left at that:
-  #      `./tests/run.sh stack ghostfolio` boots this stack in a VM with no
-  #      route to the internet.
-  #   2. It means the app CANNOT start before Postgres is accepting
-  #      connections, hence the service_healthy dependency below rather than
-  #      the bare `depends_on` upstream's compose uses.
+  #   1. It must work with NO NETWORK — the ExcaliDash failure (finding #40)
+  #      asked of a different image. Checked by unpacking the published layer,
+  #      not reasoned about: `node_modules/.bin/prisma` exists in the runtime
+  #      image (npx execs the local binary, never the registry);
+  #      `@prisma/engines/schema-engine-debian-openssl-3.0.x` is baked in and
+  #      matches the runtime base; prisma 7.x runs queries through WASM +
+  #      @prisma/adapter-pg, so there is no `libquery_engine*.node` to fetch
+  #      (ExcaliDash's schema declared an arm64 binaryTarget its amd64 image
+  #      did not carry). `generate` runs at BUILD time; only `migrate deploy`
+  #      and an idempotent `db seed` run at start. Still ASSERTED:
+  #      `./tests/run.sh stack ghostfolio` boots this in a VM with no route
+  #      to the internet.
+  #   2. The app CANNOT start before Postgres accepts connections — hence
+  #      service_healthy below, not upstream's bare `depends_on`.
   # ---------------------------------------------------------------------------
   ghostfolio:
-    # Docker Hub only — there is no ghcr/quay mirror. The tag is BARE: the
-    # repository publishes `latest`, `3`, `3.65.0`, `3.64.0` … and NO
-    # `v`-prefixed tag exists at all, so `v3.65.0` could never have been
-    # pulled. Worth stating because the `v`-or-not question has broken two
-    # other stacks in this repo in opposite directions.
-    #
-    # Upstream releases roughly daily, so this pin will look stale fast. That
-    # is the intended behaviour: `tests/update-images.sh` resolves the digest
-    # and the `image-pins` lint fails on drift, so the version only moves when
-    # someone moves it.
+    # Docker Hub only — no ghcr/quay mirror. Tag is BARE: no `v`-prefixed tag
+    # exists at all (the v-or-not question has broken two other stacks, in
+    # opposite directions). Upstream releases roughly daily, so this pin will
+    # look stale fast — intended: the version only moves when someone moves
+    # it, and the `image-pins` lint watches the digest.
     image: ghostfolio/ghostfolio:3.65.0
     container_name: ghostfolio
     depends_on:
@@ -86,12 +70,12 @@ services:
       # separate file's decision and a silent upstream change would turn this
       # stack into a 502 with a healthy container.
       - PORT=3333
-      # 🚨 The Prisma connection string, assembled here from POSTGRES_PASSWORD
-      # so the password exists in exactly ONE key of .sops.env. `${VAR:-}`
-      # interpolates from the project directory's .env at compose PARSE time
-      # (same mechanism stacks/books uses); the `:-` default is what keeps
-      # Arcane's staged sync validation — which runs where the decrypted .env
-      # cannot exist — from failing the whole stack (finding #11).
+      # 🚨 The Prisma connection string, assembled from POSTGRES_PASSWORD so
+      # the password exists in exactly ONE key of .sops.env. `${VAR:-}`
+      # interpolates from the project .env at compose PARSE time (same
+      # mechanism stacks/books uses); the `:-` default meets finding #11's
+      # constraint — an absent .env renders empty instead of failing the
+      # stack.
       #
       # connect_timeout is Prisma's, in SECONDS, and the generous value is
       # deliberate: the migration step runs before the app and a cold Postgres
@@ -130,10 +114,9 @@ services:
       # The escape hatch is in the code: discovery is skipped entirely when
       # OIDC_AUTHORIZATION_URL, OIDC_TOKEN_URL and OIDC_USER_INFO_URL are ALL
       # set. Set all three, or accept the boot-time dependency knowingly.
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's gitops
-    # sync VALIDATES the compose in a staging directory before copying, where
-    # the host-side decrypted .env cannot exist yet — a plain `env_file: .env`
-    # fails that validation and the sync of the whole stack aborts.
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written), and the plain form
+    # aborts the whole stack.
     env_file:
       - path: .env
         required: false
@@ -155,15 +138,12 @@ services:
       # start_period is long because that migration is inside it: on a first
       # boot the schema is created from zero before the server binds at all.
       #
-      # 🚨 `curl`, NOT `wget`, and that is not a style preference. The image is
-      # node:22-slim, and the node slim variants install curl/wget as build
-      # dependencies and then PURGE them — so a `wget` probe would exec a
-      # binary that does not exist. Docker records that as a FAILING
-      # healthcheck, not as a configuration error, so the container would sit
-      # unhealthy forever while serving perfectly (finding #34's failure mode,
-      # reached by a different door). Ghostfolio's own Dockerfile re-adds
-      # exactly two packages to the runtime stage — `curl` and `openssl` — so
-      # curl is the only HTTP client in here.
+      # 🚨 `curl`, NOT `wget` — not style: node:22-slim purges wget, and a
+      # probe exec'ing a missing binary is recorded as a FAILING healthcheck,
+      # not a config error — unhealthy forever while serving perfectly
+      # (finding #34's failure mode by a different door). Ghostfolio's
+      # Dockerfile re-adds exactly `curl` and `openssl` to the runtime stage,
+      # so curl is the only HTTP client in here.
       test: ['CMD-SHELL', 'curl -fsS -o /dev/null http://127.0.0.1:3333/api/v1/health || exit 1']
       interval: 30s
       timeout: 10s
@@ -211,26 +191,19 @@ services:
   # churn into the /mnt/fast Backrest include set for state that is worth
   # nothing the moment it is restored.
   #
-  # NO PASSWORD, ON PURPOSE, and this is a deviation worth stating plainly.
-  # Upstream's compose runs `redis-server --requirepass ${REDIS_PASSWORD}` and
-  # sets a matching REDIS_PASSWORD on the app. Two reasons not to copy that:
-  #
-  #   1. It puts the password on ARGV, and containers on this host share the
-  #      host PID namespace — `/proc/<pid>/cmdline` is readable. That exact
-  #      shape is a logged defect in this repo already (the MySQL password on
-  #      argv in backup-prepare.sh). Fixing it properly means templating a
-  #      redis.conf from the secret, which is real machinery for an evaluation
-  #      stack.
-  #   2. There is nothing to defend against here. This compose file declares no
-  #      `networks:`, so the project gets its OWN bridge network; the only
-  #      containers that can resolve or reach `ghostfolio_cache` are the two
-  #      above. Nothing is published. Every other Redis in this fleet
-  #      (paperless, wger, dawarich) is unauthenticated for the same reason.
-  #
-  # The consequence to know: REDIS_PASSWORD must stay UNSET on the app. If it
-  # is set while redis has no `requirepass`, redis answers AUTH with "ERR
-  # Client sent AUTH, but no password is set" and the app fails to reach its
-  # cache — so the two halves have to move together or not at all.
+  # NO PASSWORD, ON PURPOSE — a deviation from upstream's
+  # `redis-server --requirepass ${REDIS_PASSWORD}`. Two reasons:
+  #   1. That puts the password on ARGV in a shared host PID namespace
+  #      (`/proc/<pid>/cmdline` readable — the backup-prepare.sh MySQL
+  #      defect's exact shape); fixing it properly means templating a
+  #      redis.conf, real machinery for an evaluation stack.
+  #   2. Nothing to defend against: no `networks:` declared, so the project
+  #      gets its OWN bridge — only the two containers above can reach this,
+  #      nothing published. Every other Redis in the fleet (paperless, wger,
+  #      dawarich) is unauthenticated for the same reason.
+  # Consequence: REDIS_PASSWORD must stay UNSET on the app — set against a
+  # no-requirepass redis, AUTH errors ("ERR Client sent AUTH...") and the
+  # app cannot reach its cache. The two halves move together or not at all.
   ghostfolio_cache:
     image: redis:7.4-alpine
     container_name: ghostfolio_cache

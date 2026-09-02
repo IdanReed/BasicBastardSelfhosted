@@ -72,15 +72,13 @@ services:
       #       ""      "http://$DOCUMENT_CONTAINER_NAME";
       #   }
       #
-      # and the nginx image's envsubst pass only substitutes variables that are
-      # SET, so an unset one survives into the generated config as a literal
-      # `$DOCUMENT_CONTAINER_NAME`. nginx parses the whole file regardless of
-      # which branch would match at runtime — DOCUMENT_SERVER_URL_EXTERNAL is
-      # set below, so the "" branch is dead code — and rejects it with
-      # `[emerg] unknown "document_container_name" variable`. openresty then
-      # crash-loops to FATAL under supervisord while every OTHER process in the
-      # container starts normally, so the container stays up, the supervisor
-      # log scrolls happily, and only the healthcheck ever notices.
+      # and the nginx image's envsubst pass only substitutes variables that
+      # are SET, so an unset one survives into the generated config as a
+      # literal `$DOCUMENT_CONTAINER_NAME`. nginx parses the whole file even
+      # though the "" branch is dead code here, and rejects it with `[emerg]
+      # unknown "document_container_name" variable` — openresty crash-loops
+      # to FATAL under supervisord while every OTHER process starts normally,
+      # so only the healthcheck ever notices.
       - DOCUMENT_CONTAINER_NAME=docspace_ds
       - DOCUMENT_SERVER_URL_EXTERNAL=http://docspace_ds:80
       - DOCUMENT_SERVER_JWT_HEADER=AuthorizationJwt
