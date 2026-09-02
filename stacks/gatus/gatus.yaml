@@ -72,6 +72,37 @@ alerting:
       send-on-resolved: true
 
 endpoints:
+  # Actual is NOT behind forward auth (native login), so the path probe
+  # expects the SPA shell, not a 302.
+  - name: "actual (path: caddy -> service)"
+    group: "path"
+    url: "https://actual.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # /health is LIVENESS-ONLY — a bare express 200 {"status":"UP"} with no
+  # storage check behind it (src/app.ts at v26.9.0). Still the right probe:
+  # `/` is a static SPA shell that stays green with the API dead, and
+  # [BODY].status pins the one bit of meaning /health does carry.
+  - name: "actual (service)"
+    group: "service"
+    url: "http://127.0.0.1:10308/health"
+    interval: 1m
+    headers:
+      Host: "actual.svc.idanreed.com"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].status == UP"
+    alerts:
+      - type: ntfy
+
   - name: "arcane (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://arcane.svc.idanreed.com/"
@@ -762,6 +793,36 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: "mealie (path: caddy -> service)"
+    group: "path"
+    url: "https://mealie.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # /api/app/about is the HONEST probe: unauthenticated and it runs a real
+  # query against the configured database (verified in app_about.py) — the
+  # same path the container healthcheck uses. Its /startup-info sibling is
+  # fine too; nothing under /api/app/about makes outbound calls.
+  - name: "mealie (service)"
+    group: "service"
+    url: "http://127.0.0.1:10352/api/app/about"
+    interval: 1m
+    headers:
+      Host: "mealie.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
   - name: "ntfy (path: caddy -> service)"
     group: "path"
     url: "https://ntfy.svc.idanreed.com/"
@@ -1169,6 +1230,40 @@ endpoints:
       ignore-redirect: true
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  - name: "wealthfolio (path: caddy -> service)"
+    group: "path"
+    url: "https://wealthfolio.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # /api/v1/healthz is a STATIC "ok" (no DB query, no auth check) — but the
+  # Axum server only binds AFTER its embedded SQLite migrations, so a 200
+  # still means a live listener over a migrated schema. /api/v1/readyz is
+  # byte-identical; never probe it expecting readiness semantics. A mangled
+  # WF_AUTH_PASSWORD_HASH is boot-fatal at 3.7.0 (startup parse — this probe
+  # goes red with everything else); what no probe can see is a VALID hash
+  # for the wrong password — the wealthfolio suite covers that with a real
+  # login.
+  - name: "wealthfolio (service)"
+    group: "service"
+    url: "http://127.0.0.1:10309/api/v1/healthz"
+    interval: 1m
+    headers:
+      Host: "wealthfolio.svc.idanreed.com"
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[BODY] == ok"
     alerts:
       - type: ntfy
 

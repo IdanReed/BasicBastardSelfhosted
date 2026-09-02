@@ -21,6 +21,21 @@
 # hardware-configuration.nix, which imports this file.
 {
   systemd.tmpfiles.rules = [
+    # === actual (bind sources in its compose.yaml) ===
+    # 1001:1001 — the uid the compose file PINS with `user: "1001:1001"`. The
+    # image creates `actual` uid 1001 for exactly this purpose and then ships
+    # with no USER instruction (measured: `"User": null` in the published
+    # 26.9.0 config; the suite's first run wrote account.sqlite as 0:0), so
+    # without the compose pin the server runs as root. Nothing in the
+    # container chowns, and the create-folders migration mkdirs server-files/
+    # and user-files/ under /data before the server ever binds — so a
+    # root-owned bind mount plus the pinned uid is a container that exits at
+    # start (the seerr crash-loop class, finding #14).
+    # account.sqlite (server password, sessions, file index — and the
+    # SimpleFIN credential once bank sync is set up) plus every budget file.
+    # This IS the backup payload; no backup-prepare.sh line yet (evaluation
+    # stack) — raw fast-volume include set only.
+    "d /mnt/fast/actual 0755 1001 1001 -"
     # === arcane (bind sources in its compose.yaml) ===
     # 1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
     # reason /srv/stacks is 1000:1000, finding #10) and writes its own SQLite
@@ -357,6 +372,14 @@
     # NOT_BACKED_UP entry in tests/lib/lints.nix: the slow-volume plan is an
     # explicit include list and this is deliberately not on it.
     "d /mnt/slow/loki 0755 10001 10001 -"
+    # === mealie (bind sources in its compose.yaml) ===
+    # root:root is fine and ANY hand-fix is futile: the image's entry.sh starts
+    # as root, runs `chown -R $PUID:$PGID /app` — which INCLUDES the bind-mounted
+    # /app/data — on EVERY start, then gosu-drops to 911:911 (PUID/PGID defaults,
+    # deliberately unset in the compose). So /mnt/fast/mealie ends up 911:911
+    # within seconds of first `up` regardless of this rule. backup-prepare.sh
+    # reads mealie.db from here as root, so nothing else cares who owns it.
+    "d /mnt/fast/mealie 0755 root root -"
     # === media (bind sources in its compose.yaml) ===
     # Declared here rather than left to docker's create-on-mount because docker
     # always creates missing bind sources root-owned at container start — exactly
@@ -561,6 +584,14 @@
     # source — so moving this mount would turn the vault's only dump into a
     # permanent silent no-op rather than an error.
     "d /mnt/fast/vaultwarden 0755 root root -"
+    # === wealthfolio (bind sources in its compose.yaml) ===
+    # 1000:1000, and the image will NOT heal a wrong owner: the Dockerfile ends
+    # on USER 1000:1000 with no root entrypoint and no chown — the first write
+    # to a root-owned /data fails and the container exits (upstream's own
+    # upgrade doc is a manual chown -R 1000:1000). One directory carries the
+    # whole stack: wealthfolio.db (SQLite, WAL) plus secrets.json (provider
+    # API keys, encrypted with WF_SECRET_KEY).
+    "d /mnt/fast/wealthfolio 0755 1000 1000 -"
     # === wger (bind sources in its compose.yaml) ===
     # 🚨 Wger's media directory must be 1000:1000. Its base image does
     # `deluser ubuntu` then `adduser wger --uid 1000` and the production image

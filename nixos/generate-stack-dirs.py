@@ -94,6 +94,16 @@ DEFAULT_OWNER = ("root", "root")
 # stack-dirs-generated lint goes red. The reverse — compose mounting a path
 # this table says nothing about — is the case the table exists to catch.
 STACK_NOTES = {
+    "actual": """\
+1001:1001 — the uid the compose file PINS with `user: "1001:1001"`. The
+image creates `actual` uid 1001 for exactly this purpose and then ships
+with no USER instruction (measured: `"User": null` in the published
+26.9.0 config; the suite's first run wrote account.sqlite as 0:0), so
+without the compose pin the server runs as root. Nothing in the
+container chowns, and the create-folders migration mkdirs server-files/
+and user-files/ under /data before the server ever binds — so a
+root-owned bind mount plus the pinned uid is a container that exits at
+start (the seerr crash-loop class, finding #14).""",
     "arcane": """\
 1000:1000, NOT the default — Arcane runs as PUID/PGID 1000 (the same
 reason /srv/stacks is 1000:1000, finding #10) and writes its own SQLite
@@ -270,6 +280,13 @@ the 0600 immich.json into the config dir. The seerr uid-1000 crash-loop class
 (finding #14) therefore does not apply, but the 'd' rules still must exist:
 docker creates missing bind sources at container start with no say over the
 parent /mnt/fast/immich.""",
+    "mealie": """\
+root:root is fine and ANY hand-fix is futile: the image's entry.sh starts
+as root, runs `chown -R $PUID:$PGID /app` — which INCLUDES the bind-mounted
+/app/data — on EVERY start, then gosu-drops to 911:911 (PUID/PGID defaults,
+deliberately unset in the compose). So /mnt/fast/mealie ends up 911:911
+within seconds of first `up` regardless of this rule. backup-prepare.sh
+reads mealie.db from here as root, so nothing else cares who owns it.""",
     "media": """\
 Declared here rather than left to docker's create-on-mount because docker
 always creates missing bind sources root-owned at container start — exactly
@@ -390,6 +407,13 @@ The path is load-bearing beyond ownership: backup-prepare.sh hardcodes
 /mnt/fast/vaultwarden/db.sqlite3, and sqlite_backup returns 0 for a MISSING
 source — so moving this mount would turn the vault's only dump into a
 permanent silent no-op rather than an error.""",
+    "wealthfolio": """\
+1000:1000, and the image will NOT heal a wrong owner: the Dockerfile ends
+on USER 1000:1000 with no root entrypoint and no chown — the first write
+to a root-owned /data fails and the container exits (upstream's own
+upgrade doc is a manual chown -R 1000:1000). One directory carries the
+whole stack: wealthfolio.db (SQLite, WAL) plus secrets.json (provider
+API keys, encrypted with WF_SECRET_KEY).""",
     "wger": """\
 🚨 Wger's media directory must be 1000:1000. Its base image does
 `deluser ubuntu` then `adduser wger --uid 1000` and the production image
@@ -415,6 +439,15 @@ download one and hang offline.""",
 # a stale key is an error, not a no-op, so this table cannot rot into a list
 # of ownerships for paths nothing mounts any more.
 DIR_NOTES: dict[str, dict] = {
+    # --- actual --------------------------------------------------------
+    "/mnt/fast/actual": {
+        "owner": ("1001", "1001"),
+        "note": """\
+account.sqlite (server password, sessions, file index — and the
+SimpleFIN credential once bank sync is set up) plus every budget file.
+This IS the backup payload; no backup-prepare.sh line yet (evaluation
+stack) — raw fast-volume include set only.""",
+    },
     # --- arcane --------------------------------------------------------
     "/mnt/fast/arcane": {"owner": ("1000", "1000")},
     # --- media ---------------------------------------------------------
@@ -636,6 +669,8 @@ Root-owned this fails visibly rather than silently, unusually for this
 table: Grafana's /api/health reports {"database":"ok"} from a real query,
 so an unwritable directory shows up as an unhealthy container.""",
     },
+    # --- wealthfolio ---------------------------------------------------
+    "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},
     # --- samba ---------------------------------------------------------
     "/mnt/slow/samba/shared": {
         "mode": "0775",
