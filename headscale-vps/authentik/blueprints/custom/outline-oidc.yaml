@@ -17,33 +17,15 @@
 # outline.svc.idanreed.com deliberately does not `import protected`.
 #
 # ---------------------------------------------------------------------------
-# 🚨 THE CLIENT SECRET IS NOT SET HERE YET — DELIBERATE, INCOMPLETE STATE.
-#    READ THIS BEFORE ROTATING ANYTHING
-# ---------------------------------------------------------------------------
-# The fleet convention (headscale-oidc, immich-oidc) is `client_secret: !Env
-# <NAME>`: sops -> modules/authentik.nix template -> worker environment ->
-# blueprint. The oidc-contract lint fails the build if a blueprint reads an
-# !Env name the worker environment and sops template do not both provide —
-# correctly: applied against an unset variable it stores an EMPTY secret and
-# every token exchange 401s at login time, silently.
-#
-# As shipped this provider has no client_secret attribute, so AUTHENTIK
-# GENERATES ONE and the operator copies it out of the UI (Applications ->
-# Providers -> outline) into stacks/outline/.sops.env as OIDC_CLIENT_SECRET —
-# a manual step that a `state: present` re-apply will not re-teach you.
-#
-# TO PUT IT ON THE FLEET'S NORMAL FOOTING, four changes land together:
-#   1. headscale-vps/secrets.sops.yaml (+ .example, + tests/fixtures/vps*.sops.yaml):
-#      add key OUTLINE_OIDC_CLIENT_SECRET.
-#   2. headscale-vps/modules/authentik.nix: declare
-#      `sops.secrets.OUTLINE_OIDC_CLIENT_SECRET = { };` and add
-#      `OUTLINE_OIDC_CLIENT_SECRET=${config.sops.placeholder.OUTLINE_OIDC_CLIENT_SECRET}`
-#      to the "authentik.env" template.
-#   3. headscale-vps/authentik/compose.yaml, worker environment:
-#      `OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}`
-#   4. here: uncomment the client_secret line below.
-# Then the same value must also be in stacks/outline/.sops.env — the
-# three-way rotation coupling immich already documents.
+# client_secret is on the fleet's normal footing (headscale-oidc.yaml,
+# immich-oidc.yaml): `!Env OUTLINE_OIDC_CLIENT_SECRET`, travelling
+# sops -> modules/authentik.nix template -> worker environment -> blueprint.
+# The SAME value must sit in stacks/outline/.sops.env as OIDC_CLIENT_SECRET —
+# the three-way rotation coupling immich documents. Rotating it = edit both
+# sops files + VPS nixos-rebuild switch + re-up the outline stack. The
+# oidc-contract lint ties the !Env name to the worker env and the sops
+# template; a name unset in either stores an EMPTY secret and every token
+# exchange 401s at login time, silently.
 version: 1
 metadata:
   name: outline-oidc
@@ -64,9 +46,9 @@ entries:
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
       client_id: outline
-      # See the header block: uncomment together with the three plumbing
-      # changes it lists, never on its own.
-      # client_secret: !Env OUTLINE_OIDC_CLIENT_SECRET
+      # !Env reads from the worker's environment (see header). Plain "${VAR}"
+      # is NOT interpolated by authentik — it would be stored as a literal.
+      client_secret: !Env OUTLINE_OIDC_CLIENT_SECRET
       redirect_uris:
         # Outline builds this itself as `${URL}/auth/oidc.callback` — read out
         # of the image's build/plugins/oidc/server/auth/oidcRouter.js, not

@@ -12,6 +12,7 @@ HEADSCALE_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:/pyuCaf5mRgF1m3o2xjTS8xaJpAhqR
 AUTHENTIK_BOOTSTRAP_PASSWORD: ENC[AES256_GCM,data:OgaRNV4tLR3XYVglGUuK+idpo198an8=,iv:nsMtOhWjIDkZopeO4+8AbLXzm4cQj+7NCrQcVB9fEpc=,tag:De0rwA8MIUWvyVBZML6hyA==,type:str]
 AUTHENTIK_BOOTSTRAP_TOKEN: ENC[AES256_GCM,data:fsKtDSsb5pNZmRqlf8+osMpShxpctyN6ZqGx/86/H18V1d3/qOoekm9YCOb6EH8=,iv:sHlHymXsNSfdSIl6VsOn/W3b1UISNYxWLZAnZjHpJ0w=,tag:Wyl9R9jQlhKg2OOUsnyv+Q==,type:str]
 IMMICH_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:Iz0V5HQTrAAizyMX6GFDTSmJfMSzDXaKoSlzA7RJsoOyOcX/cF+GoSc=,iv:yJKwwxBTviIg+oMzatz6IhO5vnKDHOrWevZtu4Csykk=,tag:MpxLIvj+HOKJCOsQQjpgJA==,type:str]
+OUTLINE_OIDC_CLIENT_SECRET: ENC[AES256_GCM,data:7oa7ADTyFoYANJ2wdyX0zXVpH12sW3LUxj5TInVmP95iHM3glitIwS0s,iv:MjGZEAJhP0PZrF0bIrx+lEvPYsW/291ZGyFSLTr5PX4=,tag:Xp9Yz9vt1kYveADgQO/t9Q==,type:str]
 sops:
     age:
         - enc: |
@@ -23,7 +24,7 @@ sops:
             LnWz8phwRmqoueT71CgqgvVKPPyAcWlIOsMpjPBM10FntkTj0O8jUg==
             -----END AGE ENCRYPTED FILE-----
           recipient: age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
-    lastmodified: "2026-08-30T14:11:23Z"
-    mac: ENC[AES256_GCM,data:kT3vUTyc5b3LQ0d9d9tJ0GSqBFJoO5YWaumnybxtWuTXKOLUX4vV5nwGi69NySWWpzHEZeM/wYutLhExp4txr/cyJW2/8FG953/IHOqNjo2GCwWN+B3p7UO+GJdWLdMns/U5qc+FQmKyTWE65TRj5NWhiWHzDSRN9N1qThiv6dE=,iv:CN8EShhSVCKt6HE/YLPtJN8nu57vDHV697MHemw9YYw=,tag:ey0AaaxWK/dZ86riBaG8iA==,type:str]
+    lastmodified: "2026-09-02T16:24:56Z"
+    mac: ENC[AES256_GCM,data:QUbn5cscb2IgGwy78unMpJgoR84Gvgh80eUO9L4udTZ4+/Q5+V6/wIymxqPhr4217jR6IB9PZSty3Vta9MmFpO/Odi/Oe8NuxlH/HYwd0rA7HiPwJvqHmu+bc/DaHeSoDTxOJNgG6D/uSJTktJmPuL/UFqX3wGXi7hxqMqqiCjg=,iv:XlsSnvarTsrY/BP78NzkSXTrmoDqQ+Y8MZj/Cx9GoUk=,tag:NkTGRjktm6v5SuwrvKCJiw==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.0
