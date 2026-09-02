@@ -5,8 +5,8 @@
 // `discovery.docker` and `loki.source.docker` components that would be the
 // obvious way to collect container logs, and using either means mounting
 // /var/run/docker.sock into a container that also talks to the network. That
-// socket is root-equivalent on this host (it is exactly why Arcane's UI is
-// loopback-only and behind Caddy). Routing container stdout through journald
+// socket is root-equivalent on this host (exactly why the deploy plane's UI
+// is loopback-only and behind Caddy). Routing container stdout through journald
 // instead — virtualisation.docker.daemon.settings.log-driver in
 // nixos/configuration.nix — gets the same lines with two read-only bind
 // mounts and no privilege at all.

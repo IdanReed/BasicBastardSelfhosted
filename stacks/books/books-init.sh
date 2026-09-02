@@ -5,8 +5,8 @@
 #
 # Contract (media-init pattern):
 #   - Every mutation logs "books-init: CHANGE: ...". A second run — every
-#     Arcane redeploy reruns this container — must log ZERO change lines. The
-#     books suite asserts exactly that.
+#     redeploy reruns this container — must log ZERO change lines. The books
+#     suite asserts exactly that.
 #   - Unset credentials are a HARD error (decrypt race, finding #11): exiting
 #     nonzero fails the deploy loudly instead of leaving library apps nobody
 #     can log in to.
@@ -142,29 +142,22 @@ kv_auth = {"x-api-key": api_key}
 #   fileGroupTypes  = [2, 3] = EPub + Pdf (§8.3 if you want EPUB-only)
 #   folderWatching  = false: inotify against a bind mount is unreliable in
 #                     Docker, and the post-download hook is a precise trigger.
-#   enableMetadata  = TRUE, and the name is a trap. It does NOT mean "fetch
-#                     metadata from the internet" — it means "parse the
-#                     metadata inside the file". BookParser only calls
-#                     BookService.ParseInfo when it is set; with it false the
-#                     parser falls back to the FILENAME, which for a Book
-#                     library yields an empty Series, and the scanner then
-#                     logs "Unable to parse any meaningful information out of
-#                     file" and indexes NOTHING. Reading the EPUB's own OPF is
-#                     also the entire reason Kavita was chosen over a
-#                     Calibre-based stack. No egress: GetComicInfo reads the
-#                     epub itself.
+#   enableMetadata  = TRUE — the name is a trap: it means "parse the metadata
+#                     INSIDE the file", not "fetch from the internet".
+#                     BookParser only calls BookService.ParseInfo when set;
+#                     false falls back to the FILENAME, which for a Book
+#                     library yields an empty Series and the scanner indexes
+#                     NOTHING ("Unable to parse any meaningful information").
+#                     No egress: GetComicInfo reads the epub itself — and
+#                     reading the OPF is why Kavita was chosen over Calibre.
 #   allowMetadataMatching / allowScrobbling = false: THESE are the external
-#                     ones, and they stay off — this stack is designed to need
-#                     no egress.
-#   metadataProvider = 2 (Hardcover) is REQUIRED even with matching disabled,
-#                     and it is not a formality: MetadataProvider has no zero
-#                     member, so an omitted field binds 0, fails the
-#                     [EnumDataType] check and gets an automatic 400 — and if
-#                     it got past that, ValidateMetadataProvider throws
-#                     invalid-metadata-provider, which surfaces as a 500 with
-#                     no localized message. It selects WHICH provider would be
-#                     used, not WHETHER one is; the two allow* flags above are
-#                     what keep it dormant.
+#                     ones — this stack is designed to need no egress.
+#   metadataProvider = 2 (Hardcover), REQUIRED even with matching disabled:
+#                     MetadataProvider has no zero member, so an omitted field
+#                     binds 0, fails [EnumDataType] -> automatic 400 (and past
+#                     that, ValidateMetadataProvider throws -> unlocalized
+#                     500). It selects WHICH provider, not WHETHER; the two
+#                     allow* flags keep it dormant.
 library = {
     "id": 0,
     "name": "Books",

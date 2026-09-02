@@ -15,7 +15,7 @@
 # already done, so the script logs no change and exits 0.
 #
 # Every mutation logs "docspace-init: CHANGE: ...". A second run — and every
-# Arcane redeploy reruns this container — must log ZERO change lines.
+# redeploy reruns this container — must log ZERO change lines.
 set -eu
 
 python3 - <<'PY'

@@ -2,16 +2,13 @@
 # passwd-init — generates /mosquitto/config/passwd before the broker starts
 # (annex §3.2). Runs in the eclipse-mosquitto image itself, as root.
 #
-# Why this image and not alpine: mosquitto_passwd is already here, so there is
-# no `apk add` in the boot path. That is finding #4 — backrest's config-init
-# used to install gettext at container start, and a registry outage at boot
-# took the whole backup stack down with it.
+# This image, not alpine: mosquitto_passwd is already here, so no `apk add`
+# in the boot path (finding #4 — a registry outage at boot must not take the
+# stack down).
 #
-# Why it regenerates unconditionally rather than touch-once: this is what
-# makes secret rotation work. Rotating MQTT_*_PASSWORD in sops and
-# re-deploying has to reach the broker, and the file is derived state with no
-# runtime-owned content to preserve (contrast backrest's config.json, which
-# the app itself writes to).
+# Regenerates unconditionally — see the block below; the file is derived
+# state with no runtime-owned content to preserve (contrast backrest's
+# config.json, which the app itself writes).
 #
 # Contract:
 #   - Unset, empty, or still-changeme_ credentials are a HARD error, BEFORE
@@ -61,32 +58,23 @@ for var in FRIGATE_MQTT_PASSWORD MQTT_HA_PASSWORD MQTT_HEALTHCHECK_PASSWORD; do
     check "$var"
 done
 
-# THIS ONESHOT REGENERATES UNCONDITIONALLY, and is the one place in the fleet
-# where a re-run legitimately logs a CHANGE line. That is a deliberate choice
-# between two imperfect options:
-#
-#   - mosquitto_passwd SALTS every hash, so the output is never byte-identical
-#     between runs and `cmp` cannot answer "did anything actually change?".
-#   - Answering it anyway means storing a digest of the INPUT passwords beside
-#     the file — which lives under /mnt/fast, which backrest backs up. That
-#     ships an offline-crackable artifact to a third-party storage box to save
-#     a log line. An unsalted digest of an operator-chosen password is worth
-#     considerably more to an attacker than the pbkdf2 hashes it sits next to.
-#
-# So: no sidecar, regenerate every time, and the automation suite exempts this
-# container from its zero-CHANGE assertion with the same reasoning. Rotation
+# REGENERATES UNCONDITIONALLY — the one oneshot in the fleet where a re-run
+# legitimately logs a CHANGE line (the automation suite exempts it from the
+# zero-CHANGE assertion). mosquitto_passwd SALTS every hash, so `cmp` cannot
+# answer "did anything change?" — and answering it would mean storing a
+# digest of the INPUT passwords under /mnt/fast, an offline-crackable
+# artifact shipped to a third-party storage box to save a log line. Rotation
 # works for free as a consequence.
 
-# NOT `-b <password>`: this container's processes live in the host PID
-# namespace, where /proc/<pid>/cmdline is world-readable, so the old form
-# published all three MQTT passwords to every host uid on every stack up. Same
-# narrowing backup-prepare.sh made when it moved DB passwords to MYSQL_PWD.
-# `mosquitto_passwd -U` hashes a plaintext `user:password` file IN PLACE, so
-# nothing secret is ever an argument.
+# NOT `-b <password>`: processes here live in the host PID namespace, where
+# /proc/<pid>/cmdline is world-readable — that form published all three MQTT
+# passwords to every host uid (same narrowing as backup-prepare.sh's
+# MYSQL_PWD). `mosquitto_passwd -U` hashes a plaintext `user:password` file
+# IN PLACE, so nothing secret is ever an argument.
 #
 # The plaintext stages in the container's private /tmp, never under
-# /mosquitto/config — that path is the /mnt/fast bind, which backrest ships to
-# a third-party storage box. Only the HASHED result crosses over.
+# /mosquitto/config — that path is the /mnt/fast bind, which backrest ships
+# to a third-party storage box. Only the HASHED result crosses over.
 STAGE=/tmp/passwd.stage
 # "$STAGE.tmp" too: mosquitto_passwd -U rewrites through a sibling <file>.tmp
 # and only unlinks it on success, so a failed rehash would otherwise leave the

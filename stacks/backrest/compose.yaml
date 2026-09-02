@@ -1,34 +1,27 @@
 # Backrest — restic orchestrator + browse/restore UI.
 #
-# Differences from the original design in ServerNotes/designs/core-backups.md,
-# all of which were things that could not have worked:
+# Deviations from ServerNotes/designs/core-backups.md, each a trap:
 #
-#   - No db-dump.sh command hook. The dumps run on the HOST
-#     (nixos/backup-prepare.sh) because this image ships neither the docker CLI
-#     nor sqlite3, /mnt/fast is mounted read-only here, and the hook was
-#     registered ON_ERROR_CANCEL — so its guaranteed failure cancelled every
-#     single snapshot.
-#   - /config is a DIRECTORY, mounted read-write. Backrest rewrites config.json
-#     whenever anything changes in the UI, so :ro breaks it; and bind-mounting
-#     a *file* that does not exist yet makes Docker silently create a directory
-#     at that path.
-#   - config-init runs once and exits, with depends_on:
-#     service_completed_successfully. The original sidecar ran `sleep infinity`
-#     and nothing ordered it before Backrest, so it was a race.
-#   - Notifications go to http://ntfy/ on a shared docker network rather than
-#     host.docker.internal, which does not resolve on Linux and made every
-#     success and failure notification silently disappear.
+#   - No db-dump.sh command hook: dumps run on the HOST
+#     (nixos/backup-prepare.sh). The image ships neither docker CLI nor
+#     sqlite3, /mnt/fast is :ro here, and an ON_ERROR_CANCEL hook that always
+#     fails cancels every snapshot.
+#   - /config is a DIRECTORY, read-write: Backrest rewrites config.json on
+#     any UI change (:ro breaks it), and bind-mounting a not-yet-existing
+#     *file* makes Docker silently create a directory at that path.
+#   - config-init runs once and exits, ordered by depends_on:
+#     service_completed_successfully (a sleep-infinity sidecar is a race).
+#   - Notifications go to http://ntfy/ on a shared docker network —
+#     host.docker.internal does not resolve on Linux, which silently drops
+#     every notification.
 #   - Hooks use actionShoutrrr (ntfy) and actionHealthchecks (dead-man), NOT
-#     actionWebhook: backrest 1.9.1 defines actionWebhook in its proto and
-#     accepts it in config, but ships NO handler for it — every hook fired
-#     "no handler for hook type" at runtime, so no notification and no
-#     dead-man ping would ever have been delivered. Caught by
-#     tests/suites/backrest.nix triggering a real backup.
-#   - No `apk add gettext` for envsubst. That put dl-cdn.alpinelinux.org in the
-#     boot path — registry or uplink down at boot meant the whole backup stack
-#     stayed down — and made config-init impossible to run in the offline VM
-#     suite. config-init.sh substitutes with busybox awk instead, and treats a
-#     missing/empty variable as a hard error where envsubst wrote "".
+#     actionWebhook: backrest 1.9.1 accepts actionWebhook in config but ships
+#     NO handler ("no handler for hook type" at runtime, nothing delivered).
+#     Caught by tests/suites/backrest.nix triggering a real backup.
+#   - No `apk add gettext`/envsubst: that puts the registry in the boot path
+#     (down at boot = backup stack down) and breaks the offline VM suite.
+#     config-init.sh substitutes with busybox awk and treats missing/empty
+#     vars as a hard error where envsubst wrote "".
 services:
   config-init:
     image: alpine:3.21
@@ -37,12 +30,9 @@ services:
     # Backrest owns the file afterwards; the template is a bootstrap seed, not
     # a source of truth. To re-seed: delete /mnt/fast/backrest/config/config.json.
     entrypoint: ["/bin/sh", "/template/config-init.sh"]
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
+    # Long form with required:false ON PURPOSE (finding #11): a deploy can
+    # race the host-side decrypt (.env not yet written; timer lands it ≤~1min
+    # after delivery), and the plain form aborts the whole stack. Residual
     # window: a deploy racing the first decrypt starts with unset vars — the
     # loud guard is each service's own healthcheck/startup failure.
     env_file:
@@ -59,23 +49,21 @@ services:
       # with every backup failing on DNS (uXXXXXX.your-storagebox.de).
       - ./ssh_config:/template/ssh_config:ro
       - /mnt/fast/backrest/config:/config
-      # ONE FILE, not the whole /var/lib/backup directory (which is what this
-      # mounted until 2026-08-31). The directory also holds vps_ed25519 — the
-      # passwordless-sudo identity for the PUBLIC VPS — which this container
-      # has no use for whatsoever: config-init reads exactly one path, the
-      # storage-box key, and only to decide whether to let Backrest start.
+      # ONE FILE, not the whole /var/lib/backup directory — that also holds
+      # vps_ed25519, the passwordless-sudo identity for the PUBLIC VPS, which
+      # this container has no use for: config-init reads exactly one path,
+      # the storage-box key, only to decide whether to let Backrest start.
       #
-      # ⚠ Single-file binds behave differently from directory binds when the
-      # source is MISSING: docker manufactures a DIRECTORY at the host path
-      # (verified, and the same trap the header documents for /config). That
-      # is why the gate in config-init.sh tests `-f` before `-s`, and it is
-      # self-healing — the tmpfiles `C+` rule in nixos/configuration.nix
-      # removes whatever is at the path before re-copying the key.
+      # ⚠ Single-file binds with a MISSING source: docker manufactures a
+      # DIRECTORY at the host path (verified; same trap as /config in the
+      # header). Hence the `-f` before `-s` gate in config-init.sh; the
+      # tmpfiles `C+` rule in nixos/configuration.nix removes whatever is at
+      # the path before re-copying, so it self-heals.
       #
-      # The source must stay a REAL FILE, never the /run/secrets symlink
-      # sops-nix would install by default: a symlink target outside the bind
-      # dangles inside the container. That is why BACKUP_STORAGEBOX_SSH_KEY
-      # has no custom `path` and a tmpfiles C+ rule materialises it instead.
+      # Source must stay a REAL FILE, never the /run/secrets symlink sops-nix
+      # would install by default — a symlink target outside the bind dangles
+      # in-container. That is why BACKUP_STORAGEBOX_SSH_KEY has no custom
+      # `path` and a tmpfiles C+ rule materialises it instead.
       - /var/lib/backup/storagebox_ed25519:/keys/storagebox_ed25519:ro
     networks:
       - homelab
@@ -105,16 +93,15 @@ services:
       # into /var/lib/backup directly: the next boot overwrites it.
       - /var/lib/backup/storagebox_ed25519:/root/.ssh/id_ed25519:ro
       # System-wide ssh config path on purpose: ssh enforces root ownership
-      # on /root/.ssh/config, but Arcane's sync (PUID 1000) delivers this
-      # file 1000-owned — mounting it there breaks every ssh with "Bad owner
-      # or permissions". /etc/ssh/ssh_config carries no ownership check.
+      # on /root/.ssh/config, but the stack git sync delivers this file
+      # 1000-owned — mounting it there breaks every ssh with "Bad owner or
+      # permissions". /etc/ssh/ssh_config carries no ownership check.
       - ./ssh_config:/etc/ssh/ssh_config:ro
-      # The pinned Hetzner Storage Box host keys behind that config's
+      # Pinned Hetzner Storage Box host keys behind that config's
       # `StrictHostKeyChecking yes`. Read-only and OUTSIDE the writable layer
-      # on purpose: the container's own ~/.ssh/known_hosts is discarded on
-      # every recreate, which is what turned `accept-new` into a fresh TOFU
-      # each time. Verified against Hetzner's published fingerprints — see the
-      # header of known_hosts.
+      # on purpose: ~/.ssh/known_hosts is discarded on every recreate, which
+      # turns `accept-new` into a fresh TOFU each time. Verified against
+      # Hetzner's published fingerprints — see the known_hosts header.
       - ./known_hosts:/etc/ssh/ssh_known_hosts:ro
       # Data to back up. Read-only: Backrest never needs to write here, and the
       # host-side dump job is what puts dumps into /mnt/fast/_dumps.
@@ -124,14 +111,7 @@ services:
       - '127.0.0.1:10002:9898'
     networks:
       - homelab
-    # Long form with required:false ON PURPOSE (finding #11): Arcane's
-    # gitops sync VALIDATES the compose in a staging directory before copying,
-    # where the host-side decrypted .env cannot exist yet — a plain
-    # `env_file: .env` fails that validation and the sync of the whole stack
-    # aborts. required:false passes staging; at deploy time the project dir
-    # has the real .env (decrypt timer, ≤~1min after delivery). Residual
-    # window: a deploy racing the first decrypt starts with unset vars — the
-    # loud guard is each service's own healthcheck/startup failure.
+    # Long form with required:false ON PURPOSE (finding #11): see config-init.
     env_file:
       - path: .env
         required: false
