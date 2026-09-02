@@ -32,13 +32,11 @@ echo "> Stopping VM $VM_ID..."
 qm stop "$VM_ID" 2>/dev/null || true
 
 echo "> Restoring NixOS image..."
-# qmrestore reads .vma.zst natively, so no manual decompress — the old
-# mktemp+zstd dance died at zstd (it refuses to overwrite the file mktemp had
-# already created) and staged a multi-GB VMA on /tmp, often tmpfs. No
-# `qm disk import` either: that expects a disk image, not a vzdump archive.
-# --force replaces the whole VM; config and disks come from the archive
-# (nixos-generators embeds them), and build_proxmox.sh re-applies the
-# cloud-init wiring afterwards.
+# qmrestore reads .vma.zst natively — no manual decompress (zstd refuses to
+# overwrite a mktemp'd file and stages a multi-GB VMA on /tmp, often tmpfs),
+# and NOT `qm disk import` (expects a disk image, not a vzdump archive).
+# --force replaces the whole VM; config and disks come from the archive, and
+# build_proxmox.sh re-applies the cloud-init wiring afterwards.
 qmrestore "$IMAGE_PATH" "$VM_ID" --storage local-zfs --force
 
 echo "> Done. OS reimported for VM $VM_ID."
