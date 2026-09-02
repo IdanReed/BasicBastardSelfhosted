@@ -141,24 +141,30 @@
 	# five named headers were never the hole, and X-Authentik-Jwt was.
 	request_header -X-Authentik-*
 
-	@arcane host arcane.svc.idanreed.com
-	handle @arcane {
+	@komodo host komodo.svc.idanreed.com
+	handle @komodo {
 		# Forward auth, and of everything in this file it is the entry
-		# with the largest blast radius: Arcane mounts the Docker socket,
-		# so its web UI is a ROOT-EQUIVALENT interface for this host. The
-		# _overview.md row has said FwdAuth all along; this implements it.
-		# Its own login stays underneath, so it fails closed either way.
+		# with the largest blast radius: Komodo's Core UI drives Periphery,
+		# which mounts the Docker socket — so the UI is a ROOT-EQUIVALENT
+		# interface for this host. The _overview.md row says FwdAuth; this
+		# implements it. Komodo's own local login stays underneath, so it
+		# fails closed either way.
 		#
 		# 🚨 ROLLOUT ORDER IS NOT OPTIONAL HERE. The blueprint entry plus a
 		# VPS rebuild must land BEFORE this route syncs, because the thing
-		# you would normally use to fix a broken deploy IS Arcane. If it
+		# you would normally use to fix a broken deploy IS Komodo. If it
 		# does lock out, the recovery paths are the loopback publish over
 		# SSH (`curl localhost:10000`) and `nixos-rebuild switch
 		# --target-host`, neither of which goes through Caddy — but plan
 		# not to need them.
 		#
-		# Nothing calls Arcane's API through Caddy: the gitops suite drives
-		# it from inside the VM over loopback, and the UI is browser-only.
+		# FULLY protected, no /listener exemption: redeploy webhooks run
+		# Forgejo -> Core on the internal loopback/tailnet path (both are
+		# loopback+tailnet-local), never through Caddy, so invariant #2 stays
+		# clean. The gitops suite drives the API from inside the VM over
+		# loopback; the UI is browser-only. If a webhook ever MUST traverse
+		# Caddy, add `@komodo_listener path /listener/*` bypassing forward_auth
+		# here — a vhost-routing detail, never an Authentik change.
 		import protected
 		reverse_proxy localhost:10000
 	}
