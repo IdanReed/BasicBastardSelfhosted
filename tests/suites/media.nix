@@ -102,12 +102,10 @@
 
 let
   stackImages = [
-    # The boot chain: bootstrap-komodo is wantedBy multi-user.target, so its
-    # image must be loadable before the script gets control.
-    images."ghcr_io_moghtech_komodo-core_2_1_0"
-    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
-    images."ghcr_io_ferretdb_ferretdb_2_7_0"
-    images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
+    # The deploy plane (Komodo) is MASKED in this suite — media does not test
+    # it, and its 4 containers (Core/Periphery/FerretDB/Postgres) starved the
+    # timing-sensitive clamav quarantine-inode test under the 3-concurrent
+    # sweep. So no komodo images here; the mask is in the node config below.
     # The stack, every pinned ref from stacks/media/compose.yaml:
     images."qmcgaw_gluetun_v3_41_3"
     images."alpine_3_21" # qbit-init
@@ -124,14 +122,12 @@ let
     images."python_3_13-alpine" # media-init
   ];
 
-  # Seeds /srv the way the real host gets it: Arcane's git sync on the live
+  # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Only the media stack is seeded — the other
-  # stacks are the light suite's job — plus /srv/komodo for bootstrap-komodo.
+  # stacks are the light suite's job; komodo is masked, so /srv/komodo is not
+  # needed.
   seedSrv = pkgs.runCommand "srv-seed-media" { } ''
-    mkdir -p $out/komodo $out/stacks/media
-    cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
-
+    mkdir -p $out/stacks/media
     cp -r ${../../stacks/media}/. $out/stacks/media/
     chmod -R u+w $out/stacks/media
     # The working-tree cp -r can capture a developer's locally-decrypted
@@ -174,10 +170,17 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;
-            beforeUnits = [ "bootstrap-komodo.service" ];
+            # Komodo masked below, so nothing container-shaped runs at boot;
+            # the only contract is "loaded before the test script's compose up".
+            beforeUnits = [ "multi-user.target" ];
           })
-          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
-          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
+          {
+            # Keep the deploy plane out of the boot path — media does not test
+            # it, and its containers starve the quarantine-inode timing. The
+            # stack-git-sync timer would also fail its clone (no Forgejo here).
+            systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
+            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         # This many containers on the sized profile's 2 cores makes every
@@ -209,8 +212,7 @@ pkgs.testers.runNixOSTest {
           # Mirrors nixos/hardware-configuration.nix, which cannot be
           # imported here because it mounts real partitions by partlabel.
           # The media rules below are the SAME set production declares —
-          # keep the two lists in sync by hand.
-          "d /srv/komodo 0755 root root -"
+          # keep the two lists in sync by hand. (No /srv/komodo: masked here.)
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
           # Bind-mount roots from stacks/media/compose.yaml. root-owned is
@@ -272,8 +274,7 @@ pkgs.testers.runNixOSTest {
             RemainAfterExit = true;
           };
           script = ''
-            mkdir -p /srv/komodo /srv/stacks
-            cp -r --no-preserve=mode ${seedSrv}/komodo/. /srv/komodo/
+            mkdir -p /srv/stacks
             cp -r --no-preserve=mode ${seedSrv}/stacks/. /srv/stacks/
             chown -R 1000:1000 /srv/stacks
           '';
@@ -385,12 +386,14 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # Boot chain: sops fixture -> decrypted .env -> homelab network -> arcane
+    # Boot chain: sops fixture -> decrypted .env -> homelab network -> stack
     # -----------------------------------------------------------------------
     with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
         services_vm.wait_for_unit("docker-network-homelab.service")
-        services_vm.wait_for_unit("bootstrap-komodo.service")
-        services_vm.succeed("test -s /srv/stacks/media/.env")
+        # Komodo is masked here, so decrypt runs via its minutely timer, not
+        # bootstrap-komodo's Requires — wait the .env out (mk-stack-suite pattern).
+        services_vm.wait_for_unit("multi-user.target")
+        services_vm.wait_until_succeeds("test -s /srv/stacks/media/.env", timeout=90)
         stat = services_vm.succeed(
             "stat -c '%a %u:%g' /srv/stacks/media/.env"
         ).strip()
@@ -401,7 +404,7 @@ pkgs.testers.runNixOSTest {
                   "VPN_SERVICE_PROVIDER"]:
             services_vm.succeed(f"grep -q '^{k}=' /srv/stacks/media/.env")
 
-    # Images are loaded before bootstrap-komodo; the compose runs below must
+    # Images are loaded before multi-user.target; the compose runs below must
     # not race the load (an `up` mid-load pulls nothing offline).
     services_vm.wait_for_unit("load-test-images.service")
 
