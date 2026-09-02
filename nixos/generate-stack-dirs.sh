@@ -6,7 +6,7 @@
 #   git diff nixos/stack-dirs.nix        # the change you are about to ship
 #
 # Run this after adding or moving any /mnt bind mount in stacks/*/compose.yaml
-# or arcane/compose.yaml. The `stack-dirs-generated` lint re-runs the same
+# or komodo/compose.yaml. The `stack-dirs-generated` lint re-runs the same
 # generator and byte-compares against the checked-in file, so forgetting is a
 # build failure rather than 13 silently missing tmpfiles rules (which is
 # exactly what the hand-maintained list it replaced produced).

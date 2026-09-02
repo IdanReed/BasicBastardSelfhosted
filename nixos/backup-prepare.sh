@@ -26,7 +26,7 @@ VPS_HOST="${VPS_HOST:-headscale-vps.tailnet.idanreed.com}"
 VPS_USER="${VPS_USER:-idan}"
 VPS_KEY="${VPS_KEY:-/var/lib/backup/vps_ed25519}"
 
-# Where Arcane's git sync lands the stacks. Presence of a directory here is
+# Where the host's stack-git-sync unit lands the stacks. Presence of a directory here is
 # this script's only evidence that a stack is SUPPOSED to be running on this
 # host — see require_running below.
 STACKS="${STACKS:-/srv/stacks}"
@@ -34,7 +34,7 @@ STACKS="${STACKS:-/srv/stacks}"
 # Escape hatch, space-separated, matched against either the stack name or the
 # container name: a stack that is deliberately stopped (mid-migration, being
 # retired) would otherwise page every night. Deliberately an env var on the
-# unit rather than a file in the stack directory, because Arcane's git sync
+# unit rather than a file in the stack directory, because stack-git-sync
 # owns the contents of $STACKS and would overwrite a marker dropped there.
 BACKUP_SKIP="${BACKUP_SKIP:-}"
 
@@ -126,7 +126,16 @@ finish_dump() {
 # pg_dumpall against the container's superuser. A logical dump is restorable;
 # a file-level copy of a live pgdata directory generally is not, which is why
 # the Backrest plans exclude **/pgdata/**.
-for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio; do
+#
+# komodo is the manager's OWN state (Resource-Sync defs, stack registrations,
+# users), not a managed stack — FerretDB stores it all as JSONB in this
+# Postgres, so one pg_dumpall captures Komodo entirely. Replaces the arcane
+# sqlite line removed below. Expects container komodo_db + superuser komodo
+# (POSTGRES_USER), like every entry here. Komodo lives at /srv/komodo, not
+# /srv/stacks/komodo, so require_running's $STACKS/<name> presence check never
+# matches it: a fully-removed komodo silently skips (as arcane did before it),
+# while a stopped-but-present komodo_db still FAILS loudly via the exists() branch.
+for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo; do
     container="${svc}_db"
     # Every service in this loop is also its own stack directory name.
     require_running "$container" "$svc" || continue
@@ -377,25 +386,9 @@ sqlite_backup ntfy           /mnt/fast/ntfy/lib/auth.db
 # restorable copy.
 sqlite_backup gatus          /mnt/fast/gatus/gatus.db
 
-# Arcane's own state — the GitOps sync definitions, i.e. the thing that knows
-# how every stack on this host is delivered. It lived in the `arcane_data`
-# NAMED volume until 2026-08-31, which put it under /var/lib/docker and
-# therefore inside the Backrest plans' `**/docker/**` exclusion: it was in no
-# backup at all. arcane/compose.yaml now binds /mnt/fast/arcane to /app/data
-# (the image declares VOLUME /app/data and its DATABASE_URL default is
-# `file:data/arcane.db`), so the file is finally reachable — and, being WAL,
-# needs the same `.backup` treatment as forgejo rather than a raw copy.
-#
-# Why it matters more than its size suggests: `syncDirectory` is a per-sync
-# flag that defaults OFF in v1.17.4, so a sync definition recreated by hand
-# after a restore silently reverts to single-file mode and stops delivering
-# the sibling .sops.env — a restore that looks fine and ships no secrets.
-sqlite_backup arcane         /mnt/fast/arcane/arcane.db
-
 # Grafana's own state (stacks/logging). Its default database is sqlite at
 # /var/lib/grafana/grafana.db over the /mnt/fast/grafana bind, and it is
-# WAL-mode with a live writer — the same raw-copy trap as forgejo and arcane
-# above.
+# WAL-mode with a live writer — the same raw-copy trap as forgejo above.
 #
 # What is genuinely only here is small but not reproducible: dashboards, saved
 # Explore queries, users, API keys and preferences. Everything else that makes
