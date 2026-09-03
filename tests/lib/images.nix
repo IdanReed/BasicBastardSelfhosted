@@ -242,13 +242,13 @@
     finalImageName = "ghcr.io/home-assistant/home-assistant";
     finalImageTag = "2026.8.3";
   };
-  "ghcr_io_idanreed_caddy-cloudflare_2_11_2" = {
-    composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2";
+  "ghcr_io_idanreed_caddy-cloudflare_2_11_2-cf0_2_4" = {
+    composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4";
     imageName = "caddy";
     imageDigest = "sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562";
     hash = "sha256-HPpccoluk3umDZjfwDBUlceC2UebrefbbttUtP3QuR8=";
     finalImageName = "ghcr.io/idanreed/caddy-cloudflare";
-    finalImageTag = "2.11.2";
+    finalImageTag = "2.11.2-cf0.2.4";
   };
   "ghcr_io_immich-app_immich-machine-learning_v3_1_0" = {
     composeRef = "ghcr.io/immich-app/immich-machine-learning:v3.1.0";

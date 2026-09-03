@@ -48,7 +48,7 @@ let
     images."binwiederhier_ntfy_v2_11_0"
     images."ghcr_io_alam00000_bentopdf_1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
-    images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
+    images."ghcr_io_idanreed_caddy-cloudflare_2_11_2-cf0_2_4"
   ];
 
   # caddy needs /var/lib/test-ca in-container for the trust_pool line above
