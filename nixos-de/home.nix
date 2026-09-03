@@ -129,6 +129,22 @@
         SOPS_AGE_KEY=$key SOPS_EDITOR="zeditor --wait" sops edit "$@"
       }
 
+      # sopsgen <apply|rotate|list|view|search> [args…] — secrets-gen/sops-gen
+      # from anywhere, inside its nix-shell, same sudo-cat key dance as
+      # sopsedit. A `--dry-run` anywhere in the args skips the sudo — that
+      # pass is read-only and keyless by design (`list`/`search --keys` are
+      # keyless too, but they still cost a sudo here rather than teach this
+      # wrapper sops-gen's key matrix).
+      sopsgen() {
+        local repo=${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted
+        local key=
+        if [[ " $* " != *" --dry-run "* ]]; then
+          key=$(sudo cat /var/lib/sops-nix/sops_age_key.txt) || return
+        fi
+        SOPS_AGE_KEY=$key nix-shell "$repo/secrets-gen/shell.nix" \
+          --run "cd $repo && secrets-gen/sops-gen ''${(q)@}"
+      }
+
       # vidtrim <video> [speed] [threshold] [margin]
       # auto-editor cuts the silence, ffmpeg speeds up what's left.
       # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
