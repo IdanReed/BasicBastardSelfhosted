@@ -62,6 +62,18 @@
               # Growpart for disk expansion
               boot.growPartition = true;
 
+              # Baked-in VM config — qmrestore resets the VM to these on every
+              # re-image, so hand-run `qm set` fixes do not survive. Defaults
+              # were 1 core / 1G / an all-zeros MAC / empty boot order (hit
+              # live 2026-09-03). MAC is a fixed value from the Proxmox OUI so
+              # the VM keeps one L2 identity across re-images.
+              proxmox.qemuConf = {
+                cores = 4;
+                memory = 8192;
+                boot = "order=virtio0";
+                net0 = "virtio=BC:24:11:5E:11:03,bridge=vmbr0,firewall=1";
+              };
+
               # Filesystem for image (replaced/extended by the real disks)
               fileSystems."/" = {
                 device = "/dev/disk/by-label/nixos";
