@@ -161,15 +161,20 @@
     # "tls: internal error", every OIDC login degraded until a manual
     # restart). Wait for the discovery doc — but BOUNDED, so a genuinely
     # down Authentik still lets headscale start in break-glass mode.
+    # Worst case must fit inside TimeoutStartSec below — a switch restarts
+    # authentik alongside us, and its ~60s health-start window is the normal
+    # case, not the exception (first switch: start-pre was killed at the
+    # default timeout mid-wait).
     preStart = ''
-      for i in $(seq 1 60); do
-        ${pkgs.curl}/bin/curl -sf --max-time 3 \
+      for i in $(seq 1 30); do
+        ${pkgs.curl}/bin/curl -sf --max-time 2 \
           https://auth.idanreed.com/application/o/headscale/.well-known/openid-configuration \
           -o /dev/null && exit 0
         sleep 2
       done
-      echo "OIDC discovery still unreachable after 120s — starting anyway (CLI-auth fallback)"
+      echo "OIDC discovery still unreachable after ~120s — starting anyway (CLI-auth fallback)"
     '';
+    serviceConfig.TimeoutStartSec = 300;
 
     # Required for OnFailure to mean anything: the nixpkgs module ships
     # Restart=always/RestartSec=5s under the default limit of 5 starts / 10
