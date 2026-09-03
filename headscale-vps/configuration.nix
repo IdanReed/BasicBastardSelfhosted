@@ -67,6 +67,12 @@ in
   # KbdInteractive off, fail2ban, sops-encrypted keys.
   security.sudo.wheelNeedsPassword = false;
 
+  # nixos-rebuild --target-host pushes locally-built (unsigned) store paths;
+  # the daemon accepts those only from a trusted user (hit live 2026-09-03:
+  # "lacks a signature by a trusted key"). Wheel is already root-equivalent
+  # here (passwordless sudo above), so this widens nothing.
+  nix.settings.trusted-users = [ "root" "@wheel" ];
+
   # SSH server
   services.openssh = {
     enable = true;
