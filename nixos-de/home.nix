@@ -141,8 +141,11 @@
         if [[ " $* " != *" --dry-run "* ]]; then
           key=$(sudo cat /var/lib/sops-nix/sops_age_key.txt) || return
         fi
+        # (j: :) of the (q)-quoted args: ''${(q)@} alone splits like "$@" and
+        # the args past the first land on nix-shell itself — --dry-run is a
+        # real nix-shell flag, so the command silently never ran.
         SOPS_AGE_KEY=$key nix-shell "$repo/secrets-gen/shell.nix" \
-          --run "cd $repo && secrets-gen/sops-gen ''${(q)@}"
+          --run "cd $repo && secrets-gen/sops-gen ''${(j: :)''${(q)@}}"
       }
 
       # vidtrim <video> [speed] [threshold] [margin]
