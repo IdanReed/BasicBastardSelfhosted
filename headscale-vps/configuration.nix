@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, modulesPath, ... }:
 
 let
   # Byte-identical copy of nixos-de/ssh-pubkeys.nix (canonical) — see its
@@ -6,6 +6,12 @@ let
   sshPubkeys = import ./ssh-pubkeys.nix;
 in
 {
+  # Hetzner Cloud is KVM: stage 1 must have the virtio drivers or boot dies
+  # waiting for /dev/disk/by-partlabel/disk-main-root (hit live 2026-09-03).
+  # The VM suites cannot catch a missing-initrd-module bug — the test driver
+  # injects its own qemu-vm profile — so this import is load-bearing.
+  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
+
   # System identity
   networking.hostName = "headscale-vps";
   system.stateVersion = "25.11";
