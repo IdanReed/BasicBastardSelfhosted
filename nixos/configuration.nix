@@ -43,6 +43,12 @@ in
   # of sudo (key-only auth, KbdInteractive off, sops-encrypted keys).
   security.sudo.wheelNeedsPassword = false;
 
+  # Finding #4 (infra-review): caddy binds {$TAILNET_IP} (network_mode: host)
+  # and crash-loops with EADDRNOTAVAIL at boot until tailscale0 has its
+  # address. nonlocal_bind lets the bind succeed immediately; traffic flows
+  # once the interface is up.
+  boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = 1;
+
   # nixos-rebuild --target-host pushes locally-built (unsigned) store paths;
   # the daemon accepts those only from a trusted user (hit live 2026-09-03:
   # "lacks a signature by a trusted key"). Wheel is already root-equivalent
