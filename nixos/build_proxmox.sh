@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Configures cloud-init with the age key and starts the VM.
 # The age key is injected so sops-nix can decrypt secrets at boot.

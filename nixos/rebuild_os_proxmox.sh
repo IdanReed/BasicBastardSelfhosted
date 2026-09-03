@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Rebuilds the NixOS image and imports it to Proxmox.
 # Run this for first-time setup or full OS re-image.
