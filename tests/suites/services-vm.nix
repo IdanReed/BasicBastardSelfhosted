@@ -645,9 +645,13 @@ pkgs.testers.runNixOSTest {
                "-o ConnectTimeout=10 -o BatchMode=yes")
         outsider.succeed(f"{SSH} -i /etc/test-ssh-key idan@services-vm true")
         outsider.succeed(f"{SSH} -i /etc/test-ssh-key idan@services-vm sudo -n true")
+        # Read the advertised methods via a 'none' probe (rejected with the
+        # list of methods that can continue). `|| true` because ssh exits
+        # non-zero once out of methods — the list still prints, and the
+        # `publickey in methods` assert below guards against a dead sshd.
         methods = outsider.succeed(
-            f"{SSH} -v -o PubkeyAuthentication=no idan@services-vm true 2>&1 "
-            "| grep 'Authentications that can continue' | head -1"
+            f"{SSH} -v -o PreferredAuthentications=none idan@services-vm true 2>&1 "
+            "| grep 'Authentications that can continue' | head -1 || true"
         )
         assert "publickey" in methods, f"never saw the auth offer: {methods!r}"
         assert "password" not in methods, f"sshd offers passwords: {methods!r}"

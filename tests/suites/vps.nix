@@ -351,10 +351,13 @@ pkgs.testers.runNixOSTest {
 
           # The server must not OFFER password auth at all. BatchMode alone
           # cannot distinguish "password refused" from "could not type one",
-          # so read the advertised methods from the handshake.
+          # so read the advertised methods from the handshake: a 'none' probe
+          # is rejected with the list of methods that can continue. `|| true`
+          # because ssh exits non-zero once out of methods — the list still
+          # prints, and the `publickey in methods` assert below guards a dead sshd.
           methods = outsider.succeed(
-              f"{SSH} -v -o PubkeyAuthentication=no idan@headscale-vps true 2>&1 "
-              "| grep 'Authentications that can continue' | head -1"
+              f"{SSH} -v -o PreferredAuthentications=none idan@headscale-vps true 2>&1 "
+              "| grep 'Authentications that can continue' | head -1 || true"
           )
           # publickey present proves the handshake actually reached auth —
           # without this, a dead sshd would vacuously pass the next assert.
