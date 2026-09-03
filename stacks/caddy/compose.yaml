@@ -8,7 +8,7 @@
 # the compose directory.
 services:
   caddy:
-    image: ghcr.io/idanreed/caddy-cloudflare:2.11.2
+    image: ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4
     container_name: caddy
     # Host networking so Caddy can bind the tailnet IP directly and reach
     # every service on 127.0.0.1 — which is where they all publish now, so
