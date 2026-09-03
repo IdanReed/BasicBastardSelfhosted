@@ -76,7 +76,9 @@
           zed = "zeditor";
           nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
           nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
-          hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; }";
+          # Trailing `source` + `rehash` run in the invoking shell (aliases expand
+          # in place), so new aliases/commands are usable without a new shell.
+          hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
           hmb = "home-manager build --flake ${flakeDir}#idan";
           nfu = "nix flake update";
           ngc = "sudo nix-collect-garbage -d";
