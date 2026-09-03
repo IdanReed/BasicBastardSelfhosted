@@ -24,7 +24,7 @@ echo ""
 # never in the workspace, each use costs a sudo); a workspace copy wins if
 # present. The temp copy lives OUTSIDE $EXTRA_FILES_DIR on purpose — that
 # whole directory ships to the VPS filesystem root via --extra-files.
-if [[ ! -f "$AGE_KEY_FILE" && -e /var/lib/sops-nix/sops_age_key.txt ]]; then
+if [[ ! -f "$AGE_KEY_FILE" ]] && sudo test -e /var/lib/sops-nix/sops_age_key.txt; then
     echo "> No workspace key; reading /var/lib/sops-nix (sudo)"
     AGE_KEY_TMP=$(mktemp)
     trap "rm -rf $EXTRA_FILES_DIR; rm -f $AGE_KEY_TMP" EXIT
