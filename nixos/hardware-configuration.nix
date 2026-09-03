@@ -13,7 +13,10 @@
   ];
 
   # Boot configuration
-  boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "virtio_pci" "virtio_scsi" "sd_mod" "sr_mod" ];
+  # virtio_blk is load-bearing: the OS disk is virtio0 (/dev/vda) — without
+  # it the stage-1 initrd cannot see the root disk (same failure class as the
+  # VPS 2026-09-03). The scsi modules cover the sda/sdb/sdc data disks.
+  boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "virtio_pci" "virtio_blk" "virtio_scsi" "sd_mod" "sr_mod" ];
   boot.initrd.kernelModules = [ ];
   boot.kernelModules = [ "kvm-intel" ];
   boot.extraModulePackages = [ ];
@@ -21,7 +24,10 @@
   # Bootloader
   boot.loader.grub = {
     enable = true;
-    device = "/dev/sda";
+    # The OS disk: virtio0 = /dev/vda. /dev/sda is the scsi1 STATE disk —
+    # grub-install on it fails (no BIOS-boot partition), which is the guard
+    # that caught this when it was wrong.
+    device = "/dev/vda";
   };
 
   # Root filesystem (OS disk - will be the Proxmox image disk)
