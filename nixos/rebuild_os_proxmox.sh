@@ -13,7 +13,9 @@ cd "$(dirname "$0")"
 VM_ID="${1:?Usage: $0 VM_ID [--build]}"
 BUILD_IMAGE="${2:-}"
 
-IMAGE_PATH="./result/vzdump-qemu-nixos.vma.zst"
+# The image name carries the nixpkgs version (vzdump-qemu-nixos-<ver>.vma.zst)
+# — glob it rather than pinning a name that drifts every channel bump.
+IMAGE_PATH=$(ls ./result/vzdump-qemu-*.vma.zst 2>/dev/null | head -1 || true)
 
 # Build image if requested
 if [[ "$BUILD_IMAGE" == "--build" ]]; then
@@ -22,8 +24,8 @@ if [[ "$BUILD_IMAGE" == "--build" ]]; then
 fi
 
 # Check image exists
-if [[ ! -f "$IMAGE_PATH" ]]; then
-    echo "> Error: Image not found at $IMAGE_PATH"
+if [[ -z "$IMAGE_PATH" || ! -f "$IMAGE_PATH" ]]; then
+    echo "> Error: no vzdump-qemu-*.vma.zst under ./result/"
     echo "> Run with --build flag or build manually with: nix build .#proxmox-image"
     exit 1
 fi
