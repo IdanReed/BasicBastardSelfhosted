@@ -152,10 +152,11 @@ pkgs.testers.runNixOSTest {
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
           {
-            # stack-git-sync's TRIGGER is masked: at boot Forgejo is not up yet
-            # and STACK_GIT_TOKEN still holds the fixture placeholder, so a timer
-            # tick would fail its clone and ntfy-alert. The test seeds Forgejo +
-            # a real token, overwrites the secret, then starts the unit by hand —
+            # stack-git-sync's TRIGGER is masked: the fixture now holds a real
+            # (throwaway) STACK_GIT_SSH_KEY, but at boot Forgejo is not up yet
+            # and its public half is not registered as a deploy key, so a timer
+            # tick would still fail its clone and ntfy-alert. The test seeds
+            # Forgejo, registers the deploy key, then starts the unit by hand —
             # the unit that runs is the production one, only its trigger moves.
             systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
           }
@@ -346,6 +347,30 @@ pkgs.testers.runNixOSTest {
         )
         PUSH_URL = f"http://{GUSER}:{TOKEN}@127.0.0.1:10550/{GUSER}/{GREPO}.git"
 
+    with subtest("the sync's pubkey is registered as a READ-ONLY deploy key over ssh"):
+        # The loopback sshd publish (compose 127.0.0.1:10551:22) must accept
+        # ssh before the sync can clone; `up --wait` gates only on the http
+        # healthcheck, so wait for the sshd separately — keyscan rather than a
+        # bare TCP probe, proving the banner exchange and not just the bind.
+        services_vm.wait_until_succeeds(
+            "ssh-keyscan -p 10551 127.0.0.1 2>/dev/null | grep -q ssh-ed25519",
+            timeout=120,
+        )
+        # Derive the public half from the fixture-decrypted private key on the
+        # VM — the same derivation the operator runs (deploy-handbook §6).
+        pubkey = services_vm.succeed(
+            "ssh-keygen -y -f /run/secrets/STACK_GIT_SSH_KEY"
+        ).strip()
+        assert pubkey.startswith("ssh-ed25519 "), f"unexpected pubkey: {pubkey!r}"
+        # read_only=true: the sync only ever pulls; a write-capable key here
+        # would silently widen the host's blast radius.
+        services_vm.succeed(
+            f"curl -sf --max-time 10 -X POST -H 'Authorization: token {TOKEN}' "
+            "-H 'Content-Type: application/json' "
+            f"-d '{json.dumps({'title': 'stack-git-sync', 'key': pubkey, 'read_only': True})}' "
+            f"{FORGE_API}/repos/{GUSER}/{GREPO}/keys -o /dev/null"
+        )
+
     with subtest("revision one is pushed over authenticated http"):
         services_vm.succeed(
             "cd /root && rm -rf work && mkdir work && cd work && "
@@ -368,11 +393,10 @@ pkgs.testers.runNixOSTest {
     # stack-git-sync (host) delivers the files; decrypt writes .env
     # -----------------------------------------------------------------------
     with subtest("stack-git-sync pulls the repo into /srv/stacks (1000:1000)"):
-        # Overwrite the fixture-placeholder STACK_GIT_TOKEN with idan's real
-        # token (root can write the 0400 sops secret), then run the production
-        # unit by hand — its trigger is masked, its behaviour is not.
-        services_vm.succeed(
-            f"printf '%s' '{TOKEN}' > /run/secrets/STACK_GIT_TOKEN")
+        # No secret surgery needed any more: the fixture's STACK_GIT_SSH_KEY is
+        # a real (throwaway) private key and its public half was just
+        # registered as the deploy key — run the production unit by hand; its
+        # trigger is masked, its behaviour is not.
         try:
             services_vm.succeed("systemctl start stack-git-sync.service")
         except Exception:
@@ -504,9 +528,15 @@ pkgs.testers.runNixOSTest {
     # persistent failure is suppressed the unit reports SUCCESS, invisible to
     # `systemctl --failed` and to every failed-units sweep. This subtest is
     # the only witness that the one page it does send actually happens.
-    with subtest("🚨 a broken token FAILS the sync once, then suppresses"):
-        services_vm.succeed("cp /run/secrets/STACK_GIT_TOKEN /root/token.bak")
-        services_vm.succeed("printf 'broken' > /run/secrets/STACK_GIT_TOKEN")
+    with subtest("🚨 a broken deploy key FAILS the sync once, then suppresses"):
+        # known_hosts guard: the pinned host key lives in the root-only
+        # StateDirectory from the first successful clone. A broken IDENTITY is
+        # an auth failure, not a host-key event, so it must not touch the pin
+        # — snapshot it and compare after the failed runs.
+        pinned = services_vm.succeed(
+            "sha256sum /var/lib/stack-git-sync/known_hosts").strip()
+        services_vm.succeed("cp /run/secrets/STACK_GIT_SSH_KEY /root/key.bak")
+        services_vm.succeed("printf 'broken' > /run/secrets/STACK_GIT_SSH_KEY")
         # First run must FAIL — the exit 1 is what reaches ntfy via OnFailure.
         services_vm.fail("systemctl start stack-git-sync.service")
         services_vm.succeed("test -e /run/stack-git-sync.failed")
@@ -514,9 +544,12 @@ pkgs.testers.runNixOSTest {
         # down Forgejo pages once, not every minute forever.
         services_vm.succeed("systemctl start stack-git-sync.service")
         services_vm.succeed("test -e /run/stack-git-sync.failed")
+        after = services_vm.succeed(
+            "sha256sum /var/lib/stack-git-sync/known_hosts").strip()
+        assert after == pinned, f"broken-key run altered known_hosts: {after!r}"
 
     with subtest("recovery clears the stamp and says so"):
-        services_vm.succeed("cp /root/token.bak /run/secrets/STACK_GIT_TOKEN")
+        services_vm.succeed("cp /root/key.bak /run/secrets/STACK_GIT_SSH_KEY")
         services_vm.succeed("systemctl start stack-git-sync.service")
         services_vm.fail("test -e /run/stack-git-sync.failed")
         journal = services_vm.succeed(

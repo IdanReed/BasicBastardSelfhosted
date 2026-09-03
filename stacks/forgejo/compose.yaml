@@ -2,13 +2,15 @@
 # push mirror for select public repos (LONGRUN decision); this instance is
 # the source of truth, including the remote the stack git sync pulls from.
 #
-# Access is HTTPS-ONLY in v1: web UI and git-over-https both ride Caddy at
-# forgejo.svc.idanreed.com (token auth for git). SSH is deliberately
-# DEFERRED — it would need a second published port plus key management, and
-# https+token already covers every current consumer (the stack git sync's
-# pull, human pushes, future CI checkout). DISABLE_SSH below keeps the
-# container's sshd off and stops the UI from advertising ssh:// clone URLs
-# it cannot honour.
+# Access model (v1 HTTPS-only SUPERSEDED 2026-09-03, operator decision "full
+# SSH for git"): SSH is enabled, LOOPBACK-ONLY — the container's sshd is
+# published on 127.0.0.1:10551, same convention as the web port. Caddy cannot
+# proxy SSH, so humans reach it via ProxyJump through the VM's own sshd (the
+# desktop `forgejo` identity in nixos-de/ssh-identities.nix), and
+# stack-git-sync on this host clones over loopback with a per-repo READ-ONLY
+# deploy key (STACK_GIT_SSH_KEY). HTTPS+token is NOT removed: the web UI and
+# git-over-https still ride Caddy at forgejo.svc.idanreed.com, and Renovate +
+# the CI runner stay HTTP API-token consumers.
 #
 # NO .sops.env for v1, on purpose: Forgejo self-generates all of its private
 # material — SECRET_KEY, INTERNAL_TOKEN, the JWT secrets — into
@@ -38,7 +40,19 @@ services:
       # What clone URLs and redirects are built from; must match the Caddy
       # route (the caddy-routes lint ties the published port to it).
       - FORGEJO__server__ROOT_URL=https://forgejo.svc.idanreed.com/
-      - FORGEJO__server__DISABLE_SSH=true
+      # Explicit false, not merely absent: the classic image's setup runs
+      # environment-to-ini, which PERSISTED the old DISABLE_SSH=true into the
+      # stateful /data/gitea/conf/app.ini — only an explicit false overwrites
+      # it on an instance that ever ran the v1 config.
+      - FORGEJO__server__DISABLE_SSH=false
+      # What the UI's ssh clone button advertises: git@forgejo:... where
+      # "forgejo" is the desktop's ssh Host alias (ssh-identities.nix), which
+      # carries the ProxyJump + port. SSH_PORT here is app.ini-level (clone
+      # URLs only); the container's actual sshd listens on 22 — the s6
+      # openssh setup templates its Port from the plain SSH_PORT *container*
+      # env (default 22), which is deliberately left unset.
+      - FORGEJO__server__SSH_DOMAIN=forgejo
+      - FORGEJO__server__SSH_PORT=10551
       # Single-user instance: the admin is created headless with the CLI
       # (`forgejo admin user create`); nobody self-registers.
       - FORGEJO__service__DISABLE_REGISTRATION=true
@@ -55,6 +69,12 @@ services:
       # Web UI and git-over-https on one port. Loopback-only: Caddy is the
       # only path in (loopback-binding lint enforces the pattern).
       - '127.0.0.1:10550:3000'
+      # git-over-ssh, loopback-only (host port from the Infra block, next
+      # free after 10550): the container's own sshd on its internal 22.
+      # Consumers are on-host (stack-git-sync) or arrive via ProxyJump
+      # through the VM's sshd — nothing on the LAN or tailnet reaches this
+      # directly. Host keys self-generate into /data/ssh on first start.
+      - '127.0.0.1:10551:22'
     healthcheck:
       # The dedicated health endpoint, not '/': it checks the DB and cache
       # backends, and both the suites and `up --wait` key off it.
