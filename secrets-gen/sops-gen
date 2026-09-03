@@ -415,10 +415,12 @@ apply_gen_entry() { # i — the real machine: fire on absent/^changeme only
     case ${tgt_state[$j]} in
       newfile)
         rendered=$(render "$T_PART" "$T_TPL")
+        [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires
         FILLS["$T_FILE|$T_KEY"]=$(quote_for "${FMT_OF[$T_FILE]}" "$rendered")
         NEWFILE[$T_FILE]=1; wrote=1;;
       absent|fire)
         rendered=$(render "$T_PART" "$T_TPL")
+        [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires
         sops_set "$T_FILE" "$T_KEY" "$rendered"; wrote=1;;
     esac
   done
@@ -522,6 +524,7 @@ cmd_rotate() {
     split_target "$t"
     [[ -f $ROOT/$T_FILE ]] || die "rotate: $T_FILE does not exist — run apply first"
     rendered=$(render "$T_PART" "$T_TPL")
+    [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires
     sops_set "$T_FILE" "$T_KEY" "$rendered"
     echo "  rotated   ${T_FILE}:${T_KEY}"
   done
