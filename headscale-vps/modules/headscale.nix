@@ -153,6 +153,24 @@
   systemd.services.headscale = {
     onFailure = [ "notify-failure@%n.service" ];
 
+    # Headscale probes the OIDC discovery URL exactly ONCE at startup and on
+    # any failure silently falls back to CLI-auth for its whole lifetime
+    # (only_start_if_oidc_is_available=false, kept deliberately — see the
+    # design table). On first boot that probe races Caddy's initial
+    # cert issuance for auth.idanreed.com and loses (hit live 2026-09-03:
+    # "tls: internal error", every OIDC login degraded until a manual
+    # restart). Wait for the discovery doc — but BOUNDED, so a genuinely
+    # down Authentik still lets headscale start in break-glass mode.
+    preStart = ''
+      for i in $(seq 1 60); do
+        ${pkgs.curl}/bin/curl -sf --max-time 3 \
+          https://auth.idanreed.com/application/o/headscale/.well-known/openid-configuration \
+          -o /dev/null && exit 0
+        sleep 2
+      done
+      echo "OIDC discovery still unreachable after 120s — starting anyway (CLI-auth fallback)"
+    '';
+
     # Required for OnFailure to mean anything: the nixpkgs module ships
     # Restart=always/RestartSec=5s under the default limit of 5 starts / 10
     # SECONDS — at 5s apart at most 2 starts land in the window, so the unit

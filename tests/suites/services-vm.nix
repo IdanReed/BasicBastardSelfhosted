@@ -66,7 +66,7 @@ let
     # missing one surfaces offline as a registry pull attempt.
     images."glanceapp_glance_v0_8_5"
     images."ghcr_io_sharevb_it-tools_2026_7_11"
-    images."ghcr_io_idanreed_caddy-cloudflare_2_11_2"
+    images."ghcr_io_idanreed_caddy-cloudflare_2_11_2-cf0_2_4"
   ];
 
   # The production Caddyfile asks for DNS-01 against Cloudflare, which needs a
