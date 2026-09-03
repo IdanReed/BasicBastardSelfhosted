@@ -108,6 +108,7 @@
           ./modules/home/zed.nix
           ./modules/home/obsidian.nix
           ./modules/home/handy.nix
+          ./modules/home/tts.nix
           ./modules/home/excalidraw.nix
           ./modules/home/ssh-identities.nix
           ./modules/home/work-vpn.nix
