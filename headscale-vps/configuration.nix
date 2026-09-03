@@ -334,7 +334,12 @@ in
   # StateDirectory.
   systemd.tmpfiles.rules = [
     "d /srv/authentik 0755 root root -"
-    "d /srv/authentik/pgdata 0700 root root -"
+    # 70:70 = postgres-alpine's uid INSIDE the container. tmpfiles `d` rules
+    # re-apply ownership on EVERY activation, not just creation — root:root
+    # here re-owned the live PGDATA mountpoint out from under postgres on the
+    # first post-deploy rebuild (2026-09-03: "pg_filenode.map: Permission
+    # denied", Authentik down until a manual chown).
+    "d /srv/authentik/pgdata 0700 70 70 -"
     "d /srv/authentik/redis 0755 root root -"
     "d /srv/authentik/media 0755 root root -"
     "d /srv/authentik/certs 0755 root root -"
