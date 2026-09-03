@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # DESTRUCTIVE: nixos-anywhere WIPES the target and installs NixOS.
 # The AGE key is injected via --extra-files so sops-nix can decrypt at boot.
