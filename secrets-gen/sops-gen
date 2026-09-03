@@ -170,8 +170,12 @@ quote_for() { # dotenv values containing $ must be single-quoted (ledger #30)
 }
 
 sops_set() { # file key value
-  local fmt=${FMT_OF[$1]}
-  json_str "$(quote_for "$fmt" "$3")" \
+  local fmt=${FMT_OF[$1]} v=$3
+  # quote_for is inlined WITHOUT command substitution: $(quote_for ...) strips
+  # a trailing newline, re-breaking ssh private keys (hit live 2026-09-03,
+  # one layer below the render-side fix for the same thing).
+  if [[ $fmt == dotenv && $v == *'$'* ]]; then v="'$v'"; fi
+  json_str "$v" \
     | (cd "$ROOT" && sops set --idempotent --value-stdin "$1" "$(keypath "$2")")
 }
 
@@ -416,7 +420,8 @@ apply_gen_entry() { # i — the real machine: fire on absent/^changeme only
       newfile)
         rendered=$(render "$T_PART" "$T_TPL")
         [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires
-        FILLS["$T_FILE|$T_KEY"]=$(quote_for "${FMT_OF[$T_FILE]}" "$rendered")
+        [[ ${FMT_OF[$T_FILE]} == dotenv && $rendered == *'$'* ]] && rendered="'$rendered'"
+        FILLS["$T_FILE|$T_KEY"]=$rendered  # plain assignment — $(quote_for) would strip a trailing newline
         NEWFILE[$T_FILE]=1; wrote=1;;
       absent|fire)
         rendered=$(render "$T_PART" "$T_TPL")
