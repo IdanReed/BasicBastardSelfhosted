@@ -70,10 +70,12 @@ secrets:
     freeze: true
     note: "done by hand — never touch; pubkey x3 + Hetzner ssh-copy-id; tmpfiles C+ copy for backrest"
     targets: [{ file: nixos/secrets.sops.yaml, key: BACKUP_STORAGEBOX_SSH_KEY, part: private }]
-  - name: nixos/STACK_GIT_TOKEN
-    class: pull
-    note: "Forgejo read-only token; declared in nixos/configuration.nix:290 but ABSENT from the real yaml — sops-nix activation fails until added (SOPS-KEYGEN-PLAN §5)"
-    targets: [{ file: nixos/secrets.sops.yaml, key: STACK_GIT_TOKEN }]
+  - name: nixos/STACK_GIT_SSH_KEY
+    class: derived
+    recipe: ssh-ed25519
+    note: "replaces the v1 STACK_GIT_TOKEN pull entry (SSH since 2026-09): a deploy KEY is generable before Forgejo exists, so this fills at pre-flight instead of the token's mint-after-bring-up dance"
+    reminder: "paste the PUBLIC half (ssh-keygen -y on the decrypted private) into the Forgejo repo Settings -> Deploy keys as READ-ONLY once Forgejo is up (deploy-handbook §6)"
+    targets: [{ file: nixos/secrets.sops.yaml, key: STACK_GIT_SSH_KEY, part: private }]
 
   # --- headscale-vps/secrets.sops.yaml -------------------------------------
   - name: vps/TAILSCALE_AUTH_KEY
@@ -164,6 +166,12 @@ secrets:
     freeze: true
     note: "done — do not touch"
     targets: [{ file: nixos-de/secrets.sops.yaml, key: ssh/storagebox, part: private }]
+  - name: de/ssh/forgejo
+    class: derived
+    recipe: ssh-ed25519
+    note: "desktop -> Forgejo git-over-ssh via ProxyJump arcane-vm (identity in nixos-de/ssh-identities.nix); no ssh-pubkeys.nix entry — not a host authorizedKey (gatech precedent)"
+    reminder: "paste the PUBLIC half into the Forgejo user Settings -> SSH keys at deploy-handbook §6"
+    targets: [{ file: nixos-de/secrets.sops.yaml, key: ssh/forgejo, part: private }]
   - name: de/workvpn
     class: config
     note: "employer-issued facts"
