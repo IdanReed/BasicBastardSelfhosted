@@ -12,8 +12,9 @@
 #
 # Deliberately NOT covered here:
 #   - the Caddy route (services/tailnet suites own routing)
-#   - ssh access: deferred in v1 — the stack disables it, and this suite
-#     asserts THAT (no second published port) rather than working around it
+#   - the ssh CLONE path end to end: enabled since 2026-09 (loopback-only on
+#     10551) — this suite asserts the sshd publish posture (loopback bind,
+#     LAN cannot reach it); checks.gitops proves the deploy-key clone
 #   - mirroring out to GitHub (needs the internet by definition; the suites
 #     are offline)
 
@@ -297,20 +298,26 @@ pkgs.testers.runNixOSTest {
         ).strip()
         assert code in ("401", "404"), f"anonymous API read returned {code}"
 
-    with subtest("only the web port is published, on loopback, and the LAN cannot reach it"):
+    with subtest("exactly web + ssh are published, on loopback, and the LAN cannot reach them"):
         ports = services_vm.succeed("docker port forgejo").strip().splitlines()
         assert ports, "docker port printed nothing"
-        for line in ports:
-            # ssh is deferred in v1: any published port besides 3000->10550
-            # (e.g. a 22) means the compose drifted from the design note.
-            assert line.startswith("3000/tcp -> 127.0.0.1:"), (
-                f"unexpected published port: {line!r}"
-            )
+        # Since 2026-09 the compose publishes TWO ports, both loopback-only:
+        # 3000->10550 (web/https) and 22->10551 (git-over-ssh). Anything else
+        # means the compose drifted from the design note.
+        expected = {"3000/tcp -> 127.0.0.1:10550", "22/tcp -> 127.0.0.1:10551"}
+        assert set(ports) == expected, f"published ports drifted: {ports!r}"
+        # The container's sshd actually answers on the loopback publish (the
+        # end-to-end clone over it is checks.gitops' job).
+        services_vm.wait_until_succeeds(
+            "ssh-keyscan -p 10551 127.0.0.1 2>/dev/null | grep -q ssh-ed25519",
+            timeout=60,
+        )
         # Positive control first (immich/books precedent): without it a
-        # node-naming or routing regression makes both fail()s pass vacuously.
+        # node-naming or routing regression makes the fail()s pass vacuously.
         outsider.succeed("nc -z -w 5 services-vm 22")
         outsider.fail(f"nc -z -w 5 services-vm {PORT}")
         outsider.fail("nc -z -w 5 services-vm 3000")
+        outsider.fail("nc -z -w 5 services-vm 10551")
 
     with subtest("no unit is left failed at suite end"):
         failed = services_vm.succeed("systemctl --failed --no-legend").strip()
