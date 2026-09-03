@@ -64,7 +64,7 @@ HEAVY_RE='paperless-ngx|goauthentik|apache/tika|gotenberg|backrest'
 # Images referenced in compose but not resolvable from a public registry.
 # Format: <compose reference>|<substitute reference>|<reason>
 declare -a SUBSTITUTES=(
-  "ghcr.io/idanreed/caddy-cloudflare:2.11.2|caddy:2.11.2|fork image is built by .github/workflows/build-caddy.yml and is not published yet; the DNS-01 plugin it adds is unused in the suites, which force 'tls internal'"
+  "ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4|caddy:2.11.2|fork image published by build-caddy.yml (composite tag = caddy 2.11.2 + cloudflare plugin 0.2.4); the DNS-01 plugin is unused in the suites, which force 'tls internal'"
 )
 
 echo "==> Collecting image references from compose files"
