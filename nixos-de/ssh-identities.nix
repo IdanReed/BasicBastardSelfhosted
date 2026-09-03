@@ -19,6 +19,27 @@
     host = "github.gatech.edu";
     user = "git";
   };
+  # Forgejo on the services VM, whose sshd is published LOOPBACK-ONLY
+  # (127.0.0.1:10551) — so the desktop hops through the VM's own sshd via
+  # ProxyJump (Caddy can't proxy SSH). Clone remote: forgejo:idan/<repo>.git.
+  #
+  # 🚨 CRITICAL: `host` MUST stay the alias "forgejo", NOT 127.0.0.1. The
+  # generated Host pattern is "<name> <host>" (modules/home/ssh-identities.nix),
+  # so a literal 127.0.0.1 here would hijack EVERY plain `ssh 127.0.0.1` with
+  # User git / Port 10551 / the jump. extraOptions merges last, so its
+  # HostName=127.0.0.1 override wins over the alias-derived HostName.
+  #
+  # No ssh-pubkeys.nix entry: this is a Forgejo user SSH key, not a host
+  # authorizedKey (precedent: the gatech identity).
+  forgejo = {
+    host = "forgejo";
+    user = "git";
+    port = 10551;
+    extraOptions = {
+      HostName = "127.0.0.1";
+      ProxyJump = "arcane-vm";
+    };
+  };
   # ---
   # Server
   # ---

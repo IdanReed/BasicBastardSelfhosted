@@ -4,12 +4,6 @@ let
   # Copy of nixos-de/ssh-pubkeys.nix (flakes can't reference outside their
   # root); ssh-pubkey-parity lint guards drift.
   sshPubkeys = import ./ssh-pubkeys.nix;
-
-  # Token via GIT_ASKPASS, never argv — /proc/<pid>/cmdline is world-readable
-  # (same narrowing as firefly-cron).
-  stackGitAskpass = pkgs.writeShellScript "stack-git-askpass" ''
-    exec cat ${config.sops.secrets.STACK_GIT_TOKEN.path}
-  '';
 in
 {
   # Imports live HERE, not in flake.nix: tests/default.nix evaluates this file
@@ -222,10 +216,11 @@ in
         mode = "0600";
       };
 
-      # Read-only Forgejo token for stack-git-sync (Forgejo runs
-      # DISABLE_SSH=true, so the "deploy key" is a git-over-HTTP token).
-      # Root-only; consumed via GIT_ASKPASS.
-      STACK_GIT_TOKEN = {
+      # Read-only Forgejo deploy key for stack-git-sync (SSH since 2026-09,
+      # replaces the v1 read:repository token; an SSH key exists before
+      # Forgejo does, killing the placeholder+rebuild dance at bring-up).
+      # Root-only; consumed via GIT_SSH_COMMAND, never argv.
+      STACK_GIT_SSH_KEY = {
         mode = "0400";
       };
     };
@@ -504,7 +499,13 @@ in
     # Its silent failure is a stack that never updates — alert directly.
     onFailure = [ "notify-failure@%n.service" ];
 
-    path = with pkgs; [ git rsync coreutils ];
+    path = with pkgs; [
+      git
+      # git shells out to `ssh` for the ssh:// remote (GIT_SSH_COMMAND).
+      openssh
+      rsync
+      coreutils
+    ];
 
     serviceConfig = {
       Type = "oneshot";
@@ -519,18 +520,24 @@ in
       set -uo pipefail
       umask 077
 
-      # Loopback HTTP, NOT the tailnet vhost (same as modules/renovate.nix):
-      # keeps tailscaled + Caddy + the wildcard cert out of the dependency set.
-      host="127.0.0.1:10550"
-      user="idan"
+      # Loopback SSH, NOT the tailnet vhost: keeps tailscaled + Caddy + the
+      # wildcard cert out of the dependency set (Caddy could not proxy SSH
+      # anyway). 10551 is the forgejo stack's loopback sshd publish.
+      host="127.0.0.1"
+      port="10551"
       repo="idan/BasicBastardSelfhosted"
       branch="main"
       work="$STATE_DIRECTORY/checkout"
-      url="http://$user@$host/$repo.git"
+      url="ssh://git@$host:$port/$repo.git"
 
-      # Token via GIT_ASKPASS — never argv. Fail fast rather than block on a
-      # TTY prompt the oneshot cannot answer.
-      export GIT_ASKPASS=${stackGitAskpass}
+      # Deploy key via GIT_SSH_COMMAND — never argv. Host-key pinning model:
+      # accept-new pins Forgejo's host key on FIRST loopback contact into the
+      # root-only StateDirectory (Forgejo generates its host keys into
+      # /data/ssh on first start, so there is no pre-boot artifact to pin
+      # against); any later mismatch fails the unit loudly -> ntfy, which is
+      # exactly the desired signal on /data loss. Fail fast rather than block
+      # on a TTY prompt the oneshot cannot answer.
+      export GIT_SSH_COMMAND="ssh -i ${config.sops.secrets.STACK_GIT_SSH_KEY.path} -o IdentitiesOnly=yes -o UserKnownHostsFile=$STATE_DIRECTORY/known_hosts -o StrictHostKeyChecking=accept-new"
       export GIT_TERMINAL_PROMPT=0
 
       # Alert on state CHANGE (the decrypt-sops-envs pattern): a persistent
@@ -552,10 +559,10 @@ in
       if [ ! -d "$work/.git" ]; then
         rm -rf "$work"
         git clone --quiet --branch "$branch" "$url" "$work" \
-          || fail "clone failed (is Forgejo reachable at $host?)"
+          || fail "clone failed (is Forgejo's sshd reachable at $host:$port, deploy key registered?)"
       else
         git -C "$work" fetch --quiet origin "$branch" \
-          || fail "fetch failed (is Forgejo reachable at $host?)"
+          || fail "fetch failed (is Forgejo's sshd reachable at $host:$port, deploy key registered?)"
         git -C "$work" reset --quiet --hard "origin/$branch" \
           || fail "reset to origin/$branch failed"
       fi

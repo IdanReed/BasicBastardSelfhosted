@@ -1631,9 +1631,10 @@ no symptom until the outage it would have caught, which is why this is a lint
 and not a checklist), vps, services, tailnet,
 authentik, paperless, backrest, **rotation** (the restartUnits contract),
 **gitops** (the full Komodo push→sync→decrypt→deploy loop, against a REAL
-in-VM Forgejo remote over http — the git-daemon transport substitution is
+in-VM Forgejo remote — pushes over http, the sync clone over loopback ssh
+with a read-only deploy key; the git-daemon transport substitution is
 retired), **forgejo** (healthz, headless admin seed, API repo, credentialed
-push + clone-back), **forward-auth** (redirect/spoof/no-lockout + API
+push + clone-back, loopback-only web+ssh publish posture), **forward-auth** (redirect/spoof/no-lockout + API
 contract), **media** (24 subtests: gluetun kill-switch offline by
 construction, both-sided x265 guard proven against injected TRaSH artifacts,
 EICAR→quarantine chain), **immich** (20 subtests: make-style config render
