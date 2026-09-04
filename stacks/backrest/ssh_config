@@ -11,9 +11,9 @@
 # recoverable; see README.md.
 
 Host storagebox
-    HostName uXXXXXX.your-storagebox.de
+    HostName u662946.your-storagebox.de
     Port 23
-    User uXXXXXX
+    User u662946-sub1
     IdentityFile /root/.ssh/id_ed25519
     IdentitiesOnly yes
     # PINNED, not trust-on-first-use. `accept-new` plus a known_hosts in the

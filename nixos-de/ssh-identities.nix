@@ -56,11 +56,13 @@
     user = "idan";
   };
   storagebox = {
-    # WHY placeholder: the Hetzner Storage Box is not provisioned yet, so no
-    # real box name exists. Idan fills in the real u<number> host/user when
-    # ordering it; u000000 is Hetzner's documented example, guaranteed unreal.
-    host = "u000000.your-storagebox.de";
-    user = "u000000";
+    # Hetzner Storage Box sub-account (provisioned 2026-09-03). `user` is the
+    # sub-account (base dir presented as /home, restic repo at /home/restic —
+    # verified writable); HostName is the main box. Password auth cannot be
+    # disabled on Hetzner boxes, so the account password stays valid — it is a
+    # strong random value in the offline recovery artifact; SMB/WebDAV off.
+    host = "u662946.your-storagebox.de";
+    user = "u662946-sub1";
     port = 23; # Hetzner Storage Box SSH lives on 23, not 22
   };
 }
