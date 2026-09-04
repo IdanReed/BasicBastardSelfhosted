@@ -48,13 +48,18 @@ exists()  { docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 # skip-on-not-running would leave a stopped or crash-looping database silently
 # absent from the backup with a green run. Three states, only one fine:
 #
-#   not deployed  no $STACKS/<stack> and no container at all — the dump list
-#                 legitimately runs ahead of the build-out (backup-coverage
-#                 lint WARNs on this), so silent, successful skip.
+#   not deployed  no container was ever created for it. Under the Komodo
+#                 GitOps model stack-git-sync rsyncs EVERY stack DIR into
+#                 $STACKS regardless of deployment, so a $STACKS/<stack> dir
+#                 alone no longer implies deployed — only a created container
+#                 does. The dump list legitimately runs ahead of the
+#                 build-out, so this is a silent, successful skip.
 #   skipped       named in BACKUP_SKIP. Logged, not alerted.
-#   expected      stack on disk, or container exists but not running: a real
-#                 hole in tonight's backup — rc_local=1, OnFailure -> ntfy
-#                 exactly like a dump that errored.
+#   expected      container EXISTS but is not running: a deployed stack whose
+#                 database is down = a real hole in tonight's backup —
+#                 rc_local=1, OnFailure -> ntfy exactly like a dump that
+#                 errored. (Pathological edge: a DB container docker-rm'd out
+#                 from under a live stack reads as not-deployed — accepted.)
 #
 # Returns nonzero in all three cases; the caller skips the dump either way.
 require_running() {
@@ -70,14 +75,13 @@ require_running() {
 
     if exists "$container"; then
         log "FAILED: container $container exists but is NOT running - $stack has no dump in this backup"
-    elif [ -d "$STACKS/$stack" ]; then
-        log "FAILED: $STACKS/$stack is deployed but $container is not running - $stack has no dump in this backup"
-    else
-        log "skip: $stack is not deployed on this host (no $STACKS/$stack, no $container)"
+        log "  if $stack is deliberately stopped, add it to BACKUP_SKIP= on backup-prepare.service"
+        rc_local=1
         return 1
     fi
-    log "  if $stack is deliberately stopped, add it to BACKUP_SKIP= on backup-prepare.service"
-    rc_local=1
+    # dir may exist (GitOps seeds it) but no container was ever created -> the
+    # stack is registered, not deployed. Silent skip, same as no dir at all.
+    log "skip: $stack is not deployed on this host (no $container container)"
     return 1
 }
 
