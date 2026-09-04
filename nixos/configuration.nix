@@ -33,6 +33,15 @@ in
   networking.defaultGateway = "10.0.0.1";
   networking.nameservers = [ "10.0.0.1" ];
 
+  # Pin the NIC name to ens18 by MAC via a udev .link — so the static-IP
+  # config above survives a Proxmox machine-type change (i440fx -> q35 for the
+  # Arc A380 PCIe passthrough re-enumerates the PCI bus and would otherwise
+  # rename the interface, dropping 10.0.0.3).
+  systemd.network.links."10-lan" = {
+    matchConfig.MACAddress = "a2:db:6f:f6:9f:d7";
+    linkConfig.Name = "ens18";
+  };
+
   # Timezone
   time.timeZone = "America/Chicago";
 
