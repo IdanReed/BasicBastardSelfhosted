@@ -30,12 +30,17 @@ mqtt:
   password: "{FRIGATE_MQTT_PASSWORD}"
 
 detectors:
-  # PRODUCTION VALUE. A missing Coral is a crash LOOP, not a degradation (see
-  # the compose header); the suite overrides this one block with `type: cpu`,
-  # so the tested config differs from the deployed one exactly here.
-  coral:
-    type: edgetpu
-    device: usb
+  # INTERIM (2026-09-04): CPU detector. No Coral USB is being purchased — the
+  # target accelerator is the Arc A380 via OpenVINO (`type: openvino,
+  # device: GPU`, with /dev/dri passed to the container), gated on the A380
+  # passthrough to VM110 being unblocked (ServerNotes arc-a380-passthrough.md:
+  # needs the Proxmox 8/9 upgrade). Until then the CPU detector keeps frigate
+  # HEALTHY instead of crash-looping on an absent edgetpu — fine for a few
+  # cameras on the 32-core VM, not ideal for many. This now matches what the
+  # suite runs, so the deployed and tested configs no longer diverge here.
+  cpu1:
+    type: cpu
+    num_threads: 3
 
 # Operator-supplied (annex §8.2). Frigate explicitly supports an empty map —
 # it is the config Frigate writes for itself on first run — so the stack
