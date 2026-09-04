@@ -63,6 +63,21 @@ in
   # once the interface is up.
   boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = 1;
 
+  # Intel Arc A380 (passed through as hostpci0 from the Proxmox host:
+  # `qm set 110 --hostpci0 0000:84:00,pcie=1`) for Jellyfin/immich hardware
+  # transcode + compute. DG2 is native in i915 on kernel 6.2+ (guest = 6.12),
+  # so no force_probe. Appears as /dev/dri/renderD128 once the GPU is attached;
+  # containers (media/immich) map /dev/dri and the render group.
+  hardware.graphics = {
+    enable = true;
+    extraPackages = with pkgs; [
+      intel-media-driver     # VAAPI (iHD) — Jellyfin transcode
+      vpl-gpu-rt             # oneVPL runtime — Arc QSV
+      intel-compute-runtime  # OpenCL — immich ML / compute
+    ];
+  };
+  boot.kernelModules = [ "i915" ];
+
   # nixos-rebuild --target-host pushes locally-built (unsigned) store paths;
   # the daemon accepts those only from a trusted user (hit live 2026-09-03:
   # "lacks a signature by a trusted key"). Wheel is already root-equivalent
