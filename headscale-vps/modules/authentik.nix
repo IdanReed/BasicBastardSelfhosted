@@ -29,6 +29,7 @@ in
       HEADSCALE_OIDC_CLIENT_SECRET=${config.sops.placeholder.HEADSCALE_OIDC_CLIENT_SECRET}
       IMMICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.IMMICH_OIDC_CLIENT_SECRET}
       OUTLINE_OIDC_CLIENT_SECRET=${config.sops.placeholder.OUTLINE_OIDC_CLIENT_SECRET}
+      KAVITA_OIDC_CLIENT_SECRET=${config.sops.placeholder.KAVITA_OIDC_CLIENT_SECRET}
       AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
       AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
@@ -57,6 +58,12 @@ in
     # Outline has NO local accounts — a mismatched pair is a total login
     # lockout, silent until token exchange.
     OUTLINE_OIDC_CLIENT_SECRET = { };
+
+    # Same shape: consumed by !Env in blueprints/custom/kavita-oidc.yaml,
+    # twin copy in stacks/books/.sops.env as KAVITA_OIDC_CLIENT_SECRET
+    # (rendered into Kavita's appsettings.json). Kavita keeps local
+    # accounts, so a mismatch only breaks the OIDC login path, not access.
+    KAVITA_OIDC_CLIENT_SECRET = { };
 
     # Without these the blueprint creates user `idan` with no credential, and
     # with no SMTP configured there is no password-reset path either — nobody
