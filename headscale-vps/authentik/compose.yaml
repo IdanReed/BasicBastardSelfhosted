@@ -105,6 +105,10 @@ services:
       # Consumed by the outline-oidc blueprint via its !Env tag; the stack-side
       # copy is stacks/outline/.sops.env (OIDC_CLIENT_SECRET).
       OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}
+      # Consumed by the kavita-oidc blueprint via its !Env tag; the
+      # stack-side copy is stacks/books/.sops.env (KAVITA_OIDC_CLIENT_SECRET,
+      # rendered into Kavita's appsettings.json).
+      KAVITA_OIDC_CLIENT_SECRET: ${KAVITA_OIDC_CLIENT_SECRET:?kavita oidc client secret required}
       # First-start bootstrap of the `akadmin` superuser. Without these there is
       # no way to log in at all: the blueprint's `idan` user has no credential
       # and no SMTP is configured for a reset link. Ignored on later starts.

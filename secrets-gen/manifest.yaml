@@ -417,11 +417,17 @@ secrets:
     class: generate
     recipe: base64:24
     targets: [{ file: stacks/books/.sops.env, key: ABS_ADMIN_PASSWORD }]
-  - name: books/oidc
-    class: pull
-    note: "future gen+twin x2 once Authentik blueprints exist"
+  - name: kavita/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up books stack"
     targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: KAVITA_OIDC_CLIENT_SECRET }
       - { file: stacks/books/.sops.env, key: KAVITA_OIDC_CLIENT_SECRET }
+  - name: abs/oidc
+    class: pull
+    note: "future gen+twin xhost once the audiobookshelf-oidc blueprint exists (Phase 2)"
+    targets:
       - { file: stacks/books/.sops.env, key: ABS_OIDC_CLIENT_SECRET }
   - name: books/AA_DONATOR_KEY
     class: pull
