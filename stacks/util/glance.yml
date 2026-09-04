@@ -86,9 +86,9 @@ pages:
             groups:
               - title: Status
                 links:
-                  - title: Gatus — uptime
+                  - title: Gatus
                     url: https://gatus.svc.idanreed.com
-                  - title: Beszel — hosts
+                  - title: Beszel
                     url: https://beszel.svc.idanreed.com
 
       - size: full
@@ -196,11 +196,11 @@ pages:
               # there is no second set of checks to drift).
               - title: Status
                 links:
-                  - title: Gatus — uptime
+                  - title: Gatus
                     url: https://gatus.svc.idanreed.com
-                  - title: Beszel — hosts
+                  - title: Beszel
                     url: https://beszel.svc.idanreed.com
-                  - title: ntfy — alerts
+                  - title: ntfy
                     url: https://ntfy.svc.idanreed.com
 
               - title: Identity
@@ -216,15 +216,15 @@ pages:
             groups:
               - title: Infrastructure
                 links:
-                  - title: Komodo — containers
+                  - title: Komodo
                     url: https://komodo.svc.idanreed.com
-                  - title: Forgejo — git
+                  - title: Forgejo
                     url: https://forgejo.svc.idanreed.com
-                  - title: Backrest — backups
+                  - title: Backrest
                     url: https://backrest.svc.idanreed.com
-                  - title: Windmill — jobs
+                  - title: Windmill
                     url: https://windmill.svc.idanreed.com
-                  - title: Grafana — logs
+                  - title: Grafana
                     url: https://grafana.svc.idanreed.com
 
               # The library-filling half of the media stack. Everything here
