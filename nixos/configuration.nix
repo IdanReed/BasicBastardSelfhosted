@@ -19,6 +19,20 @@ in
   networking.hostName = "services-vm";
   system.stateVersion = "25.11";
 
+  # Static LAN IP — REQUIRED declaratively. 🚨 The image sets 10.0.0.3 via
+  # cloud-init, but cloud-init lives only in the image build (flake.nix), so
+  # every `nixos-rebuild switch` strips it from the running system. The IP
+  # survived in RAM until the first real reboot (hit live 2026-09-04), then
+  # NixOS's default DHCP grabbed a different address and everything expecting
+  # 10.0.0.3 broke. Pin it here so it persists across reboots, independent of
+  # cloud-init/DHCP. (iface ens18 = the virtio net0 predictable name.)
+  networking.useDHCP = false;
+  networking.interfaces.ens18.ipv4.addresses = [
+    { address = "10.0.0.3"; prefixLength = 24; }
+  ];
+  networking.defaultGateway = "10.0.0.1";
+  networking.nameservers = [ "10.0.0.1" ];
+
   # Timezone
   time.timeZone = "America/Chicago";
 
