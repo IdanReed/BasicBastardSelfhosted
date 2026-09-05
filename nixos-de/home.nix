@@ -156,6 +156,32 @@
           --run "cd $repo && secrets-gen/sops-gen ''${(j: :)''${(q)@}}"
       }
 
+      # redeploy [stack…] — STOP-GAP for Komodo issue #1120 (deploy-on-sync is
+      # broken): after `git push forgejo main`, stack-git-sync pulls the new
+      # compose to /srv/stacks but Komodo does NOT recreate the containers, so
+      # compose / OIDC / image changes sit un-applied (this is why the OIDC
+      # rollout showed no login button until a manual recreate). Runs
+      # `docker compose up -d` on the services VM for each named stack (all of
+      # /srv/stacks/* with a compose.yaml if none given). `up -d` recreates
+      # ONLY containers whose compose/env/image config-hash CHANGED, so a
+      # no-arg run deploys exactly the changed stacks — the Komodo-equivalent.
+      # idan is in the VM's docker group, so no sudo. Delete once Komodo
+      # deploys on sync.
+      # ⚠ Converges each stack to the REPO state: a stack hand-patched live on
+      # the host (e.g. outline's DATABASE_URL, ledger #26) reverts to its
+      # .sops.env value — name stacks explicitly to avoid touching those.
+      redeploy() {
+        local script='
+      [ "$#" -gt 0 ] || set -- /srv/stacks/*/
+      for a in "$@"; do
+        s=$(basename "$a")
+        [ -f /srv/stacks/$s/compose.yaml ] || { echo "skip $s (no compose.yaml)"; continue; }
+        echo "=== $s ==="
+        ( cd /srv/stacks/$s && docker compose -p "$s" up -d )
+      done'
+        print -r -- "$script" | ssh idan@10.0.0.3 bash -s -- "$@"
+      }
+
       # vidtrim <video> [speed] [threshold] [margin]
       # auto-editor cuts the silence, ffmpeg speeds up what's left.
       # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
