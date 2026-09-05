@@ -56,6 +56,18 @@ services:
       # Single-user instance: the admin is created headless with the CLI
       # (`forgejo admin user create`); nobody self-registers.
       - FORGEJO__service__DISABLE_REGISTRATION=true
+      # Push-to-create: `git push` to a URL whose repo does not exist yet
+      # creates it under the pushing user instead of erroring ("Push to
+      # create is not enabled for users"). Off upstream by default; on here
+      # because this instance is the git ROOT and new repos start life as a
+      # working copy on the desktop. Works on both transports; the path must
+      # be under an owner that already exists (there are no orgs, so
+      # ENABLE_PUSH_CREATE_ORG stays off).
+      - FORGEJO__repository__ENABLE_PUSH_CREATE_USER=true
+      # Repos born that way are private. Upstream default is already true —
+      # pinned explicitly so an upstream flip cannot silently publish a repo
+      # that was created by a push rather than through the UI.
+      - FORGEJO__repository__DEFAULT_PUSH_CREATE_PRIVATE=true
       # Actions, off by default in Forgejo and easy to forget because GitHub
       # has no equivalent switch. This is only HALF the toggle: Actions must
       # also be turned on PER REPOSITORY (repo Settings -> Units -> Actions),

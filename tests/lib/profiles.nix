@@ -34,9 +34,22 @@ rec {
   # Only eth0 is neutralised. The test driver configures the vlan interfaces
   # (eth1+) itself, so clearing networking.interfaces wholesale would strip the
   # nodes of their addresses and every assertion would fail on a dead network.
+  #
+  # The gateway goes with it. Since fe0bdb0 the services VM declares a static
+  # LAN address on ens18 plus `defaultGateway = 10.0.0.1` — real on the LAN,
+  # nonexistent on a test vlan, where there is no 10.0.0.0/24 interface for
+  # the route to hang off. `ip route add default via 10.0.0.1` then fails with
+  # "Nexthop has invalid gateway" and network-setup.service dies. It does NOT
+  # fail at boot: scripted networking is pulled in lazily, so the unit only
+  # runs when the first `docker compose` starts socket-activated dockerd —
+  # mid-test, minutes in, long after every readiness gate has passed. The one
+  # thing it breaks is the "no unit is left failed at suite end" assertion,
+  # which is exactly the check that should not be lying about anything else.
+  # mkForce null is a no-op for the VPS config (DHCP supplies its route).
   noDhcp = {
     networking.useDHCP = lib.mkForce false;
     networking.interfaces.eth0.useDHCP = lib.mkForce false;
+    networking.defaultGateway = lib.mkForce null;
   };
 
   # --------------------------------------------------------------------------

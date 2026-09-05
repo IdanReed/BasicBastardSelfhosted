@@ -2,7 +2,8 @@
 # headless admin bootstrap through the CLI, an API token issued by the CLI, a
 # repo created through the API with that token, a real push over git-http
 # WITH credentials from the host, a clone back that verifies the content
-# round-tripped, and the anonymous + off-host negatives.
+# round-tripped, push-to-create landing a repo that was never created, and
+# the anonymous + off-host negatives.
 #
 # Boots ONLY the forgejo stack on the real services-VM config —
 # bootstrap-komodo is taken out of the boot path, the same trade
@@ -277,6 +278,45 @@ pkgs.testers.runNixOSTest {
         pushed = services_vm.succeed("git -C /root/work rev-parse HEAD").strip()
         cloned = services_vm.succeed("git -C /root/out rev-parse HEAD").strip()
         assert pushed == cloned, f"HEAD drifted: pushed {pushed}, cloned {cloned}"
+
+    # -----------------------------------------------------------------------
+    # Push-to-create: the repo is NOT created first
+    # -----------------------------------------------------------------------
+    with subtest("pushing to a repo that does not exist creates it, private"):
+        # ENABLE_PUSH_CREATE_USER in the compose. Without it Forgejo answers
+        # "Push to create is not enabled for users" and the push fails —
+        # which is exactly the regression this asserts against, since the
+        # setting lands in the STATEFUL app.ini via environment-to-ini and a
+        # dropped env line would only surface on the next container start.
+        new_url = f"http://{ADMIN}:{TOKEN}@127.0.0.1:{PORT}/{ADMIN}/pushcreate.git"
+        # 404 first: prove the repo genuinely does not exist yet, so a
+        # leftover from an earlier subtest cannot make this pass vacuously.
+        code = services_vm.succeed(
+            "curl -s --max-time 10 -o /dev/null -w '%{http_code}' "
+            + f"-H 'Authorization: token {TOKEN}' {API}/repos/{ADMIN}/pushcreate"
+        ).strip()
+        assert code == "404", f"pushcreate repo already exists (API said {code})"
+
+        try:
+            services_vm.succeed(
+                "cd /root && rm -rf newrepo && mkdir newrepo && cd newrepo && "
+                "git init -b main . && "
+                "git config user.email test@test && git config user.name test && "
+                f"echo '{PAYLOAD}' > README.md && "
+                "git add -A && git commit -q -m seed && "
+                f"git push -q {new_url} main"
+            )
+        except Exception:
+            diag("push-to-create")
+            raise
+
+        # DEFAULT_PUSH_CREATE_PRIVATE: a repo that appears without ever
+        # passing through the UI must not be public.
+        info = json.loads(services_vm.succeed(
+            f"curl -sf --max-time 10 -H 'Authorization: token {TOKEN}' "
+            f"{API}/repos/{ADMIN}/pushcreate"
+        ))
+        assert info.get("private") is True, f"push-created repo is not private: {info!r}"
 
     # -----------------------------------------------------------------------
     # Negatives
