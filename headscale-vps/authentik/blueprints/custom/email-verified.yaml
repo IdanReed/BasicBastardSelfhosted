@@ -1,0 +1,39 @@
+# Override the built-in OAuth "email" scope mapping so it emits
+# `email_verified: true` for any account that has an email address.
+#
+# WHY: authentik's default email scope mapping (managed
+# goauthentik.io/providers/oauth2/scope-email) hardcodes
+# `"email_verified": False` in this version. Apps that only need a non-empty
+# email (Immich, Outline) don't care, but Kavita — and other strict OIDC
+# clients — REFUSE login with "Your email must be verified to login" when the
+# claim is false. Since this deployment has NO open enrollment (users are
+# admin-defined in headscale-oidc.yaml or created in the UI; there is no
+# registration/enrollment flow), every account's email is operator-vouched, so
+# asserting verified is accurate.
+#
+# Matched by `managed` identifier = a partial update of the single built-in
+# mapping, so every provider's `!Find [scopemapping, [scope_name, email]]`
+# still resolves to this one object (adding a second email-scope mapping would
+# make those !Find lookups ambiguous — deliberately avoided).
+#
+# `bool(request.user.email)` not hardcoded True: an account with no email
+# correctly reports unverified rather than lying.
+#
+# .yaml extension load-bearing (discovery globs **/*.yaml, finding #7).
+version: 1
+metadata:
+  name: email-verified
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  - model: authentik_providers_oauth2.scopemapping
+    state: present
+    identifiers:
+      managed: goauthentik.io/providers/oauth2/scope-email
+    attrs:
+      expression: |
+        return {
+            "email": request.user.email,
+            "email_verified": bool(request.user.email),
+        }
