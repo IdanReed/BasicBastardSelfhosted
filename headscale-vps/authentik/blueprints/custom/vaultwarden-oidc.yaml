@@ -32,7 +32,13 @@ entries:
     id: vaultwarden-provider
     state: present
     identifiers:
-      name: vaultwarden
+      # NOT "vaultwarden": forward-auth.yaml already owns a PROXY provider by
+      # that name (the /admin forward-auth), and Authentik provider names are
+      # globally unique across types — the collision left this oauth2 provider
+      # unbound and /application/o/vaultwarden/ 404ing. The application slug
+      # below stays "vaultwarden" (forward-auth's app is "vaultwarden-admin"),
+      # so SSO_AUTHORITY .../application/o/vaultwarden is unchanged.
+      name: vaultwarden-sso
     attrs:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
