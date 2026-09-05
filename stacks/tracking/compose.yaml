@@ -72,12 +72,25 @@ services:
       #
       # Kills Gravatar and drawio; also the only egress this image makes.
       - DISABLE_EXTERNAL_SERVICES=true
-      # OIDC ships READY and OFF (annex §4): flipping to `oidc` plus three
-      # OIDC_* values is the whole change.
-      # ⚠ When that happens, set OIDC_ISSUER_DISCOVER EXPLICITLY: the code
-      # defaults it FALSE while the docs say true — trusting the docs yields
-      # a provider that cannot discover its endpoints.
-      - AUTH_METHOD=standard
+      # OIDC — ENABLED (fleet rollout 2026-09-05, bookstack-oidc.yaml blueprint).
+      # 🚨 HARD CUTOVER: AUTH_METHOD=oidc REMOVES the local login form — there
+      # is no dual mode. So (a) deploy the VPS blueprint FIRST (nrs-vps) then
+      # this stack, or OIDC is on with no working provider = lockout; and
+      # (b) BREAK-GLASS is reverting this to `standard` + redeploy (the
+      # bookstack-admin-init local admin is otherwise unreachable). Auto-
+      # registration of new OIDC users is built-in and unconditional; accounts
+      # link by the `sub` claim, and a new user lands with the default
+      # registration role (promote in the BookStack UI for admin).
+      - AUTH_METHOD=oidc
+      - OIDC_NAME=Authentik
+      - OIDC_ISSUER=https://auth.idanreed.com/application/o/bookstack/
+      # ⚠ EXPLICIT: the code defaults OIDC_ISSUER_DISCOVER FALSE while the docs
+      # say true — without this the provider cannot find its endpoints.
+      - OIDC_ISSUER_DISCOVER=true
+      - OIDC_CLIENT_ID=bookstack
+      # Remap: the shared tracking .env carries the prefixed name (three apps,
+      # one file); BookStack reads the bare OIDC_CLIENT_SECRET.
+      - OIDC_CLIENT_SECRET=${BOOKSTACK_OIDC_CLIENT_SECRET}
     # Long form with required:false ON PURPOSE (finding #11): a deploy can
     # race the first host-side decrypt, and the plain form aborts the whole
     # stack when .env is absent.
@@ -166,12 +179,22 @@ services:
       - HBOX_OPTIONS_HOSTNAME=homebox.svc.idanreed.com
       # Hourly failed egress from a tailnet-only host. Non-fatal, just noise.
       - HBOX_OPTIONS_GITHUB_RELEASE_CHECK=false
-      # ⚠ OIDC OFF, not merely "unconfigured": Homebox resolves discovery
-      # EAGERLY at start (retry ladder ~7.5s, tuned for a sibling service,
-      # not a cross-tailnet VPS) — enabled, a tailnet blip during `up`
-      # restart-loops this container. Turning it on carries that cost
-      # (annex §7).
-      - HBOX_OIDC_ENABLED=false
+      # OIDC — ENABLED (fleet rollout 2026-09-05, homebox-oidc.yaml blueprint).
+      # 🚨 EAGER DISCOVERY: Homebox resolves the issuer's .well-known AT START
+      # (retry ladder ~7.5s, tuned for a sibling, not a cross-tailnet VPS) —
+      # so a tailnet blip to the VPS during `up` restart-loops this container.
+      # This is the accepted cost of enabling it (annex §7); it self-heals once
+      # the VPS is reachable (restart: unless-stopped). The client SECRET is
+      # only used at token exchange, so an empty secret does NOT crash boot.
+      # HBOX_OPTIONS_TRUST_PROXY + HOSTNAME above make the redirect_uri https.
+      - HBOX_OIDC_ENABLED=true
+      - HBOX_OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/homebox/
+      - HBOX_OIDC_CLIENT_ID=homebox
+      # Remap from the shared tracking .env prefixed name.
+      - HBOX_OIDC_CLIENT_SECRET=${HOMEBOX_OIDC_CLIENT_SECRET}
+      - HBOX_OIDC_SCOPE=openid profile email
+      # HBOX_OPTIONS_ALLOW_REGISTRATION stays true so the first OIDC login can
+      # become the group owner; close it after (operator step, annex §3).
       # HBOX_AUTH_API_KEY_PEPPER arrives from .env, REQUIRED (boot refuses
       # under 32 bytes) — absent from essentially every compose example
       # online, so a copied blog post will not start.
@@ -233,12 +256,24 @@ services:
       - CRAWLER_ENABLE_ADBLOCKER=false
       # Client-side check that hangs the UI when there is no egress.
       - DISABLE_NEW_RELEASE_CHECK=true
-      # OIDC ships OFF: enabled purely by the PRESENCE of
-      # OAUTH_WELLKNOWN_URL, so unset is the off state.
-      # ⚠ ORDERING when enabling: DISABLE_PASSWORD_AUTH=true disables BOTH
-      # users.create AND apiKeys.exchange (how tracking-init provisions).
-      # Bootstrap first, lock down second — and OAUTH_AUTO_REDIRECT silently
-      # does nothing unless DISABLE_PASSWORD_AUTH is also true.
+      # OIDC — ENABLED (fleet rollout 2026-09-05, karakeep-oidc.yaml blueprint).
+      # Enabled purely by the PRESENCE of OAUTH_WELLKNOWN_URL. Lazy discovery
+      # (next-auth resolves .well-known per sign-in), so no boot hazard.
+      # ⚠ ORDERING: password auth is LEFT ON (DISABLE_PASSWORD_AUTH unset) so
+      # tracking-init can still provision the admin via users.create /
+      # apiKeys.exchange; do NOT set DISABLE_PASSWORD_AUTH=true until after the
+      # first successful deploy. OAUTH_AUTO_REDIRECT is likewise left off (it
+      # is a silent no-op unless password auth is disabled).
+      - OAUTH_WELLKNOWN_URL=https://auth.idanreed.com/application/o/karakeep/.well-known/openid-configuration
+      - OAUTH_PROVIDER_NAME=Authentik
+      - OAUTH_CLIENT_ID=karakeep
+      # Remap from the shared tracking .env prefixed name.
+      - OAUTH_CLIENT_SECRET=${KARAKEEP_OIDC_CLIENT_SECRET}
+      - OAUTH_SCOPE=openid email profile
+      # Link the OIDC identity to the existing local admin by verified email
+      # (else a second, non-admin account is minted). Safe here: Authentik is
+      # the only IdP and emails are verified (email-verified.yaml).
+      - OAUTH_ALLOW_DANGEROUS_EMAIL_ACCOUNT_LINKING=true
       #
       # NEXTAUTH_SECRET and MEILI_MASTER_KEY arrive from .env.
     # Long form with required:false ON PURPOSE (finding #11): see bookstack.

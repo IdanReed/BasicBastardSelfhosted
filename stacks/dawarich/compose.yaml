@@ -105,11 +105,19 @@ services:
       # gets cached, so it stays on.
       - STORE_GEODATA=true
       - PROMETHEUS_EXPORTER_ENABLED=false
-      # OIDC ships READY and OFF (annex §4): with the OIDC_* vars unset the app
-      # warns and falls back to email/password, exactly like Kavita and
-      # audiobookshelf in the books stack. Turning it on needs
-      # OIDC_ISSUER/_CLIENT_ID/_CLIENT_SECRET and SELF_HOSTED=true (already
-      # set); the redirect URI is /users/auth/openid_connect/callback.
+      # OIDC — ENABLED (fleet rollout 2026-09-05, dawarich-oidc.yaml blueprint).
+      # Lazy discovery (omniauth resolves per-request), so no boot hazard; the
+      # app also keeps email/password (ALLOW_EMAIL_PASSWORD_LOGIN default true)
+      # as fallback. OIDC_REDIRECT_URI is REQUIRED on 1.14.0 (not inferred).
+      # OIDC_AUTO_REGISTER (default true) creates accounts on first OIDC login,
+      # matched by email; ensure the operator's Authentik email == the seeded
+      # DAWARICH_ADMIN_EMAIL to land on the existing admin.
+      - OIDC_ISSUER=https://auth.idanreed.com/application/o/dawarich/
+      - OIDC_CLIENT_ID=dawarich
+      # Remap: app reads OIDC_CLIENT_SECRET; .env carries the prefixed twin.
+      - OIDC_CLIENT_SECRET=${DAWARICH_OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=https://dawarich.svc.idanreed.com/users/auth/openid_connect/callback
+      - OIDC_PROVIDER_NAME=Authentik
       #
       # SECRET_KEY_BASE and DATABASE_PASSWORD arrive from .env.
       # 🚨 SECRET_KEY_BASE MUST NEVER ROTATE: application.rb derives the

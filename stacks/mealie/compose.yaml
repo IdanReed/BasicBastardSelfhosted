@@ -60,19 +60,24 @@ services:
       # mealie_init below is the mitigation. Same class as wger's
       # admin/adminadmin.
       #
-      # OIDC — config-ready and OFF (tandoor/books posture): local admin
-      # until the Authentik client secret lands. Verified NOT boot-fatal:
-      # discovery happens lazily on the first login redirect, so a VPS blip
-      # cannot take the stack down at `up` (no ghostfolio eager-discovery
-      # hazard).
-      - OIDC_AUTH_ENABLED=false
+      # OIDC — ENABLED (fleet rollout 2026-09-05, mealie-oidc.yaml blueprint).
+      # Verified NOT boot-fatal: discovery is lazy (first login redirect), so
+      # a VPS blip cannot take the stack down at `up` (no ghostfolio/homebox
+      # eager-discovery hazard). Local admin (mealie_init) stays as fallback —
+      # ALLOW_PASSWORD_LOGIN default true.
+      - OIDC_AUTH_ENABLED=true
       - OIDC_PROVIDER_NAME=Authentik
       - OIDC_CONFIGURATION_URL=https://auth.idanreed.com/application/o/mealie/.well-known/openid-configuration
       - OIDC_CLIENT_ID=mealie
-      # ⚠ When enabling: leave OIDC_USER_GROUP / OIDC_ADMIN_GROUP unset OR
-      # put the groups claim in the token — the feature refuses to start if
-      # either is set while OIDC_GROUPS_CLAIM resolves to nothing.
-      # OIDC_CLIENT_SECRET arrives from .env, inert while disabled.
+      # Auto-provision on first OIDC login, matched to existing users by email.
+      # Both default to these values; pinned explicitly so the intent is
+      # legible and drift-proof.
+      - OIDC_SIGNUP_ENABLED=true
+      - OIDC_USER_CLAIM=email
+      # ⚠ OIDC_USER_GROUP / OIDC_ADMIN_GROUP left UNSET on purpose — the feature
+      # refuses to start if either is set while OIDC_GROUPS_CLAIM resolves to
+      # nothing, and the standard scopes (openid/email/profile) carry no groups.
+      # OIDC_CLIENT_SECRET arrives from .env (twin of MEALIE_OIDC_CLIENT_SECRET).
       #
       # ALLOW_PASSWORD_LOGIN stays default (true) on purpose: the local
       # admin is the fallback when the IdP is unreachable.

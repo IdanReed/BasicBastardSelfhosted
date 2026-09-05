@@ -109,6 +109,25 @@ services:
       # stack-side copy is stacks/books/.sops.env (KAVITA_OIDC_CLIENT_SECRET,
       # rendered into Kavita's appsettings.json).
       KAVITA_OIDC_CLIENT_SECRET: ${KAVITA_OIDC_CLIENT_SECRET:?kavita oidc client secret required}
+      # Fleet-wide OIDC rollout 2026-09-05: one passthrough per native-OIDC app,
+      # consumed by the matching blueprints/custom/<app>-oidc.yaml via !Env. The
+      # :?-guard aborts authentik.service at boot if the sops template did not
+      # render the var — the loud half of the oidc-contract; the silent half (an
+      # unset var → empty stored secret → token-exchange 401) is what the lint
+      # guards against. Rendered from modules/authentik.nix's sops template.
+      ABS_OIDC_CLIENT_SECRET: ${ABS_OIDC_CLIENT_SECRET:?audiobookshelf oidc client secret required}
+      PAPERLESS_OIDC_CLIENT_SECRET: ${PAPERLESS_OIDC_CLIENT_SECRET:?paperless oidc client secret required}
+      BOOKSTACK_OIDC_CLIENT_SECRET: ${BOOKSTACK_OIDC_CLIENT_SECRET:?bookstack oidc client secret required}
+      HOMEBOX_OIDC_CLIENT_SECRET: ${HOMEBOX_OIDC_CLIENT_SECRET:?homebox oidc client secret required}
+      KARAKEEP_OIDC_CLIENT_SECRET: ${KARAKEEP_OIDC_CLIENT_SECRET:?karakeep oidc client secret required}
+      DAWARICH_OIDC_CLIENT_SECRET: ${DAWARICH_OIDC_CLIENT_SECRET:?dawarich oidc client secret required}
+      TANDOOR_OIDC_CLIENT_SECRET: ${TANDOOR_OIDC_CLIENT_SECRET:?tandoor oidc client secret required}
+      MEALIE_OIDC_CLIENT_SECRET: ${MEALIE_OIDC_CLIENT_SECRET:?mealie oidc client secret required}
+      VAULTWARDEN_OIDC_CLIENT_SECRET: ${VAULTWARDEN_OIDC_CLIENT_SECRET:?vaultwarden oidc client secret required}
+      GHOSTFOLIO_OIDC_CLIENT_SECRET: ${GHOSTFOLIO_OIDC_CLIENT_SECRET:?ghostfolio oidc client secret required}
+      ACTUAL_OPENID_CLIENT_SECRET: ${ACTUAL_OPENID_CLIENT_SECRET:?actual oidc client secret required}
+      WEALTHFOLIO_OIDC_CLIENT_SECRET: ${WEALTHFOLIO_OIDC_CLIENT_SECRET:?wealthfolio oidc client secret required}
+      EXCALIDRAW_OIDC_CLIENT_SECRET: ${EXCALIDRAW_OIDC_CLIENT_SECRET:?excalidraw oidc client secret required}
       # First-start bootstrap of the `akadmin` superuser. Without these there is
       # no way to log in at all: the blueprint's `idan` user has no credential
       # and no SMTP is configured for a reset link. Ignored on later starts.

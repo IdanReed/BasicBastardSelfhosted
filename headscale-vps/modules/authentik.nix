@@ -30,6 +30,24 @@ in
       IMMICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.IMMICH_OIDC_CLIENT_SECRET}
       OUTLINE_OIDC_CLIENT_SECRET=${config.sops.placeholder.OUTLINE_OIDC_CLIENT_SECRET}
       KAVITA_OIDC_CLIENT_SECRET=${config.sops.placeholder.KAVITA_OIDC_CLIENT_SECRET}
+      # Fleet-wide OIDC rollout 2026-09-05: one !Env per native-OIDC app, each
+      # consumed by blueprints/custom/<app>-oidc.yaml. Twin copy in the stack's
+      # .sops.env (secrets-gen/manifest.yaml). Adding a line here is half the
+      # oidc-contract contract — the other half is the matching worker env in
+      # authentik/compose.yaml. See the sops.secrets block below for per-app notes.
+      ABS_OIDC_CLIENT_SECRET=${config.sops.placeholder.ABS_OIDC_CLIENT_SECRET}
+      PAPERLESS_OIDC_CLIENT_SECRET=${config.sops.placeholder.PAPERLESS_OIDC_CLIENT_SECRET}
+      BOOKSTACK_OIDC_CLIENT_SECRET=${config.sops.placeholder.BOOKSTACK_OIDC_CLIENT_SECRET}
+      HOMEBOX_OIDC_CLIENT_SECRET=${config.sops.placeholder.HOMEBOX_OIDC_CLIENT_SECRET}
+      KARAKEEP_OIDC_CLIENT_SECRET=${config.sops.placeholder.KARAKEEP_OIDC_CLIENT_SECRET}
+      DAWARICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.DAWARICH_OIDC_CLIENT_SECRET}
+      TANDOOR_OIDC_CLIENT_SECRET=${config.sops.placeholder.TANDOOR_OIDC_CLIENT_SECRET}
+      MEALIE_OIDC_CLIENT_SECRET=${config.sops.placeholder.MEALIE_OIDC_CLIENT_SECRET}
+      VAULTWARDEN_OIDC_CLIENT_SECRET=${config.sops.placeholder.VAULTWARDEN_OIDC_CLIENT_SECRET}
+      GHOSTFOLIO_OIDC_CLIENT_SECRET=${config.sops.placeholder.GHOSTFOLIO_OIDC_CLIENT_SECRET}
+      ACTUAL_OPENID_CLIENT_SECRET=${config.sops.placeholder.ACTUAL_OPENID_CLIENT_SECRET}
+      WEALTHFOLIO_OIDC_CLIENT_SECRET=${config.sops.placeholder.WEALTHFOLIO_OIDC_CLIENT_SECRET}
+      EXCALIDRAW_OIDC_CLIENT_SECRET=${config.sops.placeholder.EXCALIDRAW_OIDC_CLIENT_SECRET}
       AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
       AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
@@ -64,6 +82,28 @@ in
     # (rendered into Kavita's appsettings.json). Kavita keeps local
     # accounts, so a mismatch only breaks the OIDC login path, not access.
     KAVITA_OIDC_CLIENT_SECRET = { };
+
+    # Fleet-wide OIDC rollout 2026-09-05. Each is consumed by !Env in the
+    # matching blueprints/custom/<app>-oidc.yaml, its only VPS-side consumer;
+    # the twin copy lives in the stack's .sops.env (secrets-gen/manifest.yaml,
+    # gen+twin xhost) and is what the app itself reads. All keep local/app
+    # accounts alongside OIDC (additive), so a mismatched pair breaks only the
+    # OIDC login path, not access — except Outline (already wired) which has no
+    # local accounts. sops-declared (a deploy-check lint, not structural) stays
+    # red until sops-gen lands the real values in secrets.sops.yaml.
+    ABS_OIDC_CLIENT_SECRET = { };
+    PAPERLESS_OIDC_CLIENT_SECRET = { };
+    BOOKSTACK_OIDC_CLIENT_SECRET = { };
+    HOMEBOX_OIDC_CLIENT_SECRET = { };
+    KARAKEEP_OIDC_CLIENT_SECRET = { };
+    DAWARICH_OIDC_CLIENT_SECRET = { };
+    TANDOOR_OIDC_CLIENT_SECRET = { };
+    MEALIE_OIDC_CLIENT_SECRET = { };
+    VAULTWARDEN_OIDC_CLIENT_SECRET = { };
+    GHOSTFOLIO_OIDC_CLIENT_SECRET = { };
+    ACTUAL_OPENID_CLIENT_SECRET = { };
+    WEALTHFOLIO_OIDC_CLIENT_SECRET = { };
+    EXCALIDRAW_OIDC_CLIENT_SECRET = { };
 
     # Without these the blueprint creates user `idan` with no credential, and
     # with no SMTP configured there is no password-reset path either — nobody

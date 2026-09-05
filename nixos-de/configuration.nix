@@ -76,6 +76,15 @@
 
   networking = {
     hostName = "nixos-desktop";
+    # Reach Authentik's admin UI over the tailnet. Its /if/admin* + /api/v3/*
+    # are restricted to tailnet/loopback (headscale-vps modules/caddy.nix,
+    # security-review item 5), so from a public IP the web UI login-LOOPS: the
+    # login flow runs, but the interface's /api/v3 calls 403 and the SPA bounces
+    # back to login. Map auth.idanreed.com to the VPS tailnet IP so the desktop
+    # hits it over the tailnet (remote_ip 100.64.x -> not restricted, cookie
+    # domain + cert still match). The intended fleet-wide fix (headscale
+    # extra_record) needs split-DNS; this host override is the reliable path.
+    extraHosts = "100.64.0.1 auth.idanreed.com";
     #networkmanager = {
     #  enable = true;
     #  plugins = [ pkgs.networkmanager-openconnect ];

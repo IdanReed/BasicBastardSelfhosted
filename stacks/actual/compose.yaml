@@ -68,16 +68,21 @@ services:
       # To enable, when the Authentik client secret lands:
       #   1. Register redirect https://actual.svc.idanreed.com/openid/callback
       #      in Authentik; real client id/secret into .sops.env.
-      #   2. Uncomment both lines below and redeploy.
-      #   3. docker exec actual node scripts/enable-openid.js
+      # Rollout 2026-09-05: the env below is UNCOMMENTED (inert — nothing is
+      # fetched at boot; the login method lives in the DB), and actual-oidc.yaml
+      # is the blueprint. But OIDC is NOT live until the DB flip:
+      #   docker exec actual node scripts/enable-openid.js
       #      (refuses if bootstrap never ran — actual_init guarantees it did).
       # 🚨 Then LOG IN THROUGH AUTHENTIK IMMEDIATELY: the first OIDC login
       # becomes the server OWNER, permanently — not reassignable from the UI;
       # on a tailnet "whoever clicks first" is every enrolled device.
       # ⚠ ACTUAL_OPENID_ENFORCE=true (kills the password fallback) only
-      # AFTER a verified OIDC login, or it is a lockout.
-      # - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
-      # - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
+      # AFTER a verified OIDC login, or it is a lockout — left UNSET here.
+      - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
+      - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
+      # client_id is public; pinned here (overrides the vestigial .sops.env
+      # stub). ACTUAL_OPENID_CLIENT_SECRET arrives from .env.
+      - ACTUAL_OPENID_CLIENT_ID=actual
       #
       # SimpleFIN: native, and NO wiring here — that is the feature. The
       # credential is pasted once in the client UI and stored in

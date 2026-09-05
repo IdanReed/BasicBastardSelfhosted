@@ -59,9 +59,23 @@ services:
       - CSRF_TRUSTED_ORIGINS=https://tandoor.svc.idanreed.com
       # Nginx inside the container serves media; gunicorn should not.
       - GUNICORN_MEDIA=0
-      # No open registration. The superuser is created by tandoor_init.
+      # No open (local) registration. The superuser is created by tandoor_init.
       - ENABLE_SIGNUP=0
-      # POSTGRES_PASSWORD and SECRET_KEY arrive from .env.
+      # OIDC — ENABLED (fleet rollout 2026-09-05, tandoor-oidc.yaml blueprint)
+      # via django-allauth's openid_connect provider. Lazy discovery (first
+      # login), so no boot hazard; local superuser stays as fallback.
+      # 🚨 Python-literal JSON (True, not true): settings.py runs ast.literal_eval
+      # FIRST and lowercase true is a ValueError. ${TANDOOR_OIDC_CLIENT_SECRET}
+      # is interpolated by compose from .env at parse time. provider_id
+      # "authentik" fixes the callback path /accounts/authentik/login/callback/
+      # (must match the blueprint redirect_uri).
+      - SOCIAL_PROVIDERS=allauth.socialaccount.providers.openid_connect
+      - 'SOCIALACCOUNT_PROVIDERS={"openid_connect":{"OAUTH_PKCE_ENABLED":True,"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"tandoor","secret":"${TANDOOR_OIDC_CLIENT_SECRET}","settings":{"server_url":"https://auth.idanreed.com/application/o/tandoor/.well-known/openid-configuration"}}]}}'
+      # Auto-provision an account on first OIDC login (allauth default True;
+      # pinned so a future default change can't silently close it). ⚠ HIDE_LOGIN_FORM
+      # left unset and REMOTE_USER_AUTH must NEVER be set (removes /setup/).
+      - SOCIALACCOUNT_AUTO_SIGNUP=1
+      # POSTGRES_PASSWORD, SECRET_KEY and TANDOOR_OIDC_CLIENT_SECRET arrive from .env.
       # ⚠ An unset SECRET_KEY does NOT crash: settings.py falls back to the
       # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a
       # [WARNING] — every session cookie signed with a public, CONSTANT key,

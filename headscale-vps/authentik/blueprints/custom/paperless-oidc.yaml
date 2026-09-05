@@ -1,0 +1,82 @@
+# OIDC provider + application for Paperless-ngx (stacks/paperless on the
+# services VM).
+#
+# Native OIDC via django-allauth: Paperless drives the browser flow itself (no
+# outpost / no forward-auth entry; the Caddy route for paperless.svc.idanreed.com
+# does not `import protected`). Paperless keeps its LOCAL superuser
+# (PAPERLESS_ADMIN_USER) working alongside OIDC as break-glass — additive, like
+# Kavita, not Outline's OIDC-only door.
+#
+# .yaml extension is load-bearing (blueprint discovery globs **/*.yaml only,
+# finding #7). No comment-only `attrs:` keys (finding #9).
+#
+# client_secret rides the fleet's normal path: `!Env PAPERLESS_OIDC_CLIENT_SECRET`
+# from sops -> modules/authentik.nix template -> worker env -> blueprint. The
+# SAME value sits in stacks/paperless/.sops.env as PAPERLESS_OIDC_CLIENT_SECRET,
+# interpolated into the PAPERLESS_SOCIALACCOUNT_PROVIDERS JSON (sops-gen draws
+# one value into both files as the paperless/oidc twin). Rotate = both sops
+# files + VPS nixos-rebuild switch + re-up the paperless stack. A mismatch 401s
+# at token exchange, silently. The oidc-contract lint ties the !Env name to the
+# worker env + sops template, and the client_id/issuer/redirect strings.
+#
+# client_id "paperless" and issuer .../application/o/paperless/ must match the
+# server_url in PAPERLESS_SOCIALACCOUNT_PROVIDERS. The callback path segment
+# "authentik" below is the allauth provider_id, NOT the slug — they need not
+# match but both are pinned by the oidc-contract lint against the compose JSON.
+version: 1
+metadata:
+  name: paperless-oidc
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # ===========================================
+  # OIDC Provider for Paperless-ngx
+  # ===========================================
+  - model: authentik_providers_oauth2.oauth2provider
+    id: paperless-provider
+    state: present
+    identifiers:
+      name: paperless
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      # grant_types is REQUIRED on this authentik version: authorize.py rejects
+      # the whole flow if empty (invalid_request — hit live 2026-09-03). Same
+      # as kavita/outline/immich/headscale.
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: paperless
+      # !Env reads the worker environment (see header); "${VAR}" would be a
+      # literal, not interpolated.
+      client_secret: !Env PAPERLESS_OIDC_CLIENT_SECRET
+      redirect_uris:
+        # django-allauth's fixed callback path: /accounts/oidc/<provider_id>/
+        # login/callback/ — provider_id is "authentik" (set in the compose
+        # PAPERLESS_SOCIALACCOUNT_PROVIDERS JSON). Trailing slash required.
+        # Strict matching — a drifted URL fails at login, not with a warning.
+        - url: "https://paperless.svc.idanreed.com/accounts/oidc/authentik/login/callback/"
+          matching_mode: strict
+      property_mappings:
+        # The standard three, exactly like kavita/outline/immich/headscale.
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+
+  # ===========================================
+  # Application (ties provider to UI)
+  # ===========================================
+  - model: authentik_core.application
+    id: paperless-app
+    state: present
+    identifiers:
+      slug: paperless
+    attrs:
+      name: Paperless-ngx
+      provider: !KeyOf paperless-provider
+      policy_engine_mode: any
+      meta_launch_url: "https://paperless.svc.idanreed.com"
+      meta_description: "Document management + OCR"

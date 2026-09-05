@@ -34,6 +34,22 @@ services:
       # that login IS the auth here. The suite can't see the break: it probes
       # loopback, where the Origin matches.
       - PAPERLESS_URL=https://paperless.svc.idanreed.com
+      # OIDC — ENABLED (fleet rollout 2026-09-05, paperless-oidc.yaml blueprint)
+      # via django-allauth's openid_connect provider. Lazy discovery (first
+      # login), so no boot hazard; the local PAPERLESS_ADMIN_USER superuser
+      # stays as break-glass. ${PAPERLESS_OIDC_CLIENT_SECRET} is interpolated by
+      # compose from .env at parse time. provider_id "authentik" fixes the
+      # callback path /accounts/oidc/authentik/login/callback/ (must match the
+      # blueprint redirect_uri). Do NOT set PAPERLESS_DISABLE_REGULAR_LOGIN or
+      # PAPERLESS_REDIRECT_LOGIN_TO_SSO until a first SSO login is verified.
+      - PAPERLESS_APPS=allauth.socialaccount.providers.openid_connect
+      - 'PAPERLESS_SOCIALACCOUNT_PROVIDERS={"openid_connect":{"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"paperless","secret":"${PAPERLESS_OIDC_CLIENT_SECRET}","settings":{"server_url":"https://auth.idanreed.com/application/o/paperless/.well-known/openid-configuration"}}]}}'
+      # Auto-provision SSO users (allauth SOCIALACCOUNT_AUTO_SIGNUP); accounts
+      # link by email and land as regular (non-staff) users — grant admin in
+      # /admin if needed. Local self-registration stays closed.
+      - PAPERLESS_SOCIAL_AUTO_SIGNUP=true
+      - PAPERLESS_ACCOUNT_ALLOW_SIGNUPS=false
+      # PAPERLESS_OIDC_CLIENT_SECRET arrives from .env.
       - USERMAP_UID=1000
       - USERMAP_GID=1000
     # Long form with required:false ON PURPOSE (finding #11): a deploy can

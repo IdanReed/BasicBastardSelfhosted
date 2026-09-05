@@ -77,12 +77,27 @@ services:
       # No SMTP on this host, unconfigured on purpose: invite emails will
       # not send; /admin surfaces a copyable link instead.
       #
-      # ---- OIDC ships READY and OFF (annex §4) ----
-      # SSO_ENABLED stays unset until the Authentik client secret exists;
-      # then SSO_ENABLED=true + SSO_AUTHORITY + the SSO_CLIENT_* values from
-      # .env. Discovery is LAZY (authorize/token path, not boot), so unlike
-      # Homebox this starts fine with Authentik unreachable — the offline
-      # fixture can leave SSO configured.
+      # ---- OIDC/SSO — ENABLED (fleet rollout 2026-09-05, vaultwarden-oidc.yaml).
+      # server 1.37.2 has native SSO (1.34+) — no separate -sso build.
+      # Discovery is LAZY (authorize/token path, not boot), so this starts fine
+      # with Authentik unreachable — master-password login stays as fallback
+      # (SSO_ONLY left unset/false).
+      - SSO_ENABLED=true
+      # Issuer base — NO /.well-known suffix, vaultwarden appends it.
+      - SSO_AUTHORITY=https://auth.idanreed.com/application/o/vaultwarden
+      # client_id is public; pinned here (overrides the vestigial .sops.env
+      # stub). SSO_CLIENT_SECRET arrives from .env.
+      - SSO_CLIENT_ID=vaultwarden
+      - SSO_SCOPES=email profile
+      # Link an SSO identity to an existing/invited account by verified email.
+      # ⚠ NOT full auto-provision: Bitwarden vaults are client-side E2EE, so a
+      # brand-new vault still needs client registration — invite via /admin.
+      # SIGNUPS_ALLOWED stays false by design (see above); onboarding is the
+      # invite flow, then SSO links by email.
+      - SSO_SIGNUPS_MATCH_EMAIL=true
+      # Per-user SSO/login rate-limit bucket keyed on the real client IP, not
+      # the shared docker gateway (research §6.3).
+      - IP_HEADER=X-Forwarded-For
       # ⚠ Do NOT register `bitwarden://sso-callback` with Authentik — those
       # per-client redirects never reach the IdP. The single provider URI is
       # https://vaultwarden.svc.idanreed.com/identity/connect/oidc-signin

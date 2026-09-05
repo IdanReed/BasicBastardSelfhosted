@@ -222,11 +222,18 @@ secrets:
     freeze: true
     note: "first-run-only bootstrap; later rotation here is a silent no-op (reset via client UI / reset-password.js)"
     targets: [{ file: stacks/actual/.sops.env, key: ACTUAL_INIT_PASSWORD }]
+  # Rollout 2026-09-05: only the SECRET is generated. ACTUAL_OPENID_CLIENT_ID is
+  # public and pinned to the literal "actual" in compose.yaml (which overrides
+  # the vestigial .sops.env stub via compose's environment>env_file precedence),
+  # so it is intentionally NOT a managed secret. Native OIDC ships ready-and-off:
+  # the value is inert until `docker exec actual node scripts/enable-openid.js`
+  # (a DB flip) — the first OIDC login then becomes the server owner permanently.
   - name: actual/oidc
-    class: pull
-    note: "future gen+twin once an Authentik blueprint exists (native OIDC ships ready-and-off)"
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost; the enable step is a manual CLI/DB flip — see maintenance-handbook OIDC section"
     targets:
-      - { file: stacks/actual/.sops.env, key: ACTUAL_OPENID_CLIENT_ID }
+      - { file: headscale-vps/secrets.sops.yaml, key: ACTUAL_OPENID_CLIENT_SECRET }
       - { file: stacks/actual/.sops.env, key: ACTUAL_OPENID_CLIENT_SECRET }
 
   - name: beszel/hub-ssh
@@ -273,6 +280,13 @@ secrets:
     class: generate
     recipe: hex:48
     targets: [{ file: stacks/ghostfolio/.sops.env, key: POSTGRES_PASSWORD }]
+  - name: ghostfolio/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side bare OIDC_CLIENT_SECRET (env_file). Ghostfolio OIDC is EXPERIMENTAL and eager-discovers AT BOOT — compose sets all three OIDC_*_URL overrides so boot skips discovery and stays safe. Then VPS nixos-rebuild switch + re-up ghostfolio."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: GHOSTFOLIO_OIDC_CLIENT_SECRET }
+      - { file: stacks/ghostfolio/.sops.env, key: OIDC_CLIENT_SECRET }
 
   - name: logging/GF_SECURITY_ADMIN_PASSWORD
     class: generate
@@ -288,9 +302,12 @@ secrets:
     recipe: base64:24
     targets: [{ file: stacks/mealie/.sops.env, key: MEALIE_ADMIN_PASSWORD }]
   - name: mealie/oidc
-    class: pull
-    note: "future gen+twin once an Authentik blueprint exists"
-    targets: [{ file: stacks/mealie/.sops.env, key: OIDC_CLIENT_SECRET }]
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up mealie. Stack side is bare OIDC_CLIENT_SECRET; VPS side is namespaced MEALIE_OIDC_CLIENT_SECRET (the blueprint !Env)."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: MEALIE_OIDC_CLIENT_SECRET }
+      - { file: stacks/mealie/.sops.env, key: OIDC_CLIENT_SECRET }
 
   - name: outline/SECRET_KEY
     class: generate
@@ -324,6 +341,13 @@ secrets:
     targets:
       - { file: stacks/paperless/.sops.env, key: POSTGRES_PASSWORD }
       - { file: stacks/paperless/.sops.env, key: PAPERLESS_DBPASS }
+  - name: paperless/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side is interpolated into PAPERLESS_SOCIALACCOUNT_PROVIDERS (compose ${...}); then VPS nixos-rebuild switch + re-up paperless."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: PAPERLESS_OIDC_CLIENT_SECRET }
+      - { file: stacks/paperless/.sops.env, key: PAPERLESS_OIDC_CLIENT_SECRET }
 
   - name: samba/SAMBA_IDAN_PASSWORD
     class: generate
@@ -358,6 +382,13 @@ secrets:
     note: "argon2id PHC, single-quoted ($ in dotenv); malformed hash is boot-fatal"
     targets:
       - { file: stacks/wealthfolio/.sops.env, key: WF_AUTH_PASSWORD_HASH, part: argon2 }
+  - name: wealthfolio/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05, new key). 🚨 Wealthfolio OIDC discovery runs ONCE AT STARTUP and PANICS the server with NO escape hatch — enabling it makes EVERY stack restart hostage to VPS reachability. Ships OFF in compose by design; flipping it on is an explicit operator decision (see maintenance-handbook OIDC section). The secret is generated regardless so the flip is one edit away."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: WEALTHFOLIO_OIDC_CLIENT_SECRET }
+      - { file: stacks/wealthfolio/.sops.env, key: WF_OIDC_CLIENT_SECRET }
 
   # --- stacks: no real .sops.env yet — apply creates it from the example ---
   - name: automation/HA_ADMIN_PASSWORD
@@ -425,9 +456,11 @@ secrets:
       - { file: headscale-vps/secrets.sops.yaml, key: KAVITA_OIDC_CLIENT_SECRET }
       - { file: stacks/books/.sops.env, key: KAVITA_OIDC_CLIENT_SECRET }
   - name: abs/oidc
-    class: pull
-    note: "future gen+twin xhost once the audiobookshelf-oidc blueprint exists (Phase 2)"
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up books stack. books-init.sh PATCHes /api/auth-settings when the stack-side value is non-empty."
     targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: ABS_OIDC_CLIENT_SECRET }
       - { file: stacks/books/.sops.env, key: ABS_OIDC_CLIENT_SECRET }
   - name: books/AA_DONATOR_KEY
     class: pull
@@ -450,9 +483,12 @@ secrets:
     recipe: base64:24
     targets: [{ file: stacks/dawarich/.sops.env, key: DAWARICH_ADMIN_PASSWORD }]
   - name: dawarich/oidc
-    class: pull
-    note: "future gen+twin once an Authentik blueprint exists"
-    targets: [{ file: stacks/dawarich/.sops.env, key: DAWARICH_OIDC_CLIENT_SECRET }]
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up dawarich."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: DAWARICH_OIDC_CLIENT_SECRET }
+      - { file: stacks/dawarich/.sops.env, key: DAWARICH_OIDC_CLIENT_SECRET }
 
   - name: docspace/APP_CORE_MACHINEKEY
     class: generate
@@ -599,6 +635,13 @@ secrets:
     class: generate
     recipe: base64:24
     targets: [{ file: stacks/tandoor/.sops.env, key: TANDOOR_ADMIN_PASSWORD }]
+  - name: tandoor/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side is interpolated into the SOCIALACCOUNT_PROVIDERS Python-literal JSON in compose (${...}); then VPS nixos-rebuild switch + re-up tandoor."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: TANDOOR_OIDC_CLIENT_SECRET }
+      - { file: stacks/tandoor/.sops.env, key: TANDOOR_OIDC_CLIENT_SECRET }
 
   - name: tracking/APP_KEY
     class: derived
@@ -643,12 +686,32 @@ secrets:
     class: generate
     recipe: base64:24
     targets: [{ file: stacks/tracking/.sops.env, key: KARAKEEP_ADMIN_PASSWORD }]
-  - name: tracking/oidc
-    class: pull
-    note: "future gen+twin x3 once Authentik blueprints exist"
+  # Rollout 2026-09-05: three DISTINCT client secrets (one per app), NOT one
+  # shared draw — the tracking stack packs three apps into one .sops.env, and
+  # each app's compose remaps its prefixed key to the bare name the app reads
+  # (OIDC_CLIENT_SECRET / HBOX_OIDC_CLIENT_SECRET / OAUTH_CLIENT_SECRET). Each
+  # is a gen+twin xhost: stack side prefixed, VPS side same prefixed name (the
+  # blueprint !Env). client_id is public (literal in compose), never a secret.
+  - name: bookstack/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost; then VPS nixos-rebuild switch + re-up tracking stack"
     targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: BOOKSTACK_OIDC_CLIENT_SECRET }
       - { file: stacks/tracking/.sops.env, key: BOOKSTACK_OIDC_CLIENT_SECRET }
+  - name: homebox/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost. Homebox resolves OIDC discovery AT BOOT — enabling it couples the tracking stack's start to VPS reachability (eager-discovery, restart-loops on a tailnet blip)."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: HOMEBOX_OIDC_CLIENT_SECRET }
       - { file: stacks/tracking/.sops.env, key: HOMEBOX_OIDC_CLIENT_SECRET }
+  - name: karakeep/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost; enable OIDC only AFTER tracking-init seeds the local admin (DISABLE_PASSWORD_AUTH would block the seed)"
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: KARAKEEP_OIDC_CLIENT_SECRET }
       - { file: stacks/tracking/.sops.env, key: KARAKEEP_OIDC_CLIENT_SECRET }
 
   - name: vaultwarden/admin
@@ -658,11 +721,17 @@ secrets:
     note: "argon2id PHC, single-quoted — a mangled $ here is a login-bypass-shaped failure (ledger #30)"
     targets:
       - { file: stacks/vaultwarden/.sops.env, key: ADMIN_TOKEN, part: argon2 }
+  # Rollout 2026-09-05: only the SECRET is generated. SSO_CLIENT_ID is public
+  # and pinned to the literal "vaultwarden" in compose.yaml (overrides the
+  # vestigial .sops.env stub), so it is not a managed secret. vaultwarden/server
+  # 1.37.2 has native SSO (1.34+) — no separate -sso build. Lazy discovery;
+  # master-password login stays as fallback (SSO_ONLY off).
   - name: vaultwarden/sso
-    class: pull
-    note: "future gen+twin once an Authentik blueprint exists"
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost; then VPS nixos-rebuild switch + re-up vaultwarden. VPS !Env is VAULTWARDEN_OIDC_CLIENT_SECRET, stack side is SSO_CLIENT_SECRET."
     targets:
-      - { file: stacks/vaultwarden/.sops.env, key: SSO_CLIENT_ID }
+      - { file: headscale-vps/secrets.sops.yaml, key: VAULTWARDEN_OIDC_CLIENT_SECRET }
       - { file: stacks/vaultwarden/.sops.env, key: SSO_CLIENT_SECRET }
 
   - name: wger/SECRET_KEY
@@ -717,6 +786,13 @@ secrets:
     class: generate
     recipe: base64:24
     targets: [{ file: stacks/excalidraw/.sops.env, key: ADMIN_PASSWORD }]
+  - name: excalidraw/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost (rollout 2026-09-05, new key). AstraDraw is ALPHA and its OIDC discovery timing is UNMEASURED (may be boot-fatal like wealthfolio). Ships OFF in compose (empty OIDC_ISSUER_URL); flip on only after testing against a dead issuer. Secret generated regardless. Then VPS nixos-rebuild switch + re-up excalidraw."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: EXCALIDRAW_OIDC_CLIENT_SECRET }
+      - { file: stacks/excalidraw/.sops.env, key: OIDC_CLIENT_SECRET }
 
   # --- stacks/proton/.sops.env (hydroxide export sidecar; merged post-fork) -
   # Both are PULL-class: the account email and the bridge password printed once

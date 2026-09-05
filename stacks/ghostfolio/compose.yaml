@@ -94,26 +94,24 @@ services:
       # it salts the hash of every security token, which is the only credential
       # Ghostfolio accounts have (see .sops.env.example).
       #
-      # OIDC ships OFF. Ghostfolio has native OIDC, but upstream labels it
-      # EXPERIMENTAL, and turning it on needs an Authentik client secret that
-      # requires the production age key to reach the VPS secrets.sops.yaml.
-      # Same posture as the books and tracking stacks: run on the app's own
-      # auth until the operator lands the secret. The off state is the default
-      # — ENABLE_FEATURE_AUTH_OIDC defaults to false and
-      # ENABLE_FEATURE_AUTH_TOKEN defaults to true — so nothing is set here.
-      #
-      # 🚨 WHEN IT IS TURNED ON, READ THIS FIRST. Setting
-      # ENABLE_FEATURE_AUTH_OIDC=true makes the auth module fetch
-      # ${OIDC_ISSUER}/.well-known/openid-configuration AT BOOT, and the catch
-      # arm `throw`s — Nest bootstrap aborts and the container exits. This is
-      # Homebox's eager-discovery problem (see stacks/tracking/compose.yaml)
-      # with the failure escalated from a restart loop to a hard stop, and the
-      # dependency is a cross-tailnet call to the Hetzner VPS, so a tailnet
-      # blip during `docker compose up` takes the stack down.
-      #
-      # The escape hatch is in the code: discovery is skipped entirely when
-      # OIDC_AUTHORIZATION_URL, OIDC_TOKEN_URL and OIDC_USER_INFO_URL are ALL
-      # set. Set all three, or accept the boot-time dependency knowingly.
+      # OIDC — ENABLED (fleet rollout 2026-09-05, ghostfolio-oidc.yaml blueprint).
+      # Upstream labels Ghostfolio OIDC EXPERIMENTAL and ENABLE_FEATURE_AUTH_OIDC
+      # makes the auth module fetch ${OIDC_ISSUER}/.well-known AT BOOT, hard-
+      # stopping the container if the VPS is unreachable. WE TAKE THE ESCAPE
+      # HATCH: discovery is skipped entirely when OIDC_AUTHORIZATION_URL,
+      # OIDC_TOKEN_URL and OIDC_USER_INFO_URL are ALL set (verified in-source),
+      # so with the three explicit endpoints below boot NEVER contacts the VPS —
+      # the endpoints are hit only during an actual login. This is what makes
+      # enabling it boot-safe (unlike wealthfolio, which has no such hatch).
+      # ENABLE_FEATURE_AUTH_TOKEN stays default-true as the fallback.
+      - ENABLE_FEATURE_AUTH_OIDC=true
+      - OIDC_ISSUER=https://auth.idanreed.com/application/o/ghostfolio/
+      - OIDC_AUTHORIZATION_URL=https://auth.idanreed.com/application/o/authorize/
+      - OIDC_TOKEN_URL=https://auth.idanreed.com/application/o/token/
+      - OIDC_USER_INFO_URL=https://auth.idanreed.com/application/o/userinfo/
+      - OIDC_CLIENT_ID=ghostfolio
+      # OIDC_CLIENT_SECRET arrives from .env (twin of GHOSTFOLIO_OIDC_CLIENT_SECRET).
+      # Redirect URI the blueprint registers: /api/auth/oidc/callback.
     # Long form with required:false ON PURPOSE (finding #11): a deploy can
     # race the host-side decrypt (.env not yet written), and the plain form
     # aborts the whole stack.
