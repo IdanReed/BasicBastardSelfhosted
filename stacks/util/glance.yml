@@ -104,9 +104,9 @@ pages:
 
               - title: Books
                 links:
-                  - title: Kavita
+                  - title: Kavita ✅
                     url: https://kavita.svc.idanreed.com
-                  - title: Audiobookshelf
+                  - title: Audiobookshelf ✅
                     url: https://audiobookshelf.svc.idanreed.com
                   - title: Shelfmark
                     url: https://shelfmark.svc.idanreed.com
@@ -120,13 +120,13 @@ pages:
 
               - title: Personal
                 links:
-                  - title: Immich
+                  - title: Immich ✅
                     url: https://immich.svc.idanreed.com
-                  - title: Paperless
+                  - title: Paperless ✅
                     url: https://paperless.svc.idanreed.com
                   - title: Vaultwarden
                     url: https://vaultwarden.svc.idanreed.com
-                  - title: Dawarich
+                  - title: Dawarich ✅
                     url: https://dawarich.svc.idanreed.com
                   - title: rmfakecloud
                     url: https://rmfakecloud.svc.idanreed.com
@@ -135,13 +135,13 @@ pages:
 
               - title: Notes and Inventory
                 links:
-                  - title: BookStack
+                  - title: BookStack ✅
                     url: https://bookstack.svc.idanreed.com
-                  - title: Homebox
+                  - title: Homebox ✅
                     url: https://homebox.svc.idanreed.com
-                  - title: Karakeep
+                  - title: Karakeep ✅
                     url: https://karakeep.svc.idanreed.com
-                  - title: Outline
+                  - title: Outline ✅
                     url: https://outline.svc.idanreed.com
                   - title: SilverBullet
                     url: https://silverbullet.svc.idanreed.com
@@ -153,11 +153,11 @@ pages:
                 links:
                   - title: Firefly III
                     url: https://firefly.svc.idanreed.com
-                  - title: Ghostfolio
+                  - title: Ghostfolio ✅
                     url: https://ghostfolio.svc.idanreed.com
                   - title: Owl
                     url: https://owl.svc.idanreed.com
-                  - title: Tandoor
+                  - title: Tandoor ✅
                     url: https://tandoor.svc.idanreed.com
                   - title: wger
                     url: https://wger.svc.idanreed.com
