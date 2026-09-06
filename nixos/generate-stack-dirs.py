@@ -704,9 +704,29 @@ connects the two but these two files agreeing. A mismatch is not a crash
 samba-init refuses to start on a mismatch and the suite measures it
 (write over SMB, stat on the host).
 
-0775 rather than 0755: the group bit is what lets a future second SMB
-user share the tree without each file being private to whoever wrote it.""",
+0775 rather than 0755: the group bit is what lets the other SMB users (all
+gid 1000) share the tree without each file being private to whoever wrote it.""",
     },
+    # Per-user private trees (multi-user rollout 2026-09-05). ONE shared gid
+    # (1000) so everyone can use `shared`; DISTINCT uids so each personal dir is
+    # private. 0700 <uid>:1000 → only the owner enters (the shared group can't),
+    # backing config.yml's per-share `validusers`. Each uid MUST match
+    # config.yml's `auth:` and samba-init refuses to start on a mismatch.
+    "/mnt/slow/samba/personal": {
+        "mode": "0755",
+        "owner": ("root", "root"),
+        "note": """\
+Parent of the per-user private trees. root:root 0755 — nobody writes here;
+o+x lets each SMB user traverse into their own subdir, which is 0700 and so
+leaks nothing.""",
+    },
+    "/mnt/slow/samba/personal/idan": {"mode": "0700", "owner": ("1000", "1000")},
+    "/mnt/slow/samba/personal/alondra": {"mode": "0700", "owner": ("1001", "1000")},
+    "/mnt/slow/samba/personal/cale": {"mode": "0700", "owner": ("1002", "1000")},
+    "/mnt/slow/samba/personal/zach": {"mode": "0700", "owner": ("1003", "1000")},
+    "/mnt/slow/samba/personal/rylan": {"mode": "0700", "owner": ("1004", "1000")},
+    "/mnt/slow/samba/personal/cameron": {"mode": "0700", "owner": ("1005", "1000")},
+    "/mnt/slow/samba/personal/justin": {"mode": "0700", "owner": ("1006", "1000")},
 }
 
 

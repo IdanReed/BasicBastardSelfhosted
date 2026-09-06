@@ -48,6 +48,17 @@ in
       ACTUAL_OPENID_CLIENT_SECRET=${config.sops.placeholder.ACTUAL_OPENID_CLIENT_SECRET}
       WEALTHFOLIO_OIDC_CLIENT_SECRET=${config.sops.placeholder.WEALTHFOLIO_OIDC_CLIENT_SECRET}
       EXCALIDRAW_OIDC_CLIENT_SECRET=${config.sops.placeholder.EXCALIDRAW_OIDC_CLIENT_SECRET}
+      # Per-user initial passwords, consumed by !Env in headscale-oidc.yaml's
+      # authentik_core.user entries (managed/re-asserted every apply). HAND-SET
+      # human-memorable values via sopsedit; copy_only twins into each user's
+      # Windmill + Samba account (secrets-gen/manifest.yaml).
+      IDAN_INITIAL_PASSWORD=${config.sops.placeholder.IDAN_INITIAL_PASSWORD}
+      ALONDRA_INITIAL_PASSWORD=${config.sops.placeholder.ALONDRA_INITIAL_PASSWORD}
+      CALE_INITIAL_PASSWORD=${config.sops.placeholder.CALE_INITIAL_PASSWORD}
+      ZACH_INITIAL_PASSWORD=${config.sops.placeholder.ZACH_INITIAL_PASSWORD}
+      RYLAN_INITIAL_PASSWORD=${config.sops.placeholder.RYLAN_INITIAL_PASSWORD}
+      CAMERON_INITIAL_PASSWORD=${config.sops.placeholder.CAMERON_INITIAL_PASSWORD}
+      JUSTIN_INITIAL_PASSWORD=${config.sops.placeholder.JUSTIN_INITIAL_PASSWORD}
       AUTHENTIK_BOOTSTRAP_PASSWORD=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_PASSWORD}
       AUTHENTIK_BOOTSTRAP_TOKEN=${config.sops.placeholder.AUTHENTIK_BOOTSTRAP_TOKEN}
     '';
@@ -104,6 +115,17 @@ in
     ACTUAL_OPENID_CLIENT_SECRET = { };
     WEALTHFOLIO_OIDC_CLIENT_SECRET = { };
     EXCALIDRAW_OIDC_CLIENT_SECRET = { };
+
+    # Per-user initial passwords (idan + the 5 friends), consumed by !Env in
+    # headscale-oidc.yaml. Hand-set human-memorable values; copy_only twins to
+    # Windmill + Samba. sops-declared (deploy-check) stays red until set.
+    IDAN_INITIAL_PASSWORD = { };
+    ALONDRA_INITIAL_PASSWORD = { };
+    CALE_INITIAL_PASSWORD = { };
+    ZACH_INITIAL_PASSWORD = { };
+    RYLAN_INITIAL_PASSWORD = { };
+    CAMERON_INITIAL_PASSWORD = { };
+    JUSTIN_INITIAL_PASSWORD = { };
 
     # Without these the blueprint creates user `idan` with no credential, and
     # with no SMTP configured there is no password-reset path either — nobody

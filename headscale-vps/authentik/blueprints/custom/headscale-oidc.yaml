@@ -118,6 +118,16 @@ entries:
   # Users
   # Add new users here and push to git
   # ===========================================
+  # 🚨 PASSWORD IS DECLARATIVELY MANAGED. `password: !Env <USER>_INITIAL_PASSWORD`
+  # is RE-ASSERTED on every blueprint apply (worker restart / nrs-vps), so a
+  # user's own password change reverts on the next deploy — the password IS the
+  # sops value (option (a) "managed"). Values are HAND-SET (human-memorable),
+  # not sops-gen'd: `sopsedit headscale-vps/secrets.sops.yaml` to set each
+  # <USER>_INITIAL_PASSWORD, then `sopsgen apply` copies it to the same user's
+  # Windmill + Samba accounts (copy_only twin, secrets-gen/manifest.yaml). The
+  # SAME value is that user's login for every tier-1 app + Windmill + Samba.
+  # All users sit in headscale-users → tailnet access + (policy_engine_mode:any)
+  # every service; per-user apps self-isolate, shared apps (HA/Frigate) are shared.
   - model: authentik_core.user
     id: user-idan
     state: present
@@ -128,18 +138,90 @@ entries:
       email: idan@idanreed.com
       path: users
       is_active: true
+      password: !Env IDAN_INITIAL_PASSWORD
       groups:
         - !Find [authentik_core.group, [name, headscale-users]]
 
-  # Example: Add another user
-  # - model: authentik_core.user
-  #   state: present
-  #   identifiers:
-  #     username: alice
-  #   attrs:
-  #     name: Alice Smith
-  #     email: alice@example.com
-  #     path: users
-  #     is_active: true
-  #     groups:
-  #       - !Find [authentik_core.group, [name, headscale-users]]
+  - model: authentik_core.user
+    id: user-alondra
+    state: present
+    identifiers:
+      username: alondra
+    attrs:
+      name: Alondra
+      email: apcalondraperezcortez@gmail.com
+      path: users
+      is_active: true
+      password: !Env ALONDRA_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]
+
+  - model: authentik_core.user
+    id: user-cale
+    state: present
+    identifiers:
+      username: cale
+    attrs:
+      name: Cale
+      email: calethim@gmail.com
+      path: users
+      is_active: true
+      password: !Env CALE_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]
+
+  - model: authentik_core.user
+    id: user-zach
+    state: present
+    identifiers:
+      username: zach
+    attrs:
+      name: Zach
+      email: zach@hayzak.com
+      path: users
+      is_active: true
+      password: !Env ZACH_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]
+
+  - model: authentik_core.user
+    id: user-rylan
+    state: present
+    identifiers:
+      username: rylan
+    attrs:
+      name: Rylan
+      email: rylankasitz@gmail.com
+      path: users
+      is_active: true
+      password: !Env RYLAN_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]
+
+  - model: authentik_core.user
+    id: user-cameron
+    state: present
+    identifiers:
+      username: cameron
+    attrs:
+      name: Cameron
+      email: camos3434@gmail.com
+      path: users
+      is_active: true
+      password: !Env CAMERON_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]
+
+  - model: authentik_core.user
+    id: user-justin
+    state: present
+    identifiers:
+      username: justin
+    attrs:
+      name: Justin
+      email: justindanita@gmail.com
+      path: users
+      is_active: true
+      password: !Env JUSTIN_INITIAL_PASSWORD
+      groups:
+        - !Find [authentik_core.group, [name, headscale-users]]

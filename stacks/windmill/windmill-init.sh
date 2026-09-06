@@ -8,6 +8,14 @@
 # token"): presented as a bearer token it authenticates against the ordinary
 # API without ever using `changeme`.
 #
+# ROSTER (rollout 2026-09-05): idan is the super_admin; the other 6 are regular
+# instance users (tier-2b "declarative user accounts"). Each password arrives
+# from .env as <USER>_INITIAL_PASSWORD — a copy_only twin of that user's
+# Authentik password (secrets-gen/manifest.yaml user/*), so one memorable
+# password is their login for Authentik + Windmill + Samba. Multi-user +
+# workspaces are OSS; only SSO federation is Enterprise (login-tiers.md), which
+# is why these are local accounts + a second login.
+#
 # Every mutation logs "windmill-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must log ZERO change lines.
 set -eu
@@ -23,6 +31,18 @@ import urllib.request
 WM = "http://windmill_server:8000"
 DEFAULT_ADMIN = "admin@windmill.dev"
 
+# (email, password_env, super_admin). idan first — he is the login used for
+# workspace + membership operations below.
+USERS = [
+    ("idan@idanreed.com",               "IDAN_INITIAL_PASSWORD",    True),
+    ("apcalondraperezcortez@gmail.com", "ALONDRA_INITIAL_PASSWORD", False),
+    ("calethim@gmail.com",              "CALE_INITIAL_PASSWORD",    False),
+    ("zach@hayzak.com",                 "ZACH_INITIAL_PASSWORD",    False),
+    ("rylankasitz@gmail.com",           "RYLAN_INITIAL_PASSWORD",   False),
+    ("camos3434@gmail.com",             "CAMERON_INITIAL_PASSWORD", False),
+    ("justindanita@gmail.com",          "JUSTIN_INITIAL_PASSWORD",  False),
+]
+
 
 def log(msg):
     print(f"windmill-init: {msg}", flush=True)
@@ -36,9 +56,9 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly: unset means the .env did not decrypt, and
-        # "unprovisioned" means admin@windmill.dev / changeme stays live on
-        # a service that runs arbitrary code.
+        # Fail loudly: unset means the .env did not decrypt or the password was
+        # never hand-set, and "unprovisioned" means admin@windmill.dev /
+        # changeme stays live on a service that runs arbitrary code.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -72,38 +92,45 @@ def wait_for_server(tries=90, delay=2):
 
 
 secret = env("SUPERADMIN_SECRET")
-admin_email = env("WINDMILL_ADMIN_EMAIL").lower()
-admin_pass = env("WINDMILL_ADMIN_PASSWORD")
 workspace = os.environ.get("WINDMILL_WORKSPACE", "main").strip() or "main"
 
-if admin_email == DEFAULT_ADMIN:
-    fatal(f"WINDMILL_ADMIN_EMAIL must not be {DEFAULT_ADMIN}")
-if len(admin_pass) < 12:
-    fatal("WINDMILL_ADMIN_PASSWORD must be at least 12 characters")
+# Resolve passwords up front so a missing/short one fails before any mutation.
+roster = []
+for email, pw_env, is_super in USERS:
+    email = email.lower()
+    if email == DEFAULT_ADMIN:
+        fatal(f"roster email must not be {DEFAULT_ADMIN}")
+    pw = env(pw_env)
+    if len(pw) < 12:
+        fatal(f"{pw_env} must be at least 12 characters")
+    roster.append((email, pw, is_super))
+
+admin_email, admin_pass, _ = roster[0]
 
 wait_for_server()
 
 # ---------------------------------------------------------------------------
-# 1. The real superadmin
+# 1. Create every roster user (idempotent — 400 "already exists" is a no-op)
 # ---------------------------------------------------------------------------
-code, body = request(
-    f"{WM}/api/users/create",
-    method="POST",
-    body={"email": admin_email, "password": admin_pass, "super_admin": True},
-    token=secret,
-)
-if code < 300:
-    log(f"CHANGE: created superadmin {admin_email}")
-elif code == 400 and "already exists" in body.lower():
-    log(f"superadmin {admin_email} already exists")
-else:
-    # 401/403 here means SUPERADMIN_SECRET is not being accepted, which is the
-    # difference between "provisioned" and "changeme is still live". Never
-    # swallow it.
-    fatal(f"POST /api/users/create returned {code}: {body[:400]}")
+for email, pw, is_super in roster:
+    code, body = request(
+        f"{WM}/api/users/create",
+        method="POST",
+        body={"email": email, "password": pw, "super_admin": is_super},
+        token=secret,
+    )
+    if code < 300:
+        log(f"CHANGE: created {'superadmin' if is_super else 'user'} {email}")
+    elif code == 400 and "already exists" in body.lower():
+        log(f"{email} already exists")
+    else:
+        # 401/403 here means SUPERADMIN_SECRET is not being accepted, which is
+        # the difference between "provisioned" and "changeme is still live".
+        # Never swallow it.
+        fatal(f"POST /api/users/create ({email}) returned {code}: {body[:400]}")
 
 # ---------------------------------------------------------------------------
-# 2. Log in AS that user for everything else
+# 2. Log in AS the admin (idan) for everything else
 # ---------------------------------------------------------------------------
 # Not the superadmin token: a real session is the path the UI uses, and if
 # login fails, step 1 lied.
@@ -156,7 +183,36 @@ else:
         fatal(f"POST /api/workspaces/create returned {code}: {body[:400]}")
 
 # ---------------------------------------------------------------------------
-# 4. Retire the default account
+# 4. Add the non-admin users to the workspace (BEST-EFFORT)
+# ---------------------------------------------------------------------------
+# The instance accounts (step 1) are what let them log in — that is the tier-2b
+# guarantee. Workspace membership is a convenience on top, and the add endpoint
+# is version-sensitive (add vs invite; body shape), so a non-2xx here is a
+# WARNING, never fatal — it must not break the idempotency contract or the
+# stack. Re-runs: an already-member response is treated as a no-op.
+for email, _, is_super in roster:
+    if is_super:
+        continue  # idan owns the workspace as its creator
+    code, body = request(
+        f"{WM}/api/w/{workspace}/users/add",
+        method="POST",
+        body={"email": email, "is_admin": False, "operator": False},
+        token=token,
+    )
+    low = body.lower()
+    if code < 300:
+        log(f"CHANGE: added {email} to workspace '{workspace}'")
+    elif code == 400 and "already" in low:
+        log(f"{email} already in workspace '{workspace}'")
+    else:
+        log(
+            f"WARN: could not add {email} to workspace '{workspace}' "
+            f"({code}: {body[:200]}); the account still exists — add it in the "
+            f"UI if workspace membership is wanted"
+        )
+
+# ---------------------------------------------------------------------------
+# 5. Retire the default account
 # ---------------------------------------------------------------------------
 # ⚠ The verb is DELETE — a POST to the same path 405s, an easy way to
 # "retire" an account that is still live.

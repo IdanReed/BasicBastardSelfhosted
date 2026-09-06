@@ -58,6 +58,9 @@ services:
     volumes:
       - ./samba-init.sh:/init.sh:ro
       - /mnt/slow/samba/shared:/share
+      # Parent of the per-user private dirs, read-only — samba-init stats
+      # /personal/<user> to enforce the uid contract (each is <uid>:1000).
+      - /mnt/slow/samba/personal:/personal:ro
     env_file:
       - path: .env
         required: false
@@ -80,6 +83,16 @@ services:
       # config.yml's `auth:` entry (tmpfiles rule via DIR_NOTES in
       # nixos/generate-stack-dirs.py).
       - /mnt/slow/samba/shared:/mnt/slow/samba/shared
+      # Per-user private trees. Each is bind-mounted individually (not the
+      # parent) so generate-stack-dirs.py discovers it and tmpfiles pre-creates
+      # it <uid>:1000 0700 — the uid contract config.yml's `auth:` depends on.
+      - /mnt/slow/samba/personal/idan:/mnt/slow/samba/personal/idan
+      - /mnt/slow/samba/personal/alondra:/mnt/slow/samba/personal/alondra
+      - /mnt/slow/samba/personal/cale:/mnt/slow/samba/personal/cale
+      - /mnt/slow/samba/personal/zach:/mnt/slow/samba/personal/zach
+      - /mnt/slow/samba/personal/rylan:/mnt/slow/samba/personal/rylan
+      - /mnt/slow/samba/personal/cameron:/mnt/slow/samba/personal/cameron
+      - /mnt/slow/samba/personal/justin:/mnt/slow/samba/personal/justin
     environment:
       - TZ=America/Chicago
       - SAMBA_WORKGROUP=WORKGROUP

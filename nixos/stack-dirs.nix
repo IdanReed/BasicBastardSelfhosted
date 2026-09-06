@@ -543,6 +543,17 @@
     # root-owned.
     "d /mnt/fast/samba 0755 root root -"
     "d /mnt/slow/samba 0755 root root -"
+    # Parent of the per-user private trees. root:root 0755 — nobody writes here;
+    # o+x lets each SMB user traverse into their own subdir, which is 0700 and so
+    # leaks nothing.
+    "d /mnt/slow/samba/personal 0755 root root -"
+    "d /mnt/slow/samba/personal/alondra 0700 1001 1000 -"
+    "d /mnt/slow/samba/personal/cale 0700 1002 1000 -"
+    "d /mnt/slow/samba/personal/cameron 0700 1005 1000 -"
+    "d /mnt/slow/samba/personal/idan 0700 1000 1000 -"
+    "d /mnt/slow/samba/personal/justin 0700 1006 1000 -"
+    "d /mnt/slow/samba/personal/rylan 0700 1004 1000 -"
+    "d /mnt/slow/samba/personal/zach 0700 1003 1000 -"
     # 🚨 The share tree is 1000:1000, and that is a CONTRACT with
     # stacks/samba/config.yml's `auth:` entry, which creates the SMB user with
     # uid 1000 gid 1000 INSIDE the container via `adduser -u`. Nothing
@@ -551,8 +562,8 @@
     # samba-init refuses to start on a mismatch and the suite measures it
     # (write over SMB, stat on the host).
     #
-    # 0775 rather than 0755: the group bit is what lets a future second SMB
-    # user share the tree without each file being private to whoever wrote it.
+    # 0775 rather than 0755: the group bit is what lets the other SMB users (all
+    # gid 1000) share the tree without each file being private to whoever wrote it.
     "d /mnt/slow/samba/shared 0775 1000 1000 -"
     # === silverbullet (bind sources in its compose.yaml) ===
     # 1000:1000, and here the ownership is not just about write access — it

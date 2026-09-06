@@ -128,6 +128,16 @@ services:
       ACTUAL_OPENID_CLIENT_SECRET: ${ACTUAL_OPENID_CLIENT_SECRET:?actual oidc client secret required}
       WEALTHFOLIO_OIDC_CLIENT_SECRET: ${WEALTHFOLIO_OIDC_CLIENT_SECRET:?wealthfolio oidc client secret required}
       EXCALIDRAW_OIDC_CLIENT_SECRET: ${EXCALIDRAW_OIDC_CLIENT_SECRET:?excalidraw oidc client secret required}
+      # Per-user initial passwords consumed by !Env in headscale-oidc.yaml's
+      # authentik_core.user entries. Rendered from the sops template
+      # (modules/authentik.nix); hand-set human-memorable values via sopsedit.
+      IDAN_INITIAL_PASSWORD: ${IDAN_INITIAL_PASSWORD:?idan initial password required}
+      ALONDRA_INITIAL_PASSWORD: ${ALONDRA_INITIAL_PASSWORD:?alondra initial password required}
+      CALE_INITIAL_PASSWORD: ${CALE_INITIAL_PASSWORD:?cale initial password required}
+      ZACH_INITIAL_PASSWORD: ${ZACH_INITIAL_PASSWORD:?zach initial password required}
+      RYLAN_INITIAL_PASSWORD: ${RYLAN_INITIAL_PASSWORD:?rylan initial password required}
+      CAMERON_INITIAL_PASSWORD: ${CAMERON_INITIAL_PASSWORD:?cameron initial password required}
+      JUSTIN_INITIAL_PASSWORD: ${JUSTIN_INITIAL_PASSWORD:?justin initial password required}
       # First-start bootstrap of the `akadmin` superuser. Without these there is
       # no way to log in at all: the blueprint's `idan` user has no credential
       # and no SMTP is configured for a reset link. Ignored on later starts.
