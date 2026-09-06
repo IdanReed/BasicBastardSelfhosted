@@ -71,10 +71,21 @@ auth:
     password: ${SAMBA_JUSTIN_PASSWORD}
 
 global:
-  # Appended AFTER the image's hardcoded heredoc; last value wins.
+  # Appended AFTER the image's hardcoded heredoc AND its SAMBA_INTERFACES block
+  # (01-config.sh emits `interfaces = …` + `bind interfaces only = yes` first),
+  # so these WIN on last-value.
   # SMB1 is the ransomware-worm protocol; no client here needs it.
   - "server min protocol = SMB3_00"
   - "smb encrypt = required"
+  # 🚨 bind interfaces only = NO, overriding the yes that SAMBA_INTERFACES emits.
+  # tailscale0 is a POINTOPOINT/NOARP /32 TUN; smbd excludes point-to-point
+  # devices from its bindable set, so with `bind interfaces only = yes` it
+  # silently refuses to listen on the tailnet address — by NAME *or* by explicit
+  # IP (both verified). Since every client reaches this host over the tailnet,
+  # we bind all addresses and gate access with `hosts allow` instead (=
+  # SAMBA_HOSTS_ALLOW: loopback + LAN 10/8 + tailnet 100.64/10; SMB is also
+  # credential-gated). `interfaces = …` stays set but is now advisory.
+  - "bind interfaces only = no"
 
 # `shared` is common to all (group-writable via gid 1000). Each `personal/<name>`
 # is private: `validusers` gates it at the SMB layer AND the dir is 0700
