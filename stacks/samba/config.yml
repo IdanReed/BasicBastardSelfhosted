@@ -27,14 +27,48 @@
 # uids are what make `personal/<name>` (owned <uid>:1000, 0700) private to one
 # person. Each uid/gid MUST match the tmpfiles rule for its dir (DIR_NOTES in
 # nixos/generate-stack-dirs.py); samba-init refuses to start on a mismatch.
+# Block style, NOT flow `{ ... }`: a flow mapping treats the `{` and `}` in a
+# `${VAR}` value as flow indicators, so `password: ${SAMBA_IDAN_PASSWORD}` inside
+# `{ }` is INVALID YAML — the image's `yq` then fails to parse the WHOLE file,
+# silently (2>/dev/null) creates zero users/shares, and smbd still starts with
+# only [global] so the shallow healthcheck stays green. In block style an
+# unquoted `${VAR}` is a plain scalar; the image's envsubst substitutes it.
 auth:
-  - { user: idan,    group: shared, uid: 1000, gid: 1000, password: ${SAMBA_IDAN_PASSWORD} }
-  - { user: alondra, group: shared, uid: 1001, gid: 1000, password: ${SAMBA_ALONDRA_PASSWORD} }
-  - { user: cale,    group: shared, uid: 1002, gid: 1000, password: ${SAMBA_CALE_PASSWORD} }
-  - { user: zach,    group: shared, uid: 1003, gid: 1000, password: ${SAMBA_ZACH_PASSWORD} }
-  - { user: rylan,   group: shared, uid: 1004, gid: 1000, password: ${SAMBA_RYLAN_PASSWORD} }
-  - { user: cameron, group: shared, uid: 1005, gid: 1000, password: ${SAMBA_CAMERON_PASSWORD} }
-  - { user: justin,  group: shared, uid: 1006, gid: 1000, password: ${SAMBA_JUSTIN_PASSWORD} }
+  - user: idan
+    group: shared
+    uid: 1000
+    gid: 1000
+    password: ${SAMBA_IDAN_PASSWORD}
+  - user: alondra
+    group: shared
+    uid: 1001
+    gid: 1000
+    password: ${SAMBA_ALONDRA_PASSWORD}
+  - user: cale
+    group: shared
+    uid: 1002
+    gid: 1000
+    password: ${SAMBA_CALE_PASSWORD}
+  - user: zach
+    group: shared
+    uid: 1003
+    gid: 1000
+    password: ${SAMBA_ZACH_PASSWORD}
+  - user: rylan
+    group: shared
+    uid: 1004
+    gid: 1000
+    password: ${SAMBA_RYLAN_PASSWORD}
+  - user: cameron
+    group: shared
+    uid: 1005
+    gid: 1000
+    password: ${SAMBA_CAMERON_PASSWORD}
+  - user: justin
+    group: shared
+    uid: 1006
+    gid: 1000
+    password: ${SAMBA_JUSTIN_PASSWORD}
 
 global:
   # Appended AFTER the image's hardcoded heredoc; last value wins.
