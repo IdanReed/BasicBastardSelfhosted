@@ -35,6 +35,7 @@ files:
   - { path: stacks/dawarich/.sops.env, format: dotenv, example: stacks/dawarich/.sops.env.example }
   - { path: stacks/docspace/.sops.env, format: dotenv, example: stacks/docspace/.sops.env.example }
   - { path: stacks/firefly/.sops.env, format: dotenv, example: stacks/firefly/.sops.env.example }
+  - { path: stacks/forgejo/.sops.env, format: dotenv, example: stacks/forgejo/.sops.env.example }
   - { path: stacks/ghostfolio/.sops.env, format: dotenv, example: stacks/ghostfolio/.sops.env.example }
   - { path: stacks/immich/.sops.env, format: dotenv, example: stacks/immich/.sops.env.example }
   - { path: stacks/logging/.sops.env, format: dotenv, example: stacks/logging/.sops.env.example }
@@ -287,6 +288,13 @@ secrets:
     targets:
       - { file: headscale-vps/secrets.sops.yaml, key: GHOSTFOLIO_OIDC_CLIENT_SECRET }
       - { file: stacks/ghostfolio/.sops.env, key: OIDC_CLIENT_SECRET }
+  - name: forgejo/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up forgejo. Stack-side FORGEJO_OIDC_CLIENT_SECRET is read by forgejo-init (admin auth add-oauth into the DB), not the main container."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: FORGEJO_OIDC_CLIENT_SECRET }
+      - { file: stacks/forgejo/.sops.env, key: FORGEJO_OIDC_CLIENT_SECRET }
 
   - name: logging/GF_SECURITY_ADMIN_PASSWORD
     class: generate

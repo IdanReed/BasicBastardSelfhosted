@@ -75,6 +75,20 @@ services:
       # before nixos/modules/forgejo-runner.nix's registration means anything
       # or .forgejo/workflows/* ever fires.
       - FORGEJO__actions__ENABLED=true
+      # OIDC auto-provisioning (login-tiers tier 1). The auth SOURCE itself is
+      # seeded into the DB by forgejo_init (add-oauth); these app.ini settings
+      # govern what happens on an Authentik login:
+      #   ENABLE_AUTO_REGISTRATION — create a Forgejo account on first OIDC login.
+      #     DISABLE_REGISTRATION stays true above, so ONLY Authentik can mint
+      #     accounts — there is still no open self-signup.
+      #   ACCOUNT_LINKING=auto — link to an existing local account by verified
+      #     email instead of erroring/duplicating, so the seeded admin keeps its
+      #     local (break-glass) password AND can log in via Authentik.
+      #   USERNAME=preferred_username — take the Forgejo username from Authentik's
+      #     preferred_username claim, not the email localpart.
+      - FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true
+      - FORGEJO__oauth2_client__ACCOUNT_LINKING=auto
+      - FORGEJO__oauth2_client__USERNAME=preferred_username
     volumes:
       - /mnt/fast/forgejo/data:/data
     ports:
@@ -96,3 +110,26 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
+
+  # forgejo_init — seed the Authentik OAuth2/OIDC auth source (see
+  # forgejo-init.sh for why a container: the source lives in Forgejo's DB, not
+  # app.ini/env). One-shot after the instance is healthy.
+  # FORGEJO_OIDC_CLIENT_SECRET arrives from .sops.env -> .env — the stack's
+  # FIRST secret (Forgejo otherwise self-generates all its private material).
+  forgejo_init:
+    image: codeberg.org/forgejo/forgejo:16.0
+    container_name: forgejo_init
+    user: "1000:1000"
+    entrypoint: ['/bin/sh', '/init/forgejo-init.sh']
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /mnt/fast/forgejo/data:/data
+      - ./forgejo-init.sh:/init/forgejo-init.sh:ro
+    # Long form + required:false (finding #11): a deploy can race the first
+    # decrypt, and the plain form would abort the whole stack.
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"

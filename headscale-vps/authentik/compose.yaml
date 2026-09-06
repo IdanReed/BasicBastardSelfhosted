@@ -128,6 +128,7 @@ services:
       ACTUAL_OPENID_CLIENT_SECRET: ${ACTUAL_OPENID_CLIENT_SECRET:?actual oidc client secret required}
       WEALTHFOLIO_OIDC_CLIENT_SECRET: ${WEALTHFOLIO_OIDC_CLIENT_SECRET:?wealthfolio oidc client secret required}
       EXCALIDRAW_OIDC_CLIENT_SECRET: ${EXCALIDRAW_OIDC_CLIENT_SECRET:?excalidraw oidc client secret required}
+      FORGEJO_OIDC_CLIENT_SECRET: ${FORGEJO_OIDC_CLIENT_SECRET:?forgejo oidc client secret required}
       # Per-user initial passwords consumed by !Env in headscale-oidc.yaml's
       # authentik_core.user entries. Rendered from the sops template
       # (modules/authentik.nix); hand-set human-memorable values via sopsedit.

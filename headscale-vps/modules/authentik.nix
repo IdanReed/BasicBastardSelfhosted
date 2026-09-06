@@ -48,6 +48,7 @@ in
       ACTUAL_OPENID_CLIENT_SECRET=${config.sops.placeholder.ACTUAL_OPENID_CLIENT_SECRET}
       WEALTHFOLIO_OIDC_CLIENT_SECRET=${config.sops.placeholder.WEALTHFOLIO_OIDC_CLIENT_SECRET}
       EXCALIDRAW_OIDC_CLIENT_SECRET=${config.sops.placeholder.EXCALIDRAW_OIDC_CLIENT_SECRET}
+      FORGEJO_OIDC_CLIENT_SECRET=${config.sops.placeholder.FORGEJO_OIDC_CLIENT_SECRET}
       # Per-user initial passwords, consumed by !Env in headscale-oidc.yaml's
       # authentik_core.user entries (managed/re-asserted every apply). HAND-SET
       # human-memorable values via sopsedit; copy_only twins into each user's
@@ -115,6 +116,9 @@ in
     ACTUAL_OPENID_CLIENT_SECRET = { };
     WEALTHFOLIO_OIDC_CLIENT_SECRET = { };
     EXCALIDRAW_OIDC_CLIENT_SECRET = { };
+    # Forgejo (stacks/forgejo): twin copy in stacks/forgejo/.sops.env, read by
+    # forgejo-init to seed the DB auth source. Rotate = both files + this rebuild.
+    FORGEJO_OIDC_CLIENT_SECRET = { };
 
     # Per-user initial passwords (idan + the 5 friends), consumed by !Env in
     # headscale-oidc.yaml. Hand-set human-memorable values; copy_only twins to
