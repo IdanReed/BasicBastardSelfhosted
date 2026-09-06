@@ -31,8 +31,15 @@ import urllib.request
 WM = "http://windmill_server:8000"
 DEFAULT_ADMIN = "admin@windmill.dev"
 
-# (email, password_env, super_admin). idan first — he is the login used for
-# workspace + membership operations below.
+# (email, password_env, super_admin). idan is the super_admin; the 6 friends
+# are regular users. Every password arrives from .env as <USER>_INITIAL_PASSWORD
+# — a copy_only twin of that user's one memorable password (secrets-gen manifest
+# user/*), so idan's windmill login is the SAME password as Authentik/Samba/etc.
+# All admin ops below use the SUPERADMIN_SECRET bearer (never a login-as-user),
+# so this stays correct even when idan's stored password differs (a create is a
+# no-op for an existing account — on the current instance idan keeps whatever
+# password his account already has until windmill_data is reset or he changes it
+# in the UI; a fresh windmill gets IDAN_INITIAL_PASSWORD at creation).
 USERS = [
     ("idan@idanreed.com",               "IDAN_INITIAL_PASSWORD",    True),
     ("apcalondraperezcortez@gmail.com", "ALONDRA_INITIAL_PASSWORD", False),
@@ -105,12 +112,17 @@ for email, pw_env, is_super in USERS:
         fatal(f"{pw_env} must be at least 12 characters")
     roster.append((email, pw, is_super))
 
-admin_email, admin_pass, _ = roster[0]
-
 wait_for_server()
 
+# All admin operations use the SUPERADMIN_SECRET bearer directly — no
+# login-as-a-user session. idan is managed out of band (already superadmin),
+# and a friend's own session is not needed to create them or add them to the
+# workspace. This also sidesteps the "log in as idan" 401 when idan's real
+# password differs from any sops value.
+token = secret
+
 # ---------------------------------------------------------------------------
-# 1. Create every roster user (idempotent — 400 "already exists" is a no-op)
+# 1. Create the friend users (idempotent — 400 "already exists" is a no-op)
 # ---------------------------------------------------------------------------
 for email, pw, is_super in roster:
     code, body = request(
@@ -128,22 +140,6 @@ for email, pw, is_super in roster:
         # the difference between "provisioned" and "changeme is still live".
         # Never swallow it.
         fatal(f"POST /api/users/create ({email}) returned {code}: {body[:400]}")
-
-# ---------------------------------------------------------------------------
-# 2. Log in AS the admin (idan) for everything else
-# ---------------------------------------------------------------------------
-# Not the superadmin token: a real session is the path the UI uses, and if
-# login fails, step 1 lied.
-code, body = request(
-    f"{WM}/api/auth/login",
-    method="POST",
-    body={"email": admin_email, "password": admin_pass},
-)
-if code >= 300:
-    fatal(f"login as {admin_email} returned {code}: {body[:400]}")
-token = body.strip().strip('"')
-if not token:
-    fatal("login returned an empty token")
 
 # ---------------------------------------------------------------------------
 # 3. The workspace
@@ -170,7 +166,7 @@ else:
         f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
     )
     if code == 400 and "username" in body.lower() and "not allowed" not in body.lower():
-        payload["username"] = admin_email.split("@")[0]
+        payload["username"] = "idan"
         code, body = request(
             f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
         )
@@ -192,7 +188,7 @@ else:
 # stack. Re-runs: an already-member response is treated as a no-op.
 for email, _, is_super in roster:
     if is_super:
-        continue  # idan owns the workspace as its creator
+        continue  # superadmins already have access to every workspace
     code, body = request(
         f"{WM}/api/w/{workspace}/users/add",
         method="POST",

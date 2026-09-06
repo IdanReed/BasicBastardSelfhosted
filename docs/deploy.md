@@ -284,21 +284,40 @@ person is: a blueprint entry + a `secrets-gen/manifest.yaml` `user/<name>`
 `copy_only` twin (Authentik + Windmill + Samba) + a Samba `auth:`/share pair
 (next uid) + its `personal/<name>` `DIR_NOTES`. No UI clicking.
 
-**Passwords are hand-set + managed.** Each user's password is one memorable
-value used for Authentik (tier-1 apps), Windmill, and Samba. In Authentik it is
-re-asserted on every apply (a user's own change reverts on the next `nrs-vps`).
+**One password per user, one place.** Each `user/<name>` entry names the VPS
+`<USER>_INITIAL_PASSWORD` as its `source: true` target — the single hand-set
+value. Every other target is derived from it: plain copies for Authentik (`!Env`,
+re-asserted each apply), Windmill, and Samba. **idan is special:** his one
+password is also the admin for the second-login services that can't federate —
+Beszel (plain), Backrest (**bcrypt**), qBittorrent (**pbkdf2**) — so the former
+separate `services-admin` password is gone. Edit idan's value once and every one
+of those follows, hashes included.
 
-**The finish (after any user/password change):**
+**To set or change a password:**
 ```bash
-sopsedit headscale-vps/secrets.sops.yaml     # set <USER>_INITIAL_PASSWORD (memorable)
-#   ⚠ when (re)setting idan: also blank the OLD SAMBA_IDAN_PASSWORD so the copy
-#     propagates the new value, not the stale one. New users start empty (clean).
-sopsgen apply                 # copy_only fans each value → windmill + samba
-sopsgen rotate services-admin # ONE shared 2a admin password (idan) for
-                              #   beszel/backrest/qbit — `apply` won't touch it
-                              #   (targets already hold old values), only rotate
-nrs-vps                       # Authentik users + passwords live
-git push forgejo main         # deliver windmill/samba/etc. to the services VM
+sopsedit headscale-vps/secrets.sops.yaml   # type the memorable <USER>_INITIAL_PASSWORD
+sopsgen rotate user/<name>                 # re-reads the source, re-derives EVERY
+                                           #   copy + hash from it (idan → also
+                                           #   beszel/backrest/qbit). No `apply`,
+                                           #   no "blank the old value" dance.
+```
+`rotate` (not `apply`) is the tool for a change: `apply` only fills missing/
+`changeme` targets and will refuse on "diverged twins" once a value differs.
+`rotate` reads the `source:` target authoritatively and rewrites the rest.
+
+**One-time migration** (Beszel/Backrest/qBit still hold the old generated
+`services-admin` value, and Windmill has no idan key yet):
+```bash
+sopsgen rotate user/idan     # converges beszel/backrest/qbit onto idan's password
+                             #   + adds IDAN_INITIAL_PASSWORD to windmill/.sops.env
+```
+This clears the `stack-env-drift` red on `windmill` (real `.sops.env` missing
+`IDAN_INITIAL_PASSWORD` until `rotate` writes it).
+
+**Then deliver it:**
+```bash
+nrs-vps                      # Authentik users + passwords live
+git push forgejo main        # deliver windmill/samba/beszel/backrest/media to the VM
 #   then in Komodo redeploy: windmill, samba, beszel, backrest, media
 nixos-rebuild switch --target-host idan@10.0.0.3 --sudo --flake ./nixos#services-vm
 #   ^ REQUIRED for Samba: creates the /mnt/slow/samba/personal/<name> tmpfiles
@@ -306,8 +325,10 @@ nixos-rebuild switch --target-host idan@10.0.0.3 --sudo --flake ./nixos#services
 #   ⚠ the services-VM flake is in ./nixos (its own flake), so `--flake ./nixos#…`
 #     from the repo root, or `cd nixos` first. `--sudo` (was --use-remote-sudo).
 ```
-Until `sopsgen apply`, `./tests/run.sh` shows `stack-env-drift` on windmill +
-samba (the new keys pending in the real `.sops.env`) — expected, cleared by it.
+Note: on an already-running Windmill, idan's account keeps its existing password
+(a `users/create` is a no-op for an existing user) — a fresh `windmill_data`
+picks up `IDAN_INITIAL_PASSWORD`, or reset it in the UI. The friends are created
+with theirs on first run either way.
 
 Each friend then enrols a device on the tailnet themselves
 (`tailscale up --login-server=https://headscale.idanreed.com`, log in via

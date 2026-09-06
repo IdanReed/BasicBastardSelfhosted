@@ -11,6 +11,10 @@
 # copy_only: true => never fresh-draw; only propagate an existing real value.
 # recovery: KEY => plaintext escrowed under KEY in secrets-recovery.sops.yaml
 #                  and printed once at generation time.
+# target `source: true` => (copy_only only) this one target holds the hand-set
+#                  canonical plaintext; `rotate <name>` re-reads it and re-derives
+#                  every OTHER target from it (plain copies + hash parts). This is
+#                  how one edit to a source value fans out to all its copies+hashes.
 
 version: 1
 recovery_file: secrets-recovery.sops.yaml
@@ -247,22 +251,6 @@ secrets:
     class: generate
     recipe: uuid
     targets: [{ file: stacks/beszel/.sops.env, key: TOKEN }]
-  # Shared tier-2a admin password (idan) for the second-login services — ONE
-  # draw, each target rendered in its required form (rollout 2026-09-05).
-  # Dedicated by design, NOT the akadmin/AUTHENTIK_BOOTSTRAP_PASSWORD (that is
-  # the IdP root, and Beszel stores this one PLAINTEXT). Supersedes the former
-  # separate beszel/USER_PASSWORD, backrest/admin and media/qbit entries.
-  # Rotate = `sopsgen rotate services-admin` (re-hashes all three).
-  - name: services-admin
-    class: derived
-    recipe: base64:24
-    recovery: SERVICES_ADMIN_PASSWORD
-    note: "idan's login for beszel (plain) + backrest (bcrypt) + qbittorrent (plain+pbkdf2); username pinned to idan in each compose/config"
-    targets:
-      - { file: stacks/beszel/.sops.env, key: USER_PASSWORD }
-      - { file: stacks/backrest/.sops.env, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
-      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD }
-      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
   - name: beszel/config
     class: config
     note: "hub login email + root block device basename"
@@ -370,22 +358,40 @@ secrets:
   # every tier-1 app (Authentik !Env, re-asserted each apply = option a),
   # Windmill, and Samba. idan's entry unifies + supersedes the former
   # windmill/WINDMILL_ADMIN_PASSWORD and samba/SAMBA_IDAN_PASSWORD.
+  #
+  # idan is SPECIAL: his one password is ALSO the admin for the second-login
+  # services that cannot federate (Beszel, Backrest, qBittorrent) — superseding
+  # the former separate `services-admin` entry. The VPS IDAN_INITIAL_PASSWORD is
+  # the `source: true` target: the single hand-set value. `sopsgen rotate
+  # user/idan` re-reads it and re-derives every other target — plain copies
+  # (Samba/Windmill/Beszel/qBit-plain) verbatim and hashes (Backrest bcrypt,
+  # qBittorrent pbkdf2) freshly hashed. So idan's admin password lives in ONE
+  # place; edit it, `sopsgen rotate user/idan`, and every service follows.
+  # (username is pinned to idan in each compose/config; plaintext is readable
+  # from the source, so no recovery escrow is needed.)
+  # MIGRATION: because Beszel/Backrest/qBit currently hold the old generated
+  # services-admin value, a plain `apply` will refuse on "diverged twins" — run
+  # `sopsgen rotate user/idan` ONCE to converge them onto idan's password.
   - name: user/idan
     class: generate
     recipe: base64:24
     copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
+    note: "idan's ONE password (source = VPS IDAN_INITIAL_PASSWORD). rotate re-derives all copies + hashes below"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: IDAN_INITIAL_PASSWORD }
-      - { file: stacks/windmill/.sops.env, key: IDAN_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: IDAN_INITIAL_PASSWORD, source: true }
       - { file: stacks/samba/.sops.env, key: SAMBA_IDAN_PASSWORD }
+      - { file: stacks/windmill/.sops.env, key: IDAN_INITIAL_PASSWORD }
+      - { file: stacks/beszel/.sops.env, key: USER_PASSWORD }
+      - { file: stacks/backrest/.sops.env, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
+      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD }
+      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
   - name: user/alondra
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ALONDRA_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: ALONDRA_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: ALONDRA_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_ALONDRA_PASSWORD }
   - name: user/cale
@@ -394,7 +400,7 @@ secrets:
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: CALE_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: CALE_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: CALE_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_CALE_PASSWORD }
   - name: user/zach
@@ -403,7 +409,7 @@ secrets:
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ZACH_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: ZACH_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: ZACH_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_ZACH_PASSWORD }
   - name: user/rylan
@@ -412,7 +418,7 @@ secrets:
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: RYLAN_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: RYLAN_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: RYLAN_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_RYLAN_PASSWORD }
   - name: user/cameron
@@ -421,7 +427,7 @@ secrets:
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: CAMERON_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: CAMERON_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: CAMERON_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_CAMERON_PASSWORD }
   - name: user/justin
@@ -430,7 +436,7 @@ secrets:
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: JUSTIN_INITIAL_PASSWORD }
+      - { file: headscale-vps/secrets.sops.yaml, key: JUSTIN_INITIAL_PASSWORD, source: true }
       - { file: stacks/windmill/.sops.env, key: JUSTIN_INITIAL_PASSWORD }
       - { file: stacks/samba/.sops.env, key: SAMBA_JUSTIN_PASSWORD }
   - name: samba/SAMBA_INTERFACES

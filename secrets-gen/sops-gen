@@ -88,11 +88,14 @@ load_manifest() {
       [[ -n ${FMT_OF[$tf]:-} ]] || die "manifest: $name: target file '$tf' not in files:"
     done
   done < <(yq -r '.secrets[] | [.name, .class, (.recipe // ""), (.freeze // false), (.copy_only // false),
-                   (.recovery // ""), ([.targets[] | [.file, .key, (.part // "plain"), (.template // "")] | join("|")] | join("^")),
+                   (.recovery // ""), ([.targets[] | [.file, .key, (.part // "plain"), (.template // ""), ((.source // false) | tostring)] | join("|")] | join("^")),
                    (.note // ""), (.reminder // ""), ((.deps // []) | join(" "))] | .[]' "$MANIFEST")
 }
 
-split_target() { IFS='|' read -r T_FILE T_KEY T_PART T_TPL <<<"$1"; }
+# T_SRC=true marks the ONE target holding the hand-set canonical plaintext that
+# a copy_only entry re-derives every other target (plain copies + hashes) from
+# on `rotate`. Absent from a target => "false".
+split_target() { IFS='|' read -r T_FILE T_KEY T_PART T_TPL T_SRC <<<"$1"; }
 
 # yaml keypath "ssh/github" -> ["ssh"]["github"]
 keypath() {
@@ -517,16 +520,35 @@ cmd_rotate() {
     pull)   die "$name is pull-class — it cannot be generated, only obtained. ${E_NOTE[$i]}";;
     config) die "$name is a config fact — edit it by hand (sopsedit)";;
   esac
-  [[ ${E_COPY[$i]} == true ]] && die "$name is copy-only — rotate the source entry instead"
-  if [[ ${E_FREEZE[$i]} == true && $FORCE == 0 ]]; then
-    die "$name is FROZEN (rotation breaks things — see manifest note). Re-run with --force if you accept that. ${E_NOTE[$i]}"
-  fi
   have_key || die "rotate needs the age key: SOPS_AGE_KEY=\"\$(sudo cat /var/lib/sops-nix/sops_age_key.txt)\" sops-gen rotate $name"
 
-  draw "${E_RECIPE[$i]}"
-  local t rendered
+  local t rendered src_file="" src_key=""
+  if [[ ${E_COPY[$i]} == true ]]; then
+    # copy_only rotate = re-read the hand-set canonical value from the entry's
+    # `source: true` target and re-derive every OTHER target from it (plain
+    # copies verbatim, hash parts freshly hashed). This is how a single edit to
+    # e.g. IDAN_INITIAL_PASSWORD propagates to Samba/Windmill/Beszel plus the
+    # Backrest/qBittorrent hashes. Without a source target, rotation of a
+    # copy_only entry is meaningless.
+    for t in ${E_TARGETS[$i]//^/ }; do
+      split_target "$t"
+      [[ $T_SRC == true ]] && { src_file=$T_FILE; src_key=$T_KEY; break; }
+    done
+    [[ -n $src_file ]] || die "$name is copy-only with no 'source: true' target — rotate the source entry instead"
+    [[ -f $ROOT/$src_file ]] || die "rotate: source $src_file does not exist — run apply first"
+    DRAW=$(get_value "$src_file" "$src_key")
+    [[ -n $DRAW && $DRAW != changeme* ]] || die "$name: source ${src_file}:${src_key} is unset/changeme — sopsedit it first"
+    DRAW_PUB="" DRAW_PRIV_B64=""
+  else
+    if [[ ${E_FREEZE[$i]} == true && $FORCE == 0 ]]; then
+      die "$name is FROZEN (rotation breaks things — see manifest note). Re-run with --force if you accept that. ${E_NOTE[$i]}"
+    fi
+    draw "${E_RECIPE[$i]}"
+  fi
+
   for t in ${E_TARGETS[$i]//^/ }; do
     split_target "$t"
+    [[ $T_SRC == true ]] && continue  # source already holds the value; don't rewrite it
     [[ -f $ROOT/$T_FILE ]] || die "rotate: $T_FILE does not exist — run apply first"
     rendered=$(render "$T_PART" "$T_TPL")
     [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires

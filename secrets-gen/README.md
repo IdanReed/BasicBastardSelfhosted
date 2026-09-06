@@ -76,7 +76,15 @@ secrets:
       - { file: stacks/x/.sops.env, key: DATABASE_URL,
           template: "postgres://x:${v}@x_db:5432/x" }   # ${v} = rendered value
       - { file: stacks/x/.sops.env, key: HASH, part: argon2 }
+      - { file: h/secrets.sops.yaml, key: PW, source: true }  # copy_only: the
+          # one hand-set target; `rotate x/db` re-derives all others from it
 ```
+
+Target `source: true` (copy_only only): marks the single target that holds the
+hand-set canonical plaintext. `rotate <name>` reads it and re-derives every
+other target — plain copies verbatim, hash parts freshly hashed — so one edit
+fans out to all copies and hashes. `apply` still only fills missing/`changeme`
+and refuses on diverged twins; use `rotate` to push a change.
 
 Recipes: `hex:N` (N hex **chars**), `base64:N` (N random **bytes**, b64),
 `alnum:N`, `uuid`, `wg`, `ssh-ed25519`, `cmd:...` (escape hatch).
