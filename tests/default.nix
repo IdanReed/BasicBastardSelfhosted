@@ -83,6 +83,7 @@ let
     "modules/caddy.nix"
     "modules/headscale.nix"
     "modules/authentik.nix"
+    "modules/log-shipper.nix"
   ];
 
   vpsConfig = evalHost ([ sopsModule ] ++ map (f: ../headscale-vps + "/${f}") vpsModuleFiles);

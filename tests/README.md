@@ -129,6 +129,20 @@ Beyond "it parses":
   the authentik suite walks the reputation policy → DenyStage binding → flow.
   The `fail2ban-journal-contract` lint pins the compose journald tag to both
   `journalmatch` consumers.
+- **VPS journal shipping, at the half that fails silently**: the vps suite
+  boots the real `modules/log-shipper.nix` with its sink deliberately
+  unreachable, then asserts the things that break *quietly* — that Alloy has
+  actually read journal entries (`loki_source_journal_target_lines_total > 0`,
+  the silent-zero guard, not `is-active`), that the ingest token lands
+  `vlogs-ingest 440` and the unit holds **both** supplementary groups (the
+  nixpkgs module's `DynamicUser=true` means group membership is the only way
+  in, and NixOS list-merging is the only thing keeping `systemd-journal`), that
+  nothing logged a permission error, and that the world-readable
+  `/etc/alloy/config.alloy` references the token by path rather than inlining
+  it. The `vlogs-ingest-contract` lint statically pins the six couplings
+  between the collector, the caddy vhost and the sops twin — including that the
+  vhost never gains `import protected`, since a forward-auth 302 on a push
+  endpoint is discarded telemetry rather than a login prompt.
 - **The gluetun kill-switch, offline by construction**: the media fixture
   points wireguard at TEST-NET-1, so the suite runs with the tunnel
   permanently down and proves qBittorrent's netns has zero egress beyond the
@@ -157,6 +171,7 @@ Honest list; do not read a green suite as covering these.
 | Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. Likewise forward-auth: the suite proves the gate redirects, is scoped to bentopdf, and rejects spoofed `X-Forwarded-Host` — but no authenticated request ever passes THROUGH the gate to the app. |
 | A rotation reaching the blueprint's `!Env` provider row | `rotation` stops at the worker's container environment; `authentik` reads the provider rows but never rotates. Whether Authentik re-reads `!Env` into the provider row after a rotation is asserted by neither — a manual check after the first real rotation. |
 | Dictionarry profile content / gluetun turning healthy / HW transcode | The media suite runs offline: Profilarr's DB link needs egress (the WARN fallback is asserted instead), gluetun's healthcheck dials through the tunnel (started detached; the `depends_on … restart: true` contract is real-host-only), and no GPU exists in the VM (the guarded `/dev/dri` stanza is asserted to exist, nothing more). |
+| **The VPS→services-VM log hop itself** | The vps suite has no services VM in it, so `vlogs-ingest.svc.idanreed.com` resolves to nothing and every push fails — which is what makes the suite's assertions honest (they cover reading and authenticating, not delivering), but it means the cross-host leg is proven by no suite. The `tailnet` suite has both hosts and could carry it; doing so means adding the logging stack's images to a suite that currently boots three. Until then the real check is the `victorialogs (vps ingest)` gatus probe in production, and the LogsQL in `dashboards/login-attempts.json` has never been run against a live store — panels may need adjusting on first use, which is exactly why the *VPS lines shipped* tile exists to tell you the difference between a bad query and no data. |
 | A real fail2ban ban / a real reputation lockout | The vps suite never provokes an actual ban (bantime would race every later ssh subtest) and no suite saturates reputation to -10; the filter/policy *logic* is what's asserted. The journal-routing contract (tag → journalmatch) is lint-recovered, not runtime-exercised. |
 | Immich ML inference / live OIDC login | The immich suite runs offline: model download and every inference *result* (smart search hits, faces, duplicates) need egress — the suite pins the degraded-but-healthy state instead (ML answers `/ping`, smart search errors, server stays up). The OIDC browser + `app.immich:///oauth-callback` flow is doubly uncoverable (needs a browser AND v3's secure-OAuth default vs the suite's plain-HTTP loopback); the rendered config contract and the authentik-side provider are asserted instead. |
 | The Coral TPU, real cameras, and the IoT VLAN | The automation suite has no TPU and no RTSP sources. A missing Coral is a **crash loop**, not a degradation (the watchdog SIGTERMs PID 1), so the suite overrides the detector block with `type: cpu` — the tested config differs from the deployed one in exactly the block that fails hardest. What is covered instead: the guarded `/dev/bus/usb` stanza is asserted to exist and Frigate to run without the device, and Frigate is asserted **not to be in safe mode** (an invalid config does not crash it — it starts with `cameras: {}` and MQTT off, reporting healthy). Object detection, recording, snapshots and the IoT-VLAN broker path are untouched. Home Assistant's discovery integrations (mDNS/SSDP/DHCP) are inert on a bridge network by design; the suite cannot tell that from broken, so it asserts neither. |

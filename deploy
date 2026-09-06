@@ -17,6 +17,15 @@
 #   ./deploy forgejo samba   # force-deploy named stacks (also re-runs sync+decrypt)
 #   ./deploy --vps           # also nrs-vps even if auto-detect didn't fire
 # Run it AFTER `sopsgen apply` (if you added secrets) and `git commit`.
+#
+# 🚨 ORDER: the VPS leg runs BEFORE the services-VM stacks. That is correct for
+# the common case (OIDC: the app redirects to a provider that must already
+# exist) and BACKWARDS for anything where the VPS is the CLIENT of a
+# services-VM endpoint — today that is VPS log shipping, whose Alloy would come
+# up pushing at a vlogs-ingest vhost caddy has not served yet (docs/deploy.md
+# §5.6 has the recipe: push by hand first, so CHANGED is empty and this leg
+# stays quiet, then `./deploy <stacks>`, then `nrs-vps`). Note naming stacks
+# does NOT suppress the VPS leg — it fires off the pushed diff, not off $STACKS.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

@@ -26,6 +26,7 @@
         ./modules/caddy.nix
         ./modules/headscale.nix
         ./modules/authentik.nix
+        ./modules/log-shipper.nix
       ];
       specialArgs = { inherit inputs; };
     };

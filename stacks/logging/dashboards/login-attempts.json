@@ -1,0 +1,241 @@
+{
+  "uid": "login-attempts",
+  "title": "Login attempts & bans (VPS)",
+  "tags": ["security", "vps", "fail2ban", "authentik"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What this is",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**The public auth surface of the fleet, in one place.** Everything here comes from the headscale VPS's journal, shipped by `headscale-vps/modules/log-shipper.nix` and selected with `host=\"headscale-vps\"`. That host is the only publicly reachable one: SSH on :22 and Authentik's login flow on :443. Nothing else in the fleet takes a login from the internet.\n\n**Two enforcement layers produce these lines.** `fail2ban` (sshd + authentik jails, maxretry 3 / bantime 1h) bans by IP. Authentik's `login-hardening.yaml` reputation policy scores per (username, ip), which is what catches an attacker rotating source addresses — an IP ban cannot. This dashboard observes both; it does not configure either.\n\n**Blind spots, so you do not read more into a quiet panel than is there:**\n- **An empty dashboard is ambiguous.** \"Nobody attacked\" and \"log shipping broke\" look identical here. The *VPS lines shipped* tile is the disambiguator — if it reads 0, believe nothing else on this page. The Gatus probe `victorialogs (vps ingest)` alerts on the same condition.\n- **Bans are shown, not attempts-that-were-already-banned.** Once fail2ban drops an IP, its later packets never reach sshd or Authentik, so they are invisible. Ban *count* is the attack signal; raw attempt count under-reports by design.\n- **Retention is the store's, not this dashboard's** — 100 GiB fleet-wide, oldest-first (`stacks/logging/compose.yaml`). Scroll back far enough and history simply ends."
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "fail2ban bans",
+      "description": "Ban events in the selected range. Matches the word 'Ban', which does not match 'Unban' — LogsQL tokenises, so those are different words. 'Restore Ban' (replayed from fail2ban's own db at startup) DOES match and will inflate this briefly after a VPS reboot.",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\", unit=\"fail2ban.service\"} Ban | stats count() as bans"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 25 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Authentik login failures",
+      "description": "authentik `login_failed` events — the same event the fail2ban authentik jail counts, and the same one login-hardening.yaml scores. Sourced from the authentik-server container only; that is the container whose journald tag the jail pins (fail2ban-journal-contract lint).",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 5 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\", container=\"authentik-server\"} login_failed | stats count() as failures"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "SSH refusals",
+      "description": "Refused SSH attempts. PasswordAuthentication and KbdInteractive are both off on this host, so 'Failed password' should be RARE-to-absent and 'Invalid user' is the normal signature of a scanner. All three phrases are matched because which one sshd emits depends on how far the client got.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 5 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\", unit=\"sshd.service\"} (\"Invalid user\" or \"Failed password\" or \"Connection closed by authenticating user\") | stats count() as refusals"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "VPS lines shipped",
+      "description": "🚨 READ THIS TILE FIRST. Total journal lines received from the VPS in the range, regardless of content. ZERO means the shipping path is broken (alloy.service down, ingest token rotated on one side only, tailnet route gone) and every other panel on this page is showing you an absence of data rather than an absence of attacks. Non-zero means the pipeline is alive and the other panels mean what they say.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 5 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\"} | stats count() as lines"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Bans over time",
+      "description": "fail2ban ban events bucketed by the panel's step. A flat line at zero with a healthy 'VPS lines shipped' tile is the good state.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "hits",
+          "expr": "{host=\"headscale-vps\", unit=\"fail2ban.service\"} Ban",
+          "legendFormat": "bans"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Authentik login failures over time",
+      "description": "Shape matters more than height here: a steady low trickle is background internet noise, a vertical wall is a credential-stuffing run. The fail2ban authentik jail uses findtime=1h precisely so failures spread thinly across minutes still accumulate to a ban.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "hits",
+          "expr": "{host=\"headscale-vps\", container=\"authentik-server\"} login_failed",
+          "legendFormat": "login_failed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "table",
+      "title": "Top source IPs (Authentik)",
+      "description": "client_ip is authentik's FORWARDED client address, not the TCP peer — the peer is always Caddy on loopback. This is the same field the fail2ban filter captures, so an IP high on this list and absent from the ban log means it stayed under maxretry=3 per findtime=1h.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\", container=\"authentik-server\"} login_failed | extract '\"client_ip\": \"<client_ip>\"' | stats by (client_ip) count() as attempts | sort by (attempts desc) limit 20"
+        }
+      ]
+    },
+
+    {
+      "type": "table",
+      "title": "Top usernames tried (Authentik)",
+      "description": "The ATTEMPTED username. authentik's event JSON carries `username` twice — once under `context` (what was typed) and once under `user` (the resolved account, if any); `extract` takes the first match, which is the context one. Names that are not real accounts are scanners; a real account name appearing here repeatedly is the one worth acting on.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "stats",
+          "expr": "{host=\"headscale-vps\", container=\"authentik-server\"} login_failed | extract '\"username\": \"<username>\"' | stats by (username) count() as attempts | sort by (attempts desc) limit 20"
+        }
+      ]
+    },
+
+    {
+      "type": "logs",
+      "title": "fail2ban activity",
+      "description": "Everything the jails did, unfiltered — bans, unbans, and the 'Restore Ban' replay after a restart. This is the panel that replaces `journalctl -u fail2ban` over SSH.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "maxLines": 500,
+          "expr": "{host=\"headscale-vps\", unit=\"fail2ban.service\"}"
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+
+    {
+      "type": "logs",
+      "title": "SSH refusals",
+      "description": "The raw sshd side. Useful when a ban looks wrong and you need to see what the client actually did before fail2ban counted it.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 35 },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "victorialogs" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "instant",
+          "maxLines": 500,
+          "expr": "{host=\"headscale-vps\", unit=\"sshd.service\"} (\"Invalid user\" or \"Failed password\" or \"Connection closed by authenticating user\")"
+        }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    }
+  ]
+}

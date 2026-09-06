@@ -48,6 +48,16 @@ pkgs.testers.runNixOSTest {
           ../../headscale-vps/configuration.nix
           ../../headscale-vps/modules/caddy.nix
           ../../headscale-vps/modules/headscale.nix
+          # The journal shipper. Its SINK is unreachable in this suite (the
+          # services VM is not a node here and nothing resolves
+          # vlogs-ingest.svc.idanreed.com), and that is deliberate rather than
+          # a gap being tolerated: it means the assertions below exercise the
+          # half that fails SILENTLY in production — reading the journal at
+          # all, and being able to read the token — while the half that fails
+          # LOUDLY (a push that 401s or cannot connect) is left to the Gatus
+          # probe. An unreachable sink is also the exact state the WAL exists
+          # for, so the unit staying healthy through it is itself the contract.
+          ../../headscale-vps/modules/log-shipper.nix
 
           profiles.noBootloader
           profiles.noDhcp
@@ -474,6 +484,121 @@ pkgs.testers.runNixOSTest {
       # ---------------------------------------------------------------------
       # Policy
       # ---------------------------------------------------------------------
+      # ---------------------------------------------------------------------
+      # Journal shipping (modules/log-shipper.nix)
+      # ---------------------------------------------------------------------
+      # This host's journal is where fail2ban's bans and authentik's
+      # login_failed events land, and until the shipper existed they were
+      # visible only over SSH. Every failure mode of the shipper is SILENT —
+      # the symptom is an absence of logs, in the place you would go to look
+      # for the absence — so none of it can be left to "the unit is active".
+      headscale_vps.wait_for_unit("alloy.service")
+
+      with subtest("the ingest token is delivered group-readable, not owner-readable"):
+          # 🚨 The nixpkgs alloy module runs the unit with DynamicUser=true, so
+          # there is no stable username for sops-nix's `owner` and the ONLY way
+          # in is a static group the dynamic user is added to. Both halves are
+          # asserted because either one alone is silently useless.
+          secret = "${nodes.vps.sops.secrets.VLOGS_INGEST_TOKEN.path}"
+          group_mode = headscale_vps.succeed(f"stat -c '%G %a' {secret}").strip()
+          assert group_mode == "vlogs-ingest 440", \
+              f"ingest token is {group_mode!r}, expected 'vlogs-ingest 440'"
+
+          # Exact equality, same reason as the OIDC secret above: with a dotenv
+          # sops file this would be the WHOLE decrypted document.
+          val = headscale_vps.succeed(f"cat {secret}").strip()
+          assert val == "test0vlogs0ingest0token0deadbeef0deadbeef0dead", \
+              f"ingest token is not the bare value: {val!r}"
+
+          # The other half: the unit is actually IN that group, AND kept the
+          # module's own systemd-journal group. serviceConfig.SupplementaryGroups
+          # is list-valued so NixOS's unitOption type concatenates the two
+          # definitions — if that merge semantic ever changes, one of these
+          # groups vanishes and the failure is either "reads nothing" or
+          # "cannot authenticate", both silent.
+          groups = headscale_vps.succeed(
+              "systemctl show alloy.service -p SupplementaryGroups --value"
+          ).strip()
+          assert "vlogs-ingest" in groups, \
+              f"alloy is not in the vlogs-ingest group: {groups!r}"
+          assert "systemd-journal" in groups, (
+              "alloy lost the systemd-journal group — the module's own "
+              f"SupplementaryGroups did not survive the merge: {groups!r}"
+          )
+
+          # The decisive check on readability, because the two above are both
+          # about configuration rather than outcome: alloy would log a permission
+          # error on the token file if it could not open it, and does not.
+          denied = headscale_vps.succeed(
+              "journalctl -u alloy --no-pager -o cat | "
+              "grep -ci 'permission denied' || true"
+          ).strip()
+          assert denied == "0", \
+              "alloy logged a permission error (the token file it cannot read)"
+
+      with subtest("the collector actually reads journal entries"):
+          # 🚨 THE SILENT-ZERO GUARD, and the whole reason this subtest is not
+          # just `is-active`. A collector with a wrong `path`, a lost group or
+          # a journal that was never made persistent runs perfectly happily and
+          # forwards NOTHING, forever. stacks/logging/config.alloy documents the
+          # measured matrix behind that; this asserts the outcome instead of the
+          # settings. The counter is on the SOURCE side, so it climbs even
+          # though this suite's sink is unreachable.
+          def journal_lines_read(_):
+              out = headscale_vps.succeed(
+                  "curl -sf http://127.0.0.1:12345/metrics | "
+                  "grep '^loki_source_journal_target_lines_total' || true"
+              )
+              total = 0.0
+              for line in out.splitlines():
+                  try:
+                      total += float(line.rsplit(" ", 1)[1])
+                  except (IndexError, ValueError):
+                      pass
+              return total > 0
+
+          headscale_vps.wait_until_succeeds(
+              "curl -sf http://127.0.0.1:12345/metrics -o /dev/null", timeout=60
+          )
+          retry(journal_lines_read)
+
+      with subtest("alloy's own listener is loopback-only"):
+          # The firewall in configuration.nix opens 22/80/443 and nothing else,
+          # so this is defence in depth — but a default that silently became
+          # 0.0.0.0 would put this host's component graph one firewall rule away
+          # from the public internet.
+          listeners = headscale_vps.succeed("ss -ltnH '( sport = :12345 )'")
+          assert "127.0.0.1:12345" in listeners, listeners
+          assert "0.0.0.0:12345" not in listeners, \
+              f"alloy's UI is bound to all interfaces: {listeners}"
+          outsider.fail("curl -sf --max-time 5 http://headscale-vps:12345/metrics -o /dev/null")
+
+      with subtest("the deployed config carries no plaintext token and ships over https"):
+          # /etc/alloy/config.alloy is world-readable (it has to be — the module
+          # puts it in /etc so that a switch can RELOAD rather than restart), so
+          # the token must be referenced by path and never inlined. This is the
+          # check that fails if someone "simplifies" bearer_token_file into
+          # bearer_token.
+          cfg = headscale_vps.succeed("cat /etc/alloy/config.alloy")
+          assert "test0vlogs0ingest0token" not in cfg, \
+              "the ingest token is INLINED in a world-readable /etc file"
+          assert 'bearer_token_file = "/run/secrets/VLOGS_INGEST_TOKEN"' in cfg, \
+              f"config does not read the token from its sops path:\n{cfg}"
+
+          # https, and the ingest vhost specifically. A regression to plain
+          # http, or to the store's loopback publish, would either put the
+          # token on the wire in clear or silently stop working off-host.
+          assert "https://vlogs-ingest.svc.idanreed.com/insert/loki/api/v1/push" in cfg, \
+              f"sink is not the ingest vhost:\n{cfg}"
+
+          # The stream-field list must match stacks/logging/config.alloy's
+          # exactly, or the two collectors' pushes define DIFFERENT streams from
+          # the same labels and every cross-host query quietly lies. The
+          # vlogs-ingest-contract lint checks the same thing statically; this
+          # checks what was actually deployed.
+          assert "_stream_fields=job,unit,container,host" in cfg, \
+              f"sink _stream_fields drifted from the services VM's:\n{cfg}"
+
       with subtest("policy.hujson is loaded by the running server"):
           # Positive first: ask the running server for its policy and demand
           # OUR content in it. Grepping the journal for error strings alone is

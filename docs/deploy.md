@@ -341,6 +341,69 @@ Each friend then enrols a device on the tailnet themselves
 (`tailscale up --login-server=https://headscale.idanreed.com`, log in via
 Authentik) — that's their action, not yours.
 
+## 5.6 VPS log shipping (fail2ban / login-attempt dashboard)
+
+The headscale VPS ships its journal to the services VM's VictoriaLogs, which is
+what puts fail2ban bans and Authentik `login_failed` events on a Grafana
+dashboard instead of behind an SSH session. Three pieces:
+`headscale-vps/modules/log-shipper.nix` (native Alloy on the VPS), the
+`vlogs-ingest.svc.idanreed.com` vhost in `stacks/caddy/Caddyfile`, and the
+provisioned dashboard in `stacks/logging/dashboards/`.
+
+🚨 **THIS IS THE ONE CHANGE `./deploy` SEQUENCES BACKWARDS.** §4's chain runs
+`nrs-vps` *before* the services-VM stacks, which is right for OIDC (the app
+redirects to a provider that must already exist) and wrong here for the mirror
+reason: bringing up the shipper first points Alloy at a vhost that does not
+exist yet. Naming stacks does **not** suppress it — the VPS leg fires off the
+pushed diff, and this change touches `headscale-vps/`.
+
+Nothing is lost when it happens (Alloy retries into its WAL, and the vhost
+sitting idle the other way round is inert), but you will spend the time
+debugging a 401 you created. Push first, so `deploy`'s VPS auto-detect stays
+quiet, then take the two halves in order:
+
+```bash
+sopsgen apply                 # draws ONE VLOGS_INGEST_TOKEN into BOTH sides:
+                              #   stacks/caddy/.sops.env + headscale-vps/secrets.sops.yaml
+git add -A && git commit      # deploy refuses an uncommitted tree
+git push forgejo main         # push HERE, not via deploy: with forgejo already at
+                              #   HEAD, deploy's CHANGED set is empty and its
+                              #   nrs-vps leg does not fire
+./deploy caddy logging        # sync + decrypt + redeploy, stacks only
+nrs-vps                       # LAST: brings up alloy against a vhost that now exists
+```
+
+**Verify (takes about a minute for the first push to land):**
+```bash
+# on the services VM — the freshness query the gatus probe runs
+curl -s 'http://127.0.0.1:10456/select/logsql/query?query=_time:15m%20%7Bhost=%22headscale-vps%22%7D&limit=5'
+# on the VPS — did the collector read anything at all?
+curl -s http://127.0.0.1:12345/metrics | grep loki_source_journal_target_lines_total
+journalctl -u alloy -n 50     # a 401 here means the two token halves disagree
+```
+Then open Grafana → **Login attempts & bans (VPS)**. If every panel is empty
+but *VPS lines shipped* is non-zero, the shipping is fine and the panel queries
+need adjusting; if *VPS lines shipped* is zero, nothing else on the page means
+anything.
+
+⚠ **The dashboard needs the datasource plugin**, which is still the one-time
+operator install into `/mnt/fast/grafana/plugins` documented in
+`stacks/logging/compose.yaml`. Until it lands, Grafana is healthy, the
+dashboard exists, and every panel fails to query — use vmui on 10456 meanwhile.
+
+🚨 **`sopsgen apply` is REQUIRED, not just recommended, and it gates the VPS
+rebuild rather than only the log flow.** `modules/log-shipper.nix` *declares*
+`sops.secrets.VLOGS_INGEST_TOKEN`, and sops-nix resolves every declared secret
+at activation — so a `nrs-vps` against a `headscale-vps/secrets.sops.yaml` that
+does not yet contain that key **fails the rebuild**, it does not merely ship no
+logs. Loud rather than silent, which is the right way round, but it means the
+first `./deploy` after this lands will stop at its VPS leg if the token was
+never drawn.
+
+Until `sopsgen apply`, `./tests/run.sh` also shows `stack-env-drift` on caddy
+(`VLOGS_INGEST_TOKEN` pending in the real `.sops.env`) — expected, and the only
+red in the gate; it clears with the same command.
+
 ## 6. Gotchas
 
 - **The git-remote trap.** `git push forgejo main` — **not** `origin`/GitHub.

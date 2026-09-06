@@ -820,6 +820,54 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # The same check for the OTHER collector — the headscale VPS
+  # (headscale-vps/modules/log-shipper.nix). It needs its own probe because the
+  # one above is satisfied entirely by this host's own Alloy: the VPS's stream
+  # could stop for days without moving it.
+  #
+  # 🚨 THIS IS THE ONLY ALARM ON THE VPS SHIPPER, and the failure it catches is
+  # a silent one by construction. Every part of that path fails QUIETLY: a
+  # rotated-on-one-side ingest token makes caddy 401 while Alloy retries into
+  # its WAL, a lost tailnet route does the same, and alloy.service itself stays
+  # `active` through all of it. The symptom in every case is an absence of
+  # logs, in exactly the place you would go to look for the absence. (The unit
+  # genuinely dying is covered separately, by notify-failure@ on the VPS.)
+  #
+  # 30m rather than the 15m above: the shipper's WAL deliberately rides out
+  # short outages and then replays, so a 15m window would alert on the
+  # recovery it is supposed to make invisible. With failure-threshold 3 at a
+  # 5m interval this still reports inside an hour, which is the right latency
+  # for "my log shipping broke" — the "the VPS is GONE" question is answered
+  # much faster by the public probes at the bottom of this file.
+  - name: "victorialogs (vps ingest)"
+    group: "service"
+    url: "http://127.0.0.1:10456/select/logsql/query?query=_time%3A30m%20%7Bhost%3D%22headscale-vps%22%7D&limit=1"
+    interval: 5m
+    conditions:
+      - "[STATUS] == 200"
+      - "len([BODY]) > 0"
+    alerts:
+      - type: ntfy
+
+  # The ingest vhost itself. 401 IS the healthy answer (the CardDAV probe
+  # below is the precedent for a non-200 healthy status): an unauthenticated
+  # GET / must hit the token gate in stacks/caddy/Caddyfile and go no further.
+  #
+  # So this probe does double duty — it proves the route, the wildcard cert and
+  # the tailnet bind are live, AND that the gate is still closed. A 200 here
+  # would mean the Authorization matcher stopped matching (an empty
+  # VLOGS_INGEST_TOKEN, a reordered directive) and the fleet's log store had
+  # become writable by anything on the tailnet.
+  - name: "vlogs-ingest (path: caddy -> token gate)"
+    group: "path"
+    url: "https://vlogs-ingest.svc.idanreed.com/"
+    interval: 2m
+    conditions:
+      - "[STATUS] == 401"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
   # Proton bridge (10003-10005): liveness only — a TCP accept proves `serve`
   # is up, NEVER that anyone is logged in or Proton is reachable (the stack's
   # compose header carries that gap). The first non-http probes in this file:

@@ -261,6 +261,21 @@ services:
       # backup.
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/victorialogs.yaml:ro
 
+      # Provisioned dashboards, same argument as the datasource above: a
+      # dashboard built by clicking lives only in grafana.db, and the day you
+      # discover the nightly sqlite dump was the only copy is a bad day. The
+      # provider config points at the directory; the directory is the mount
+      # below. Both read-only — Grafana never writes back (allowUiUpdates is
+      # false), so a bind that let it try would only produce confusing errors.
+      #
+      # ⚠ These are ORDINARY 0644 repo files delivered by stack-git-sync, and
+      # grafana runs as uid 472 in-container — the same exposure
+      # grafana-datasource.yaml already has. If provisioning ever starts
+      # EACCES-ing after a delivery change, that is the cause and it hits all
+      # three of these mounts at once, not just the new ones.
+      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/fleet.yaml:ro
+      - ./dashboards:/etc/grafana/dashboards:ro
+
     # Long form with required:false ON PURPOSE (finding #11): a deploy can
     # race the first decrypt (the .env not yet written), and the plain form
     # aborts the whole stack.

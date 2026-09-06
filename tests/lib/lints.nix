@@ -1184,6 +1184,171 @@ in
     '';
 
   # ---------------------------------------------------------------------------
+  # VPS journal shipping: collector <-> caddy vhost <-> secret, across 6 files
+  # ---------------------------------------------------------------------------
+  # The headscale VPS ships its journal — every fail2ban ban, every authentik
+  # login_failed — into the services VM's VictoriaLogs. Nothing links the two
+  # ends: the collector is a nix module on one host, the gate is a Caddyfile on
+  # another, and the token that joins them is a cross-host sops twin. Every
+  # possible drift here is SILENT IN BOTH DIRECTIONS — the shipper keeps
+  # retrying into its WAL, caddy keeps answering 401, no unit fails, and the
+  # only symptom is that host="headscale-vps" is missing from a dashboard
+  # nobody looks at until they need it.
+  #
+  # Six couplings, all of them a rename away from breaking:
+  #   1. sink hostname          == the Caddyfile's @vlogs_ingest host matcher
+  #   2. sink path              == the path the vhost's allowlist permits
+  #   3. sink _stream_fields    == stacks/logging/config.alloy's (else the two
+  #                                collectors define different streams from the
+  #                                same labels and cross-host queries lie)
+  #   4. token key name         == the Caddyfile's Authorization matcher env var
+  #   5. token declared in both .example files (so a fresh host has it)
+  #   6. the vhost does NOT import protected (a forward-auth 302 on a push
+  #      endpoint is silently discarded telemetry, not a login prompt)
+  vlogs-ingest-contract =
+    mkLint "vlogs-ingest-contract" ''
+      ${py} - <<'PY'
+      import re, sys, yaml
+
+      shipper = open("${repo + "/headscale-vps/modules/log-shipper.nix"}").read()
+      caddyfile = open("${repo + "/stacks/caddy/Caddyfile"}").read()
+      vmalloy = open("${repo + "/stacks/logging/config.alloy"}").read()
+
+      errs = []
+
+      # --- the collector's side -------------------------------------------
+      host = re.search(r'ingestHost\s*=\s*"([^"]+)"', shipper)
+      path = re.search(r'ingestPath\s*=\s*"([^"]+)"', shipper)
+      fields = re.search(r'streamFields\s*=\s*"([^"]+)"', shipper)
+      if not (host and path and fields):
+          sys.exit("log-shipper.nix no longer defines ingestHost/ingestPath/"
+                   "streamFields as plain string lets — this lint reads them "
+                   "textually; fix the lint before trusting it")
+      host, path, fields = host.group(1), path.group(1), fields.group(1)
+
+      # The url must actually be BUILT from those lets, over https. An
+      # interpolation that stopped referring to them would leave this lint
+      # checking three variables nothing uses.
+      if 'url = "https://''${ingestHost}''${ingestPath}?_stream_fields=''${streamFields}"' not in shipper:
+          errs.append("log-shipper.nix's sink url is no longer assembled from "
+                      "ingestHost/ingestPath/streamFields over https — this "
+                      "lint's other legs are then vacuous")
+
+      # --- 3: stream fields match the other collector ----------------------
+      other = re.search(r"_stream_fields=([A-Za-z0-9_,]+)", vmalloy)
+      if not other:
+          sys.exit("stacks/logging/config.alloy has no _stream_fields in its "
+                   "sink url — fix this lint")
+      if other.group(1) != fields:
+          errs.append(f"_stream_fields drift: log-shipper.nix pushes "
+                      f"{fields!r} but stacks/logging/config.alloy pushes "
+                      f"{other.group(1)!r}. Two collectors defining different "
+                      f"streams from the same labels makes every cross-host "
+                      f"query quietly host-specific")
+
+      # --- the caddy side: find the handle block for this vhost ------------
+      lines = [re.sub(r"#.*$", "", l) for l in caddyfile.splitlines()]
+      matcher = None
+      for l in lines:
+          m = re.match(r"\s*@(\S+)\s+host\s+" + re.escape(host) + r"\s*$", l)
+          if m:
+              matcher = m.group(1)
+              break
+      if matcher is None:
+          errs.append(f"no Caddy vhost matcher for {host!r} — the collector "
+                      f"pushes at a hostname nothing serves (every push fails "
+                      f"TLS or 404s, and alloy just retries)")
+          block = []
+      else:
+          block, depth, inside = [], 0, False
+          for l in lines:
+              if re.match(r"\s*handle\s+@" + re.escape(matcher) + r"\s*\{", l):
+                  inside, depth = True, 0
+              if inside:
+                  block.append(l)
+                  depth += l.count("{") - l.count("}")
+                  if depth <= 0 and len(block) > 1:
+                      break
+      body = "\n".join(block)
+
+      if block:
+          # --- 2: only the push path is reachable --------------------------
+          if f"not path {path}" not in body:
+              errs.append(f"the {host} handle does not restrict to {path!r}. "
+                          f"VictoriaLogs serves its /select/* query api and "
+                          f"/internal/* maintenance endpoints on the SAME port "
+                          f"as ingest and has no auth of its own, so the path "
+                          f"allowlist IS the authorization model")
+          if "respond @not_ingest" not in body:
+              errs.append(f"the {host} handle has no `respond` rejecting "
+                          f"non-ingest paths")
+
+          # --- 4: the token gate ------------------------------------------
+          if "Authorization" not in body or "{$VLOGS_INGEST_TOKEN}" not in body:
+              errs.append(f"the {host} handle does not gate on an "
+                          f"Authorization: Bearer {{$VLOGS_INGEST_TOKEN}} "
+                          f"header — the fleet's log store would be writable "
+                          f"by anything that reaches the tailnet")
+          if "respond @unauthorized" not in body:
+              errs.append(f"the {host} handle matches the token but never "
+                          f"`respond`s to a mismatch — the matcher is inert")
+
+          # --- 6: never forward auth --------------------------------------
+          if "import protected" in body:
+              errs.append(f"the {host} handle imports `protected`. Forward "
+                          f"auth answers an unauthenticated PUSH with a 302 to "
+                          f"authentik; alloy treats that as a non-retryable "
+                          f"success and the lines are GONE. Machine ingest "
+                          f"authenticates with the bearer token, never with a "
+                          f"browser redirect")
+
+      # --- 5: the secret is declared on both hosts and generated -----------
+      if "sops.secrets.VLOGS_INGEST_TOKEN" not in shipper:
+          errs.append("log-shipper.nix does not declare "
+                      "sops.secrets.VLOGS_INGEST_TOKEN — nothing delivers the "
+                      "token to /run/secrets")
+
+      for f, want in [
+          ("headscale-vps/secrets.sops.yaml.example", "VLOGS_INGEST_TOKEN:"),
+          ("stacks/caddy/.sops.env.example", "VLOGS_INGEST_TOKEN="),
+      ]:
+          if want not in open("${repo}/" + f).read():
+              errs.append(f"{f} does not declare VLOGS_INGEST_TOKEN — a host "
+                          f"built from the template ships no logs (or, on the "
+                          f"caddy side, serves an OPEN ingest endpoint: an "
+                          f"unset var makes the matcher expect a bare "
+                          f'"Bearer ")')
+
+      # sops-gen is what actually fills both sides with ONE draw; declared as
+      # two independent secrets they would be generated to different values and
+      # the failure is a permanent 401 loop.
+      man = yaml.safe_load(open("${repo + "/secrets-gen/manifest.yaml"}"))
+      twins = [s for s in man["secrets"]
+               if any(t["key"] == "VLOGS_INGEST_TOKEN" for t in s["targets"])]
+      if not twins:
+          errs.append("secrets-gen/manifest.yaml has no VLOGS_INGEST_TOKEN "
+                      "entry — the token would be hand-generated twice and the "
+                      "two sides would never match")
+      else:
+          for s in twins:
+              files = {t["file"] for t in s["targets"]}
+              want = {"stacks/caddy/.sops.env",
+                      "headscale-vps/secrets.sops.yaml"}
+              if files != want:
+                  errs.append(f"manifest entry {s['name']!r} targets {files} — "
+                              f"it must be a twin over exactly {want}, one draw "
+                              f"for both sides")
+
+      if errs:
+          print("vlogs ingest contract violations:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"vlogs ingest contract OK ({host}{path}, _stream_fields={fields})")
+      PY
+    '';
+
+  # ---------------------------------------------------------------------------
   # /srv/stacks tmpfiles ownership
   # ---------------------------------------------------------------------------
   # nixos/hardware-configuration.nix (plus the generated ./stack-dirs.nix it

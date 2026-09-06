@@ -34,6 +34,7 @@ ZACH_INITIAL_PASSWORD: ENC[AES256_GCM,data:l+vsfGq94JnbAXnhx2Yl2YE80YA7RQMOl/OCP
 RYLAN_INITIAL_PASSWORD: ENC[AES256_GCM,data:Od14y+smwfWU4IzVL4uNfnHsWdH/OfqgbVwz+3VwDDE=,iv:KQ1bDSpka8e2odvZOmj59/8B0MvyUFq1sIivlv7YJMw=,tag:M0TfV49Y4LmZBsaxfqbVxQ==,type:str]
 CAMERON_INITIAL_PASSWORD: ENC[AES256_GCM,data:xLlmC7RE7ioAzEpdgoagv7ZFGBf+V/8ngrn674fNVg//Lw==,iv:FXW9XWEGt7Pq+T9XlMM0yf4Zds5/+NjvkGOooMY96mA=,tag:1mYUuzZyk2k6uPnjVKzBmw==,type:str]
 JUSTIN_INITIAL_PASSWORD: ENC[AES256_GCM,data:qpP7WjfKmkkYbIQ9cydAFFxz5J8W9KuZ5ZR/Ddn/xY4l,iv:taehlHtV/TiUPCDx6lO+WI3QvqIb8J0blpYKRdTD/+w=,tag:Te/hmQh1JQ4m78KwTlFEQQ==,type:str]
+VLOGS_INGEST_TOKEN: ENC[AES256_GCM,data:Nc9Kbs5Jsvmqh9+KdRt8Z/Kpl0S4oK0KMIk13f2ZSR1thbZGDmdOxh7kyNlY8g==,iv:LsfqYKMbzCy+I0D8fey7oDtNFni+raANB+Fh+qgahKU=,tag:kWQ7mMTv42LH70PK/Ifzhg==,type:str]
 sops:
     age:
         - enc: |
@@ -45,7 +46,7 @@ sops:
             LnWz8phwRmqoueT71CgqgvVKPPyAcWlIOsMpjPBM10FntkTj0O8jUg==
             -----END AGE ENCRYPTED FILE-----
           recipient: age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
-    lastmodified: "2026-09-06T02:22:29Z"
-    mac: ENC[AES256_GCM,data:PiC8WfD2oJ33+dFqtutkzFN87DJ/RB0S9hXjJv7RXSBB/KRtVKay4txFmKBBZHSY3D0Mpyra5Fbjm9AYh61Mb+EbkAPT1A5jYfpkzjtwYoz0YYkw6EFnsY7MgsJ5N2wsQyQz54P2ajFwOD4MSdkyWiKMMskxu9X/+x3b/bUO8rs=,iv:D1+zO+UHOyUPoU+PCPLtPlwWcNU5yg3q63c28hlHOlk=,tag:1VSI0RNf9xHpnWOIXWiN5g==,type:str]
+    lastmodified: "2026-09-06T03:45:09Z"
+    mac: ENC[AES256_GCM,data:ShTxuXl+BND7EmBkcKbx3Cms130DcBH/wOEX4SPUBMpBA9c0RLT/a8TX7UGAnJb6csyrnKEvNPkbQkSbDJiPcbKbYfXWqNRuaW4l8L6to6G6ZVdt6LlIxGPgXazpVnzy95UOq63H4NUwerpgofrxesqzPAT4z7/Wb65OnFEbrjQ=,iv:Qxum5Nw4HeXqAVcVUBbBJkd2sSQ0NFRD7siRsUi5XGk=,tag:sX/SNeW9NnQq5hpcKaEPkA==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.0

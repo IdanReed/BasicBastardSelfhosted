@@ -267,6 +267,18 @@ secrets:
     class: config
     targets: [{ file: stacks/caddy/.sops.env, key: TAILNET_IP }]
 
+  # Cross-host twin, and the only non-OIDC one: the VPS's Alloy presents this
+  # bearer token to the vlogs-ingest vhost, which is the only path from that
+  # host into the fleet's log store. One draw, both sides — a mismatch is a
+  # silent 401 loop that shows up only as host="headscale-vps" going quiet.
+  - name: vlogs/ingest-token
+    class: generate
+    recipe: hex:64
+    note: "VPS journal shipping; both sides must match or every push 401s"
+    targets:
+      - { file: stacks/caddy/.sops.env, key: VLOGS_INGEST_TOKEN }
+      - { file: headscale-vps/secrets.sops.yaml, key: VLOGS_INGEST_TOKEN }
+
   - name: ghostfolio/ACCESS_TOKEN_SALT
     class: generate
     recipe: hex:64
