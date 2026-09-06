@@ -80,6 +80,7 @@
           ./modules/nixos/nvidia.nix
           ./modules/nixos/tailscale.nix
           ./modules/nixos/ssh-identities.nix
+          ./modules/nixos/sshd.nix
           ./modules/nixos/work-vpn.nix
           ./modules/nixos/containers.nix
           ./modules/nixos/handy.nix
