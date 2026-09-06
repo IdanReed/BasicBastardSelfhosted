@@ -114,18 +114,25 @@ cross-referenced). `TAILSCALE_AUTH_KEY` stays `changeme` by design until step 4.
    Run as yourself, not sudo. First `--target-host` rebuild may need one
    on-box build (trusted-users). Verify headscale + authentik + caddy are up.
 
-4. **Mint tailnet keys** (`deploy-handbook.md` §4). On the VPS:
+4. **Mint tailnet keys** (`deploy-handbook.md` §4). On the VPS — the first user
+   is a throwaway `bootstrap`, **NOT `idan`** (the real `idan` is created from
+   OIDC in §8; naming the bootstrap user `idan` mints a duplicate on first OIDC
+   login and the ambiguous `idan@` then locks the whole fleet out):
    ```bash
-   sudo headscale users create idan
-   sudo headscale preauthkeys create --user 1 --reusable --expiration 24h
+   sudo headscale users create bootstrap
+   sudo headscale preauthkeys create -u <bootstrap-id> --reusable --expiration 24h
    ```
    `--reusable` is deliberate (autoconnect re-runs on a timer). Put the key into
    **both** hosts' secrets, then rebuild the VPS so it joins its own tailnet:
    ```bash
-   sopsedit headscale-vps/secrets.sops.yaml   # TAILSCALE_AUTH_KEY
-   sopsedit nixos/secrets.sops.yaml           # TAILSCALE_AUTH_KEY
+   sopseditnvim headscale-vps/secrets.sops.yaml   # TAILSCALE_AUTH_KEY
+   sopseditnvim nixos/secrets.sops.yaml           # TAILSCALE_AUTH_KEY
    nrs-vps
    ```
+   After the first OIDC login creates `idan` (§8 / §10.8), reconcile: move the
+   bootstrap nodes onto it (`headscale nodes move -i <node> -u <idan-id>`) and
+   rename/retire the bootstrap user. Bootstrap nodes have no tailnet *service*
+   access until then — expected, since §5–§7 use SSH/LAN.
 
 5. **Services VM + Komodo plane** (`deploy-handbook.md` §5). On the Proxmox host
    (data disks partitioned by hand first — see §5.1 there; `--cpu host` + static

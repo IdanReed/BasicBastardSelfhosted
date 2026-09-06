@@ -8,9 +8,14 @@
 // connected, so this file is behaviour-neutral today (nothing is tagged yet)
 // while giving guests somewhere to be constrained when they are added.
 //
-// Users are referenced with a trailing "@" (e.g. "idan@"). The user must exist
-// before it resolves to anything; it is created by `headscale users create
-// idan`, which the preauth-key step in .sops.env.example already requires.
+// Users are referenced with a trailing "@" (e.g. "idan@"). "idan@" is the REAL
+// admin: the OIDC user (idan@idanreed.com) headscale mints on the first OIDC
+// login (deploy-handbook §8). From-zero bring-up first registers servers under a
+// throwaway `bootstrap` user via preauthkey (§4); §8.1 then moves them onto
+// `idan` and retires bootstrap.
+// 🚨 NEVER name the bootstrap user `idan`: a second OIDC `idan` then collides,
+// the ambiguous `idan@` resolves to NEITHER, and every node loses tailnet access
+// (learned the hard way 2026-09-06).
 //
 // Tags are applied at registration and cannot be added retroactively without
 // re-registering the node:
