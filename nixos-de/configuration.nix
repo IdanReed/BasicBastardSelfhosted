@@ -206,6 +206,44 @@
     };
   };
 
+  # Turning ACP off above has one consequence that is invisible until you try to
+  # play something: nothing enables the codec's "IEC958 Playback Switch" any
+  # more. Activating an ACP HDMI profile used to flip it; raw mode has no
+  # equivalent step, and the control defaults to off. With it off, the Digital
+  # Enable bit on the display-audio converter stays clear, so the converter
+  # accepts a stream and emits nothing — PipeWire links, ALSA reports RUNNING,
+  # hw_ptr advances, ELD is valid, the pin is OUT, and the display is silent.
+  # Every layer reads healthy, which makes this expensive to diagnose twice.
+  #
+  # Scoped by the presence of eld# nodes in procfs rather than by vendor id:
+  # only display-audio codecs expose those, so this follows the hardware for the
+  # same reason the rule above does, and it cannot touch the analog codecs or
+  # USB audio. Indices are enumerated from the control list because a card
+  # carries one switch per HDMI/DP port and numids are not stable across cards.
+  systemd.services.hdmi-iec958-enable = {
+    description = "Enable IEC958 playback on display-audio codecs (ACP is off)";
+    after = [ "sound.target" ];
+    wantedBy = [ "multi-user.target" "sleep.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = false;
+    };
+    script = ''
+      shopt -s nullglob
+      for dir in /proc/asound/card*/; do
+        elds=("$dir"eld#*)
+        (( ''${#elds[@]} )) || continue
+        card=''${dir%/}; card=''${card##*/card}
+        ${pkgs.alsa-utils}/bin/amixer -c "$card" controls 2>/dev/null \
+          | grep -F "name='IEC958 Playback Switch'" \
+          | sed 's/^numid=\([0-9]*\),.*/\1/' \
+          | while read -r numid; do
+              ${pkgs.alsa-utils}/bin/amixer -c "$card" cset numid="$numid" on >/dev/null 2>&1 || true
+            done
+      done
+    '';
+  };
+
   fonts = {
     enableDefaultPackages = true;
     packages = with pkgs; [
@@ -248,6 +286,11 @@
     ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"
     # SATA link power management - max performance
     ACTION=="add", SUBSYSTEM=="scsi_host", KERNEL=="host*", ATTR{link_power_management_policy}="max_performance"
+
+    # A codec reprobe (display hotplug, GPU runtime PM) re-registers the card
+    # with IEC958 back at its default, so re-run the enable job on card add.
+    # See systemd.services.hdmi-iec958-enable above for why that is needed.
+    ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="hdmi-iec958-enable.service"
   '';
 
   # === CachyOS Performance: Process Prioritization ===

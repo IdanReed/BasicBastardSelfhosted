@@ -380,6 +380,8 @@ secrets:
     targets:
       - { file: headscale-vps/secrets.sops.yaml, key: IDAN_INITIAL_PASSWORD, source: true }
       - { file: stacks/samba/.sops.env, key: SAMBA_IDAN_PASSWORD }
+      # desktop cifs credential (nixos-de/modules/nixos/samba-mounts.nix)
+      - { file: nixos-de/secrets.sops.yaml, key: SAMBA_IDAN_PASSWORD }
       - { file: stacks/windmill/.sops.env, key: IDAN_INITIAL_PASSWORD }
       - { file: stacks/beszel/.sops.env, key: USER_PASSWORD }
       - { file: stacks/backrest/.sops.env, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }

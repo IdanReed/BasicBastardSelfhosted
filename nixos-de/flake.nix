@@ -84,6 +84,7 @@
           ./modules/nixos/work-vpn.nix
           ./modules/nixos/containers.nix
           ./modules/nixos/handy.nix
+          ./modules/nixos/samba-mounts.nix
         ];
       };
 
