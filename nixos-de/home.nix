@@ -109,7 +109,7 @@
     initContent = ''
       pdf() { QT_QPA_PLATFORM=xcb setsid -f sioyek "$@" >/dev/null 2>&1 }
 
-      # sopsedit <file> — edit a sops file in Zed.
+      # sopsedit <file> — edit a sops file in Zed (sopseditnvim: in nvim).
       #
       # Zed has no SOPS extension: zed-industries/extensions#3004 is blocked on
       # the extension API having no buffer open/save hook, so transparent
@@ -127,15 +127,23 @@
       # If `--wait` ever returns instantly against an already-running Zed
       # (zed-industries/zed#54203), sops re-encrypts the *unedited* tmpfile and
       # the edit is silently lost — `git diff` after saving is the check.
-      sopsedit() {
+      # `sopseditnvim` is the same flow with nvim as the editor: a terminal
+      # editor blocks until it exits by construction, so it needs no `--wait`
+      # and cannot hit the zed#54203 lost-edit race. Prefer it when the edit
+      # matters (or when there is no Wayland session to spawn Zed into).
+      _sopsedit() {
+        local editor=$1
+        shift
         if [[ -z $1 ]]; then
-          echo "usage: sopsedit <file.sops.yaml|.sops.env>" >&2
+          echo "usage: ''${funcstack[2]} <file.sops.yaml|.sops.env>" >&2
           return 1
         fi
         local key
         key=$(sudo cat /var/lib/sops-nix/sops_age_key.txt) || return
-        SOPS_AGE_KEY=$key SOPS_EDITOR="zeditor --wait" sops edit "$@"
+        SOPS_AGE_KEY=$key SOPS_EDITOR=$editor sops edit "$@"
       }
+      sopsedit() { _sopsedit "zeditor --wait" "$@" }
+      sopseditnvim() { _sopsedit nvim "$@" }
 
       # sopsgen <apply|rotate|list|view|search> [args…] — secrets-gen/sops-gen
       # from anywhere, inside its nix-shell, same sudo-cat key dance as
