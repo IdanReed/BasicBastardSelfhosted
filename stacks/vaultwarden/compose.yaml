@@ -84,7 +84,11 @@ services:
       # (SSO_ONLY left unset/false).
       - SSO_ENABLED=true
       # Issuer base — NO /.well-known suffix, vaultwarden appends it.
-      - SSO_AUTHORITY=https://auth.idanreed.com/application/o/vaultwarden
+      # 🚨 Trailing slash is LOAD-BEARING: Authentik advertises its issuer as
+      # .../o/vaultwarden/ (with slash), and vaultwarden's OIDC library does a
+      # STRICT issuer==authority match on the discovery doc. Without the slash:
+      # "unexpected issuer URI .../vaultwarden/ (expected .../vaultwarden)".
+      - SSO_AUTHORITY=https://auth.idanreed.com/application/o/vaultwarden/
       # client_id is public; pinned here (overrides the vestigial .sops.env
       # stub). SSO_CLIENT_SECRET arrives from .env.
       - SSO_CLIENT_ID=vaultwarden
