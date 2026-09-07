@@ -196,6 +196,25 @@
         print -r -- "$script" | ssh idan@10.0.0.3 bash -s -- "$@"
       }
 
+      # md2pdf <file.md> [out.pdf] — plain PDF from a markdown file.
+      # typst, not LaTeX, as the pdf-engine: ~90MB of closure instead of
+      # texlive's several GB, and its stock look is already the "text on a
+      # page" one we want here. No template, no -V knobs beyond the font.
+      # mainfont is NOT optional: pandoc's typst template hands the engine an
+      # empty font list when it's unset and typst hard-errors ("font fallback
+      # list must not be empty"). Libertinus Serif ships inside the typst
+      # binary, so this stays independent of what fontconfig has locally.
+      md2pdf() {
+        local in=$1
+        if [[ -z $in ]]; then
+          echo "usage: md2pdf <file.md> [out.pdf]" >&2
+          return 1
+        fi
+        local out=''${2:-''${in:r}.pdf}
+        nix shell nixpkgs#pandoc nixpkgs#typst -c \
+          pandoc "$in" -o "$out" --pdf-engine=typst -V mainfont="Libertinus Serif"
+      }
+
       # vidtrim <video> [speed] [threshold] [margin]
       # auto-editor cuts the silence, ffmpeg speeds up what's left.
       # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
