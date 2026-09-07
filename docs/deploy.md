@@ -32,6 +32,9 @@ Key distinction: **the services VM pulls stacks from git; the VPS does not.**
 A VPS change needs `nrs-vps` (it reads the *local* flake and pushes over the
 tailnet). A services-VM *stack* change needs a `git push forgejo main` +
 redeploy. A services-VM *OS* change needs a `--target-host` rebuild.
+`./deploy` runs all three legs automatically off the pushed diff
+(`headscale-vps/` → nrs-vps, `nixos/` → the `--target-host` rebuild,
+`stacks/<name>/` → sync + redeploy).
 
 Full provisioning detail (Proxmox image build, `nixos-anywhere`, Ventoy USB)
 is in `deploy-handbook.md` §3, §5, §10.

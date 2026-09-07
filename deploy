@@ -7,6 +7,9 @@
 #   2. git add + commit      (the review gate)
 #   3. git push forgejo main -> MISSED MOST OFTEN; stack-git-sync then pulls stale
 #   4. nrs-vps               (only if headscale-vps/ changed)
+#   4b. services-VM OS rebuild (only if nixos/ changed — host units like
+#       stack-git-sync/decrypt live there, NOT in any stack; finding #79 sat
+#       undeployed because this leg was missing from the chain)
 #   5. stack-git-sync + decrypt-sops-envs on the VM (timers, ~1 min lag)
 #   6. redeploy the stack    (Komodo #1120: push does NOT auto-deploy)
 # Nothing told you a step was skipped. This drives all of it and REFUSES to
@@ -16,6 +19,7 @@
 #   ./deploy                 # deploy exactly what changed since forgejo/main
 #   ./deploy forgejo samba   # force-deploy named stacks (also re-runs sync+decrypt)
 #   ./deploy --vps           # also nrs-vps even if auto-detect didn't fire
+#   ./deploy --vm            # also rebuild the services-VM OS even if auto-detect didn't fire
 # Run it AFTER `sopsgen apply` (if you added secrets) and `git commit`.
 #
 # 🚨 ORDER: the VPS leg runs BEFORE the services-VM stacks. That is correct for
@@ -36,10 +40,12 @@ say() { printf '\033[1;36m» %s\033[0m\n' "$*"; }
 err() { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
 
 FORCE_VPS=0
+FORCE_VM=0
 STACKS=()
 for a in "$@"; do
   case "$a" in
     --vps) FORCE_VPS=1 ;;
+    --vm)  FORCE_VM=1 ;;
     -*)    err "unknown flag: $a"; exit 2 ;;
     *)     STACKS+=("$a") ;;
   esac
@@ -76,6 +82,16 @@ if [[ $FORCE_VPS -eq 1 ]] || printf '%s\n' "$CHANGED" | grep -q '^headscale-vps/
   say "headscale-vps changed -> nrs-vps (Authentik / headscale / ACL)"
   nixos-rebuild switch --flake "$REPO/headscale-vps#headscale-vps" \
     --target-host idan@vps --use-remote-sudo
+fi
+
+# BEFORE the stack legs on purpose: a nixos/ change often alters the very
+# units the stack leg drives (stack-git-sync, decrypt-sops-envs), and the
+# forced sync below must run under the NEW unit — finding #79's fix is
+# exactly this shape (the sync unit normalises file modes during the sync).
+if [[ $FORCE_VM -eq 1 ]] || printf '%s\n' "$CHANGED" | grep -q '^nixos/'; then
+  say "nixos/ changed -> services-VM OS rebuild (git-sync / decrypt / komodo-bootstrap units)"
+  nixos-rebuild switch --flake "$REPO/nixos#services-vm" \
+    --target-host "$VM" --use-remote-sudo
 fi
 
 if [[ ${#STACKS[@]} -eq 0 ]]; then
