@@ -268,11 +268,15 @@ services:
       # below. Both read-only — Grafana never writes back (allowUiUpdates is
       # false), so a bind that let it try would only produce confusing errors.
       #
-      # ⚠ These are ORDINARY 0644 repo files delivered by stack-git-sync, and
-      # grafana runs as uid 472 in-container — the same exposure
-      # grafana-datasource.yaml already has. If provisioning ever starts
-      # EACCES-ing after a delivery change, that is the cause and it hits all
-      # three of these mounts at once, not just the new ones.
+      # ⚠ These must be WORLD-READABLE on the host: grafana runs as uid 472
+      # in-container and reads them through the bind. That happened (finding
+      # #79) — stack-git-sync's umask-077 checkout + rsync -p delivered them
+      # 0600 uid-1000, the datasource provisioner EACCES'd, and Grafana
+      # treats that as FATAL: a ~11 s crash loop behind Caddy's 502 for the
+      # stack's whole lifetime. The sync unit now normalises delivery to
+      # 0644/0755 (.sops.env excepted); if provisioning ever EACCES-es
+      # again, that normalisation is the first place to look, and it hits
+      # all three of these mounts at once, not just the new ones.
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/fleet.yaml:ro
       - ./dashboards:/etc/grafana/dashboards:ro
 

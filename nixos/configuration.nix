@@ -619,6 +619,28 @@ in
 
       [ -d "$work/stacks" ] || fail "repo checkout has no stacks/ directory"
 
+      # 🚨 DELIVERED FILES MUST BE WORLD-READABLE — SECRETS EXCEPTED (finding
+      # #79). The umask 077 above makes git create every checkout file
+      # 0600/0700, and rsync -p delivers those modes verbatim. That is
+      # correct for .sops.env and irrelevant for files only root reads
+      # (compose.yaml, config.alloy) — but files BIND-MOUNTED INTO a
+      # non-root container are read with the container uid, and grafana
+      # (uid 472) EACCES'd on its provisioning mounts. Grafana treats a
+      # failed datasource provision as FATAL, so delivery perms alone held
+      # it in a ~11 s crash loop (502 at Caddy) for the stack's whole
+      # lifetime. No VM suite could see it: tests materialise stacks from
+      # the store, which is world-readable.
+      #
+      # Normalise at the SOURCE, so -p then propagates exact modes and the
+      # destination never flaps: dirs 0755, files 0644 (X keeps exec bits),
+      # then re-tighten .sops.env — its content is ciphertext, 0600 is
+      # posture. The checkout itself sits in the 0700 StateDirectory, so
+      # go+r here exposes nothing host-side.
+      chmod -R u=rwX,go=rX "$work/stacks" \
+        || fail "chmod on checkout failed"
+      find "$work/stacks" -name '.sops.env' -exec chmod 0600 {} + \
+        || fail "chmod 0600 on .sops.env failed"
+
       # --checksum: unchanged .sops.env keeps its mtime, so no minutely
       # re-decrypt. 🚨 NO --delete: the decrypted .env is absent from the
       # checkout and would be nuked — and teardown is the deploy plane's job,

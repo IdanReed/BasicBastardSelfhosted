@@ -1607,6 +1607,31 @@ name intentions, digests name bits, and only the digest is a pin. When
 `image-pins` goes red with no compose change, this is what happened —
 re-run `update-images.sh` and read the diff before assuming a mistake.
 
+### 79. stack-git-sync delivered 0600 files, and Grafana dies on an unreadable provisioning mount — FIXED
+
+Live-only, invisible to every suite: `stack-git-sync` runs under `umask 077`,
+so git creates every checkout file 0600/0700, and `rsync -p` delivered those
+modes into `/srv/stacks/` verbatim. Root-read files (compose.yaml,
+config.alloy) never noticed. Grafana's provisioning binds are read
+**in-container by uid 472**, so `grafana-datasource.yaml` EACCES'd — and
+Grafana treats a failed datasource provision as *fatal* (module `provisioning`
+fails → the whole server exits). Result: a ~11 s crash loop
+(RestartCount 14,248 over ~46 h) that surfaced only as Caddy's 502, while
+`docker ps` showed a plausible-looking `Up N seconds (health: starting)`.
+
+The VM suites could not catch it: they materialise stacks from the Nix store,
+which is world-readable — the one delivery property that differed from
+production was the one that mattered. The compose header had even predicted
+the failure shape ("ordinary 0644 repo files… if provisioning ever starts
+EACCES-ing after a delivery change").
+
+Fixed in the sync unit by normalising the **checkout** (`chmod -R u=rwX,go=rX`,
+then `.sops.env` back to 0600) so `-p` propagates exact modes and the
+destination never flaps; `.sops.env` stays 0600 as posture (its content is
+ciphertext either way). Diagnostic tell for next time: `docker events` showing
+`die`/`start` pairs every few seconds while the compose file says
+`restart: unless-stopped`, and a RestartCount in the thousands.
+
 ## Status
 
 Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
