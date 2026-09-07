@@ -1293,6 +1293,28 @@ in
               errs.append(f"the {host} handle matches the token but never "
                           f"`respond`s to a mismatch — the matcher is inert")
 
+          # --- 4b: the unset-token guard, and it must come FIRST ------------
+          # `{$VLOGS_INGEST_TOKEN}` is substituted at ADAPT time, so between a
+          # push (stack-git-sync delivers the Caddyfile within the minute) and
+          # `sopsgen apply` (which is when the token first exists) the check
+          # degrades to the literal "Bearer " — an OPEN write endpoint onto
+          # the fleet's log store for anything on the tailnet. That window was
+          # real, not hypothetical: it was the live state on 2026-09-06.
+          # Same-directive `respond`s keep source order, so the guard is only
+          # a guard if it is written above the token check.
+          if 'header Authorization "Bearer "' not in body:
+              errs.append(f"the {host} handle has no unset-token guard. Add a "
+                          f'@empty_token matcher on the literal "Bearer " '
+                          f"responding 503 BEFORE the token check, or the "
+                          f"vhost is wide open in the window between a push "
+                          f"and `sopsgen apply`")
+          elif body.index('header Authorization "Bearer "') > \
+               body.index("{$VLOGS_INGEST_TOKEN}"):
+              errs.append(f"the {host} unset-token guard is written AFTER the "
+                          f"token check. Caddy keeps same-directive `respond`s "
+                          f"in source order, so it never fires and the open "
+                          f"window is back")
+
           # --- 6: never forward auth --------------------------------------
           if "import protected" in body:
               errs.append(f"the {host} handle imports `protected`. Forward "

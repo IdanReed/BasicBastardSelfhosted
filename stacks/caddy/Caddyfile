@@ -967,23 +967,54 @@
 		# Order note, MEASURED rather than reasoned (`caddy adapt` on this
 		# file, cloudflare-dns swapped for `tls internal` so a stock binary
 		# could parse it): the subroute comes out as
-		#   static_response(401) -> static_response(403) -> reverse_proxy
+		#   static_response(503) -> static_response(401)
+		#     -> static_response(403) -> reverse_proxy
 		# i.e. `respond` outranks `reverse_proxy` in caddy's directiveOrder no
-		# matter what order they are written in, and the two `respond`s keep
+		# matter what order they are written in, and the three `respond`s keep
 		# their source order. Worth checking rather than assuming — if the
 		# proxy ran first, this vhost would be an unauthenticated write
 		# endpoint onto the fleet's log store.
+		#
+		# The same adapt was run with VLOGS_INGEST_TOKEN UNSET, which is the
+		# state that exists between a push and `sopsgen apply`. Result: the
+		# 503 guard matches `Bearer ` and the 401 becomes
+		# `not header Authorization "Bearer "`, so EVERY request gets one or
+		# the other and none reach reverse_proxy. Closed, not open.
 		#
 		# ⚠ Not a constant-time comparison — caddy's header matcher is a plain
 		# string equality. Against a 256-bit random token reached only over the
 		# tailnet, a remote timing oracle is not a practical attack; it is
 		# recorded here so the tradeoff is a decision rather than an oversight.
 		#
-		# ⚠ If VLOGS_INGEST_TOKEN is unset, `{$...}` expands to empty at adapt
-		# time and this matcher degrades to "Bearer " — which would be an open
-		# endpoint. It cannot actually happen: TAILNET_IP comes from the same
-		# .env, and an empty `bind` is a caddy parse error, so a missing .env
-		# means caddy does not start at all rather than starting permissive.
+		# 🚨 FAIL-CLOSED GUARD FOR AN UNSET TOKEN. `{$VLOGS_INGEST_TOKEN}` is
+		# substituted at ADAPT time, so if the var is missing this vhost's
+		# check degrades to the literal "Bearer " and anything on the tailnet
+		# willing to send that header gets write access to the fleet's log
+		# store.
+		#
+		# An earlier version of this comment argued that could not happen,
+		# because TAILNET_IP comes from the same .env and an empty `bind` is a
+		# parse error, so a missing .env means caddy never starts. That
+		# argument only covers a WHOLLY missing .env, and the state that
+		# actually occurs is different — observed live 2026-09-06: the .env
+		# exists and is correct and only THIS key is absent, because
+		# stack-git-sync delivers the Caddyfile the minute it is pushed while
+		# the token appears only when an operator runs `sopsgen apply`.
+		# Between those two events the degenerate matcher is what a caddy
+		# restart would deploy.
+		#
+		# So reject the degenerate value explicitly, and FIRST (same-directive
+		# `respond`s keep source order). With a real token this never matches —
+		# nothing sends a bare "Bearer " as a credential — and with an unset
+		# one the endpoint is closed instead of open. 503 not 401 on purpose:
+		# this is a server misconfiguration rather than a rejected credential,
+		# and since the gatus probe expects 401 the state alerts rather than
+		# passing silently.
+		@empty_token {
+			header Authorization "Bearer "
+		}
+		respond @empty_token "ingest token not configured on this host" 503
+
 		# ⚠ BLOCK FORM, NOT THE ONE-LINE `@name not header ...` FORM, and that
 		# is a deliberate choice about blast radius rather than a style
 		# preference. This is the only site block in the fleet, so a Caddyfile

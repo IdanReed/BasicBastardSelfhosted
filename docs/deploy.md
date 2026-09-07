@@ -381,6 +381,14 @@ curl -s 'http://127.0.0.1:10456/select/logsql/query?query=_time:15m%20%7Bhost=%2
 curl -s http://127.0.0.1:12345/metrics | grep loki_source_journal_target_lines_total
 journalctl -u alloy -n 50     # a 401 here means the two token halves disagree
 ```
+Reading the ingest vhost's status code, which is the fastest triage there is:
+
+| `curl -o /dev/null -w '%{http_code}' https://vlogs-ingest.svc.idanreed.com/` | Means |
+|---|---|
+| `404` | caddy has not picked up the new Caddyfile yet — redeploy the caddy stack |
+| `503` | the Caddyfile is live but `VLOGS_INGEST_TOKEN` is empty — `sopsgen apply` was never run, and the vhost is refusing everything (fail-closed guard) |
+| `401` | healthy: route, cert and token gate all live, credential correctly refused |
+
 Then open Grafana → **Login attempts & bans (VPS)**. If every panel is empty
 but *VPS lines shipped* is non-zero, the shipping is fine and the panel queries
 need adjusting; if *VPS lines shipped* is zero, nothing else on the page means
