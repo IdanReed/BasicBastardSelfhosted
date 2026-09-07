@@ -82,6 +82,12 @@
           # No local `sudo` — the build is user-side, privilege is remote.
           "nrs-vps" = "nixos-rebuild switch --flake ${vpsDir}#headscale-vps --target-host idan@vps --use-remote-sudo";
           "nrb-vps" = "nixos-rebuild build --flake ${vpsDir}#headscale-vps";
+          # deploy [stack…] — one command from committed change to RUNNING:
+          # gate-on-uncommitted -> push forgejo -> nrs-vps if headscale-vps
+          # changed -> force stack-git-sync+decrypt -> redeploy changed stacks ->
+          # verify. Kills the "no login button / stale config / forgot to push"
+          # class of failure. See the script header. Superset of `redeploy`.
+          deploy = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/deploy";
           # Trailing `source` + `rehash` run in the invoking shell (aliases expand
           # in place), so new aliases/commands are usable without a new shell.
           hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
