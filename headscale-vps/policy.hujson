@@ -1,24 +1,18 @@
-// Headscale ACL policy.
+// Headscale ACL policy. Loaded via modules/headscale.nix settings.policy.path;
+// validate with `headscale policy check --file policy.hujson`.
 //
-// Referenced from modules/headscale.nix as settings.policy.path. Validated
-// with: headscale policy check --file policy.hujson
+// With a policy file loaded, traffic is DEFAULT-DENY. Rule 1 keeps the owner's
+// own devices fully connected, so this file is behaviour-neutral until nodes
+// are tagged, while giving guests somewhere to be constrained.
 //
-// With a policy file loaded, traffic is DEFAULT-DENY — only flows matching an
-// accept rule are permitted. Rule 1 keeps the owner's own devices fully
-// connected, so this file is behaviour-neutral today (nothing is tagged yet)
-// while giving guests somewhere to be constrained when they are added.
-//
-// Users are referenced with a trailing "@" (e.g. "idan@"). "idan@" is the REAL
-// admin: the OIDC user (idan@idanreed.com) headscale mints on the first OIDC
-// login (deploy-handbook §8). From-zero bring-up first registers servers under a
-// throwaway `bootstrap` user via preauthkey (§4); §8.1 then moves them onto
-// `idan` and retires bootstrap.
-// 🚨 NEVER name the bootstrap user `idan`: a second OIDC `idan` then collides,
-// the ambiguous `idan@` resolves to NEITHER, and every node loses tailnet access
-// (learned the hard way 2026-09-06).
+// "idan@" is the OIDC user headscale mints on first OIDC login. From-zero
+// bring-up registers servers under a throwaway `bootstrap` user first
+// (deploy-handbook §4), then moves them onto `idan` (§8.1).
+// 🚨 NEVER name the bootstrap user `idan`: a second OIDC `idan` collides, the
+// ambiguous `idan@` resolves to NEITHER, and every node loses tailnet access.
 //
 // Tags are applied at registration and cannot be added retroactively without
-// re-registering the node:
+// re-registering:
 //   tailscale up --login-server=https://headscale.idanreed.com \
 //                --advertise-tags=tag:server
 {
@@ -28,25 +22,32 @@
   },
 
   "acls": [
-    // Owner's own devices: unrestricted. This also covers subnet routes
-    // advertised by the OPNsense router. Do not remove without another
-    // administrative path onto the tailnet.
+    // Owner's own devices, including subnet routes advertised by the OPNsense
+    // router. Do not remove without another administrative path onto the
+    // tailnet.
     {
       "action": "accept",
       "src": ["idan@"],
       "dst": ["*:*"],
     },
 
-    // Servers may reach each other — metrics scraping, and the nightly pull of
-    // VPS state into the services VM's backup set.
+    // Metrics scraping, and the nightly pull of VPS state into the services
+    // VM's backup set.
     {
       "action": "accept",
       "src": ["tag:server"],
       "dst": ["tag:server:*"],
     },
 
-    // Guests reach published services over HTTPS only: no SSH, no direct
-    // container ports, and no access to the LAN behind the subnet router.
+    // Guests get published services over HTTPS only: no SSH, no direct
+    // container ports, no LAN behind the subnet router.
+    //
+    // 🚨 :443 IS CADDY, and Caddy fronts every vhost — including the ones with
+    // no forward auth and the apps whose first login claims ownership
+    // (docs/for-shame.md). A headscale ACL is layer 3; it cannot say "these
+    // vhosts only". Before the first guest node exists, the per-vhost control
+    // must land in stacks/caddy/Caddyfile (import protected, or a
+    // `not remote_ip <guest-range>` guard). See arch-security AS-5/AS-6.
     {
       "action": "accept",
       "src": ["tag:guest"],

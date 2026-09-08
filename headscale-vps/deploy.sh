@@ -3,9 +3,6 @@
 # DESTRUCTIVE: nixos-anywhere WIPES the target and installs NixOS.
 # The AGE key is injected via --extra-files so sops-nix can decrypt at boot.
 #
-# Prerequisites: Hetzner Cloud VPS (Ubuntu, your SSH key added), its public
-# IP, and the age key (workspace ../sops_age_key.txt or /var/lib/sops-nix).
-#
 # Usage: ./deploy.sh <VPS_IP>
 
 set -euo pipefail
@@ -15,21 +12,20 @@ cd "$(dirname "$0")"
 VPS_IP="${1:?Usage: $0 <VPS_IP>}"
 AGE_KEY_FILE="../sops_age_key.txt"
 EXTRA_FILES_DIR=$(mktemp -d)
-trap "rm -rf $EXTRA_FILES_DIR" EXIT
+trap 'rm -rf "$EXTRA_FILES_DIR"' EXIT
 
 echo "=== Headscale VPS Deployment ==="
 echo ""
 
-# Canonical key is root-only at /var/lib/sops-nix (sopsedit convention:
-# never in the workspace, each use costs a sudo); a workspace copy wins if
-# present. The temp copy lives OUTSIDE $EXTRA_FILES_DIR on purpose — that
-# whole directory ships to the VPS filesystem root via --extra-files.
+# Canonical key is root-only at /var/lib/sops-nix; a workspace copy wins if
+# present. The temp copy lives OUTSIDE $EXTRA_FILES_DIR on purpose — that whole
+# directory ships to the VPS filesystem root.
 if [[ ! -f "$AGE_KEY_FILE" ]] && sudo test -e /var/lib/sops-nix/sops_age_key.txt; then
     echo "> No workspace key; reading /var/lib/sops-nix (sudo)"
     AGE_KEY_TMP=$(mktemp)
-    trap "rm -rf $EXTRA_FILES_DIR; rm -f $AGE_KEY_TMP" EXIT
-    sudo cat /var/lib/sops-nix/sops_age_key.txt > "$AGE_KEY_TMP"
+    trap 'rm -rf "$EXTRA_FILES_DIR"; rm -f "$AGE_KEY_TMP"' EXIT
     chmod 600 "$AGE_KEY_TMP"
+    sudo cat /var/lib/sops-nix/sops_age_key.txt > "$AGE_KEY_TMP"
     AGE_KEY_FILE="$AGE_KEY_TMP"
 fi
 
@@ -87,9 +83,8 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
-# Pinned to a release tag: this tool runs locally with the age master key
-# staged and as root on the target — a floating ref would hand upstream's
-# default branch both. Bump deliberately.
+# Pinned: this runs locally with the age master key staged and as root on the
+# target, so a floating ref would hand upstream's default branch both.
 nix run github:nix-community/nixos-anywhere/1.13.0 -- \
     --flake ".#headscale-vps" \
     --extra-files "$EXTRA_FILES_DIR" \

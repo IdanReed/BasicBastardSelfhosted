@@ -1,14 +1,12 @@
 { config, pkgs, lib, ... }:
 
-# Authentik (OIDC provider for Headscale).
+# Authentik (OIDC provider + forward-auth outpost).
 #
-# Stays containerised — monthly release cadence + DB migrations make the
-# upstream images the right shape — but the compose file ships *in the flake*
-# and is applied by a plain systemd unit: deploys happen on `nixos-rebuild
-# switch` (no drift window, no mutable checkout), and `systemctl restart
-# authentik` re-converges. The compose file lives in /nix/store, so the
-# project name MUST be pinned with `-p`: compose would otherwise derive it
-# from the store directory name, which changes every rebuild and orphans the
+# Stays containerised, but the compose file ships *in the flake* and is applied
+# by a plain systemd unit: deploys happen on `nixos-rebuild switch`, with no
+# mutable checkout and no drift window. The compose file lives in /nix/store,
+# so the project name MUST be pinned with `-p` — compose would otherwise derive
+# it from the store directory, which changes every rebuild and orphans the
 # previous containers.
 
 let
@@ -20,8 +18,12 @@ let
   compose = "${docker} compose -f ${composeFile} -p ${projectName}";
 in
 {
-  # One EnvironmentFile: compose needs several variables at once, and
-  # sops.secrets.<name> yields one value per file — so a template.
+  # One EnvironmentFile: compose needs several variables at once and
+  # sops.secrets.<name> yields one value per file.
+  #
+  # Every name here is half of the oidc-contract: the other half is the
+  # matching worker env in authentik/compose.yaml, consumed by !Env in
+  # blueprints/custom/<app>-oidc.yaml.
   sops.templates."authentik.env" = {
     content = ''
       PG_PASS=${config.sops.placeholder.PG_PASS}
@@ -30,11 +32,6 @@ in
       IMMICH_OIDC_CLIENT_SECRET=${config.sops.placeholder.IMMICH_OIDC_CLIENT_SECRET}
       OUTLINE_OIDC_CLIENT_SECRET=${config.sops.placeholder.OUTLINE_OIDC_CLIENT_SECRET}
       KAVITA_OIDC_CLIENT_SECRET=${config.sops.placeholder.KAVITA_OIDC_CLIENT_SECRET}
-      # Fleet-wide OIDC rollout 2026-09-05: one !Env per native-OIDC app, each
-      # consumed by blueprints/custom/<app>-oidc.yaml. Twin copy in the stack's
-      # .sops.env (secrets-gen/manifest.yaml). Adding a line here is half the
-      # oidc-contract contract — the other half is the matching worker env in
-      # authentik/compose.yaml. See the sops.secrets block below for per-app notes.
       ABS_OIDC_CLIENT_SECRET=${config.sops.placeholder.ABS_OIDC_CLIENT_SECRET}
       PAPERLESS_OIDC_CLIENT_SECRET=${config.sops.placeholder.PAPERLESS_OIDC_CLIENT_SECRET}
       BOOKSTACK_OIDC_CLIENT_SECRET=${config.sops.placeholder.BOOKSTACK_OIDC_CLIENT_SECRET}
@@ -49,10 +46,6 @@ in
       WEALTHFOLIO_OIDC_CLIENT_SECRET=${config.sops.placeholder.WEALTHFOLIO_OIDC_CLIENT_SECRET}
       EXCALIDRAW_OIDC_CLIENT_SECRET=${config.sops.placeholder.EXCALIDRAW_OIDC_CLIENT_SECRET}
       FORGEJO_OIDC_CLIENT_SECRET=${config.sops.placeholder.FORGEJO_OIDC_CLIENT_SECRET}
-      # Per-user initial passwords, consumed by !Env in headscale-oidc.yaml's
-      # authentik_core.user entries (managed/re-asserted every apply). HAND-SET
-      # human-memorable values via sopsedit; copy_only twins into each user's
-      # Windmill + Samba account (secrets-gen/manifest.yaml).
       IDAN_INITIAL_PASSWORD=${config.sops.placeholder.IDAN_INITIAL_PASSWORD}
       ALONDRA_INITIAL_PASSWORD=${config.sops.placeholder.ALONDRA_INITIAL_PASSWORD}
       CALE_INITIAL_PASSWORD=${config.sops.placeholder.CALE_INITIAL_PASSWORD}
@@ -65,44 +58,24 @@ in
     '';
     mode = "0400";
 
-    # Stable template path: rotation leaves the unit byte-identical, so
-    # nothing restarts without this. The case that bites: a rotated
-    # HEADSCALE_OIDC_CLIENT_SECRET reaching the blueprint but not Headscale.
+    # Stable template path: a rotation leaves the unit byte-identical, so
+    # nothing restarts without this.
     restartUnits = [ "authentik.service" ];
   };
 
+  # Each OIDC client secret has a twin in the app's own stack .sops.env
+  # (secrets-gen/manifest.yaml draws one value into both). Rotate = both sops
+  # files + a VPS switch + re-up the stack; a mismatch 401s at token exchange,
+  # silently. Outline is the one with no local accounts, so for it a mismatch
+  # is a total lockout rather than a degraded login path.
   sops.secrets = {
     PG_PASS = { };
     AUTHENTIK_SECRET_KEY = { };
 
-    # Consumed by !Env in blueprints/custom/immich-oidc.yaml; the worker is
-    # its only VPS-side consumer. The other copy lives in
-    # stacks/immich/.sops.env (rendered into immich.json) — rotate both
-    # together: restartUnits re-applies the blueprint, the immich stack needs
-    # a re-up.
+    HEADSCALE_OIDC_CLIENT_SECRET = { };
     IMMICH_OIDC_CLIENT_SECRET = { };
-
-    # Same shape as immich's: consumed by !Env in
-    # blueprints/custom/outline-oidc.yaml, worker is the only VPS-side
-    # consumer, twin copy in stacks/outline/.sops.env as OIDC_CLIENT_SECRET.
-    # Outline has NO local accounts — a mismatched pair is a total login
-    # lockout, silent until token exchange.
     OUTLINE_OIDC_CLIENT_SECRET = { };
-
-    # Same shape: consumed by !Env in blueprints/custom/kavita-oidc.yaml,
-    # twin copy in stacks/books/.sops.env as KAVITA_OIDC_CLIENT_SECRET
-    # (rendered into Kavita's appsettings.json). Kavita keeps local
-    # accounts, so a mismatch only breaks the OIDC login path, not access.
     KAVITA_OIDC_CLIENT_SECRET = { };
-
-    # Fleet-wide OIDC rollout 2026-09-05. Each is consumed by !Env in the
-    # matching blueprints/custom/<app>-oidc.yaml, its only VPS-side consumer;
-    # the twin copy lives in the stack's .sops.env (secrets-gen/manifest.yaml,
-    # gen+twin xhost) and is what the app itself reads. All keep local/app
-    # accounts alongside OIDC (additive), so a mismatched pair breaks only the
-    # OIDC login path, not access — except Outline (already wired) which has no
-    # local accounts. sops-declared (a deploy-check lint, not structural) stays
-    # red until sops-gen lands the real values in secrets.sops.yaml.
     ABS_OIDC_CLIENT_SECRET = { };
     PAPERLESS_OIDC_CLIENT_SECRET = { };
     BOOKSTACK_OIDC_CLIENT_SECRET = { };
@@ -116,13 +89,11 @@ in
     ACTUAL_OPENID_CLIENT_SECRET = { };
     WEALTHFOLIO_OIDC_CLIENT_SECRET = { };
     EXCALIDRAW_OIDC_CLIENT_SECRET = { };
-    # Forgejo (stacks/forgejo): twin copy in stacks/forgejo/.sops.env, read by
-    # forgejo-init to seed the DB auth source. Rotate = both files + this rebuild.
     FORGEJO_OIDC_CLIENT_SECRET = { };
 
-    # Per-user initial passwords (idan + the 5 friends), consumed by !Env in
-    # headscale-oidc.yaml. Hand-set human-memorable values; copy_only twins to
-    # Windmill + Samba. sops-declared (deploy-check) stays red until set.
+    # Per-user login passwords, re-asserted by headscale-oidc.yaml on every
+    # apply. Hand-set human-memorable values; copy_only twins to Windmill +
+    # Samba.
     IDAN_INITIAL_PASSWORD = { };
     ALONDRA_INITIAL_PASSWORD = { };
     CALE_INITIAL_PASSWORD = { };
@@ -131,10 +102,9 @@ in
     CAMERON_INITIAL_PASSWORD = { };
     JUSTIN_INITIAL_PASSWORD = { };
 
-    # Without these the blueprint creates user `idan` with no credential, and
-    # with no SMTP configured there is no password-reset path either — nobody
-    # could log in at all. The worker consumes them on first start to create
-    # the `akadmin` superuser and an API token.
+    # Without these nobody can log in at all: the blueprint's users have no
+    # credential and no SMTP is configured for a reset link. The worker
+    # consumes them on first start to create the `akadmin` superuser.
     AUTHENTIK_BOOTSTRAP_PASSWORD = { };
     AUTHENTIK_BOOTSTRAP_TOKEN = { };
   };
@@ -146,23 +116,14 @@ in
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
 
-    # This unit IS authentik's deploy plane: `up -d --wait` failing means the
-    # identity provider is down or mid-migration — "login is broken" — while
-    # headscale stays happily up (only_start_if_oidc_is_available false), so
-    # nothing else turns red. Fires only once the restart limit is exhausted:
-    # intended — a transient the next retry fixes is not phone-worthy.
+    # This unit IS authentik's deploy plane, and headscale stays up regardless
+    # (only_start_if_oidc_is_available false), so nothing else turns red when
+    # login breaks.
     onFailure = [ "notify-failure@%n.service" ];
 
-    # Without these OnFailure would NEVER fire: `failed` is only entered when
-    # the start-rate limit is exceeded, and the default 5 starts / 10 SECONDS
-    # is unreachable with RestartSec=30s — forever "activating". A general
-    # trap for every Restart=on-failure + slow-RestartSec unit in the fleet.
-    #
-    # 5 attempts / 4h: worst case 5 × (10min TimeoutStartSec + 30s) ≈ 52min,
-    # comfortably inside 4h, so the limit is genuinely reached. Generous on
-    # purpose — a converge needing three tries on a slow boot must not become
-    # a phone alert, and the containers carry `restart: unless-stopped`
-    # underneath. Eventually giving up is the point.
+    # OnFailure only fires once the start limit is exhausted, which the default
+    # 5 starts / 10 SECONDS never reaches at RestartSec=30s. 5 × (10min + 30s)
+    # ≈ 52min, comfortably inside 4h.
     startLimitIntervalSec = 14400;
     startLimitBurst = 5;
 
@@ -173,14 +134,14 @@ in
       RemainAfterExit = true;
       EnvironmentFile = config.sops.templates."authentik.env".path;
 
-      # Pull is best-effort: a registry outage must not tear down a working
-      # deployment or block boot.
+      # Best effort: a registry outage must not tear down a working deployment
+      # or block boot.
       ExecStartPre = "-${compose} pull --quiet";
       ExecStart = "${compose} up -d --remove-orphans --wait";
       ExecStop = "${compose} down";
 
-      # `up -d --wait` blocks until healthchecks pass; postgres has a 20s
-      # start_period, so allow room without hanging a rebuild indefinitely.
+      # `up -d --wait` blocks until healthchecks pass; postgres alone has a 20s
+      # start_period.
       TimeoutStartSec = "10min";
 
       Restart = "on-failure";

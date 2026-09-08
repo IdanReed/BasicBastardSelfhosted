@@ -1,18 +1,8 @@
-# OIDC provider + application for Immich (stacks/immich on the services VM).
-# Design: ServerNotes/designs/service-immich-stack-research.md §3 — which
-# corrects core-oidc.md: NO custom email_verified scopemapping (Immich v3
-# requires only a non-empty `email` claim; the standard email scope covers
-# it), and the standard three scope mappings, exactly like headscale-oidc.
-#
-# NOTE the .yaml extension is load-bearing: authentik's blueprint discovery
-# globs **/*.yaml only (finding #7 — as a .yml this would be mounted, visible,
-# and silently never discovered). No comment-only `attrs:` keys anywhere
-# (finding #9 — a key whose body is only comments parses as null and the
-# importer's .items() call kills the ENTIRE blueprint apply).
-#
-# This is an OIDC (native) provider: Immich drives the browser/mobile flow
-# itself, so there is NO outpost entry here and forward-auth.yaml is
-# untouched — outposts are for proxy providers only.
+# OIDC provider + application for Immich (slug "immich"). Native
+# OIDC, so no forward-auth entry and no `import protected` on its Caddy
+# route. client_secret travels sops -> modules/authentik.nix template ->
+# worker env -> !Env below, twinned into the stack's own .sops.env; the
+# shared blueprint conventions are documented in headscale-oidc.yaml.
 version: 1
 metadata:
   name: immich-oidc
@@ -20,9 +10,6 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
-  # ===========================================
-  # OIDC Provider for Immich
-  # ===========================================
   - model: authentik_providers_oauth2.oauth2provider
     id: immich-provider
     state: present
@@ -32,31 +19,16 @@ entries:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
-      # grant_types is REQUIRED on this authentik version: authorize.py checks
-      # `grant_type not in provider.grant_types` and rejects the whole flow if
-      # empty (invalid_request, every login broke — hit live 2026-09-03). The
-      # field postdates the original blueprints, which defaulted it to [].
       grant_types:
         - authorization_code
         - refresh_token
       client_id: immich
-      # !Env reads from the worker's environment, which systemd populates from
-      # the sops-nix-rendered EnvironmentFile (modules/authentik.nix). Plain
-      # "${VAR}" is NOT interpolated by authentik — it would be stored as a
-      # literal string. The SAME value must sit in stacks/immich/.sops.env as
-      # IMMICH_OIDC_CLIENT_SECRET, where immich-config-init renders it into
-      # immich.json — the three-way rotation coupling documented in the annex.
       client_secret: !Env IMMICH_OIDC_CLIENT_SECRET
       redirect_uris:
-        # Web login + the user-settings "link account" flow. Strict matching:
-        # a drifted externalDomain fails at login, not with a warning — the
-        # oidc-contract lint ties these to immich.json.template.
         - url: "https://immich.svc.idanreed.com/auth/login"
           matching_mode: strict
         - url: "https://immich.svc.idanreed.com/user-settings"
           matching_mode: strict
-        # Mobile app custom scheme — Authentik accepts it directly, so the
-        # /api/oauth/mobile-redirect indirection is not needed (annex §3).
         - url: "app.immich:///oauth-callback"
           matching_mode: strict
       property_mappings:
@@ -65,9 +37,6 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
 
-  # ===========================================
-  # Application (ties provider to UI)
-  # ===========================================
   - model: authentik_core.application
     id: immich-app
     state: present

@@ -1,7 +1,7 @@
 # Authentik — ships in the flake, applied by modules/authentik.nix on
-# `nixos-rebuild switch` (no git-sync). Secrets come from the sops-nix
-# rendered EnvironmentFile; there is no .env on disk. /srv/authentik paths
-# are created by systemd.tmpfiles; ./blueprints is read-only from the store.
+# `nixos-rebuild switch` (no git-sync). Secrets come from the sops-nix rendered
+# EnvironmentFile; there is no .env on disk. /srv/authentik paths are created
+# by systemd.tmpfiles; ./blueprints is read-only from the store.
 
 services:
   postgresql:
@@ -40,13 +40,11 @@ services:
     container_name: authentik_server
     restart: unless-stopped
     command: server
-    # WHY journald: the fail2ban 'authentik' jail (../configuration.nix)
+    # journald, because the fail2ban 'authentik' jail (../configuration.nix)
     # reads login_failed events off the journal by CONTAINER_TAG — with
     # json-file the systemd backend sees nothing and the jail silently never
-    # bans. login_failed is emitted by the SERVER container, not the worker
-    # (verified empirically against the pinned 2026.5.6 image; worker emitted
-    # zero). Tag must stay 'authentik-server': the jail's journalmatch pins
-    # it (fail2ban-journal-contract lint).
+    # bans. login_failed comes from the SERVER container, not the worker. The
+    # tag is pinned by the fail2ban-journal-contract lint.
     logging:
       driver: journald
       options:
@@ -58,9 +56,8 @@ services:
       AUTHENTIK_POSTGRESQL__NAME: authentik
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
-      # Required for forward auth: without it the session cookie is host-only
-      # and browsers will redirect-loop between auth.idanreed.com and each
-      # protected service on a different subdomain.
+      # Required for forward auth: host-only cookies redirect-loop between
+      # auth.idanreed.com and each protected service on another subdomain.
       AUTHENTIK_COOKIE_DOMAIN: idanreed.com
     volumes:
       - /srv/authentik/media:/media
@@ -70,8 +67,8 @@ services:
     # 9443 (self-signed) is not published at all.
     ports:
       - "127.0.0.1:9000:9000"
-    # Without this, `up -d --wait` returns when the container is *running*,
-    # not when Authentik answers — a deploy mid-migration reports success.
+    # Without this, `up -d --wait` returns when the container is *running*, not
+    # when Authentik answers — a deploy mid-migration reports success.
     healthcheck:
       test: ["CMD", "ak", "healthcheck"]
       start_period: 60s
@@ -89,6 +86,11 @@ services:
     container_name: authentik_worker
     restart: unless-stopped
     command: worker
+    # One OIDC client-secret passthrough per native-OIDC app, consumed by !Env
+    # in blueprints/custom/<app>-oidc.yaml. The :?-guard aborts
+    # authentik.service at boot if the sops template did not render the var;
+    # the silent half — an unset var storing an empty secret, so every token
+    # exchange 401s — is what the oidc-contract lint guards.
     environment:
       AUTHENTIK_REDIS__HOST: redis
       AUTHENTIK_POSTGRESQL__HOST: postgresql
@@ -97,24 +99,10 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASS:?database password required}
       AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?secret key required}
       AUTHENTIK_COOKIE_DOMAIN: idanreed.com
-      # Consumed by the headscale-oidc blueprint via its !Env tag.
       HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET:?oidc client secret required}
-      # Consumed by the immich-oidc blueprint via its !Env tag; the stack-side
-      # copy is stacks/immich/.sops.env (rendered into immich.json).
       IMMICH_OIDC_CLIENT_SECRET: ${IMMICH_OIDC_CLIENT_SECRET:?immich oidc client secret required}
-      # Consumed by the outline-oidc blueprint via its !Env tag; the stack-side
-      # copy is stacks/outline/.sops.env (OIDC_CLIENT_SECRET).
       OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}
-      # Consumed by the kavita-oidc blueprint via its !Env tag; the
-      # stack-side copy is stacks/books/.sops.env (KAVITA_OIDC_CLIENT_SECRET,
-      # rendered into Kavita's appsettings.json).
       KAVITA_OIDC_CLIENT_SECRET: ${KAVITA_OIDC_CLIENT_SECRET:?kavita oidc client secret required}
-      # Fleet-wide OIDC rollout 2026-09-05: one passthrough per native-OIDC app,
-      # consumed by the matching blueprints/custom/<app>-oidc.yaml via !Env. The
-      # :?-guard aborts authentik.service at boot if the sops template did not
-      # render the var — the loud half of the oidc-contract; the silent half (an
-      # unset var → empty stored secret → token-exchange 401) is what the lint
-      # guards against. Rendered from modules/authentik.nix's sops template.
       ABS_OIDC_CLIENT_SECRET: ${ABS_OIDC_CLIENT_SECRET:?audiobookshelf oidc client secret required}
       PAPERLESS_OIDC_CLIENT_SECRET: ${PAPERLESS_OIDC_CLIENT_SECRET:?paperless oidc client secret required}
       BOOKSTACK_OIDC_CLIENT_SECRET: ${BOOKSTACK_OIDC_CLIENT_SECRET:?bookstack oidc client secret required}
@@ -129,9 +117,7 @@ services:
       WEALTHFOLIO_OIDC_CLIENT_SECRET: ${WEALTHFOLIO_OIDC_CLIENT_SECRET:?wealthfolio oidc client secret required}
       EXCALIDRAW_OIDC_CLIENT_SECRET: ${EXCALIDRAW_OIDC_CLIENT_SECRET:?excalidraw oidc client secret required}
       FORGEJO_OIDC_CLIENT_SECRET: ${FORGEJO_OIDC_CLIENT_SECRET:?forgejo oidc client secret required}
-      # Per-user initial passwords consumed by !Env in headscale-oidc.yaml's
-      # authentik_core.user entries. Rendered from the sops template
-      # (modules/authentik.nix); hand-set human-memorable values via sopsedit.
+      # Per-user login passwords, consumed by !Env in headscale-oidc.yaml.
       IDAN_INITIAL_PASSWORD: ${IDAN_INITIAL_PASSWORD:?idan initial password required}
       ALONDRA_INITIAL_PASSWORD: ${ALONDRA_INITIAL_PASSWORD:?alondra initial password required}
       CALE_INITIAL_PASSWORD: ${CALE_INITIAL_PASSWORD:?cale initial password required}
@@ -139,9 +125,9 @@ services:
       RYLAN_INITIAL_PASSWORD: ${RYLAN_INITIAL_PASSWORD:?rylan initial password required}
       CAMERON_INITIAL_PASSWORD: ${CAMERON_INITIAL_PASSWORD:?cameron initial password required}
       JUSTIN_INITIAL_PASSWORD: ${JUSTIN_INITIAL_PASSWORD:?justin initial password required}
-      # First-start bootstrap of the `akadmin` superuser. Without these there is
-      # no way to log in at all: the blueprint's `idan` user has no credential
-      # and no SMTP is configured for a reset link. Ignored on later starts.
+      # First-start bootstrap of the `akadmin` superuser; ignored on later
+      # starts. Without it there is no way in at all — blueprint users have no
+      # credential and no SMTP is configured for a reset link.
       AUTHENTIK_BOOTSTRAP_EMAIL: admin@idanreed.com
       AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:?bootstrap password required}
       AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:?bootstrap token required}

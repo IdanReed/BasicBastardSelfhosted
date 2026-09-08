@@ -1,7 +1,19 @@
-# NOTE the .yaml extension is load-bearing: authentik's blueprint discovery
-# globs **/*.yaml only. As headscale-oidc.yml this file was mounted, visible,
-# and silently never discovered — no provider, no application, no users, no
-# error anywhere. Caught by tests/suites/authentik.nix.
+# OIDC provider + application for Headscale, plus the fleet's users and MFA.
+#
+# Conventions shared by every blueprint in this directory:
+#   - The .yaml extension is load-bearing: discovery globs **/*.yaml only, so a
+#     .yml file mounts, is visible, and silently never applies.
+#   - No comment-only `attrs:` keys: a key whose body is only comments parses
+#     as null and the importer's .items() kills the ENTIRE apply, retried
+#     forever, with the error only in worker logs.
+#   - `!Env NAME` reads the worker environment (authentik/compose.yaml, fed by
+#     the sops template in modules/authentik.nix). Plain "${VAR}" is stored as
+#     a literal. An unset name stores an EMPTY secret and every token exchange
+#     401s at login time, silently — the oidc-contract lint guards it.
+#   - grant_types is REQUIRED on this authentik version: authorize.py rejects
+#     the whole flow when it is empty.
+#   - redirect_uris use strict matching, so a drifted URL fails at login rather
+#     than warning.
 version: 1
 metadata:
   name: headscale-oidc
@@ -9,24 +21,19 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
-  # ===========================================
-  # Group for Headscale users
-  # ===========================================
-  # Membership granted in the users section below.
-  #
-  # NO `attrs:` key here on purpose: a key whose body is only comments parses
-  # as null, and the importer's .items() on it kills the ENTIRE blueprint
-  # apply, retried forever, error only in worker logs. Caught by
-  # tests/suites/authentik.nix.
   - model: authentik_core.group
     id: headscale-users-group
     state: present
     identifiers:
       name: headscale-users
 
-  # ===========================================
-  # OIDC Provider for Headscale
-  # ===========================================
+  # BookStack admin via group sync (stacks/tracking: OIDC_USER_TO_GROUPS).
+  - model: authentik_core.group
+    id: group-admin
+    state: present
+    identifiers:
+      name: Admin
+
   - model: authentik_providers_oauth2.oauth2provider
     id: headscale-provider
     state: present
@@ -36,17 +43,10 @@ entries:
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       client_type: confidential
-      # grant_types is REQUIRED on this authentik version: authorize.py checks
-      # `grant_type not in provider.grant_types` and rejects the whole flow if
-      # empty (invalid_request, every login broke — hit live 2026-09-03). The
-      # field postdates the original blueprints, which defaulted it to [].
       grant_types:
         - authorization_code
         - refresh_token
       client_id: headscale
-      # !Env reads from the worker's environment, which systemd populates from
-      # the sops-nix-rendered EnvironmentFile. Plain "${VAR}" is NOT
-      # interpolated by authentik — it would be stored as a literal string.
       # Must match services.headscale.settings.oidc.client_secret_path.
       client_secret: !Env HEADSCALE_OIDC_CLIENT_SECRET
       redirect_uris:
@@ -57,13 +57,9 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
-      # Token validity
       access_token_validity: hours=1
       refresh_token_validity: days=30
 
-  # ===========================================
-  # Application (ties provider to UI)
-  # ===========================================
   - model: authentik_core.application
     id: headscale-app
     state: present
@@ -76,19 +72,12 @@ entries:
       meta_icon: https://raw.githubusercontent.com/juanfont/headscale/main/docs/logo/headscale3_header_stacked_left.png
       meta_description: "Tailscale-compatible VPN coordination server"
 
-  # ===========================================
-  # MFA (TOTP enforcement)
-  # ===========================================
-  # Overrides the built-in MFA stage in place: a free-standing
-  # authenticatorvalidatestage does nothing (stages only run when bound), and
-  # a new stage + binding would collide with the built-in one at order 30 of
-  # default-authentication-flow and prompt twice.
-  #
-  # not_configured_action: skip | deny | configure — no "force" exists;
-  # `configure` is the enforcing option (pushes users with no authenticator
-  # through configuration_stages).
-
-  # Enrollment stage for users with no TOTP device.
+  # MFA
+  # The built-in stage is overridden in place: a free-standing
+  # authenticatorvalidatestage never runs (stages only run when bound), and a
+  # new stage + binding would collide with the built-in one at order 30 and
+  # prompt twice. not_configured_action is skip | deny | configure — there is
+  # no "force"; `configure` is the enforcing option.
   - model: authentik_stages_authenticator_totp.authenticatortotpstage
     id: totp-setup-stage
     state: present
@@ -98,8 +87,6 @@ entries:
       friendly_name: "Authenticator App Setup"
       digits: 6
 
-  # Built-in stage ships not_configured_action: skip (2FA optional); this
-  # makes it mandatory.
   - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
     id: mfa-validation-stage
     state: present
@@ -114,20 +101,15 @@ entries:
       configuration_stages:
         - !KeyOf totp-setup-stage
 
-  # ===========================================
   # Users
-  # Add new users here and push to git
-  # ===========================================
-  # 🚨 PASSWORD IS DECLARATIVELY MANAGED. `password: !Env <USER>_INITIAL_PASSWORD`
-  # is RE-ASSERTED on every blueprint apply (worker restart / nrs-vps), so a
-  # user's own password change reverts on the next deploy — the password IS the
-  # sops value (option (a) "managed"). Values are HAND-SET (human-memorable),
-  # not sops-gen'd: `sopsedit headscale-vps/secrets.sops.yaml` to set each
-  # <USER>_INITIAL_PASSWORD, then `sopsgen apply` copies it to the same user's
-  # Windmill + Samba accounts (copy_only twin, secrets-gen/manifest.yaml). The
-  # SAME value is that user's login for every tier-1 app + Windmill + Samba.
-  # All users sit in headscale-users → tailnet access + (policy_engine_mode:any)
-  # every service; per-user apps self-isolate, shared apps (HA/Frigate) are shared.
+  # 🚨 PASSWORDS ARE DECLARATIVELY MANAGED: `password: !Env <USER>_INITIAL_PASSWORD`
+  # is re-asserted on every apply, so a user's own password change reverts on
+  # the next deploy — the password IS the sops value. Hand-set human-memorable
+  # values with `sopsedit headscale-vps/secrets.sops.yaml`, then `sopsgen apply`
+  # copies each into that user's Windmill + Samba accounts.
+  #
+  # All users sit in headscale-users, which with policy_engine_mode: any means
+  # tailnet access plus every service; per-user apps self-isolate.
   - model: authentik_core.user
     id: user-idan
     state: present
@@ -141,6 +123,7 @@ entries:
       password: !Env IDAN_INITIAL_PASSWORD
       groups:
         - !Find [authentik_core.group, [name, headscale-users]]
+        - !Find [authentik_core.group, [name, Admin]]
 
   - model: authentik_core.user
     id: user-alondra

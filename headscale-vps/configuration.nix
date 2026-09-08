@@ -1,142 +1,118 @@
 { config, pkgs, lib, modulesPath, ... }:
 
 let
-  # Byte-identical copy of nixos-de/ssh-pubkeys.nix (canonical) — see its
-  # header; the ssh-pubkey-parity lint fails on drift.
+  # Byte-identical copy of nixos-de/ssh-pubkeys.nix; ssh-pubkey-parity lints it.
   sshPubkeys = import ./ssh-pubkeys.nix;
 in
 {
-  # Hetzner Cloud is KVM: stage 1 must have the virtio drivers or boot dies
-  # waiting for /dev/disk/by-partlabel/disk-main-root (hit live 2026-09-03).
-  # The VM suites cannot catch a missing-initrd-module bug — the test driver
-  # injects its own qemu-vm profile — so this import is load-bearing.
+  # Hetzner Cloud is KVM: without virtio in stage 1 the boot hangs waiting for
+  # the root partlabel. The VM suites cannot catch this — the test driver
+  # injects its own qemu-vm profile.
   imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
 
-  # System identity
+  # Identity
   networking.hostName = "headscale-vps";
   system.stateVersion = "25.11";
   time.timeZone = "UTC";
 
-  # Hetzner legacy MBR boot. Install device deliberately NOT set: disko
-  # derives boot.loader.grub.devices from disk-config.nix's EF02 partition;
-  # setting it too trips the "duplicated devices in mirroredBoots" assertion.
+  # Boot
+  # No grub.devices: disko derives them from disk-config.nix's EF02 partition,
+  # and setting both trips the mirroredBoots assertion.
   boot.loader.grub.enable = true;
 
-  # Networking (Hetzner DHCP)
+  # Networking
   networking = {
     useDHCP = true;
     interfaces.eth0.useDHCP = true;
 
+    # Caddy is the only public listener; headscale (:8080) and Authentik
+    # (:9000) are loopback-only behind it.
     firewall = {
       enable = true;
-      # Caddy is the only public listener (modules/caddy.nix); headscale
-      # (loopback:8080) and Authentik (loopback:9000) sit behind it. Do not
-      # reopen 9000/9443 — that exposed Authentik's admin over plain HTTP.
       allowedTCPPorts = [
-        22    # SSH
-        80    # Caddy - ACME HTTP-01 challenge + redirect to HTTPS
-        443   # Caddy - Headscale API, embedded DERP, Authentik
+        22 # SSH
+        80 # Caddy — ACME HTTP-01 + redirect to HTTPS
+        443 # Caddy — headscale API, embedded DERP, Authentik
       ];
       allowedUDPPorts = [
-        3478  # STUN (DERP/NAT traversal)
+        3478 # STUN (DERP/NAT traversal)
       ];
       trustedInterfaces = [ "tailscale0" ];
     };
   };
 
-  # User configuration
+  # Users
   users.users.idan = {
     isNormalUser = true;
     extraGroups = [ "wheel" "docker" ];
     shell = pkgs.bash;
-    # vps (desktop) + backup-vps (services VM's nightly state pull via
-    # backup-prepare.sh). Null-filtering: an ungenerated keypair grants no
-    # access rather than failing eval (parity lint WARNs). The test suites'
-    # login key merges in via profiles.testSshAccess, so an empty filtered
-    # list cannot break them.
+    # null = keypair not generated yet; filtered so it grants no access rather
+    # than failing eval.
     openssh.authorizedKeys.keys = lib.filter (k: k != null) [
       sshPubkeys.vps
-      sshPubkeys.backup-vps
+      # `restrict` = no pty, no port/agent/X11 forwarding, no user rc. The
+      # backup pull is `ssh <host> 'sudo …'` plus rsync --rsync-path, none of
+      # which needs any of them; a stolen key then cannot be used as a tunnel
+      # or an interactive shell. Still root via passwordless sudo below — see
+      # arch-security AS-3 for the forced-command version.
+      (lib.mapNullable (k: "restrict ${k}") sshPubkeys.backup-vps)
     ];
   };
 
-  # Deliberate trade (security review 2026-08-30): passwordless wheel is what
-  # lets `nixos-rebuild switch --target-host --use-remote-sudo` and the backup
-  # pull's `sudo docker` run non-interactively — compromise of an authorized
-  # SSH key IS instant root. Mitigations are upstream of sudo: key-only auth,
-  # KbdInteractive off, fail2ban, sops-encrypted keys.
+  # Passwordless wheel is what makes `nixos-rebuild --use-remote-sudo` and the
+  # backup pull's `sudo docker` non-interactive; an authorized key IS root.
   security.sudo.wheelNeedsPassword = false;
 
-  # nixos-rebuild --target-host pushes locally-built (unsigned) store paths;
-  # the daemon accepts those only from a trusted user (hit live 2026-09-03:
-  # "lacks a signature by a trusted key"). Wheel is already root-equivalent
-  # here (passwordless sudo above), so this widens nothing.
+  # --target-host pushes unsigned store paths, which the daemon accepts only
+  # from a trusted user.
   nix.settings.trusted-users = [ "root" "@wheel" ];
 
-  # SSH server
+  # SSH
   services.openssh = {
     enable = true;
     settings = {
       PermitRootLogin = "no";
       PasswordAuthentication = false;
-      # Explicit, not defaulted (security review 2026-08-30 item 4): OpenSSH
-      # defaults yes, and with UsePAM yes (NixOS default) that opens a PAM
-      # password path PasswordAuthentication=false does not close. The vps
-      # suite forces the method on and asserts refusal.
+      # Explicit: with UsePAM yes, PasswordAuthentication=false still leaves a
+      # PAM password path open.
       KbdInteractiveAuthentication = false;
     };
   };
 
-  # Docker for Authentik only. Headscale runs as a native systemd service
-  # (modules/headscale.nix) so that the tailnet does not depend on the
-  # container runtime being healthy.
+  # Docker
+  # Authentik only. Headscale is a native service so the tailnet does not
+  # depend on the container runtime.
   virtualisation.docker = {
     enable = true;
-    # 25.11's default `docker` is 28.x, marked insecure by nixpkgs
-    # ("unmaintained since November 2025").
+    # 25.11's default docker 28.x is marked insecure by nixpkgs.
     package = pkgs.docker_29;
     autoPrune = {
       enable = true;
       dates = "weekly";
     };
-
-    # journald driver (NixOS logDriver default) owns rotation; json-file opts
-    # here are FATAL to dockerd ("unknown log opt 'max-file'").
+    # Log driver stays at the NixOS default (journald) — json-file log opts
+    # here are fatal to dockerd.
   };
 
-  # ---------------------------------------------------------------------------
-  # journald
-  # ---------------------------------------------------------------------------
-  # 🚨 rateLimitBurst = 0 IS BAN EVIDENCE. The fail2ban authentik jail is
-  # backend=systemd; journald rate-limits PER SENDING UNIT, and docker's
-  # journald driver submits every container line from dockerd, so authentik
-  # shares ONE bucket with everything else the driver carries. At the default
-  # (10000 messages / 30s) a request flood — authentik logs ≥1 info line per
-  # request, so ~333 rps suffices — drowns interleaved login_failed lines
-  # before fail2ban sees them. Measured at the default burst: 20006 of 30000
-  # lines gone, with no "Suppressed N messages" note. 0 disables rate
-  # limiting entirely (journald.conf(5)).
+  # Journald
+  # rateLimitBurst = 0 is ban evidence: journald rate-limits per sending unit
+  # and dockerd submits every container line, so at the default a request
+  # flood drops the authentik jail's login_failed lines silently. The byte
+  # caps below are then the only bound left.
   services.journald = {
     rateLimitBurst = 0;
-
-    # Explicit: with the rate limit off, the byte cap is the only bound left;
-    # a silent upstream default change would remove it.
     storage = "persistent";
-
     extraConfig = ''
-      # The trade rateLimitBurst=0 buys: a flood rotates history faster
-      # instead of dropping lines silently. Single-partition host (one ext4
-      # root), so these caps protect the control plane's own filesystem.
       SystemMaxUse=512M
       SystemKeepFree=2G
       SystemMaxFileSize=64M
     '';
   };
 
-  # Tailscale (joins its own network)
+  # Tailscale
   services.tailscale.enable = true;
 
-  # System packages
+  # Packages
   environment.systemPackages = with pkgs; [
     git
     vim
@@ -146,16 +122,14 @@ in
     dig
     sops
     age
-    # backup-prepare.sh (services VM) snapshots headscale's live WAL db over
-    # ssh with `sqlite3 .backup` — a raw rsync of a live WAL db can tear.
+    # backup-prepare.sh (services VM) snapshots headscale's live WAL db with
+    # `sqlite3 .backup`; a raw rsync of it can tear.
     sqlite
   ];
 
-  # SOPS: YAML, not dotenv — sops-install-secrets applies the per-secret key
-  # only for yaml/json; with dotenv it silently copies the WHOLE decrypted
-  # file into every /run/secrets/<name>. Shipped once (headscale got a
-  # multi-line doc as its OIDC secret); the sops-dotenv-extraction lint
-  # guards the format.
+  # Secrets
+  # yaml, not dotenv: sops-install-secrets applies the per-secret key only for
+  # yaml/json — with dotenv every /run/secrets/<name> gets the whole file.
   sops = {
     defaultSopsFile = ./secrets.sops.yaml;
     defaultSopsFormat = "yaml";
@@ -166,25 +140,12 @@ in
     };
   };
 
-  # ---------------------------------------------------------------------------
   # Failure notification
-  # ---------------------------------------------------------------------------
-  # OnFailure= template for the units whose silent failure matters:
-  # headscale, caddy, authentik, tailscale-autoconnect.
-  #
-  # 🚨 Delivery is BEST EFFORT AND PARTLY SELF-REFERENTIAL: ntfy runs on the
-  # services VM behind its tailnet-only Caddy (ntfy.svc.idanreed.com resolves
-  # publicly but routes only inside the tailnet; no public fallback), so an
-  # alert about headscale travels over the very tailnet whose control plane
-  # just failed. Established WireGuard sessions usually survive (headscale is
-  # control plane, not data plane) — but a VPS fully off the tailnet CANNOT
-  # report. The out-of-band backstop is stacks/gatus/gatus.yaml probing both
-  # public names from the services VM over the PUBLIC internet; that is what
-  # actually catches "the VPS is gone".
-  #
-  # The body is echoed to the journal before the publish (local record even
-  # when undelivered), and the unit never fails itself — a failing notifier
-  # is just more failed units and no notification.
+  # Best effort: ntfy lives on the services VM behind its tailnet-only Caddy,
+  # so a VPS fully off the tailnet cannot report. The out-of-band backstop is
+  # the Gatus probe pair over the public internet (stacks/gatus/gatus.yaml).
+  # The body is echoed to the journal first, and the notifier never fails
+  # itself.
   systemd.services."notify-failure@" = {
     description = "Notify Ntfy that %i failed";
     serviceConfig.Type = "oneshot";
@@ -205,51 +166,35 @@ in
     '';
   };
 
-  # Tailscale auto-login.
-  #
-  # --login-server is REQUIRED: without it `tailscale up --authkey` registers
-  # against Tailscale's SaaS, where a Headscale-issued preauth key is not
-  # valid — the node silently fails to join the tailnet this host serves.
-  # This host joins its own Headscale, so it waits for the full public path
-  # (headscale on loopback + Caddy holding a valid cert). NOT boot-only —
-  # see the timer below.
+  # Tailscale autoconnect
+  # --login-server is required: without it `tailscale up --authkey` registers
+  # against Tailscale's SaaS, where a headscale preauth key is not valid. This
+  # host joins its own headscale, so it waits for the full public path.
   systemd.services.tailscale-autoconnect = {
     description = "Automatic connection to Headscale";
-    # tailscaleD, with the d: there is no tailscale.service, and systemd
-    # silently ignores ordering on a unit that does not exist — the settle
-    # loop below is the belt to this braces. (Twin unit in
-    # nixos/configuration.nix.)
+    # tailscaleD, with the d — there is no tailscale.service, and systemd
+    # silently ignores ordering against a unit that does not exist.
     after = [ "network-online.target" "tailscaled.service" "headscale.service" "caddy.service" ];
     wants = [ "network-online.target" "tailscaled.service" ];
     wantedBy = [ "multi-user.target" ];
 
     onFailure = [ "notify-failure@%n.service" ];
 
-    # Without these OnFailure could never fire: `failed` is only reached when
-    # the start-rate limit is exceeded, and the default (5 starts / 10
-    # SECONDS) is unreachable with RestartSec=30s — forever "activating",
-    # never failed, notifier never runs. The numbers are sized against each
-    # other and the timer: the script's bounded waits are 60s + 300s, so
-    # TimeoutStartSec 8min never cuts a legitimate attempt short; 3 attempts
-    # span ~26min < the 30min window, so the limit IS genuinely reached; and
-    # 30min < the timer's 1h gap, so a timed run is never refused with "start
-    # request repeated too quickly". Giving up is not permanent: the timer
-    # restarts it hourly.
+    # OnFailure only fires once a unit reaches `failed`, which only happens
+    # when the start limit is exceeded — unreachable at the default 5/10s with
+    # RestartSec=30s. 3 attempts span ~26min < 30min, and 30min < the timer's
+    # 1h gap, so a timed run is never refused as "repeated too quickly".
     startLimitIntervalSec = 1800;
     startLimitBurst = 3;
 
     serviceConfig = {
       Type = "oneshot";
       TimeoutStartSec = "8min";
-
-      # Deliberately FALSE: with true the unit stays `active` forever and
-      # OnUnitInactiveSec never fires (OnUnitActiveSec is no fix — `start` on
-      # an active RemainAfterExit oneshot is a no-op). Nothing orders itself
-      # after this unit, so the latched state costs nothing to lose.
+      # False so the timer's OnUnitInactiveSec fires — an active
+      # RemainAfterExit oneshot never goes inactive and `start` on it is a
+      # no-op.
       RemainAfterExit = false;
-
-      # First boot races ACME issuance (a minute or two); retry rather than
-      # staying off the tailnet until a human notices.
+      # First boot races ACME issuance.
       Restart = "on-failure";
       RestartSec = "30s";
     };
@@ -257,11 +202,9 @@ in
     script = ''
       set -euo pipefail
 
-      # Settle, don't sample: timed runs can land while tailscaled is
-      # mid-restart reporting "Starting", and treating that as "not connected"
-      # would re-run `up --authkey` — which fails outright if the preauth key
-      # was single-use and consumed. Wait for a terminal state. `|| true`
-      # because tailscaled may not be answering at all yet.
+      # Settle, don't sample: a timed run can land mid-restart, and treating
+      # "Starting" as not-connected would re-run `up --authkey`, which fails
+      # outright once a single-use preauth key is consumed.
       status=""
       for i in $(seq 1 12); do
         status="$(${pkgs.tailscale}/bin/tailscale status -json 2>/dev/null \
@@ -271,15 +214,14 @@ in
             echo "Already connected to Headscale"
             exit 0 ;;
           NeedsLogin|NeedsMachineAuth|Stopped)
-            # Terminal: no amount of waiting fixes these, go register.
             break ;;
         esac
         echo "tailscaled backend state '$status' ($i/12), waiting..."
         sleep 5
       done
 
-      # Bounded wait for our own control plane over HTTPS — a genuine
-      # misconfiguration still surfaces as a unit failure.
+      # Bounded wait for our own control plane, so a real misconfiguration
+      # still surfaces as a unit failure.
       for i in $(seq 1 30); do
         if ${pkgs.curl}/bin/curl -fsS --max-time 5 \
              https://headscale.idanreed.com/health >/dev/null 2>&1; then
@@ -291,9 +233,8 @@ in
       done
 
       # A changeme_* template value would register garbage against the
-      # Headscale this host fronts — fail loudly with the file to fix. Only
-      # changeme_* is guarded: the test fixtures' sentinel is overwritten by
-      # the suites before this unit starts.
+      # headscale this host fronts. Only changeme_* is guarded — the suites
+      # overwrite the fixture sentinel before this unit starts.
       authkey="$(cat ${config.sops.secrets.TAILSCALE_AUTH_KEY.path})"
       case "$authkey" in changeme*)
         echo "TAILSCALE_AUTH_KEY is still a changeme_* template value — edit it with: sops headscale-vps/secrets.sops.yaml" >&2
@@ -307,18 +248,9 @@ in
     '';
   };
 
-  # The re-run that makes autoconnect a repair loop, not a boot script: a
-  # node that loses its registration — key expiry (see oidc.expiry in
-  # modules/headscale.nix), a control plane restored from an old backup, a
-  # node deleted by mistake — goes to NeedsLogin and STAYS there.
-  #
-  # OnUnitInactiveSec, not OnCalendar/OnBootSec: measured from when the
-  # service last STOPPED, so runs never overlap — the half that required
-  # RemainAfterExit=false above. Hourly + 10min jitter: the already-Running
-  # case exits after one `tailscale status` call, so hourly is free, and an
-  # hour is the worst-case recovery latency. A PERSISTENTLY broken
-  # autoconnect therefore alerts about hourly — intended, not fatigue: it
-  # means this host is off the tailnet.
+  # A node that loses its registration goes to NeedsLogin and stays there, so
+  # autoconnect is a repair loop rather than a boot script. OnUnitInactiveSec
+  # (not OnCalendar) measures from the last stop, so runs never overlap.
   systemd.timers.tailscale-autoconnect = {
     description = "Re-check the Headscale registration hourly";
     wantedBy = [ "timers.target" ];
@@ -330,15 +262,13 @@ in
     };
   };
 
-  # Only Authentik needs host paths — Headscale's state lives under its own
-  # StateDirectory.
+  # Host paths
+  # Only Authentik needs them; headscale's state lives under its StateDirectory.
   systemd.tmpfiles.rules = [
     "d /srv/authentik 0755 root root -"
-    # 70:70 = postgres-alpine's uid INSIDE the container. tmpfiles `d` rules
-    # re-apply ownership on EVERY activation, not just creation — root:root
-    # here re-owned the live PGDATA mountpoint out from under postgres on the
-    # first post-deploy rebuild (2026-09-03: "pg_filenode.map: Permission
-    # denied", Authentik down until a manual chown).
+    # 70:70 = postgres-alpine's in-container uid. `d` rules re-apply ownership
+    # on every activation, so root:root here re-owns live PGDATA out from
+    # under postgres.
     "d /srv/authentik/pgdata 0700 70 70 -"
     "d /srv/authentik/redis 0755 root root -"
     "d /srv/authentik/media 0755 root root -"
@@ -347,11 +277,11 @@ in
     "d /var/lib/sops-nix 0700 root root -"
   ];
 
-  # Fail2ban: SSH + Authentik's login page, the two public brute-force
-  # surfaces. Layer 1 of the login-hardening pair — layer 2 is
+  # Fail2ban
+  # Layer 1 of the login-hardening pair; layer 2 is
   # authentik/blueprints/custom/login-hardening.yaml, whose reputation policy
-  # scores per (username, ip) and so catches attackers rotating source IPs,
-  # which an IP ban cannot.
+  # scores per (username, ip) and so catches IP rotation. maxretry/bantime
+  # below land in [DEFAULT] and cover both jails.
   services.fail2ban = {
     enable = true;
     maxretry = 3;
@@ -362,66 +292,52 @@ in
           enabled = true;
           port = "ssh";
           filter = "sshd";
-          maxretry = 3;
-          bantime = "1h";
         };
       };
 
-      # backend=systemd reads the journal (server container logs there via
-      # journald driver + CONTAINER_TAG, authentik/compose.yaml); the filter
-      # extracts authentik's FORWARDED client_ip, never the TCP peer — the
-      # peer is always Caddy on loopback, and banning it bricks the proxy for
-      # everyone. findtime widened to 1h (default 10m) so failures spread
-      # across minutes still accumulate.
+      # backend=systemd reads the journal (the server container logs there by
+      # CONTAINER_TAG, authentik/compose.yaml). The filter extracts authentik's
+      # FORWARDED client_ip, never the TCP peer — that is always Caddy on
+      # loopback, and banning it bricks the proxy for everyone. findtime is
+      # widened to 1h so failures spread across minutes still accumulate.
       authentik = {
         settings = {
           enabled = true;
           backend = "systemd";
           filter = "authentik";
           journalmatch = "CONTAINER_TAG=authentik-server";
-          maxretry = 3;
           findtime = "1h";
-          bantime = "1h";
         };
       };
     };
   };
 
-  # Sibling environment.etc file, not the module's per-jail `filter`: the
-  # module's INI generator would mangle the verbatim sample-line comment
-  # below, which IS the regex's provenance (the filter.d entry is a `/*.conf`
-  # glob, so siblings coexist). Captured EMPIRICALLY and validated with
-  # fail2ban-regex; the vps suite re-runs that check plus negative controls.
+  # A sibling environment.etc file rather than the jail's `filter` option: the
+  # module's INI generator mangles this file's comments. filter.d is a glob, so
+  # siblings coexist. The regex was captured empirically against
+  # ghcr.io/goauthentik/server:2026.5.6; tests/suites/vps.nix re-runs
+  # fail2ban-regex over that sample plus negative controls.
   environment.etc."fail2ban/filter.d/authentik.conf".text = ''
     # authentik login_failed brute-force filter.
     #
-    # Sample line captured VERBATIM by driving a failed flow login against the
-    # pinned image ghcr.io/goauthentik/server:2026.5.6 (server container,
-    # journald driver, X-Forwarded-For spoofed to stand in for Caddy):
-    #
-    # {"action": "login_failed", "auth_via": "unauthenticated", "client_ip": "203.0.113.77", "context": {"http_request": {"args": {}, "method": "POST", "path": "/api/v3/flows/executor/default-authentication-flow/", "request_id": "dd8c847ae65f4bd8b8f9b4a22c087385", "user_agent": "curl/8.19.0"}, "password": "********************", "stage": {"app": "authentik_stages_password", "model_name": "passwordstage", "name": "default-authentication-password", "pk": "c0ad2df11f11428a8ca68c73980bd067"}, "username": "akadmin"}, "domain_url": "127.0.0.1", "event": "Created Event", "host": "127.0.0.1:19000", "level": "info", "logger": "authentik.events.models", "pid": 184, "request_id": "dd8c847ae65f4bd8b8f9b4a22c087385", "schema_name": "public", "timestamp": "2026-08-30T19:25:26.527644", "user": {"email": "admin@idanreed.com", "pk": 4, "username": "akadmin"}}
-    #
     # The lookahead gates on the login_failed action anywhere on the line and
-    # the consume captures client_ip anywhere on the line, so the two survive
-    # any JSON key reordering. client_ip is authentik's FORWARDED client
-    # address (the TCP source it sees is loopback from Caddy). Gating on
-    # exactly "login_failed" is deliberate: the successful-login "login" event
-    # and the identification "invalid_login" event also carry client_ip, and
-    # neither should ban.
+    # the consume captures client_ip anywhere on it, so both survive JSON key
+    # reordering. Gating on exactly "login_failed" is deliberate: the
+    # successful-login "login" event and the identification "invalid_login"
+    # event also carry client_ip, and neither should ban.
     [Definition]
     failregex = ^(?=.*?"action"\s*:\s*"login_failed").*?"client_ip"\s*:\s*"<HOST>"
     journalmatch = CONTAINER_TAG=authentik-server
   '';
 
-  # The fail2ban module restarts the daemon only when its OWN generated
-  # configs change — an edit to the environment.etc filter above would deploy
-  # the file but leave the running daemon on the old regex. Tie the restart
-  # to the filter content.
+  # The module restarts the daemon only when its OWN configs change, so an
+  # edit to the filter above would deploy the file and leave the daemon on the
+  # old regex.
   systemd.services.fail2ban.restartTriggers = [
     config.environment.etc."fail2ban/filter.d/authentik.conf".source
   ];
 
-  # Nix settings
+  # Nix
   nix = {
     settings = {
       experimental-features = [ "nix-command" "flakes" ];
