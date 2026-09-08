@@ -76,11 +76,11 @@ blocks. The authoritative inventory (ports, volumes, images, full notes) is
 
 **Auth legend:** **OIDC** = native OpenID Connect via Authentik · **FwdAuth** =
 Caddy forward-auth to Authentik (the app has no SSO of its own) · **Plugin** =
-SSO needs a runtime plugin · **Local** = the app's own accounts · **SAML** =
-SAML 2.0. Some apps stack two (e.g. FwdAuth + a local login underneath).
+SSO needs a runtime plugin · **Local** = the app's own accounts. Some apps stack
+two (e.g. FwdAuth + a local login underneath).
 
-Services marked 🚧 are **deployed but not yet functional** (blocked on a secret
-or hardware); 📋 are **planned / not yet built**.
+Per-service *state* — what is deployed, what is blocked on a credential — lives
+in `ServerNotes/designs/deploy-status.md`, not in this table.
 
 ### Infra (10000–10049)
 
@@ -102,20 +102,20 @@ or hardware); 📋 are **planned / not yet built**.
 | Prowlarr | FwdAuth | Indexer management |
 | Bazarr | FwdAuth | Subtitle automation |
 | Profilarr | FwdAuth | Syncs Dictionarry quality profiles to the *arrs |
-| Seerr | OIDC* | Request UI (Jellyfin auth today; OIDC pending) |
-| Cleanuparr / qbit_manage | FwdAuth / — | Download-queue cleanup and torrent hygiene |
+| Seerr | Local | Request UI; authenticates against Jellyfin accounts (no OIDC on the stable tag) |
+| Cleanuparr | FwdAuth | Download-queue cleanup (configured in its own web UI) |
 | ClamAV | — | Scans all downloads; promotes clean audiobooks to the books drop |
-| qBittorrent | FwdAuth | 🚧 Torrent client in gluetun's netns — blocked on VPN creds |
-| Gluetun | — | 🚧 VPN tunnel + kill-switch (AirVPN) — blocked on VPN creds |
-| SuggestArr | FwdAuth | 📋 Planned — Jellyfin suggestions |
+| qBittorrent | Local | Torrent client in gluetun's netns; its own seeded WebUI credential |
+| Gluetun | — | VPN tunnel + kill-switch for the download path (provider-agnostic) |
+| SuggestArr | FwdAuth | Planned — Jellyfin suggestions |
 
 ### Data (10100–10149)
 
 | Service | Auth | What it is |
 |---|---|---|
 | Paperless-ngx | OIDC | Document management + OCR |
-| Immich | OIDC | Photo management (running healthy) |
-| Samba | Local | SMB file server, tailnet-only. 🚧 blocked on real `.sops.env` values (SSO not achievable — built `--without-ldap`) |
+| Immich | OIDC | Photo management |
+| Samba | Local | SMB file server, tailnet-only (SSO not achievable — built `--without-ldap`) |
 
 ### Books (10150–10199)
 
@@ -132,7 +132,7 @@ or hardware); 📋 are **planned / not yet built**.
 | rmfakecloud | Local | reMarkable cloud replacement |
 | Syncthing | FwdAuth + local | Bidirectional file sync (server ↔ reMarkable) |
 | SilverBullet | FwdAuth + local | File-on-disk markdown wiki (mirrored to Forgejo) |
-| Outline | OIDC | Database-backed wiki (running healthy) |
+| Outline | OIDC | Database-backed wiki (OIDC is the only login — no local accounts) |
 
 *(SilverBullet, BookStack and Outline run together as a temporary wiki bake-off.)*
 
@@ -140,9 +140,9 @@ or hardware); 📋 are **planned / not yet built**.
 
 | Service | Auth | What it is |
 |---|---|---|
-| Home Assistant | Local* | Home automation (OIDC deferred) |
+| Home Assistant | Local | Home automation (OIDC deferred) |
 | Mosquitto | Local | MQTT broker (Frigate → Home Assistant) |
-| Frigate | FwdAuth | NVR + object detection (running, no cameras yet; GPU detector pending passthrough) |
+| Frigate | FwdAuth | NVR + object detection (CPU detector until GPU passthrough lands) |
 | Windmill | FwdAuth | Workflow orchestration (reMarkable OCR, Paperless AI, LLM tasks) |
 
 *(A Windmill GPU worker + Ollama run on the desktop, not the services VM.)*
@@ -157,10 +157,10 @@ or hardware); 📋 are **planned / not yet built**.
 | Firefly III | FwdAuth | Money tracking (+ Importer, SimpleFIN) |
 | Firefly Importer | FwdAuth | SimpleFIN transaction import |
 | Dawarich | OIDC | Location tracking (PostGIS) |
-| Ghostfolio | Local* | Portfolio tracker — *evaluation* |
+| Ghostfolio | OIDC | Portfolio tracker — *evaluation* |
 | Owl | FwdAuth | Retirement planner — *evaluation* |
-| Actual Budget | Local* | Budgeting + SimpleFIN — *evaluation* (Firefly rival) |
-| Wealthfolio | Local* | Portfolio tracker — *evaluation* (Ghostfolio rival) |
+| Actual Budget | Local | Budgeting + SimpleFIN — *evaluation* (OIDC staged, DB-gated) |
+| Wealthfolio | Local | Portfolio tracker — *evaluation* (OIDC staged, shipped off) |
 
 ### Food (10350–10399)
 
@@ -178,9 +178,9 @@ or hardware); 📋 are **planned / not yet built**.
 | BentoPDF | FwdAuth | Client-side PDF toolkit |
 | Glance | FwdAuth | Feed + service-link dashboard |
 | Mazanoke | FwdAuth | In-browser image optimizer (strips EXIF) |
-| OnlyOffice DocSpace | SAML | Document collaboration (SSO is SAML, not OIDC) |
+| OnlyOffice DocSpace | Local | Document collaboration; its own portal accounts. Its only SSO is SAML 2.0, not yet exchanged with Authentik |
 | IT-Tools | FwdAuth | 80+ developer utilities (sharevb fork) |
-| Excalidraw (AstraDraw) | Local + OIDC* | Persistent whiteboard workspace |
+| Excalidraw (AstraDraw) | Local | Persistent whiteboard workspace (OIDC staged, shipped off) |
 
 ### Monitoring (10450–10499)
 
@@ -191,7 +191,7 @@ or hardware); 📋 are **planned / not yet built**.
 | Grafana | FwdAuth | Log exploration over VictoriaLogs |
 | VictoriaLogs | — | Log store (size-based retention; replaced Loki) |
 | Alloy | — | Journal collector → VictoriaLogs |
-| Speedtest Tracker | FwdAuth | 📋 Deferred (FwdAuth vs. scrape endpoint undecided) |
+| Speedtest Tracker | FwdAuth | Deferred — FwdAuth vs. scrape endpoint undecided |
 
 ### Game (10500–10549)
 
@@ -203,7 +203,7 @@ The recorded plan is one compose stack per game behind an idle-hibernation waker
 | Service | Auth | What it is |
 |---|---|---|
 | Forgejo | own | Git root (GitHub is a push mirror); SSH-first, also the GitOps source |
-| DevPod | FwdAuth | 📋 Planned — cloud dev environments |
+| DevPod | FwdAuth | Planned — cloud dev environments |
 
 ### VPS-hosted (Hetzner, not the services VM)
 
@@ -219,13 +219,16 @@ The recorded plan is one compose stack per game behind an idle-hibernation waker
 
 Operator runbooks live in this repo:
 
-- [`docs/deploy.md`](docs/deploy.md) — the deploy runbook: the three deploy
-  targets, from-scratch infra bring-up in dependency order, and the day-2
-  "repo change → live" stack loop.
+- [`docs/deploy.md`](docs/deploy.md) — the day-2 quick reference: the three
+  deploy targets, the `./deploy` chain, the secrets commands, the two ordering
+  traps, and the gotcha list.
 - [`docs/for-shame.md`](docs/for-shame.md) — the catalogue of manual,
   non-declarative bring-up steps: for each, the exact step, *why* the app makes
   it impossible to automate, and whether it survives a container recreate.
+- [`tests/README.md`](tests/README.md) — what the VM test harness covers, what it
+  cannot, and the findings ledger from building it.
 
-The **design docs** and **research annexes** (the *why* behind each service, the
-authoritative service inventory `_overview.md`, and the full from-scratch
-handbooks) live in the sibling **`ServerNotes`** repo, not in this one.
+The **from-scratch bring-up procedure** (`designs/deploy-handbook.md`), the
+**day-2 procedures** (`maintenance-handbook.md`), the authoritative service
+inventory (`_overview.md`), and the design docs and research annexes live in the
+sibling **`ServerNotes`** repo, not in this one.

@@ -1,8 +1,15 @@
 # NixOS Desktop
 
-Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS performance tuning.
+Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS
+performance tuning. This is also the fleet's admin box — every `sopsedit`,
+`sopsgen`, `nrs-vps` and `./deploy` runs from here.
 
 **Target hardware:** AMD Ryzen 7 7800X3D + NVIDIA RTX 4090
+
+The ordered install procedure is `ServerNotes/designs/deploy-handbook.md` §19.
+This file carries what is specific to this machine: the USB/Windows preparation
+the handbook only summarises, the placeholders you must set, the tuning
+inventory, and the keybindings.
 
 ## Stack
 
@@ -21,221 +28,177 @@ Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS performanc
 
 ```
 nixos-de/
-├── flake.nix
-├── configuration.nix            # System config + CachyOS performance
-├── hardware-configuration.nix   # Hardware-specific settings
-├── disko.nix                    # Declarative disk partitioning
-├── home.nix
-├── test.sh / test-wsl.sh        # Config validation
-├── FUTURE.md
+├── flake.nix, flake.lock
+├── configuration.nix            system config + CachyOS performance + nix caches
+├── hardware-configuration.nix
+├── disko.nix                    declarative disk partitioning (targetDisk — see below)
+├── home.nix                     home-manager: aliases, sopsedit/sopsgen/redeploy, starship
+├── ssh-identities.nix           name → host/user/port; drives sops.secrets AND ssh config
+├── ssh-pubkeys.nix              shared with nixos/ and headscale-vps/ (lint-enforced)
+├── secrets.sops.yaml{,.example} 14 keys: ssh/* ×7, workvpn/* ×6, SAMBA_IDAN_PASSWORD
+├── test.sh / test-wsl.sh        config validation, no deploy
+├── FUTURE.md                    tooling tracker
+├── pkgs/                        excalirender, mmd2excalidraw, openconnect-saml
 └── modules/
-    ├── nixos/
-    │   ├── nvidia.nix           # NVIDIA + CachyOS tuning
-    │   ├── tailscale.nix        # Tailscale client (run `tailscale up` after install)
-    │   ├── sops.nix             # sops-nix wiring (shared age key)
-    │   └── containers.nix       # Docker + docker-compose
-    └── home/
-        ├── niri.nix
-        ├── stylix.nix
-        ├── nixvim.nix
-        ├── foot.nix
-        ├── noctalia.nix
-        ├── yazi.nix
-        ├── zen.nix
-        ├── vscode.nix
-        ├── zed.nix
-        └── obsidian.nix
+    ├── nixos/   containers, handy, nvidia, samba-mounts, ssh-identities,
+    │            sshd, tailscale, work-vpn
+    └── home/    excalidraw, foot, handy, niri, nixvim, noctalia, obsidian,
+                 ssh-identities, stylix, tts, vscode, work-vpn, yazi, zed, zen
 ```
 
-The SOPS secret template (`.sops.env.example`) lives at the repo root (`BasicBastardSelfhosted/`), one level above this directory — encrypt a copy as `.sops.env`.
+Desktop secrets are **`secrets.sops.yaml` (YAML)**, alongside
+`secrets.sops.yaml.example`. There is no `.sops.env` for the desktop — dotenv is
+the format stacks use, and sops-nix extracts per key only from yaml/json.
 
-## Installation
+## SSH identities
 
-### 1. Prepare the USB
+`ssh-identities.nix` is the single list (name → host, user, port,
+`extraOptions`). It generates both the `sops.secrets."ssh/<name>"` declarations
+and the `programs.ssh` **`settings`** Host blocks — `matchBlocks` is a
+deprecated alias in the pinned home-manager, and `extraOptions` entries are raw
+upstream `ssh_config` directives. Each block gets
+`IdentityFile /run/secrets/ssh/<name>` and `IdentitiesOnly yes`, and the Host
+pattern matches both the alias and the real hostname.
 
-Use **Ventoy** so all three artifacts live on a single data partition (multi-ISO, no re-flashing per release): https://www.ventoy.net/en/doc_start.html (Windows GUI or `Ventoy2Disk.sh` on Linux). Install Ventoy onto the USB once, then drop the following onto its data partition:
+Public halves live in `ssh-pubkeys.nix`, duplicated byte-identically into all
+three flakes (a flake cannot reference files outside its root); the
+`ssh-pubkey-parity` lint fails on drift. `gatech` and `forgejo` deliberately have
+**no** `ssh-pubkeys.nix` entry — they are client identities for third-party
+forges, not host authorized keys.
+
+The first `home-manager switch` refuses to clobber a hand-written
+`~/.ssh/config`; move one aside once.
+
+## Preparing the install media
+
+### Ventoy USB
+
+Use **Ventoy** so all three artifacts live on one data partition (multi-ISO, no
+re-flashing per release): https://www.ventoy.net/en/doc_start.html. Install
+Ventoy onto the USB once, then drop these onto its data partition:
 
 | File | Source |
 |------|--------|
 | `nixos-minimal-*.iso` | https://nixos.org/download/#nixos-iso |
-| `BasicBastardSelfhosted.tar` | `git archive` snapshot of the flake repo (see below) |
-| `sops_age_key.txt` | The homelab age private key (your canonical copy) |
-
-Build the repo archive from Git Bash on Windows, at the `BasicBastardSelfhosted/` repo root:
+| `BasicBastardSelfhosted.tar` | `git archive` snapshot of the repo |
+| `sops_age_key.txt` | the homelab age private key |
 
 ```bash
-USB=/e   # adjust to your Ventoy data partition's mount point
+USB=/e   # your Ventoy data partition
 git archive --format=tar -o "$USB/BasicBastardSelfhosted.tar" HEAD
 ```
 
-`git archive` produces a clean snapshot with LF line endings (avoiding CRLF breakage of `.sops.env`) and omits `.git/` and uncommitted changes.
+`git archive` gives LF line endings and omits `.git/` and uncommitted changes.
+Boot the USB and pick the NixOS ISO from Ventoy's menu; if the live system fails
+to find the ISO mount, press `Ctrl-R` for GRUB2 boot mode. **Remove the USB after
+install** so the age key lives only on the target disk.
 
-Boot the USB and pick the NixOS ISO from Ventoy's menu. If the live system fails to find the ISO mount, press `Ctrl-R` in the Ventoy menu to switch to GRUB2 boot mode.
+*Fallback (no Ventoy, wipes the USB):*
+`dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress`, or Rufus/Etcher on
+Windows — then you need a second transport for the archive and the key.
 
-Remove the USB after install so the age key only lives on the target disk.
+### Tag the target drive from Windows, before booting the installer
 
-**Fallback (no Ventoy, single ISO, wipes the USB)**: `dd if=nixos-minimal-*.iso of=/dev/sdX bs=4M status=progress` on Linux/macOS, or Rufus/Etcher on Windows. You'll need a second USB or another transport for the repo archive and age key.
+With multiple identical drives, model and size do not distinguish them. Add a
+small labelled partition so the target is unmistakable in the live ISO.
 
-### 2. Tag the target drive from Windows (do this before booting the installer)
-
-If you have multiple identical drives, model/size won't distinguish them. Add a small labeled partition from Windows so the target is unmistakable in the live ISO.
-
-In **Disk Management** (`Win+X` → Disk Management):
+Disk Management (`Win+X` → Disk Management):
 
 1. Find the target physical disk in the lower pane (confirm by size + disk number).
-2. Right-click any existing partition on that drive → **Shrink Volume…** → enter `1024` MB → **Shrink**. (Or if the drive's contents are disposable, **Delete Volume…** instead.)
-3. Right-click the resulting **Unallocated** block → **New Simple Volume…** → Next.
-4. Size: leave at max → Next.
+2. Right-click any partition on it → **Shrink Volume…** → `1024` MB → **Shrink**.
+   (If the drive's contents are disposable, **Delete Volume…** instead.)
+3. Right-click the **Unallocated** block → **New Simple Volume…** → Next.
+4. Size: max → Next.
 5. **Do not assign a drive letter or path** → Next.
-6. Format: **exFAT**, volume label `NIXOS-INSTALL`, quick format → Next → Finish.
+6. Format **exFAT**, label `NIXOS-INSTALL`, quick format → Finish.
 
-Verify in PowerShell:
 ```powershell
 Get-Volume | Where-Object FileSystemLabel -eq 'NIXOS-INSTALL'
 ```
 
-disko wipes the entire disk during install, so the label is throwaway.
-
-### 3. Boot installer and identify target drive
+disko wipes the whole disk during install, so the label is throwaway. In the live
+ISO:
 
 ```bash
-# The labeled partition makes the target unambiguous
-lsblk -o NAME,SIZE,MODEL,LABEL,SERIAL
-
-# Example output (target = the disk containing the NIXOS-INSTALL partition):
-# nvme0n1     2T  Samsung SSD 990 PRO 2TB                  S6Z2NF0W123456
-# ├─nvme0n1p1 1G                          NIXOS-INSTALL    <- target marker
-# └─nvme0n1p2 1.9T                        Data
-# nvme1n1     2T  Samsung SSD 990 PRO 2TB                  S6Z2NF0WABCDEF
-# └─nvme1n1p1 2T                          Windows          <- DO NOT USE
-
-# Get the stable by-id path for the target disk
+lsblk -o NAME,SIZE,MODEL,LABEL,SERIAL      # the disk carrying NIXOS-INSTALL is the target
 ls -la /dev/disk/by-id/ | grep -v part | grep <SERIAL>
 ```
 
-**Confirm the target by the `NIXOS-INSTALL` label. Do NOT use the Windows drive.**
+### `targetDisk` is deliberately unset
 
-### 4. Update disko.nix with your drive
+`disko.nix` ships:
 
-Edit `disko.nix` and set `targetDisk` to your drive's by-id path:
 ```nix
-targetDisk = "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456";
+targetDisk = "/dev/disk/by-id/CHANGE_ME_TO_YOUR_DRIVE_ID";
 ```
 
-### 5. Unpack the config from USB
+This is a **pending decision, not an oversight** — the value is machine-specific
+and destructive, so the repo does not carry one. It matters only when disko
+*runs*: the placeholder does not block `nix flake check`, an eval, or a
+`nixos-rebuild`. Set it in the live ISO, immediately before partitioning, to the
+by-id path you confirmed above.
+
+## Placeholders to update
+
+| File | Setting | Description |
+|------|---------|-------------|
+| `disko.nix` | `targetDisk` | the drive's `/dev/disk/by-id/…` path (install time only) |
+| `configuration.nix` | `networking.hostName` | machine hostname |
+| `configuration.nix` | `time.timeZone` | timezone |
+| `home.nix` | `programs.git.settings.user.name` / `.email` | git identity |
+| `modules/home/niri.nix` | `outputs` | monitor configuration (`niri msg outputs`) |
+
+## Two things the install does not do for you
+
+**home-manager is not installed by the system config.** `programs.home-manager.enable`
+lives in `home.nix`, so the first switch has to bootstrap itself:
 
 ```bash
-# Locate the Ventoy data partition
-lsblk -o NAME,LABEL,MOUNTPOINT
-USB=/run/media/<user>/<ventoy-label>   # adjust
-
-# Extract the archive to a writable scratch dir (USB is exFAT, no unix perms)
-mkdir -p /tmp/repo
-tar -xf "$USB/BasicBastardSelfhosted.tar" -C /tmp/repo
-cd /tmp/repo/nixos-de
+nix run home-manager/master -- switch \
+  --flake ~/local/projects/server/BasicBastardSelfhosted/nixos-de#idan
 ```
 
-No network or `git clone` needed — the archive is self-contained.
+After that `hms` works. The repo must live at
+`~/local/projects/server/BasicBastardSelfhosted` — the `nrs`/`hms` aliases
+hardcode that path.
 
-### 6. Run disko to partition (DESTRUCTIVE)
+**Nothing joins the tailnet automatically.** `modules/nixos/tailscale.nix` has no
+autoconnect unit (unlike the two servers), so after the first boot:
 
 ```bash
-# Preview what disko will do (safe)
-sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko --dry-run ./disko.nix
-
-# Actually partition the drive (DESTROYS ALL DATA ON TARGET DRIVE)
-sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko ./disko.nix
+sudo tailscale up --login-server=https://headscale.idanreed.com --accept-routes
 ```
 
-### 7. Inject the SOPS age key
+That opens a browser to Authentik — log in as **`idan`**, not `akadmin`.
 
-The desktop uses the same age key as the rest of the homelab (server VM, VPS, Windows workstation). Copy `sops_age_key.txt` from the USB into the target system before installing (`$USB` from step 5):
+## Testing without deploying
 
 ```bash
-sudo mkdir -p -m 700 /mnt/var/lib/sops-nix
-sudo cp "$USB/sops_age_key.txt" /mnt/var/lib/sops-nix/sops_age_key.txt
-sudo chmod 600 /mnt/var/lib/sops-nix/sops_age_key.txt
-sudo chown 0:0 /mnt/var/lib/sops-nix/sops_age_key.txt
+./test.sh         # in WSL or on NixOS
+./test-wsl.sh     # from Git Bash on Windows
 ```
 
-If you'd rather not put the key on the USB, paste it from your password manager:
-```bash
-sudo install -m 700 -d /mnt/var/lib/sops-nix
-sudo install -m 600 /dev/stdin /mnt/var/lib/sops-nix/sops_age_key.txt <<'EOF'
-AGE-SECRET-KEY-...
-EOF
-```
-
-### 8. Install NixOS
-
-```bash
-# Mount is automatic after disko, verify:
-mount | grep /mnt
-
-# Install
-sudo nixos-install --flake .#desktop --no-root-passwd
-
-# Set user password (skip if USER_PASSWORD_HASH is wired up in .sops.env)
-sudo nixos-enter --root /mnt -c 'passwd idan'
-
-# Reboot (remove the USB)
-sudo reboot
-```
-
-### 9. Post-install: Apply Home Manager
-
-After first boot, login and run:
-```bash
-cd /path/to/nixos-de  # or clone again
-home-manager switch --flake .#idan
-```
-
-### 10. Configure monitors
-
-```bash
-# Find monitor names
-niri msg outputs
-
-# Edit modules/home/niri.nix, uncomment and adjust outputs section
-# Then reapply:
-home-manager switch --flake .#idan
-```
-
-## Testing (Without Deploying)
-
-Requires Nix (via WSL, NixOS, or container):
-
-```bash
-# From Git Bash on Windows
-./test-wsl.sh
-
-# Or in WSL/NixOS directly
-./test.sh
-```
+Flake check, eval of both configs, a dry-run build of each, `statix`, and
+`nixfmt`. The linters come from the flake's locked nixpkgs rather than the host,
+so the gate runs the same everywhere. Run it after touching anything under
+`nixos-de/`.
 
 ## Updates
 
 ```bash
-sudo nixos-rebuild switch --flake .#desktop  # System (alias: nrs)
-home-manager switch --flake .#idan           # User (alias: hms — also restarts noctalia-shell)
-nix flake update                             # Update all inputs (alias: nfu)
+sudo nixos-rebuild switch --flake .#desktop   # alias: nrs
+home-manager switch --flake .#idan            # alias: hms (also restarts noctalia-shell)
+nix flake update                              # alias: nfu
+aliases                                       # list the shell aliases
 ```
 
-Run `aliases` in a shell for the full alias list (defined in `home.nix`).
+`aliases` prints `shellAliases` only. `sopsedit`, `sopseditnvim`, `sopsgen` and
+`redeploy` are zsh functions defined in the same file (`home.nix`, `initContent`)
+and do not appear in that listing.
 
-## Placeholders to Update
+## CachyOS performance optimizations
 
-| File | Setting | Description |
-|------|---------|-------------|
-| `disko.nix` | `targetDisk` | Your drive's `/dev/disk/by-id/...` path |
-| `configuration.nix` | `networking.hostName` | Machine hostname |
-| `configuration.nix` | `time.timeZone` | Your timezone |
-| `home.nix` | `programs.git.settings.user.name`/`.email` | Git identity |
-| `modules/home/niri.nix` | `outputs` | Monitor configuration |
-
-## CachyOS Performance Optimizations
-
-Performance tuning sections are marked with `# === CachyOS Performance ===` in config files.
+Marked with `# === CachyOS Performance ===` in the config files.
 
 | Optimization | Location |
 |--------------|----------|
@@ -245,11 +208,11 @@ Performance tuning sections are marked with `# === CachyOS Performance ===` in c
 | Ananicy-cpp (process priorities) | configuration.nix |
 | Systemd tuning (timeouts, limits) | configuration.nix |
 | NTP (Cloudflare/Google) | configuration.nix |
-| NVIDIA modprobe (PAT, memory init) | nvidia.nix |
-| Audio power management | nvidia.nix |
-| VA-API hardware decode | nvidia.nix |
+| NVIDIA modprobe (PAT, memory init) | modules/nixos/nvidia.nix |
+| Audio power management | modules/nixos/nvidia.nix |
+| VA-API hardware decode | modules/nixos/nvidia.nix |
 
-## Key Bindings
+## Key bindings
 
 ### Niri
 
@@ -278,5 +241,3 @@ Performance tuning sections are marked with `# === CachyOS Performance ===` in c
 | `gd` | Go to definition |
 | `K` | Hover |
 | `<leader>gg` | LazyGit |
-
-https://public-fate-bird-aware.taile6bbb.ts.net/#/vault
