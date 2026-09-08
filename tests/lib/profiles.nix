@@ -1,86 +1,51 @@
 # Shared test-only overrides.
 #
-# Design rule for everything in this file: override the *environment*, never
-# the behaviour under test. Anything mkForce'd here is something a VM
-# physically cannot provide (a Hetzner NIC, a Let's Encrypt challenge, a real
-# age key) — not a config choice we found inconvenient. Every override carries
-# the reason, because an override that quietly disables the thing a suite
-# claims to check is worse than having no suite.
-#
-# Where an override does cost coverage, the loss is named in a comment and, if
-# it can be, recovered by a pure lint in ./lints.nix against the real value.
+# Design rule: override the ENVIRONMENT, never the behaviour under test.
+# Everything mkForce'd here is something a VM physically cannot provide. Where
+# an override costs coverage the loss is named, and ./lints.nix recovers it
+# against the real value where it can.
 
 { lib, testKeyFile }:
 
-rec {
-  # --------------------------------------------------------------------------
+{
   # Boot / hardware
-  # --------------------------------------------------------------------------
-  # Both hosts declare a bootloader for real hardware (grub on Hetzner's MBR
-  # disk, grub on Proxmox's /dev/sda). The test driver boots the kernel
-  # directly, and disko's partitioning is meaningless against a qcow the driver
-  # created — so neither can apply.
-  #
-  # Coverage lost: bootloader installation and disk-config.nix. disko ships its
-  # own makeDiskoTest for the latter; wiring it up is a separate suite.
+
+  # Both hosts declare a bootloader for real hardware; the driver boots the
+  # kernel directly. Coverage lost: bootloader installation and
+  # disk-config.nix — the disko suite covers the latter.
   noBootloader = {
     boot.loader.grub.enable = lib.mkForce false;
     boot.loader.systemd-boot.enable = lib.mkForce false;
   };
 
-  # The VPS config asks for DHCP on eth0 because Hetzner provides it. Test
-  # nodes get static addresses on vlan interfaces from the driver, and leaving
-  # DHCP on makes boot wait for a lease that never arrives.
-  # Only eth0 is neutralised. The test driver configures the vlan interfaces
-  # (eth1+) itself, so clearing networking.interfaces wholesale would strip the
-  # nodes of their addresses and every assertion would fail on a dead network.
-  #
-  # The gateway goes with it. Since fe0bdb0 the services VM declares a static
-  # LAN address on ens18 plus `defaultGateway = 10.0.0.1` — real on the LAN,
-  # nonexistent on a test vlan, where there is no 10.0.0.0/24 interface for
-  # the route to hang off. `ip route add default via 10.0.0.1` then fails with
-  # "Nexthop has invalid gateway" and network-setup.service dies. It does NOT
-  # fail at boot: scripted networking is pulled in lazily, so the unit only
-  # runs when the first `docker compose` starts socket-activated dockerd —
-  # mid-test, minutes in, long after every readiness gate has passed. The one
-  # thing it breaks is the "no unit is left failed at suite end" assertion,
-  # which is exactly the check that should not be lying about anything else.
-  # mkForce null is a no-op for the VPS config (DHCP supplies its route).
+  # eth0 ONLY: the driver configures eth1+ itself, so clearing
+  # networking.interfaces wholesale would leave every node with no address.
+  # The gateway goes too — the services VM's `defaultGateway = 10.0.0.1` has
+  # no interface to hang off on a test vlan, and network-setup.service dies
+  # lazily, mid-test, breaking only the no-failed-units assertion.
   noDhcp = {
     networking.useDHCP = lib.mkForce false;
     networking.interfaces.eth0.useDHCP = lib.mkForce false;
     networking.defaultGateway = lib.mkForce null;
   };
 
-  # --------------------------------------------------------------------------
   # Secrets
-  # --------------------------------------------------------------------------
-  # Points sops-nix at a fixture encrypted to the committed throwaway key, and
-  # plants that key where the real config expects to find it.
+
+  # A fixture encrypted to the committed throwaway key, exercising the REAL
+  # sops-nix activation path (wrong owner or mode is a genuine deploy failure
+  # config review does not catch). defaultSopsFormat is deliberately NOT
+  # overridden — see the sops-dotenv-extraction lint.
   #
-  # This deliberately exercises the real sops-nix activation path rather than
-  # stubbing secrets in. A secret that fails to decrypt, or lands with the
-  # wrong owner or mode, is a genuine deploy failure mode on both hosts, and it
-  # is one of the few that a config review does not catch.
-  #
-  # Coverage lost: that the *production* secrets.sops.yaml decrypts, which is
-  # impossible without the production key. lints.nix compares key sets across
-  # the example, the fixture, and the real encrypted file (sops-yaml keys are
-  # plaintext) instead, so a secret added to one without the others still fails.
-  #
-  # The format is NOT overridden: the host config's own defaultSopsFormat is
-  # part of what is under test — the dotenv format silently broke per-key
-  # extraction once already (see the sops-dotenv-extraction lint).
+  # Coverage lost: that the production secrets.sops.yaml decrypts; the
+  # sops-declared lint compares key sets instead.
   sopsFixture =
     fixture:
-    { config, ... }:
-    {
+    _: {
       sops.defaultSopsFile = lib.mkForce fixture;
 
-      # Both hosts hardcode this path, and it is populated out of band on real
-      # hardware (cloud-init on Proxmox, --extra-files on Hetzner). Plant it
-      # before sops-nix runs rather than overriding sops.age.keyFile, so the
-      # path the real config names is the path actually used.
+      # Both hosts hardcode this path and populate it out of band (cloud-init
+      # on Proxmox, --extra-files on Hetzner). Planting the key beats
+      # overriding sops.age.keyFile: the path the real config names is used.
       system.activationScripts.plantTestAgeKey = {
         deps = [ ];
         text = ''
@@ -90,17 +55,12 @@ rec {
       system.activationScripts.setupSecrets.deps = [ "plantTestAgeKey" ];
     };
 
-  # --------------------------------------------------------------------------
   # Container images
-  # --------------------------------------------------------------------------
-  # Loads pinned images into the guest's docker before anything that needs
-  # them. The suites run with no network — that is what makes them
-  # reproducible — so every image must already be in the store.
-  #
-  # This is ordered before the units under test rather than done from the test
-  # script, because bootstrap-komodo and authentik.service are wantedBy
-  # multi-user.target and therefore run during boot, before the script gets
-  # control.
+
+  # The suites have no network, so every image must come from the store. Done
+  # as a unit ordered BEFORE the units under test, not from the test script:
+  # bootstrap-komodo and authentik.service are wantedBy multi-user.target and
+  # run during boot, before the script gets control.
   loadImages =
     { pkgs, images, beforeUnits }:
     let
@@ -142,30 +102,14 @@ rec {
       };
     };
 
-  # --------------------------------------------------------------------------
   # Pebble issuing-root trust
-  # --------------------------------------------------------------------------
-  # Pebble (the ACME server standing in for Let's Encrypt) generates a FRESH
-  # issuing root on every run — deliberately, upstream's way of stopping people
-  # from ever trusting a test CA permanently. security.pki.certificateFiles is
-  # baked at eval time, so it can only carry the static CA for Pebble's own
-  # management endpoint, never the per-run root that signs the certificates
-  # Caddy obtains.
-  #
-  # So the root is fetched at runtime from Pebble's authenticated management
-  # API (https://<ca>:15000/roots/0, served under the static CA) and written to
-  # /var/lib/test-ca/bundle.pem together with that static CA. Consumers:
-  #
-  #   - test scripts:            curl --cacert /var/lib/test-ca/bundle.pem
-  #   - tailscaled:              SSL_CERT_FILE (Go honours it) — otherwise no
-  #                              node can `tailscale up --login-server` against
-  #                              a Caddy serving a Pebble certificate
-  #   - tailscale-autoconnect:   its readiness poll curls the public HTTPS URL
-  #   - headscale:               OIDC discovery against auth.idanreed.com
-  #
-  # Env injection into those units is a test-only override; the units
-  # themselves run unmodified. `before`/`requiredBy` on units a node does not
-  # have are ignored by systemd, so one profile serves every node shape.
+
+  # Pebble mints a FRESH issuing root every run, and
+  # security.pki.certificateFiles is baked at eval time — so the per-run root
+  # has to be fetched at runtime from Pebble's management API and bundled with
+  # the static CA for the units that dial Caddy over HTTPS (tailscaled,
+  # tailscale-autoconnect, headscale's OIDC discovery) and for test scripts.
+  # Only the environment is injected; the units run unmodified.
   pebbleTrust =
     { caDomain, caCert }:
     { pkgs, lib, ... }:
@@ -216,60 +160,34 @@ rec {
         });
     };
 
-  # --------------------------------------------------------------------------
   # SSH access
-  # --------------------------------------------------------------------------
-  # Authorises the committed throwaway keypair (tests/keys/test-ssh-key) for
-  # the idan user, merged ALONGSIDE the production ssh-pubkeys.nix entries
-  # (list options concatenate; the entries are all filled now, but their
-  # private halves live sops-encrypted where the harness cannot use them).
-  # What this makes testable, from another node:
-  #   - key login works at all, with a key the harness holds
-  #   - PasswordAuthentication no actually refuses passwords
-  #   - PermitRootLogin no actually refuses root
-  #   - wheelNeedsPassword = false gives passwordless sudo over SSH
+
+  # The committed throwaway keypair, merged ALONGSIDE the production
+  # ssh-pubkeys.nix entries (list options concatenate) — their private halves
+  # are sops-encrypted where the harness cannot reach them. This is what makes
+  # the sshd negatives testable from another node.
   testSshAccess = {
     users.users.idan.openssh.authorizedKeys.keys = [
       (lib.removeSuffix "\n" (builtins.readFile ../keys/test-ssh-key.pub))
     ];
   };
 
-  # --------------------------------------------------------------------------
   # tailscale-autoconnect
-  # --------------------------------------------------------------------------
-  # Takes the unit out of the boot path without changing a line of it.
-  #
-  # It is Type=oneshot, wantedBy=multi-user.target, and on the VPS it polls
-  # https://headscale.idanreed.com/health up to 30 times at 10s intervals before
-  # running `tailscale up`. With the fixture's placeholder auth key it then
-  # fails, and Restart=on-failure retries forever — so multi-user.target is
-  # never reached and every wait_for_unit in the suite hangs.
-  #
-  # The suites create a real preauth key, write it over the decrypted secret,
-  # and start this unit explicitly. The unit that runs is the real one,
-  # --login-server and all; only its trigger moves.
+
+  # Takes the unit out of the boot path without changing a line of it: with
+  # the fixture's placeholder auth key it fails, Restart=on-failure retries
+  # forever, multi-user.target is never reached and every wait_for_unit hangs.
+  # The suites mint a real preauth key and start it explicitly, so the unit
+  # that runs is the real one — only its trigger moves.
   manualTailscaleAutoconnect = {
     systemd.services.tailscale-autoconnect.wantedBy = lib.mkForce [ ];
-    # The unit also has a re-run timer now (day-180 fix). Its 6 h anchors
-    # outlive every suite, so this is intent-documentation more than
-    # necessity: the suites own WHEN autoconnect runs, entirely.
     systemd.timers.tailscale-autoconnect.wantedBy = lib.mkForce [ ];
   };
 
-  # Docker 28.x is marked insecure in nixos-25.11 and makes the whole
-  # configuration refuse to evaluate. Both host configs already pin docker_29;
-  # this only matters for extra test nodes that enable docker themselves.
-  dockerPin =
-    { pkgs, ... }:
-    {
-      virtualisation.docker.package = lib.mkDefault pkgs.docker_29;
-    };
-
-  # --------------------------------------------------------------------------
   # Sizing
-  # --------------------------------------------------------------------------
-  # Container hosts need considerably more than the driver's 1024MB default;
-  # Authentik alone will not finish its migrations below ~3GB.
+
+  # Container hosts need far more than the driver's 1024MB default; Authentik
+  # alone will not finish its migrations below ~3GB.
   sized =
     { memoryMB, diskMB }:
     {

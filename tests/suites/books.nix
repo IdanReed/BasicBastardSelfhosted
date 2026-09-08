@@ -818,6 +818,29 @@ pkgs.testers.runNixOSTest {
         )
         assert status.get("isInit") is True, f"abs status: {status!r}"
 
+    with subtest("books-init's whole-DTO settings round trip"):
+        # The two DB-only settings it owns. provisionAccounts cannot be
+        # asserted TRUE here: the fixture ships no OIDC secret, so
+        # kavita-config-init blanks the authority and books-init deliberately
+        # leaves the flag alone. What IS asserted is that the field exists (a
+        # rename upstream surfaces here) and that the guard fired.
+        settings = curl(KAVITA, "/api/Settings", "GET", None, kv_auth)
+        assert settings.get("allowStatCollection") is False, (
+            f"kavita stat collection is {settings.get('allowStatCollection')!r}"
+        )
+        oidc_cfg = settings.get("oidcConfig")
+        assert isinstance(oidc_cfg, dict), (
+            f"kavita settings carry no oidcConfig object: {settings!r}"
+        )
+        assert "provisionAccounts" in oidc_cfg, (
+            f"oidcConfig has no provisionAccounts key (renamed upstream?): "
+            f"{oidc_cfg!r}"
+        )
+        init_log = services_vm.succeed("docker logs books_init 2>&1")
+        assert "OIDC not configured (empty authority)" in init_log, (
+            f"books-init did not take the OIDC-off branch:\n{init_log[-2000:]}"
+        )
+
     # -----------------------------------------------------------------------
     # §6.11 the :ro library mounts really are sufficient
     # -----------------------------------------------------------------------

@@ -1,23 +1,14 @@
-# One fast suite per stack, generated from the stack's own compose file.
+# One fast suite per stack (`nix-build tests -A stackChecks.<name>`): boot the
+# real services VM, seed only that stack, `docker compose up --wait`, and
+# assert env decryption, loopback-only publishing and healthy containers.
 #
-#   nix-build tests -A stackChecks.<name>
+# ZERO per-stack maintenance by construction — images, ports and /mnt roots
+# are all derived at eval time from the compose file, so adding a stack is one
+# list entry in ../default.nix.
 #
-# The point is iteration speed on a SINGLE stack: boot the real services VM
-# config, seed only that stack into /srv/stacks, `docker compose up --wait`
-# it, and assert the things every stack must get right — env decryption,
-# loopback-only publishing, containers actually healthy.
-#
-# ZERO per-stack maintenance, by construction: the images to preload, the
-# ports to probe and the /mnt volume roots to create are all derived at eval
-# time from stacks/<name>/compose.yaml itself. Adding a stack to
-# `stackChecks` in ../default.nix is one list entry; if its images are not
-# pinned yet, evaluation throws and tells you to run tests/update-images.sh.
-#
-# What this deliberately does NOT cover (see ../suites/services-vm.nix for
-# all of it): the komodo boot chain, Caddy routing, the notify-failure path,
-# cross-stack interactions, SSH, and reboot convergence. This suite trades
-# that breadth for booting one stack in the time the full suite spends
-# loading images.
+# Deliberately NOT covered (that is ../suites/services-vm.nix's job): the
+# komodo boot chain, Caddy routing, notify-failure, cross-stack interaction,
+# SSH and reboot convergence.
 
 {
   pkgs,
@@ -33,13 +24,10 @@ let
   composeDir = ../../stacks + "/${stack}";
   composeFile = composeDir + "/compose.yaml";
 
-  # -------------------------------------------------------------------------
-  # Eval-time compose parse
-  # -------------------------------------------------------------------------
-  # A line-oriented regex scan, not a YAML parser. That is enough because the
-  # stack conventions (CLAUDE.md) keep compose files flat: one `image:` per
-  # service, list-form `ports:` and `volumes:`. A stack that strays far
-  # enough from the conventions to defeat this parse should get a hand-written
+  # Compose parse
+
+  # A line scan, not a YAML parser: the stack conventions keep compose files
+  # flat, and a stack that strays far enough to defeat it wants a hand-written
   # suite anyway.
   composeLines = lib.splitString "\n" (builtins.readFile composeFile);
 
@@ -59,15 +47,11 @@ let
     matchAll "[[:space:]]*image:[[:space:]]*[\"']?([^\"'[:space:]#]+)[\"']?[[:space:]]*(#.*)?" 0
   );
 
-  # Host-published ports, forms `127.0.0.1:P:C` and `P:C` (with optional
-  # quotes and /tcp|/udp). Group 1 is the host port either way. Every stack
-  # publishes on 127.0.0.1 by convention; a bare `P:C` still yields a
-  # loopback listener to probe plus the outsider negative. That negative
-  # verifies firewall posture only (nothing but 22 open to the LAN), NOT
-  # loopback-only binding: an accidental 0.0.0.0 publish is still dropped by
-  # the firewall here, and the real exposure — 0.0.0.0 reachable through the
-  # trusted tailscale0 — is untestable in this suite because the VM never
-  # joins a tailnet.
+  # Host-published ports, `127.0.0.1:P:C` or bare `P:C`; group 1 is the host
+  # port either way. The outsider negative below verifies FIREWALL POSTURE
+  # only, not loopback binding — a 0.0.0.0 publish is dropped by the firewall
+  # here, and the real exposure is through tailscale0, which this VM never
+  # joins. loopback-binding is the lint that covers it.
   parsedHostPorts = map lib.toInt (
     lib.unique (
       # trailing comment tolerated (POSIX ERE: plain group, not (?:...))
@@ -75,10 +59,8 @@ let
     )
   );
 
-  # Zero parsed ports would make the publishing subtest below pass vacuously
-  # (empty loop) — every generic stack so far publishes at least one port, so
-  # an empty parse means the compose file strayed from the flat conventions
-  # (long-form ports:, variables) and needs a hand-written suite instead.
+  # Zero ports would make the publishing subtest an empty loop, so an empty
+  # parse means the compose file strayed and needs a hand-written suite.
   hostPorts =
     if parsedHostPorts == [ ] then
       throw (
@@ -89,35 +71,26 @@ let
     else
       parsedHostPorts;
 
-  # Bind-mount sources under /mnt. The real host has these created by
-  # hardware-configuration.nix tmpfiles / earlier runs; in the VM they must
-  # exist before compose up or Docker creates them root-owned at mount time
-  # anyway — creating them explicitly keeps the suite honest about which
-  # paths the stack expects, and a typo'd volume path shows up as a probe of
-  # a directory nothing writes to. Relative (./file) and non-/mnt mounts are
-  # left to the seeded stack directory and the base system respectively.
+  # Bind-mount sources under /mnt. Relative (./file) and non-/mnt mounts are
+  # left to the seeded stack directory and the base system.
   mntPaths = lib.unique (matchAll "[[:space:]]*-[[:space:]]*[\"']?(/mnt/[^:\"']+):.*" 0);
 
-  # -------------------------------------------------------------------------
-  # Volume-root OWNERSHIP, from the generated table — not from root:root
-  # -------------------------------------------------------------------------
-  # 🚨 Not hardcoded root:root: that is ALSO docker's create-on-mount default,
-  # so a harness hardcoding it silently reproduces the bug stack-dirs.nix
-  # exists to prevent — any image that drops privileges (loki 10001, grafana
-  # 472, ...) restart-loops within seconds (measured). Reading the SAME
-  # generated file the real host imports keeps the suite honest, and
-  # `stack-dirs-generated` byte-compares it against a fresh generator run.
-  # Parents come along because the generator emits a rule for each one.
+  # Volume-root ownership
+
+  # 🚨 Read from the SAME generated table the real host imports, never
+  # hardcoded root:root — that is also docker's create-on-mount default, so
+  # hardcoding it reproduces the very bug stack-dirs.nix prevents (any image
+  # that drops privileges restart-loops within seconds, measured).
   stackDirRules = (import ../../nixos/stack-dirs.nix).systemd.tmpfiles.rules;
   rulePath = r: lib.elemAt (lib.splitString " " r) 1;
-  # Is `dir` this path or an ancestor of it?
+  # Ancestor-or-self, so a bind source's parents come along with their own
+  # declared ownership rather than tmpfiles' default for a created parent.
   covers = dir: p: p == dir || lib.hasPrefix (dir + "/") p;
   mntRules = lib.filter (r: lib.any (covers (rulePath r)) mntPaths) stackDirRules;
 
-  # A bind source with no rule of its own would fall back to whatever tmpfiles
-  # gives an undeclared path — the silent case again. The generator refuses to
-  # emit without a STACK_NOTES entry, so this can only fire if the two parsers
-  # disagree about a path, and then it should fire loudly at eval.
+  # Every bind source needs a rule of its OWN (not just an ancestor's). The
+  # generator refuses to emit without a STACK_NOTES entry, so this can only
+  # fire when the two parsers disagree about a path — loudly, at eval.
   unruled = lib.filter (p: !(lib.any (r: rulePath r == p) stackDirRules)) mntPaths;
   checkedMntRules =
     if unruled == [ ] then
@@ -129,13 +102,11 @@ let
         + "entry and re-run nixos/generate-stack-dirs.sh."
       );
 
-  # -------------------------------------------------------------------------
   # Image pins
-  # -------------------------------------------------------------------------
-  # Every compose ref must have a content-addressed pin in images.nix — the
-  # suites run offline, so an unpinned image cannot be pulled at runtime and
-  # the failure would otherwise surface minutes into a VM boot instead of at
-  # eval.
+
+  # The suites run offline, so an unpinned image cannot be pulled at runtime —
+  # throw at eval rather than minutes into a VM boot. The isAttrs filter drops
+  # images.nix's `_unresolved`/`_skipped` lists.
   pinnedImages = lib.filter (v: builtins.isAttrs v) (lib.attrValues images);
 
   pinFor =
@@ -153,18 +124,14 @@ let
 
   stackImages = map pinFor imageRefs;
 
-  # -------------------------------------------------------------------------
   # /srv seed
-  # -------------------------------------------------------------------------
+
   fixture = ../fixtures + "/${stack}.sops.env";
   hasFixture = builtins.pathExists fixture;
 
-  # Only this stack is seeded — the whole point is not booting the others.
-  # The stack's real .sops.env (if committed) is encrypted to the production
-  # recipient, which the throwaway test key cannot decrypt, so it is dropped
-  # and the fixture stands in. decrypt-sops-envs.service then runs the real
-  # sops CLI against it, so decryption, mode and the '$'-quoting path are
-  # still exercised for real whenever a fixture exists.
+  # The real .sops.env is encrypted to the production recipient, so it is
+  # dropped and the fixture stands in — decrypt-sops-envs then runs the real
+  # sops CLI against it and the decrypt path is still exercised for real.
   seedSrv = pkgs.runCommand "srv-seed-${stack}" { } ''
     mkdir -p $out/stacks/${stack}
     cp -r ${composeDir}/. $out/stacks/${stack}/
@@ -239,11 +206,6 @@ pkgs.testers.runNixOSTest {
         systemd.tmpfiles.rules = [
           "d /srv/stacks 0755 1000 1000 -"
           "d /var/lib/sops-nix 0700 root root -"
-          # Volume roots for this stack, with the REAL ownership from
-          # nixos/stack-dirs.nix (see the derivation above). Generic on
-          # purpose, so a new stack works without touching the harness — and
-          # correct on purpose, so a stack whose image is not root is tested
-          # against the ownership it will actually get.
         ]
         ++ checkedMntRules;
 
@@ -312,17 +274,10 @@ pkgs.testers.runNixOSTest {
     # journal dump instead of a bare stack trace.
     try:
         services_vm.wait_for_unit("multi-user.target")
-        # Only wait on decrypt-sops-envs when a fixture was seeded. (The old
-        # rationale about the unit exiting 1 on an empty /srv is obsolete —
-        # the per-file-accumulating rewrite ends with an explicit exit status
-        # and succeeds with zero .sops.env files, as the forgejo suite's
-        # no-failed-units sweep demonstrates — but the wait is still only
-        # *meaningful* when this stack actually has secrets to decrypt.)
         if has_fixture:
-            # Transient oneshot now (a minutely timer re-fires it), so
-            # wait_for_unit would race its inactive-after-success state.
-            # The artifact it must produce is the synchronisation point.
-            # 120s matches the hand-written suites — two timer ticks of margin.
+            # A transient oneshot (a minutely timer re-fires it), so
+            # wait_for_unit would race its inactive-after-success state; the
+            # artifact is the synchronisation point. 120s = two timer ticks.
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/${stack}/.env", timeout=120
             )
@@ -357,12 +312,9 @@ pkgs.testers.runNixOSTest {
                 outsider.fail(f"nc -z -w 5 services-vm {port}")
 
         with subtest("every container is running; healthchecked ones healthy"):
-            # --wait already gates on this, but inspect directly so a
-            # container that flipped to restarting between --wait and here —
-            # or a healthcheck that --wait's semantics glossed over — still
-            # fails loudly. Note this asserts *running* for every container,
-            # so a stack with a legitimate one-shot init container needs a
-            # hand-written suite (as backrest has).
+            # Inspected directly, not left to --wait: this asserts *running*
+            # for EVERY container, so a stack with a legitimate restart:"no"
+            # init one-shot needs a hand-written suite instead.
             ids = services_vm.succeed(
                 "docker compose -f /srv/stacks/${stack}/compose.yaml "
                 "-p ${stack} ps -aq"

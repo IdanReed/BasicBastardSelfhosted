@@ -1112,12 +1112,26 @@ pkgs.testers.runNixOSTest {
             f"audiobooks category saves to {save!r}"
         )
         services_vm.succeed("test -d /mnt/slow/data/downloads/audiobooks")
-        # And media-init said it did this, on the FIRST run — a category that
-        # exists with no CHANGE line behind it would mean something else
-        # created it.
+        # On a fresh volume the category comes from qbit-init's seeded
+        # categories.json, which is the half that works with the tunnel down
+        # (qbit never starts, so media-init's API reconcile cannot run).
+        seed_log = services_vm.succeed("docker logs media_qbit_init 2>&1")
+        assert "CHANGE: seeded" in seed_log and "categories.json" in seed_log, (
+            f"qbit-init did not seed categories.json:\n{seed_log}"
+        )
+        services_vm.succeed(
+            "test -f /mnt/fast/qbittorrent/config/qBittorrent/categories.json"
+        )
+        # And media-init reconciled rather than fighting it: with the seed in
+        # place its first run is the already-correct branch, not a create and
+        # not a repoint.
         first = services_vm.succeed("docker logs media_init 2>&1")
-        assert "CHANGE: qbittorrent: created category 'audiobooks'" in first, (
-            f"media-init did not report creating the category:\n{first}"
+        assert "category 'audiobooks' already saves to" in first, (
+            f"media-init did not agree with the seeded category:\n{first}"
+        )
+        assert "repointed category" not in first, (
+            f"media-init repointed a category it should have agreed with:\n"
+            f"{first}"
         )
 
     with subtest("clamd publishes no host port"):

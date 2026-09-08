@@ -606,7 +606,7 @@ pkgs.testers.runNixOSTest {
             "mkdir -p /srv/stacks/latestack && "
             "cp /srv/stacks/ntfy/.sops.env /srv/stacks/latestack/.sops.env"
         )
-        # 150s: the unit pins AccuracySec=1s (nixos/configuration.nix), so
+        # 150s: the unit pins AccuracySec=1s (nixos/modules/secrets.nix), so
         # the worst case is one ~60s tick + the decrypt itself; the slack on
         # top keeps a slow VM from flaking. If that AccuracySec ever reverts
         # to systemd's 1min default a tick can slip ~120s — the

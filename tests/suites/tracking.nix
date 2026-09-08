@@ -470,23 +470,43 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # the OIDC-ready-but-OFF contract
+    # the OIDC posture each app actually ships
     # -----------------------------------------------------------------------
-    with subtest("all three apps report OIDC off, deliberately"):
-        # Homebox exposes its whole OIDC block unauthenticated, which makes
-        # this checkable directly.
+    with subtest("OIDC is ON, and local login survives where it must"):
+        # Post-rollout (2026-09-05) all three ship OIDC ENABLED, not
+        # ready-and-off. Homebox exposes its whole OIDC block unauthenticated,
+        # which makes it checkable directly.
         status = curl(HOMEBOX, "/api/v1/status")
         assert isinstance(status, dict), f"homebox /status: {status!r}"
         oidc = status.get("oidc") or {}
-        assert not (oidc.get("enabled") if isinstance(oidc, dict) else oidc), (
-            f"homebox reports OIDC {oidc!r}, expected disabled"
+        assert oidc.get("enabled") is True, (
+            f"homebox reports OIDC {oidc!r} — HBOX_OIDC_ENABLED=true should "
+            f"make it enabled"
         )
-        # BookStack: AUTH_METHOD=standard means the login page offers no
-        # external provider button.
-        services_vm.succeed(
-            f"curl -sf {BOOKSTACK}/login -o /tmp/bs-login2.html"
+        # 🚨 The half that is load-bearing rather than cosmetic: local login
+        # must STAY available, because tracking-init registers the owner with
+        # a password. Turning it off would break the headless bootstrap.
+        assert oidc.get("allowLocal") is True, (
+            f"homebox disabled local login ({oidc!r}) — tracking-init "
+            f"registers the group owner with a password and would lock out"
         )
-        services_vm.fail("grep -qi 'oidc\\|single sign' /tmp/bs-login2.html")
+        # The other two are env-level and their rendered pages are not a
+        # contract, so assert the switch rather than the HTML.
+        bs = services_vm.succeed(
+            "docker inspect --format "
+            "'{{range .Config.Env}}{{println .}}{{end}}' bookstack"
+        )
+        assert "AUTH_METHOD=oidc" in bs, bs
+        kk = services_vm.succeed(
+            "docker inspect --format "
+            "'{{range .Config.Env}}{{println .}}{{end}}' karakeep"
+        )
+        # Karakeep enables OIDC purely by the PRESENCE of this URL...
+        assert "OAUTH_WELLKNOWN_URL=https://" in kk, kk
+        # ... and password auth stays on for the same reason as homebox:
+        # tracking-init needs users.create and apiKeys.exchange, both of which
+        # DISABLE_PASSWORD_AUTH would remove.
+        assert "DISABLE_PASSWORD_AUTH=true" not in kk, kk
 
     # -----------------------------------------------------------------------
     # publishing posture

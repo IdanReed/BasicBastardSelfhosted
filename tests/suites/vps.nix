@@ -308,6 +308,21 @@ pkgs.testers.runNixOSTest {
                   f"{path} not blocked by the Caddy matcher: {body!r}"
               )
 
+          # Traversal out of the executor carve-out, sent RAW (`--path-as-is`,
+          # or curl normalises it away before it leaves the client). Caddy
+          # normalises the path before matching, so this lands on the blocked
+          # /api/v3/flows/instances/ — the point is to keep it that way across
+          # a Caddy upgrade, because the carve-out is a prefix match and a
+          # non-normalising proxy would hand the whole flow tree to anyone.
+          body = peer.succeed(
+              f"curl -s --path-as-is {CA} "
+              f"https://${authHost}/api/v3/flows/executor/../instances/"
+          )
+          assert "restricted to tailnet" in body, (
+              f"a ../ escape from the executor carve-out reached past the "
+              f"Caddy matcher: {body!r}"
+          )
+
           # But the login SPA's API surface stays public — the flow executor
           # and branding config are called from arbitrary browsers during
           # LOGIN, so blocking them breaks every public login (the authentik

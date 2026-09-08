@@ -3,49 +3,45 @@
 # Regenerates tests/lib/images.nix from the images referenced by every compose
 # file in the repo.
 #
-# The VM suites run with no network (that is what makes them reproducible), so
-# every image has to be in the Nix store before the test starts. This script
-# resolves each `image:` reference to a content-addressed {digest, hash} pin
-# that dockerTools.pullImage can fetch, and the suites `docker load` them into
-# the guest.
+# The VM suites run with no network, so every image has to be in the Nix store
+# before the test starts. This resolves each `image:` reference to a
+# content-addressed {digest, hash} pin that dockerTools.pullImage can fetch.
 #
-# Run this after changing any image tag in a compose file. The drift lint in
-# tests/lib/lints.nix fails the suite if you forget, so a stale pin surfaces as
-# a test failure rather than as a suite that quietly tests the old image.
+# Run it after changing any image tag; the `image-pins` lint fails if you
+# forget, so a stale pin surfaces as a test failure rather than as a suite
+# quietly testing the old image.
 #
 # Usage:
 #   ./tests/update-images.sh            # all images
-#   ./tests/update-images.sh light      # skip the multi-GB ones
+#   ./tests/update-images.sh light      # re-resolve only the small ones,
+#                                       # carrying the heavy pins over verbatim
 #
 set -euo pipefail
 
 # Resolved BEFORE the cd: the lock guard below re-execs this script, and a
-# relative $0 (cd tests; ./update-images.sh) no longer resolves once the
-# working directory is the repo root.
+# relative $0 no longer resolves once the working directory is the repo root.
 SELF=$(readlink -f "$0")
 
 cd "$(dirname "$0")/.."
 OUT="tests/lib/images.nix"
 TIER="${1:-all}"
 
-# ---------------------------------------------------------------------------
+case "$TIER" in
+  all | light) ;;
+  *)
+    echo "unknown tier: $TIER (expected 'all' or 'light')" >&2
+    exit 1
+    ;;
+esac
+
 # Single-instance guard
-# ---------------------------------------------------------------------------
-# This script truncates "$OUT.tmp" once and then APPENDS one entry per image
-# before `mv`ing it into place, so two overlapping runs interleave their
-# entries and one of them moves a corrupt file over images.nix. That failure
-# does not look like a race: entries simply go missing, which reads exactly
-# like the registry having lost a tag.
-#
-# It is easy to hit, because a full run takes long enough to want to
-# background — and "wait for the tmpfile to disappear" is NOT a safe way to
-# tell whether a run is in progress: the tmpfile does not exist during the
-# opening collect-references phase, so that guard fires early and starts a
-# second run on top of the first. Waiting on the PROCESS is the only correct
-# way; this lock makes getting it wrong harmless.
-#
-# -E 99 so a lock failure is distinguishable from the exit 1 this script uses
-# for unresolved tags.
+
+# This script appends one entry per image to "$OUT.tmp" before `mv`ing it into
+# place, so two overlapping runs interleave and one moves a corrupt file over
+# images.nix — a failure that reads as the registry losing a tag, not as a
+# race. Waiting on the tmpfile is NOT a safe alternative: it does not exist
+# during the collect-references phase. -E 99 keeps a lock failure
+# distinguishable from the exit 1 used for unresolved tags.
 LOCKFILE="${TMPDIR:-/tmp}/basicbastard-update-images.lock"
 if [ "${UPDATE_IMAGES_LOCKED:-}" != "1" ]; then
   rc=0
@@ -57,9 +53,14 @@ if [ "${UPDATE_IMAGES_LOCKED:-}" != "1" ]; then
   exit "$rc"
 fi
 
-# Images too large to pin on every developer machine by default. They are only
-# needed by suites/stacks-heavy.nix.
-HEAVY_RE='paperless-ngx|goauthentik|apache/tika|gotenberg|backrest'
+# An interrupted run must not leave images.nix.tmp in the tree: that is exactly
+# the build artifact run.sh's tracked-artifacts check exists to catch, and it
+# has been committed before.
+trap 'rm -f "$OUT.tmp"' EXIT
+
+# Multi-GB images, skipped by the `light` tier. Their existing pins are carried
+# over verbatim, so a light run is never destructive.
+HEAVY_RE='paperless-ngx|goauthentik|apache/tika|gotenberg|backrest|immich-|frigate|docspace|documentserver|windmill'
 
 # Images referenced in compose but not resolvable from a public registry.
 # Format: <compose reference>|<substitute reference>|<reason>
@@ -67,16 +68,29 @@ declare -a SUBSTITUTES=(
   "ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4|caddy:2.11.2|fork image published by build-caddy.yml (composite tag = caddy 2.11.2 + cloudflare plugin 0.2.4); the DNS-01 plugin is unused in the suites, which force 'tls internal'"
 )
 
+# One flake eval instead of one per image, and the resolved path is stable for
+# the whole run.
+echo "==> Resolving nix-prefetch-docker"
+PREFETCH="$(nix build --no-link --print-out-paths nixpkgs#nix-prefetch-docker)/bin/nix-prefetch-docker"
+
 echo "==> Collecting image references from compose files"
 # .claude/worktrees/ holds Claude Code checkouts of this same repo. Their
 # compose files are stale copies, and scanning them pins images no live stack
-# references — including tags that were deleted from the tree months ago.
+# references — including tags deleted from the tree months ago.
 mapfile -t REFS < <(
   find . -name compose.yaml -not -path './.claude/*' -print0 \
-    | xargs -0 grep -hoE '^\s*image:\s*\S+' \
+    | xargs -0 -r grep -hoE '^\s*image:\s*\S+' \
     | sed -E 's/^\s*image:\s*//' \
     | sort -u
 )
+
+# An empty scan would happily `mv` a file with no pins in it over images.nix
+# and take all 80-odd with it. The lint catches that afterwards; this catches
+# it before the file is replaced.
+if [[ ${#REFS[@]} -eq 0 ]]; then
+  echo "!! no 'image:' references found — refusing to overwrite $OUT" >&2
+  exit 1
+fi
 
 # Apply substitutions and record them for the generated header.
 declare -a PINS=()
@@ -93,9 +107,24 @@ for ref in "${REFS[@]}"; do
   PINS+=("${sub:-$ref}|$ref")
 done
 
+# The existing entry for an attr, verbatim, or a non-zero exit. Used to carry
+# a heavy pin through a light run untouched.
+existing_entry() {
+  local found
+  [ -f "$OUT" ] || return 1
+  found=$(awk -v want="  \"$1\" = {" '
+    $0 == want { inside = 1 }
+    inside     { print }
+    inside && $0 == "  };" { exit }
+  ' "$OUT")
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
+}
+
 echo "==> Pinning ${#PINS[@]} images (tier: $TIER)"
 declare -a UNRESOLVED=()
 declare -a SKIPPED=()
+declare -a CARRIED=()
 {
   echo "# GENERATED by tests/update-images.sh — do not edit by hand."
   echo "#"
@@ -107,7 +136,8 @@ declare -a SKIPPED=()
     echo "#"
     echo "# Substitutions in effect:"
     for n in "${NOTES[@]}"; do
-      echo "#   $n" | fold -s -w 76 | sed '2,$s/^/#     /'
+      # sed strips the trailing space `fold -s` leaves on every wrapped line.
+      echo "#   $n" | fold -s -w 76 | sed -e '2,$s/^/#     /' -e 's/[[:space:]]*$//'
     done
   fi
   echo "{"
@@ -115,10 +145,21 @@ declare -a SKIPPED=()
 
 for pin in "${PINS[@]}"; do
   IFS='|' read -r fetchRef composeRef <<<"$pin"
+  attr=$(tr '/:.' '___' <<<"$composeRef")
 
   if [[ "$TIER" == "light" && "$fetchRef" =~ $HEAVY_RE ]]; then
-    echo "    skip (heavy): $fetchRef"
-    SKIPPED+=("$composeRef")
+    # Carry the existing pin over rather than dropping it. Dropping makes the
+    # attr disappear, and the hand-written suites reference these BY NAME, so
+    # a committed light run breaks them at eval while image-pins (which
+    # subtracts _skipped) stays green.
+    if entry=$(existing_entry "$attr"); then
+      echo "    carry (heavy): $fetchRef"
+      printf '%s\n' "$entry" >>"$OUT.tmp"
+      CARRIED+=("$composeRef")
+    else
+      echo "    skip (heavy, no existing pin): $fetchRef"
+      SKIPPED+=("$composeRef")
+    fi
     continue
   fi
 
@@ -135,27 +176,18 @@ for pin in "${PINS[@]}"; do
     echo "    $fetchRef"
   fi
 
-  # A tag that does not resolve is a real deploy-blocking bug in the compose
-  # file, not a reason to abort the run. Record it and keep going, so one bad
-  # reference does not hide the state of every other image.
-  # --final-image-{name,tag} must be passed here, not only recorded in the pin:
-  # they are written into the tarball's manifest, so the output hash depends on
-  # them. Computing the hash without them and retagging in Nix yields a
-  # fixed-output hash mismatch at build time.
+  # --final-image-{name,tag} must be passed HERE, not only recorded in the
+  # pin: they go into the tarball's manifest, so the output hash depends on
+  # them and retagging in Nix afterwards is a fixed-output hash mismatch.
   #
-  # RETRIED, and the stderr is KEPT: nix-prefetch-docker exits non-zero for a
-  # manifest 404, a registry 5xx, a rate limit, a TLS reset and a mid-pull
-  # disconnect alike, and the big images (immich-machine-learning is the
-  # repeat offender) hit the transient ones often enough to produce phantom
-  # "deploy-blocking" findings — operator-confirmed on main: TWO consecutive
-  # full runs each flagged exactly ONE "missing" image (prowlarr, then
-  # immich-ml) that skopeo found present moments later. So keep the stderr,
-  # claim only what it supports, and back off 10s/20s — the failures are
-  # transient and worth waiting out.
+  # Retried with the stderr KEPT: nix-prefetch-docker exits non-zero for a
+  # manifest 404, a 5xx, a rate limit and a mid-pull disconnect alike, and the
+  # big images hit the transient ones often enough to produce phantom
+  # "deploy-blocking" findings. Claim only what the error text supports.
   errfile=$(mktemp)
   meta=""
   for attempt in 1 2 3; do
-    if meta=$(nix run nixpkgs#nix-prefetch-docker -- \
+    if meta=$("$PREFETCH" \
       --image-name "$name" --image-tag "$tag" \
       --final-image-name "$finalName" --final-image-tag "$finalTag" \
       --quiet 2>"$errfile"); then
@@ -167,7 +199,7 @@ for pin in "${PINS[@]}"; do
 
   if [[ -z "$meta" ]]; then
     echo "      UNRESOLVED after 3 attempts. Last error:"
-    sed 's/^/        /' <(tail -n 5 "$errfile")
+    tail -n 5 "$errfile" | sed 's/^/        /'
     echo "        (verify by hand before editing the compose file — this is"
     echo "         only a bad tag if the error says the manifest is unknown)"
     UNRESOLVED+=("$composeRef")
@@ -179,7 +211,6 @@ for pin in "${PINS[@]}"; do
   digest=$(sed -nE 's/.*imageDigest = "([^"]+)".*/\1/p' <<<"$meta")
   hash=$(sed -nE 's/.*hash = "([^"]+)".*/\1/p' <<<"$meta")
 
-  attr=$(tr '/:.' '___' <<<"$composeRef")
   cat >>"$OUT.tmp" <<NIXEOF
   "$attr" = {
     composeRef = "$composeRef";
@@ -192,10 +223,9 @@ for pin in "${PINS[@]}"; do
 NIXEOF
 done
 
-# Emit the bookkeeping lists so lints can act on them. `_unresolved` is what
-# makes a bad tag fail a test run instead of only scrolling past in this
-# script's output; `_skipped` keeps a light-tier run from being mistaken for
-# full coverage.
+# `_unresolved` is what makes a bad tag fail a test run instead of only
+# scrolling past here; `_skipped` keeps a partial run from being mistaken for
+# full coverage. Carried-over heavy pins are in neither: they are real pins.
 {
   echo "  _unresolved = ["
   for u in ${UNRESOLVED+"${UNRESOLVED[@]}"}; do echo "    \"$u\""; done
@@ -208,6 +238,9 @@ done
 
 mv "$OUT.tmp" "$OUT"
 echo "==> Wrote $OUT"
+if [[ ${#CARRIED[@]} -gt 0 ]]; then
+  echo "    ${#CARRIED[@]} heavy pin(s) carried over unverified — run without 'light' before trusting them."
+fi
 
 if [[ ${#UNRESOLVED[@]} -gt 0 ]]; then
   echo

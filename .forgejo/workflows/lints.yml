@@ -4,8 +4,8 @@
 #
 # RUNNER ASSUMPTION (documented once here, shared by all three workflows):
 # a self-hosted runner in HOST-execution mode on a NixOS machine, registered
-# with the label `nix` (see nixos/modules/forgejo-runner.nix — a sketch, not
-# yet imported anywhere). Concretely that means:
+# with the label `nix` (nixos/modules/forgejo-runner.nix, imported by
+# nixos/configuration.nix). Concretely that means:
 #   - `nix` is on the job's PATH (hostPackages in the runner module) and the
 #     nix-daemon socket is reachable — DynamicUser services can talk to the
 #     daemon like any user, no trusted-user status required.

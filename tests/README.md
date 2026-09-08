@@ -14,17 +14,12 @@ today passes identically next month.
 ```bash
 ./tests/run.sh              # structural lints only — seconds, always green
 ./tests/run.sh deploy-check # structural + deploy-readiness (sops-declared) + operator to-dos
-./tests/run.sh vps          # VPS: caddy + headscale + a real tailnet
-./tests/run.sh services     # services VM: sops -> komodo -> stacks
-./tests/run.sh tailnet      # both hosts on one tailnet, end to end
+./tests/run.sh <suite>      # one named suite — see the table below
 ./tests/run.sh stack <name> # one stack alone — the fast loop for stack work
-./tests/run.sh <suite>      # one named suite — 34 exist, authentik through
-                            # excalidraw; run.sh's own header is the
-                            # authoritative list (it sits next to the case
-                            # statement it documents, so it cannot drift far)
 ./tests/run.sh disko        # disk-config.nix formats, mounts, and boots
+./tests/run.sh proxmox      # build gate for the Proxmox VMA image
 ./tests/run.sh proxmox-boot # boots the image: cloud-init key -> sops decrypt
-./tests/run.sh all
+./tests/run.sh all          # everything above
 
 ./tests/run.sh debug vps    # live VM + Python REPL
 ```
@@ -33,6 +28,10 @@ Run `./tests/run.sh` (structural lints) constantly — it is a few seconds and
 catches the cross-file contracts, and it stays green. `deploy-check` adds the
 deploy-readiness lints and the operator to-do scan; run it before a real
 deploy. Run a VM suite when you have changed something it covers.
+
+`run.sh`'s own header carries the same list as the table below, one line per
+target; it sits next to the `case` statement it documents, and the
+`run-sh-suite-parity` lint fails if either drifts from `tests/default.nix`.
 
 ### Debugging a failure
 
@@ -67,12 +66,14 @@ green light that means nothing.
 
 | Path | What it is |
 |------|-----------|
-| `default.nix` | Entry point. `checks`, `driver`, and the evaluated production configs under `config`. |
-| `lib/sources.nix` | Pins nixpkgs + sops-nix from the host's own lock file. |
+| `default.nix` | Entry point. `checks`, `stackChecks`, `driver`, and the evaluated production configs under `config`. |
+| `run.sh` | The only thing you invoke. Its header is the target list. |
+| `lib/sources.nix` | Pins nixpkgs + sops-nix + disko from the host's own lock file. |
 | `lib/images.nix` | **Generated.** Content-addressed pins for every image. |
 | `lib/profiles.nix` | The test-only overrides, each with the reason it exists. |
 | `lib/lints.nix` | Pure contract checks, run against production values. |
-| `suites/*.nix` | The VM suites. |
+| `lib/mk-stack-suite.nix` | The generic per-stack suite, derived from a compose file. |
+| `suites/*.nix` | The hand-written VM suites. |
 | `fixtures/*.sops.env` | Fake secrets, encrypted to the throwaway key below. |
 | `keys/test-age-key.txt` | **Throwaway age key, committed on purpose.** |
 | `update-images.sh` | Regenerates `lib/images.nix`. |
@@ -90,6 +91,90 @@ production recipient.
 Using real sops rather than stubbing secrets is deliberate: a secret that fails
 to decrypt, or lands with the wrong owner or mode, is a real deploy failure on
 both hosts and one that config review does not catch.
+
+## The suites
+
+One row per `run.sh` target, in the order `run.sh`'s `case` accepts them. The
+"cannot" column is per-suite; the fleet-wide gaps are in **What it cannot
+cover** further down, and every one of them applies here too.
+
+Anything marked *heavy* pulls multi-GB images and takes minutes: run it when
+you have touched what it covers, and let `heavy-nightly.yml` do the rest.
+
+| Target | What it proves | What it cannot |
+|---|---|---|
+| `vps` | The headscale VPS end to end: Caddy through a real ACME (Pebble) HTTP-01 exchange, native headscale, the authentik container, the fail2ban jail's failregex against a captured `login_failed` line, the log shipper reading the journal, firewall negatives from an off-tailnet node, and a reboot. | No services VM in it, so every log push fails — the cross-host hop is proven by no suite. Never provokes a real ban. |
+| `services` | The services VM boot chain: sops decrypt → `docker-network-homelab` → `bootstrap-komodo` → the small stacks, ordering compared by timestamp; the Caddy routing table; the notify-failure path; SSH; a reboot. | The heavy stacks (they get their own suites) and anything needing the VPS. |
+| `tailnet` | Both hosts on ONE tailnet: `tailscale-autoconnect` with `--login-server`, peers pinging over 100.64/10, a client reaching Komodo through Caddy by hostname. | Does not carry the logging stack, so the VPS→services-VM log hop is still unproven. |
+| `authentik` | *heavy.* `authentik.service` converging with the project name pinned; `sops.templates` rendering bare per-key values; the headscale and immich blueprints applying independently against the pinned image; the reputation policy → DenyStage → flow chain. | The browser login flow (JS flow executor + enforced TOTP). Rotation never reaches the `!Env` provider row. |
+| `paperless` | *heavy.* The document pipeline for real: five containers, compose-network DNS, `env_file` threading end to end (the fixture admin must mint an API token), and a document travelling HTTP → redis → celery → postgres and back out of the API. | OCR of real scans — the fixture document is plain text. Caddy routing (the `services` suite owns that). |
+| `backrest` | *heavy.* `config-init` seeding `config.json` once from the decrypted `.env`, including a `$`-laden restic password surviving the whole pipeline; the re-run leaving it byte-identical; the storage-box-key gate both ways; the shared `homelab` network reaching ntfy by name. | A real Hetzner Storage Box — an in-VM SFTP endpoint stands in — and it never restores from what it snapshots. |
+| `rotation` | *heavy.* The `restartUnits` contract executed: a NixOS specialisation switch rotates `HEADSCALE_OIDC_CLIENT_SECRET`, and headscale and authentik both really restart with the new value visible inside the worker container. | Whether Authentik re-reads the blueprint's `!Env` into the provider row — asserted by no suite. |
+| `gitops` | The Komodo loop offline: push to a real in-VM Forgejo → host `stack-git-sync` → host `decrypt-sops-envs` → a `files_on_host` Stack deployed by Periphery, which sees a secret that exists only encrypted. Invariant #4 and finding #11. | Nothing about GitHub/Forgejo webhooks reaching the host from outside. |
+| `forwardauth` | *heavy.* The bentopdf pilot across the host seam: the blueprint applying to the **embedded** outpost, `import protected` redirecting an unauthenticated tailnet request, and a spoofed `X-Forwarded-Host` rejected. | No authenticated request ever passes THROUGH the gate to the app — that needs a browser. |
+| `forgejo` | *heavy.* `healthz`, the headless admin seed, an API-created repo, a credentialed push and clone-back, and loopback-only web + ssh publishing. | Nothing about the public SSH host key rotation or a real remote clone. |
+| `media` | *heavy.* The gluetun kill-switch offline by construction (wireguard points at TEST-NET-1, so qbittorrent's netns has zero egress), the x265 guard proven against an injected TRaSH custom format, and the EICAR → quarantine chain. | Profilarr's DB link, gluetun turning healthy, and hardware transcode all need egress or a GPU. |
+| `immich` | *heavy.* Make-style config render including secret rotation, the headless admin seed, a v3 multipart upload → asset → thumbnail without ML, the literal `pg_dumpall` loop body, and reboot durability on a real disk. | ML inference results and the OIDC browser + `app.immich:///` callback flow. |
+| `books` | *heavy.* The sops → render → merge chain (Kavita's seeded JWT key not silently replaced), two apps seeded headlessly and idempotently, a real EPUB and FLAC indexed with zero egress, OPDS plus the KOReader auth leg, `:ro` mounts measured, and the post-download hook in both directions. | Anna's Archive, every metadata/cover provider, and both OIDC logins — the deliberate off-state is what is asserted. |
+| `automation` | *heavy.* A pre-seeded `.storage/http` proving Home Assistant loaded a STABLE config, a real proxied request, Frigate asserted **not** in safe mode, the MQTT round trip with auth on and both consumers connected, and Frigate's port 5000 asserted unpublished. | No Coral TPU, no cameras, no IoT VLAN. The detector is overridden to `type: cpu`, so the block that fails hardest is not the block under test. |
+| `tracking` | *heavy.* Three headless bootstraps (two of them tRPC/204-no-body), the seeded `admin@admin.com` proven dead, and Karakeep's version endpoint pinned so an accidental `latest` cannot pass. | Nothing that needs egress: no real link scraping, no OCR. |
+| `firefly` | *heavy.* The `remote_user_guard` header spelling proven from the database side, the guard's total lack of validation pinned deliberately, and the php-fpm-ping healthcheck caught lying with the database stopped. | The forward-auth half in front of it (that is `forwardauth`'s seam). |
+| `dawarich` | *heavy.* The `force_ssl`/Sidekiq interlock, host authorization asserted with a wrong `Host` as the control, and the seeded `demo@dawarich.app` proven dead across a reboot. | No real GPS ingest client. |
+| `vaultwarden` | The `ADMIN_TOKEN` proven un-mangled through decrypt → interpolate (finding #30) and a real `/admin` round trip, plus the backup paths. | The split-path forward auth on `/admin` is verified structurally by lints, not driven here. |
+| `notes-sync` | *heavy.* The rmfakecloud create-once window, and the inverted publish assertion the generic suite would pass either way: the outsider CAN reach 22000 and CANNOT reach 10200/10201. | The reMarkable tablet half is entirely client-side. |
+| `util` | The no-secrets stack, glance running offline, and the unhealthy-container alert proven to fire once and recover. | Each browser tool's actual function — only that it answers. |
+| `windmill` | *heavy.* The dependency cache proven seeded from the image, so the fleet-convention bind mount that would delete both CPython interpreters is a test failure; `admin@windmill.dev` retired. | No script actually executed against real dependencies. |
+| `restore` | The restore DRILL: `restic init` → snapshot of `/mnt/fast/_dumps` + a vaultwarden identity canary → destroy → restore → sha256 **and** mode/owner verification → the service starts on the restored key → `check --read-data`, with two hardened negative controls. | The sftp/Hetzner leg end to end, forward-compat against an older repo, and reading the production password out of a burning building. The twice-yearly manual ritual remains the real control. |
+| `tandoor` | *heavy.* `test ! -f db.sqlite3` — settings.py falls back to SQLite with no error and `boot.sh` does not even wait for Postgres. | No recipe import from a real site. |
+| `wger` | *heavy.* `admin`/`adminadmin` proven dead via `check_password`, and a real hashed asset fetched THROUGH the nginx sidecar — the only way from outside to tell "serving" from "serving with no CSS". | No exercise-database sync (needs egress). |
+| `mealie` | *heavy.* `changeme@example.com` retired and proven 401, and the database read back OUT of the sqlite file on the bind mount — sqlite by decision, so the fallback state and the intended state are the same file. | No recipe scraping (needs egress). |
+| `actual` | *heavy.* The headless `POST /account/bootstrap` path the bake-off left unverified, proven by a subsequent real login; and the up-and-claimable window before init runs, pinned. | An EVALUATION stack: no bank sync, no long-term data. |
+| `wealthfolio` | *heavy.* An Argon2id PHC surviving decrypt → compose-interpolate proven by a REAL login (finding #30 again), plus negative-control containers for the traps that only fire at boot. | No market-data provider (needs egress). |
+| `gatus` | The `network_mode: host` bind proven from ANOTHER machine — such a service is invisible to `loopback-binding` and to the generic port probe — plus an empty config directory proven to be a hard startup failure rather than a silent no-op. | It probes nothing real here: there is no fleet in the VM to watch. |
+| `docspace` | *heavy.* The wizard seeded headlessly, the three-image split held together, and the machine key in play proven to be the one from sops. | No document editing session. |
+| `beszel` | *heavy.* The key/token/signature triangle end to end and REAL disk numbers hub-side — every signal Beszel offers about itself lies in a different way (findings #44, #46) — plus `config.yml`'s declarative-AND-destructive `SyncSystems`. | No multi-host fleet, and no long-run history. |
+| `samba` | *heavy.* An authenticated SMB write/read round trip and — the assertion it exists for — a wrong password for an EXISTING user REFUSED, because `map to guest = bad user` turns a failed user creation into guest access every anonymous positive test would pass. Exposure proven from both sides. | No Windows client, no domain join. |
+| `journald-logging` | The fleet-wide journald log driver proven in-VM: `docker logs` positively asserted under the driver, and the systemd rate limit measured (~10k of a 30k burst survives the default with no "Suppressed" note; 30k/30k with `rateLimitBurst=0`). Findings #74–#76. | Not a stack suite — it guards the daemon setting the other suites' `docker logs` assertions rest on. |
+| `silverbullet` | *heavy.* The git-sync path against a REAL in-VM Forgejo: seed, a mirror round trip on a page name with a space, PAT hygiene, the finding-#66 remote-wins reconcile with its superseded branch and alert, the `CONTAINER_BOOT.md` canary, and healthy-through-a-dead-remote. | No client sync, and no conflict a human would have to resolve. |
+| `outline` | Everything provable without an IdP: the locally built OIDC redirect leg matched byte-for-byte against the compose/blueprint contract, migrations plus the zero-users first-login pin, uid-1001 data-volume writes, the `pg_dumpall` contract, stateless redis. | Outline has NO local accounts, so no login is possible here at all — only that the stack runs. |
+| `victorialogs` | *heavy.* The INGEST contract: a container writes a marker line and the suite polls the query API until it comes back, closing the healthy-collector-shipping-nothing gap. Also the label contract, the 100GiB retention flag read from the running argv, and grafana healthy offline with the datasource plugin absent. | The VPS side of the hop (see the `vps` row) and any real dashboard query. |
+| `proton` | The no-creds/no-egress contract: `serve` holding SMTP/IMAP/CardDAV listeners with no `auth.json`, a login refused as a clean IMAP `NO` rather than a hang, and the export loop failing calmly instead of crash-looping. | Nothing reaches Proton. No mail is ever fetched. |
+| `excalidraw` | *heavy.* Named-scene persistence THROUGH Postgres — write, inspect the keyv table, restart, read the same bytes back — because with `STORAGE_URI` missing the api logs one WARN and stores every scene in process memory under a green healthcheck. The keyv CREATE-TABLE race and the P3005/db-push traps are pinned too. | No collaborative session, no browser. |
+
+### The other targets
+
+| Target | What it is |
+|---|---|
+| `lints` (the default) | Every structural contract check in `lib/lints.nix`, against the real production values. No VM, seconds. Plus one check that must live in `run.sh` itself: build artifacts must not be git-tracked, which only a script with a `.git` can ask. |
+| `deploy-check` | The same plus `sops-declared` (deploy-readiness) and the operator to-do scan. A RED here means the live host is not ready, not that the code is broken. |
+| `stack <name>` | `lib/mk-stack-suite.nix` — the generic per-stack suite, below. |
+| `disko` | `headscale-vps/disk-config.nix` through disko's own `makeDiskoTest`: formats, mounts, legacy-boots. |
+| `proxmox` | Build gate for `nixos#proxmox-image` (nixos-generators + cloud-init + guest agent). A flake build, not a `tests` attr. |
+| `proxmox-boot` | Boots that image with a NoCloud seed and asserts the cloud-init age key and first-boot sops decryption through the guest agent. |
+| `all` | Everything above, plus `diskoTest` and `proxmoxBoot`, which live outside `checks` and would otherwise never run. |
+| `debug <suite>` | The interactive driver — see **Debugging a failure**. |
+
+### Generic stack suites
+
+`./tests/run.sh stack <name>` boots the real services VM with ONLY that stack
+seeded and asserts, generically: the fixture `.sops.env` really decrypts to a
+0600 `.env`, `docker compose up --wait` converges, every published port answers
+on loopback and is refused from another node, and every container is running
+(healthchecked ones healthy). Images, ports and `/mnt` volume roots are all
+derived from the compose file, so adding a stack costs one list entry in
+`default.nix`.
+
+Registered: `ghostfolio`, `logging`, `ntfy`, `proton`, `owl`, `util`,
+`outline`, `silverbullet`, `excalidraw`. Five of those also have a hand-written
+suite above, which covers what a generic green cannot.
+
+A stack needs a hand-written suite instead when `mk-stack-suite` structurally
+cannot make its claim — a `restart: "no"` init one-shot fails the
+all-containers-running check (finding #39), a healthcheck reports HEALTHY on a
+broken config, or the contract is a protocol dialogue rather than a port
+answering. `caddy` is deliberately absent: it needs the DNS-01 → `tls internal`
+substitution and a `TAILNET_IP`, and the `services` and `tailnet` suites cover
+its routing.
 
 ## What is actually asserted
 
@@ -165,7 +250,7 @@ Honest list; do not read a green suite as covering these.
 | Hetzner / Proxmox provisioning | `nixos-anywhere`, `qmrestore`, cloud-init. |
 | The literal `/dev/sda` in `disk-config.nix` | The `disko` suite (disko's own `makeDiskoTest`) formats, mounts, and legacy-boots the config — but rewrites the device to the runner's virtio disk, and overrides disko's own `boot.loader.grub.devices` derivation with its test scaffolding's. |
 | The production secret *values* decrypting | Needs the production key. The `sops-declared` lint verifies the real files' key sets (sops-yaml keys are plaintext). |
-| Caddy's cloudflare-dns plugin at work | The fork image is NOT yet published, so `update-images.sh` substitutes upstream `caddy:2.11.2` re-tagged under the fork's name (the `SUBSTITUTES` list there, recorded in `images.nix`'s header) — a broken xcaddy fork build fails **nothing** in the harness. The suites also force `tls internal`, so the plugin's DNS-01 flow is never exercised either way. Once the fork is published, drop the substitution so a broken build fails caddy startup here. |
+| Caddy's cloudflare-dns plugin at work | `update-images.sh` substitutes upstream `caddy:2.11.2` for the fork image (the `SUBSTITUTES` list there, recorded in `images.nix`'s header), so a broken xcaddy fork build fails **nothing** in the harness. The suites also force `tls internal`, so the plugin's DNS-01 flow is never exercised either way. |
 | Hetzner Storage Box itself | The backrest suite runs a real in-VM SFTP endpoint instead — key, sftp, restic, snapshots all real; only the endpoint's address is substituted. |
 | **The Storage Box leg of a restore** | `restore` now closes the local loop for real (2026-09-01): `restic init` → snapshot of `/mnt/fast/_dumps` + the vaultwarden identity canary → destroy → `restic restore` → sha256 **and** mode/owner verification → the service starts on the restored key → `check --read-data`, plus two hardened negative controls (wrong password; byte-flipped pack on a copy checked clean first). `RESTIC_PASSWORD` arrives through the real sops→`.env` path. What is STILL not proven: the sftp/Hetzner leg end to end (`backrest` proves init+snapshot over sftp but never restores from it), forward-compat against a repo older than the VM that reads it, and reading the *production* password out of a burning building. So the **twice-yearly manual ritual in `ServerNotes/designs/core-disaster-recovery.md` remains the real control** — narrower now, not replaced. |
 | Real OIDC browser login | The authentik suite verifies the secret contract, blueprint objects, and discovery; the interactive flow is not driven. Likewise forward-auth: the suite proves the gate redirects, is scoped to bentopdf, and rejects spoofed `X-Forwarded-Host` — but no authenticated request ever passes THROUGH the gate to the app. |
@@ -1634,7 +1719,7 @@ ciphertext either way). Diagnostic tell for next time: `docker events` showing
 
 ## Status
 
-Green as of 2026-08-31 — **every suite, no exceptions**: lints (**21** — newest:
+Green as of 2026-08-31 — **every suite, no exceptions**: lints (**24** — newest:
 `stack-dirs-generated`, the checked-in `nixos/stack-dirs.nix` must byte-match a
 re-run of `nixos/generate-stack-dirs.py` over `stacks/*/compose.yaml` — the
 generator replaced `tmpfiles-ownership`'s hand-maintained `COMPOSE_FILES`
@@ -1749,8 +1834,8 @@ without an IdP: the locally-built OIDC redirect leg parsed and matched
 byte-for-byte against the compose/blueprint contract, migrations + the
 zero-users first-login pin, uid-1001 data-volume writes, the pg_dumpall
 backup contract, stateless redis), stackChecks (generic coverage for
-ghostfolio, logging, ntfy, owl, util and both wikis), and the proxmox image
-build gate (`run.sh all` covers the lot).
+ghostfolio, logging, ntfy, proton, owl, util, excalidraw and both wikis), and
+the proxmox image build gate (`run.sh all` covers the lot).
 **`gatus` is green on its FIRST run** — the only suite in this campaign to
 manage that. **`docspace`** is green at 12 subtests after two real failures
 (#47, #48). **`beszel`** is green at 15 subtests after three runs — one of my
@@ -1762,7 +1847,7 @@ sixteen stack suites failed the first time they ran, and every one of those
 failures was either a real defect in the stack or a real defect in the test.**
 Nothing that "obviously worked" actually did.
 
-**Seventy-eight** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
+**Seventy-nine** findings came out of building it — see the ledger above. Remaining coverage work is tracked in the workspace-level LONGRUN.md:
 per-stack suites as stacks land (Phase 4). Forward auth and the
 boot-the-proxmox-image suite are in (see `run.sh forwardauth` /
 `run.sh proxmox-boot`). Not coverable: authentik's authenticated browser

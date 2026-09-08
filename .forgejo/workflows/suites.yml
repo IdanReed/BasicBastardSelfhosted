@@ -14,6 +14,9 @@
 # `kvm` in nix.settings.system-features automatically when /dev/kvm exists.
 # See nixos/modules/forgejo-runner.nix for the label wiring.
 #
+# No `concurrency:` group on purpose: the runner has capacity 1, so a
+# superseded run does not race a fresh one — it only delays it.
+#
 # Suites run SEQUENTIALLY (steps of one job, not parallel jobs) on purpose:
 # each boots one or more 3GB guests, and two suites racing on one host melt
 # it. A failing step also skips the rest — same short-circuit run.sh gives
@@ -39,7 +42,7 @@ jobs:
       - name: vps suite (caddy + headscale + a real tailnet)
         run: ./tests/run.sh vps
 
-      - name: services suite (sops -> docker network -> arcane -> stacks)
+      - name: services suite (sops -> komodo -> stacks)
         run: ./tests/run.sh services
 
       - name: tailnet suite (both hosts on one tailnet, end to end)

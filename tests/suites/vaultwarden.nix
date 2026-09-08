@@ -37,8 +37,10 @@
 #     that a vault no real client can open is "working". The first account is
 #     an operator step ON PURPOSE (see .sops.env.example), so nothing here logs
 #     into a vault.
-#   - **SSO.** Ships off; discovery is lazy, so the off-state is all there is
-#     to assert.
+#   - **SSO.** Ships ON (SSO_ENABLED=true since the 2026-09-05 rollout) but
+#     unreachable here — discovery is lazy, so all that is asserted is that
+#     the container starts, which it does NOT do with an empty
+#     SSO_CLIENT_SECRET.
 #   - **The /admin forward-auth layer.** Caddy imports (protected) for
 #     `/admin*` only; that hop needs the VPS outpost and is covered by
 #     tests/suites/forward-auth.nix's contract, not here. What this suite
@@ -203,9 +205,12 @@ pkgs.testers.runNixOSTest {
             "stat -c '%a %u:%g' /srv/stacks/vaultwarden/.env"
         ).strip()
         assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
-        # Present and EMPTY is the shipped OIDC state, not an oversight.
-        for k in ["SSO_CLIENT_ID", "SSO_CLIENT_SECRET"]:
-            services_vm.succeed(f"grep -qx '{k}=' /srv/stacks/vaultwarden/.env")
+        # SSO_CLIENT_ID is empty on purpose — compose.yaml's `environment:`
+        # sets it and wins over env_file. SSO_CLIENT_SECRET must NOT be:
+        # config.rs refuses to start vaultwarden when SSO_ENABLED is true and
+        # it is empty, so an empty value is a crash loop, not an off-state.
+        services_vm.succeed("grep -qx 'SSO_CLIENT_ID=' /srv/stacks/vaultwarden/.env")
+        services_vm.fail("grep -qx 'SSO_CLIENT_SECRET=' /srv/stacks/vaultwarden/.env")
 
     with subtest("the decrypted .env keeps the PHC SINGLE-QUOTED"):
         # sops round-trips the quotes as part of the value. If a future edit
@@ -301,6 +306,10 @@ pkgs.testers.runNixOSTest {
             "'{{range .Config.Env}}{{println .}}{{end}}' vaultwarden"
         )
         assert "SIGNUPS_ALLOWED=false" in env, env
+        # The SSO path has its own gate and it is NOT this one: config.rs
+        # reads SSO_SIGNUPS_ALLOWED there, whose default is true. Asserted so
+        # the posture stays a decision rather than an inherited default.
+        assert "SSO_SIGNUPS_ALLOWED=true" in env, env
         # And behaviourally, not just structurally. A 4xx here is the point;
         # note a validation 400 would also satisfy it, which is why the env
         # assertion above is kept alongside.

@@ -1,33 +1,19 @@
-# Test harness for BasicBastardSelfhosted.
+# Test harness for BasicBastardSelfhosted. Entry point: ./run.sh; see
+# ./README.md for what each suite covers and cannot.
 #
-# Deliberately NOT a flake. Flakes only see git-tracked files, so every edit to
-# an untracked module — which is most of them while a change is in progress —
-# would need a `git add` before it could be tested, and every host-config edit
-# would need a re-lock if the host directories were path inputs. Plain Nix has
-# neither problem: relative paths just work, and iteration is instant.
-#
-# nixpkgs is pinned from headscale-vps/flake.lock (see lib/sources.nix), so the
-# suites evaluate against exactly the nixpkgs the hosts are built with.
-#
-# Usage:
-#   ./tests/run.sh lints           # pure contract checks, seconds
-#   ./tests/run.sh vps             # VPS: caddy + headscale + real tailnet
-#   ./tests/run.sh services        # services VM: komodo + stacks
-#   ./tests/run.sh tailnet         # both hosts, one tailnet, end to end
-#   ./tests/run.sh all
-#
-# Debugging a failure interactively:
-#   nix-build tests -A driver.vps && ./result/bin/nixos-test-driver
-#   >>> start_all(); vps.shell_interact()
+# Deliberately NOT a flake: flakes only see git-tracked files, so every edit to
+# an in-progress module would need a `git add` before it could be tested, and
+# path inputs would need a re-lock. nixpkgs is pinned from
+# headscale-vps/flake.lock instead (lib/sources.nix), so the suites evaluate
+# against exactly the nixpkgs the hosts are built with.
 
 {
   system ? builtins.currentSystem,
-  # ServerNotes is a SIBLING repo, not a subdirectory, so a linked git worktree
-  # has no copy beside it and the three lints that read _overview.md would fail
-  # at eval — taking every other lint with them, since checks.lints forces the
-  # whole set. Overridable rather than conditional: silently skipping the
-  # inventory lints in exactly the trees where in-progress work happens is worse
-  # than a path that has to be named.
+  # ServerNotes is a SIBLING repo, so a linked git worktree has no copy beside
+  # it and the lints reading _overview.md fail at eval — taking every other
+  # lint with them, since checks.lints forces the whole set. Overridable, not
+  # conditional: silently skipping the inventory lints in exactly the trees
+  # where in-progress work happens is worse than naming a path.
   #   nix-build tests -A checks.lints --arg serverNotes /path/to/ServerNotes
   # A path, not a string: the store copy is what keeps evaluation pure.
   serverNotes ? ../../ServerNotes,
@@ -48,36 +34,29 @@ let
 
   sopsModule = "${sources.sops-nix}/modules/sops";
 
-  # The ACME server from nixpkgs' own test suite: Pebble with a fixed CA whose
-  # certificate is exposed as config.test-support.acme.caCert. Using it means
-  # Caddy runs its real ACME client against a real ACME server over HTTP-01,
-  # rather than having certificates handed to it.
+  # nixpkgs' own Pebble module, so Caddy runs its REAL ACME client through a
+  # real HTTP-01 challenge; only the CA differs from production.
   acmeServerModule = "${sources.nixpkgs}/nixos/tests/common/acme/server";
 
-  # ---------------------------------------------------------------------------
-  # Production configurations, evaluated for the lints
-  # ---------------------------------------------------------------------------
-  # These are the *real* values — no test overrides — so lints can assert
-  # contracts the VM suites necessarily override away (server_url, the OIDC
-  # issuer, the production sops file).
+  # Production configs
+
+  # The REAL values — no test overrides — so lints can assert the contracts
+  # the VM suites necessarily override away (server_url, the OIDC issuer, the
+  # production sops file).
   evalHost =
     modules:
     (import "${sources.nixpkgs}/nixos/lib/eval-config.nix" {
       inherit system;
       modules = modules ++ [
         # Keeps evaluation from demanding a bootloader device or real disks.
-        # Nothing the lints read is affected by it.
         { boot.loader.grub.enable = false; }
       ];
     }).config;
 
-  # The VPS module list, mirrored by hand from headscale-vps/flake.nix (the
-  # harness cannot import the flake — see the not-a-flake rationale above).
-  # A module added to the flake but not here would be deployed yet invisible
-  # to every lint, so lints.nix cross-checks this list against the flake's
-  # text (module-list-parity) — keep it as relative-path strings so the lint
-  # can compare it verbatim. disk-config.nix is deliberately absent: it needs
-  # disko's module, and diskoTest covers it instead.
+  # Mirrored by hand from headscale-vps/flake.nix, which the harness cannot
+  # import. Keep these as relative-path strings: module-list-parity compares
+  # them against the flake's text verbatim. disk-config.nix is deliberately
+  # absent — it needs disko's module, and diskoTest covers it.
   vpsModuleFiles = [
     "configuration.nix"
     "modules/caddy.nix"
@@ -93,31 +72,24 @@ let
     ../nixos/configuration.nix
   ];
 
-  # The services VM again, WITH hardware-configuration.nix. The VM suites
-  # substitute tmpfs mounts for it, so nothing else ever evaluates its
-  # tmpfiles rules — reverting the /srv/stacks ownership rule would keep every
-  # suite green while breaking GitOps delivery in production (see the
-  # tmpfiles-ownership lint). Only the parts pure evaluation cannot honour are
-  # stubbed, and each stub names its coverage cost:
+  # The services VM WITH hardware-configuration.nix — the only eval that sees
+  # its tmpfiles rules, since every VM suite replaces the file with tmpfs
+  # stubs. See the tmpfiles-ownership lint.
   servicesFullConfig = evalHost [
     sopsModule
     ../nixos/configuration.nix
     ../nixos/hardware-configuration.nix
     {
-      # Coverage cost: the real fileSystems (by-label/by-partlabel devices,
-      # the /var/lib/docker bind mount) are replaced wholesale, so lints
-      # reading this config must not assert anything about mounts — only the
-      # VM suites' tmpfs stand-ins and the real host exercise those.
+      # Coverage cost: the real fileSystems are replaced wholesale, so no lint
+      # reading this config may assert anything about mounts.
       fileSystems = lib.mkForce {
         "/" = {
           device = "tmpfs";
           fsType = "tmpfs";
         };
       };
-      # hardware-configuration.nix forces grub back on with a real device;
-      # evalHost's plain `enable = false` would merely conflict with it, so
-      # this one needs mkForce. Same rationale as evalHost: nothing the lints
-      # read depends on the bootloader.
+      # hardware-configuration.nix forces grub back on with a real device, so
+      # evalHost's plain `enable = false` would merely conflict with it.
       boot.loader.grub.enable = lib.mkForce false;
     }
   ];
@@ -159,7 +131,14 @@ let
     tailnet = callSuite ./suites/tailnet.nix { };
 
     # Heavy tier: multi-GB images, minutes not seconds. Run when touching the
-    # thing they cover, and in CI — not on every edit.
+    # thing they cover, and in CI — not on every edit. README.md's suite table
+    # says what each one proves and what it cannot.
+    #
+    # A stack has a hand-written suite here rather than a generic stackCheck
+    # when mk-stack-suite structurally cannot make its claim — a restart:"no"
+    # init one-shot fails its all-containers-running check, a healthcheck that
+    # reports HEALTHY on a broken config makes green meaningless, or the
+    # contract is a protocol dialogue rather than a port answering.
     authentik = callSuite ./suites/authentik.nix { };
     paperless = callSuite ./suites/paperless.nix { };
     backrest = callSuite ./suites/backrest.nix { };
@@ -168,19 +147,9 @@ let
     forwardauth = callSuite ./suites/forward-auth.nix { };
     forgejo = callSuite ./suites/forgejo.nix { };
     media = callSuite ./suites/media.nix { };
-    # Hand-written, NOT in stackChecks: its restart:"no" oneshot init
-    # containers fail mk-stack-suite's generic all-containers-running check.
     immich = callSuite ./suites/immich.nix { };
-    # Hand-written for the same reason as immich: kavita-config-init and
-    # books-init are restart:"no" oneshots.
     books = callSuite ./suites/books.nix { };
-    # Three restart:"no" oneshots, and a Frigate that reports HEALTHY on a
-    # broken config (safe mode) — the generic suite would pass on a stack
-    # doing nothing at all.
     automation = callSuite ./suites/automation.nix { };
-    # One of the three Tracking-range stacks (annex §1). Hand-written: a
-    # restart:"no" init oneshot, and three apps whose builtin healthchecks
-    # variously lie.
     tracking = callSuite ./suites/tracking.nix { };
     firefly = callSuite ./suites/firefly.nix { };
     dawarich = callSuite ./suites/dawarich.nix { };
@@ -192,40 +161,19 @@ let
     tandoor = callSuite ./suites/tandoor.nix { };
     wger = callSuite ./suites/wger.nix { };
     mealie = callSuite ./suites/mealie.nix { };
-    actual = callSuite ./suites/actual.nix { }; # hand-written: restart:"no" init one-shot fails mk-stack-suite's all-running check
-    # Hand-written: the argon2 $-quoting trap needs a REAL login; boot-fatal OIDC needs negative containers.
+    actual = callSuite ./suites/actual.nix { };
     wealthfolio = callSuite ./suites/wealthfolio.nix { };
-    # Hand-written: the core claim (a named scene persists server-side) is
-    # exactly what a green healthcheck cannot see — STORAGE_URI missing means
-    # silent in-memory storage. Write -> inspect-postgres -> restart -> read
-    # back, plus the keyv-race and P3005/db-push traps pinned.
     excalidraw = callSuite ./suites/excalidraw.nix { };
     gatus = callSuite ./suites/gatus.nix { };
-    # Hand-written though the shape fits mk-stack-suite: the contract is
-    # no-creds/no-egress behaviour — bannered listeners, a clean login
-    # refusal, the export loop failing calmly — protocol dialogues the
-    # generic suite structurally cannot make.
     proton = callSuite ./suites/proton.nix { };
     beszel = callSuite ./suites/beszel.nix { };
     samba = callSuite ./suites/samba.nix { };
     docspace = callSuite ./suites/docspace.nix { };
-    # Not a stack suite: it guards the daemon-level journald log driver that
-    # stacks/logging depends on, and with it the `docker logs` contract that
-    # 131 call sites across tests/ rely on. Cheap (~20 s of test script) and
-    # the only place rateLimitBurst = 0 is actually proven to take effect.
+    # Not a stack suite: the daemon-level journald log driver, and with it the
+    # `docker logs` contract every other suite's assertions rest on.
     journald-logging = callSuite ./suites/journald-logging.nix { };
-    # The wiki bake-off's dedicated halves — each also keeps its generic
-    # stackCheck (the util precedent). silverbullet stages a real Forgejo so
-    # the git-sync path (seed, mirror, remote-wins, canary) is driven for the
-    # first time; outline covers everything provable without an IdP.
     silverbullet = callSuite ./suites/silverbullet.nix { };
     outline = callSuite ./suites/outline.nix { };
-    # Hand-written: the INGEST contract — a container writes a marker line and
-    # the suite polls VictoriaLogs' query API until it arrives, closing the
-    # healthy-collector-shipping-nothing gap the Loki era only documented.
-    # Also pins the 100GiB retention flag in the live argv, the empty-result
-    # semantics the gatus ingest probe depends on, and grafana staying
-    # healthy offline with the datasource plugin absent.
     victorialogs = callSuite ./suites/victorialogs.nix { };
   };
 
@@ -241,59 +189,20 @@ let
       ;
   };
 
-  # caddy is deliberately absent: it needs the DNS-01 -> tls-internal
-  # Caddyfile substitution and a TAILNET_IP, which the generic suite cannot
-  # provide. Its routing is covered by the services and tailnet suites.
+  # Stacks whose shape fits the generic harness: no restart:"no" one-shot
+  # (finding #39) and no healthcheck that lies. Five of them ALSO carry a
+  # hand-written suite above, which covers what a green generic run cannot.
+  # caddy is deliberately absent — it needs the DNS-01 -> tls-internal
+  # substitution and a TAILNET_IP; services and tailnet cover its routing.
   stackChecks = lib.genAttrs [
-    # An EVALUATION stack, and the generic suite is the whole of its coverage
-    # on purpose — there is nothing bespoke to seed. What it does prove is the
-    # one thing that was in doubt: the image's entrypoint runs
-    # `npx prisma migrate deploy` before the server starts, and this suite
-    # boots it with NO ROUTE TO THE INTERNET. An npx that reached the registry,
-    # or a prisma engine downloaded at runtime, fails here rather than on the
-    # host.
     "ghostfolio"
-    # logging fits the generic harness exactly: no `restart: "no"` one-shot
-    # (finding #39), and although victorialogs carries no healthcheck at all
-    # (distroless — no shell), a
-    # project-wide `up -d --wait` tolerates that and waits for `running` —
-    # it is only NAMING a healthcheck-less service that errors (finding #42),
-    # and this harness names none. What the generic suite then buys is real:
-    # the fixture .sops.env really decrypts, both loopback publishes really
-    # answer and are refused from the outsider node, and alloy and grafana
-    # really reach `healthy` — against the same nixos/configuration.nix that
-    # carries the journald log driver, so it also exercises the switch.
     "logging"
     "ntfy"
-    # Two long-running containers, no restart:"no" oneshot; `--wait`
-    # tolerates the healthcheck-less export sidecar (the logging precedent).
-    # The bespoke no-creds protocol dialogues live in suites/proton.nix.
     "proton"
-    # Also an evaluation stack, and the generic suite is a genuinely good fit:
-    # one container, no secrets, no volume, no init oneshot. What it proves
-    # that a lint cannot is that the VERSIONED tag really does carry its
-    # dependencies — upstream's `edge` image `git clone`s and `uv sync`s from
-    # the entrypoint on every start, and an accidental swap to it would boot
-    # fine on a developer's machine and fail only here.
     "owl"
     "util"
-    # Both wikis are generic-suite-shaped: no restart:"no" init containers, and
-    # every service healthchecked. What the generic green does NOT prove is
-    # carried by the dedicated suites (checks.outline / checks.silverbullet):
-    #   outline      — boots and reports healthy with Authentik unreachable
-    #                  (measured), so this proves the stack runs, never that
-    #                  anyone can log in (no local accounts).
-    #   silverbullet — ownership IS correct here (the stack-dirs.nix rules are
-    #                  spliced in, /space is 1000:1000), but the fixture's
-    #                  GIT_SYNC_REMOTE points at 127.0.0.1:10550 and no
-    #                  Forgejo runs in this VM, so fetch/rebase/push fail
-    #                  every cycle: only the local half of the sidecar runs —
-    #                  the failure path, alerting, healthy throughout.
     "outline"
     "silverbullet"
-    # Four services, all restart: unless-stopped, all healthchecked, no
-    # oneshots — generic-suite-shaped. What it cannot see (silent in-memory
-    # storage when STORAGE_URI is lost) is suites/excalidraw.nix's job.
     "excalidraw"
   ] (name: mkStackSuite { stack = name; });
 in
@@ -316,14 +225,10 @@ rec {
     suites
     // (
       let
-        # Two honestly-different jobs. STRUCTURAL lints assert the code/config
-        # is internally coherent (fixtures, pins, port bindings) — they must be
-        # green always. DEPLOY-READINESS lints assert a real `nixos-rebuild` on
-        # the live host would activate — they go RED purely because an operator
-        # has not yet supplied a real production value (e.g. a secret declared
-        # in Nix but not yet in the encrypted secrets.sops.yaml). That is a
-        # pre-deploy checklist item, NOT a "the code is broken" signal, so it is
-        # kept OUT of the default gate and surfaced by `./tests/run.sh deploy-check`.
+        # STRUCTURAL lints say the code is internally coherent and must always
+        # be green. DEPLOY-READINESS lints go red purely because an operator
+        # has not yet supplied a production value — a checklist item, not a
+        # broken build — so they stay out of the default gate.
         deployLintNames = [ "sops-declared" ];
         structuralLints = builtins.removeAttrs lints deployLintNames;
         mkAgg =
@@ -336,40 +241,31 @@ rec {
           '';
       in
       {
-        # The always-green gate (default `./tests/run.sh`). Named entries stay
-        # individually buildable for a targeted re-run.
+        # The always-green gate. `lints.<name>` stays individually buildable.
         lints = mkAgg "lints" structuralLints;
-        # Superset for intentional pre-deploy verification: structural + the
-        # deploy-readiness lints. run.sh's deploy-check target also reports the
-        # operator to-dos (changeme_ .sops.env, null ssh-pubkeys) alongside it.
         deploy-check = mkAgg "deploy-check" lints;
       }
     );
 
   inherit stackChecks;
 
-  # Boot-the-image test: the services VM's image module set + cloud-init
-  # age-key injection + first-boot sops decryption, asserted via the qemu
-  # guest agent. Outside `suites` (a raw qemu runCommand, no driverInteractive).
+  # Outside `suites`: a raw qemu runCommand, so no driverInteractive.
   proxmoxBoot = import ./suites/proxmox-boot.nix {
     inherit pkgs lib sopsModule;
     inherit (sources) nixpkgs;
   };
 
-  # Disk layout test for headscale-vps/disk-config.nix, via disko's own
-  # makeDiskoTest. Separate from `suites` because it is not a runNixOSTest and
-  # has no driverInteractive.
+  # disk-config.nix via disko's own makeDiskoTest; likewise not a runNixOSTest.
   diskoTest = import ./suites/disko.nix {
     inherit pkgs lib;
     diskoSource = sources.disko;
   };
 
-  # Interactive drivers, for poking at a live VM when an assertion fails.
   driver = lib.mapAttrs (_: t: t.driverInteractive) suites;
 
-  # diskoTest is appended explicitly: it lives outside `checks` (not a
-  # runNixOSTest, no driverInteractive — see above) but "all" must still build
-  # it, or the only coverage disk-config.nix has silently never runs.
+  # diskoTest and proxmoxBoot are appended explicitly: they live outside
+  # `checks`, and without them "all" would silently never run the only
+  # coverage disk-config.nix and the image recipe have.
   all = pkgs.linkFarmFromDrvs "all-checks" (
     lib.attrValues checks ++ lib.attrValues stackChecks ++ [ diskoTest proxmoxBoot ]
   );

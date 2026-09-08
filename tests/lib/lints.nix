@@ -1,13 +1,8 @@
-# Pure contract checks. No VM, no images, sub-second.
+# Pure contract checks against the PRODUCTION values the VM suites must
+# override away. Each is a derivation that fails its build on violation, so
+# `nix-build tests -A checks.lints` is the whole gate.
 #
-# These exist because the VM suites have to override the environment-specific
-# values — server_url, the ACME endpoint, the sops file — and therefore cannot
-# assert anything about the *production* values of those. Each lint here checks
-# a contract that spans two files which nothing else keeps in sync, using the
-# real values.
-#
-# Everything is a derivation that fails its build on violation, so `nix-build
-# tests -A checks.lints` is the whole gate.
+# The failures these were written for are the numbered findings in ./README.md.
 
 {
   pkgs,
@@ -32,19 +27,19 @@
 }:
 
 let
+  # Helpers
+
   inherit (pkgs) runCommand;
 
   py = "${pkgs.python3.withPackages (p: [ p.pyyaml ])}/bin/python3";
 
   repo = ../..;
 
-  # The authoritative service inventory. `+` keeps this a path so only the one
-  # file is copied to the store, and so a string argument cannot smuggle an
-  # out-of-store path into a lint.
+  # A path, not a string: only the one file is copied to the store, and a
+  # string argument cannot smuggle an out-of-store path into a lint.
   overviewMd = serverNotes + "/designs/_overview.md";
 
-  # Stack directories, discovered rather than listed, so a new stack is covered
-  # the moment it exists.
+  # Discovered rather than listed, so a new stack is covered by existing.
   stackNames = lib.attrNames (
     lib.filterAttrs (n: t: t == "directory" && builtins.pathExists (repo + "/stacks/${n}/compose.yaml")) (
       builtins.readDir (repo + "/stacks")
@@ -59,8 +54,7 @@ let
     }) stackNames)
     ++ [
       {
-        # komodo: the deploy plane, a root-level compose (not under stacks/),
-        # bootstrapped onto this host like arcane/ was before it.
+        # The deploy plane: a root-level compose, not under stacks/.
         stack = "komodo";
         path = repo + "/komodo/compose.yaml";
         dir = repo + "/komodo";
@@ -72,16 +66,15 @@ let
       }
     ];
 
-  # Keys of a dotenv file, or null when the file does not exist (null vs []
-  # matters: stack-env-drift must distinguish "file absent" from "file empty").
-  # Works on encrypted .sops.env too — sops encrypts dotenv VALUES but leaves
-  # the KEYS plaintext, so drift is checkable without any decryption key. The
-  # 'sops_' prefix filters out the metadata lines sops appends on encryption.
+  # Keys of a dotenv file, or null when it does not exist (stack-env-drift must
+  # tell "file absent" from "file empty"). Encrypted .sops.env works too: sops
+  # encrypts dotenv VALUES and leaves KEYS plaintext. 'sops_' drops its
+  # metadata lines.
   dotenvKeys =
     path:
     if builtins.pathExists path then
       lib.filter (s: s != "" && !lib.hasPrefix "sops_" s) (
-        map (m: builtins.head m) (
+        map builtins.head (
           lib.filter (m: m != null) (
             map (l: builtins.match "^([A-Za-z_][A-Za-z0-9_]*)=.*" l) (
               lib.splitString "\n" (builtins.readFile path)
@@ -106,19 +99,10 @@ let
     )
   );
 
-  # ---------------------------------------------------------------------------
-  # The one enumeration of /mnt bind mounts
-  # ---------------------------------------------------------------------------
-  # nixos/generate-stack-dirs.py both WRITES nixos/stack-dirs.nix and answers
-  # "which /mnt directories does which stack need" for the lints below. Having
-  # one implementation is the whole point: the previous arrangement had the
-  # generator's job done by hand in hardware-configuration.nix and the checking
-  # done by a hand-maintained COMPOSE_FILES list here, and the list named 17 of
-  # 22 stacks — 13 bind sources with no tmpfiles rule, unnoticed for a campaign.
-  #
-  # The manifest is built from `composeFiles` (a readDir glob, not a list), so a
-  # new stack enters both the generator and the checks by existing. authentik is
-  # dropped: it runs on the VPS, whose filesystems are not this host's.
+  # The ONE enumeration of /mnt bind mounts: the same generator that writes
+  # nixos/stack-dirs.nix also answers "which directories does which stack
+  # need" for the lints below (finding #51). authentik is dropped — it runs on
+  # the VPS, whose filesystems are not this host's.
   stackDirsGenerator = "${repo + "/nixos/generate-stack-dirs.py"}";
   stackDirsManifest = pkgs.writeText "stack-dirs-manifest.json" (
     builtins.toJSON (
@@ -127,70 +111,82 @@ let
       )
     )
   );
-  # Emits {sources, directories, byStack} for the manifest above. `sources` is
-  # what a compose file literally binds; `directories` adds the parents, which
-  # need rules of their own (tmpfiles creates a missing parent with default
-  # ownership, not the rule's).
+  # Emits {sources, directories, byStack}. `sources` is what a compose file
+  # literally binds; `directories` adds the parents, which need rules of their
+  # own (tmpfiles creates a missing parent with default ownership).
   stackDirsJson = "${py} ${stackDirsGenerator} --manifest ${stackDirsManifest} --json";
 
-  # ---------------------------------------------------------------------------
-  # Trailing comments vs the end-anchored compose regexes
-  # ---------------------------------------------------------------------------
-  # Every lint that reads `ports:` matches a whole line and anchors on `$`, so
-  # `- "10100:8000"  # todo` — valid YAML that publishes on 0.0.0.0 — simply
-  # stops matching and the entry becomes invisible: a silent PASS in
-  # loopback-binding, caddy-routes and overview-sync at once. Stripping the
-  # comment before the match is the fix; doing it here rather than in three
-  # regexes keeps the anchors (and the long-form `published:` hard error) as
-  # they are.
+  # Every `ports:` regex below anchors on `$`, so a trailing `# todo` would
+  # make a 0.0.0.0 publish invisible to three lints at once. Strip it first.
   pyNoComment = ''
     def nocomment(line):
         # YAML: '#' opens a comment at line start or after whitespace.
         return re.sub(r"(?:(?<=\s)|^)#.*$", "", line)
   '';
 
-  mkLint =
-    name: script:
-    runCommand "lint-${name}"
-      {
-        nativeBuildInputs = [ pkgs.python3 ];
-      }
-      ''
-        set -eu
-        ${script}
-        touch $out
-      '';
+  # Handle blocks of a Caddyfile: matcher -> {host, ports, protected}. Three
+  # lints read the same file and must not disagree about what it says. Nested
+  # handles are attributed to the outermost (vaultwarden splits /admin off),
+  # and `ports` keeps source order because auth-column-parity wants the last.
+  pyCaddyHandles = ''
+    def caddy_handles(path):
+        matchers, handles = {}, {}
+        current, current_depth, depth = None, 0, 0
+        for raw in open(path):
+            # Comments first: the header documents `import protected` in prose
+            # and sample blocks, which must not count as routes.
+            line = re.sub(r"#.*$", "", raw)
+            m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
+            if m:
+                matchers[m.group(1)] = m.group(2)
+            h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
+            if h and current is None:
+                current, current_depth = h.group(1), depth
+                handles.setdefault(
+                    current, {"host": None, "ports": [], "protected": False})
+            if current is not None:
+                r = handles[current]
+                r["host"] = matchers.get(current)
+                if re.match(r"\s*import\s+protected\s*$", line):
+                    r["protected"] = True
+                p = re.search(r"\breverse_proxy\s+localhost:(\d+)", line)
+                if p:
+                    r["ports"].append(int(p.group(1)))
+            depth += line.count("{") - line.count("}")
+            if current is not None and depth <= current_depth:
+                current = None
+        return handles
+  '';
+
+  mkLintDrv =
+    name: attrs: script:
+    runCommand "lint-${name}" attrs ''
+      set -eu
+      ${script}
+      touch $out
+    '';
+
+  mkLint = name: mkLintDrv name { nativeBuildInputs = [ pkgs.python3 ]; };
 in
 {
-  # ---------------------------------------------------------------------------
-  # OIDC: each native-OIDC consumer <-> its Authentik blueprint
-  # ---------------------------------------------------------------------------
-  # Values have to agree across files that nothing links. With matching_mode:
-  # strict on the redirect URIs, a mismatch is not a warning — login simply
-  # fails, and silently at login time rather than at startup (headscale:
-  # oidc.only_start_if_oidc_is_available is false; immich: the config file is
-  # applied without validation against the IdP).
-  #
-  # The headscale leg does NOT auto-cover other providers — it reads
-  # vpsConfig's headscale settings and the headscale blueprint specifically —
-  # so every new OIDC pair needs its own leg here. Immich's pair is
-  # stacks/immich/immich.json.template (client side) vs immich-oidc.yaml
-  # (provider side); the client secret VALUE contract (VPS sops copy == stack
-  # .env copy) is not checkable without keys and stays a suite concern.
+  # Lints
+
+  # Each native-OIDC consumer vs its Authentik blueprint. matching_mode is
+  # strict, so drift is a silent login-time failure. One leg PER PAIR: nothing
+  # here generalises to a provider that has not been added by hand.
   oidc-contract =
     mkLint "oidc-contract" # bash
       ''
         ${py} - <<'PY'
-        import sys, yaml
+        import glob, json, os, re, sys, yaml
 
         server_url = ${builtins.toJSON vpsConfig.services.headscale.settings.server_url}
         client_id  = ${builtins.toJSON vpsConfig.services.headscale.settings.oidc.client_id}
         issuer     = ${builtins.toJSON vpsConfig.services.headscale.settings.oidc.issuer}
 
         with open("${(repo + "/headscale-vps/authentik/blueprints/custom/headscale-oidc.yaml")}") as f:
-            # The blueprint uses !Find / !KeyOf / !Env tags that PyYAML does not
-            # know. They are irrelevant here, so resolve every unknown tag to
-            # its raw scalar/sequence rather than failing to parse.
+            # authentik's !Find / !KeyOf / !Env tags are irrelevant here, so
+            # resolve every unknown tag to None rather than failing to parse.
             class Loose(yaml.SafeLoader):
                 pass
             Loose.add_multi_constructor("!", lambda loader, suffix, node: None)
@@ -234,10 +230,8 @@ in
                     f"application slug {slug!r}")
 
         # --- Immich: immich.json.template <-> immich-oidc.yaml -------------
-        # The client side here is a FILE, not a nix config: immich-config-init
-        # renders the template verbatim (only the secret substituted), so the
-        # template's oauth block is exactly what the server will present.
-        import json
+        # immich-config-init renders the template verbatim (only the secret
+        # substituted), so its oauth block is what the server will present.
         with open("${(repo + "/stacks/immich/immich.json.template")}") as f:
             tmpl = json.load(f)
         with open("${(repo + "/headscale-vps/authentik/blueprints/custom/immich-oidc.yaml")}") as f:
@@ -259,9 +253,8 @@ in
                     f"{iattrs['client_id']!r}")
 
             uris = [u["url"] for u in iattrs["redirect_uris"]]
-            # Web login + user-settings link flow derive from externalDomain;
-            # the mobile custom scheme is fixed. All strict, so a miss is
-            # fatal at login, not degraded.
+            # Web login and the user-settings link flow derive from
+            # externalDomain; the mobile custom scheme is fixed.
             expected = [external + "/auth/login",
                         external + "/user-settings",
                         "app.immich:///oauth-callback"]
@@ -284,12 +277,8 @@ in
                     f"reference the blueprint's application slug {islug!r}")
 
         # --- Outline: stacks/outline/compose.yaml <-> outline-oidc.yaml ----
-        # Outline has NO local accounts, so this pair IS the login: a drifted
-        # redirect_uri or client_id does not degrade anything, it makes the
-        # service permanently unenterable — and it fails at login time, with
-        # a HEALTHY container and nothing in any log. The client side is the
-        # compose file's environment (Outline builds its callback as
-        # <URL>/auth/oidc.callback, read out of the image's
+        # Outline has NO local accounts, so this pair IS the login. It builds
+        # its callback as <URL>/auth/oidc.callback (image's
         # plugins/oidc/server/auth/oidcRouter.js).
         with open("${(repo + "/stacks/outline/compose.yaml")}") as f:
             ocomp = yaml.safe_load(f)
@@ -327,10 +316,8 @@ in
             errs.append("outline: no application entry in outline-oidc.yaml")
         else:
             oslug = oapp["identifiers"]["slug"]
-            # Authentik's authorize/token/userinfo endpoints are global; only
-            # the per-application ones carry the slug, and the logout URI is
-            # the one the compose file sets. A slug rename that misses it
-            # leaves logout pointing at a 404.
+            # Only the per-application endpoints carry the slug, so a rename
+            # that misses OIDC_LOGOUT_URI leaves logout pointing at a 404.
             if f"/application/o/{oslug}/" not in oenv.get("OIDC_LOGOUT_URI", ""):
                 errs.append(
                     f"outline: OIDC_LOGOUT_URI "
@@ -338,25 +325,14 @@ in
                     f"blueprint's application slug {oslug!r}")
 
         # --- !Env links: blueprint <-> worker env <-> sops template ---------
-        # The Loose loader above resolves EVERY unknown tag to None, so the
-        # structural checks are blind to !Env — the one tag whose argument is
-        # a contract with two other files. Scan the raw text instead: each
-        # name a custom blueprint reads with !Env must be set in the worker's
-        # compose environment (otherwise !Env resolves against an unset
-        # variable and the provider row is stored with an empty secret —
-        # every token exchange 401s, at login time, silently) AND rendered
-        # into modules/authentik.nix's sops template (otherwise compose's
-        # :?-guard on the variable aborts authentik.service at boot).
-        # All custom blueprints are scanned, not just immich's: the next
-        # !Env-using blueprint is covered the moment it exists.
-        import re, glob, os
-
+        # Loose resolves !Env to None, so the structural checks above are
+        # blind to the one tag whose argument is a contract with two other
+        # files. Scan the raw text of EVERY custom blueprint instead.
         with open("${(repo + "/headscale-vps/authentik/compose.yaml")}") as f:
             compose_doc = yaml.safe_load(f)
         worker_env = ((compose_doc.get("services") or {})
                       .get("worker") or {}).get("environment") or {}
-        # compose allows both mapping and "KEY=value" list form for
-        # environment; normalise to the set of variable names.
+        # compose allows mapping or "KEY=value" list form.
         if isinstance(worker_env, list):
             worker_env = {e.split("=", 1)[0] for e in worker_env}
         else:
@@ -369,15 +345,12 @@ in
                 "${(repo + "/headscale-vps/authentik/blueprints/custom")}/*.yaml")):
             base = os.path.basename(bp)
             with open(bp) as f:
-                # The blueprints DISCUSS !Env in comments ("!Env reads from
-                # the worker's environment...") — strip the comment tail of
-                # each line so only actual tag usage is captured. Good enough
-                # here: no blueprint value legitimately contains " #".
+                # The blueprints DISCUSS !Env in comments; strip comment tails
+                # so only real tag usage is captured.
                 raw = "\n".join(
                     re.sub(r"(^|\s)#.*$", "", line) for line in f)
-            # Only the scalar form (!Env NAME) is parsed; the list form
-            # (!Env [NAME, default]) would slip through the regex, so fail
-            # loudly if it ever appears rather than silently not checking it.
+            # Only the scalar form is parsed, so fail loudly on the list form
+            # rather than silently not checking it.
             if re.search(r"!Env\s*\[", raw):
                 errs.append(
                     f"{base}: uses the list form '!Env [...]', which this "
@@ -391,11 +364,9 @@ in
                         f"variable, the provider row stores an empty "
                         f"secret, and login fails at token exchange, "
                         f"silently")
-                # sops-nix renders placeholders to sentinel strings before
-                # eval can see them (see sops-declared), so the template
-                # CONTENT is only checkable as source text. Word boundary,
-                # not substring: placeholder.FOO must not satisfy a check
-                # for placeholder.FOO_V2's prefix (or vice versa).
+                # sops-nix renders placeholders to sentinels before eval can
+                # see them, so the template is only checkable as source text.
+                # Word boundary: placeholder.FOO must not satisfy FOO_V2.
                 if not re.search(
                         rf"placeholder\.{re.escape(name)}\b", module_src):
                     errs.append(
@@ -414,36 +385,42 @@ in
         PY
       '';
 
-  # ---------------------------------------------------------------------------
-  # Secrets declared in Nix must exist in the encrypted file
-  # ---------------------------------------------------------------------------
-  # sops-nix fails at activation, not at build, when a declared secret is
-  # missing from the sops file — so this turns a first-boot failure into an
-  # eval-time one.
-  #
-  # Three files are compared per host, and sops-yaml makes all three checkable:
-  # values are encrypted but TOP-LEVEL KEYS stay plaintext, so even the real
-  # production secrets.sops.yaml can be verified without the production key.
-  #   1. secrets.sops.yaml          — what the host will actually decrypt
-  #   2. secrets.sops.yaml.example  — the documented template
-  #   3. tests/fixtures/*.sops.yaml — what the suites exercise
-  # Any drift between the declared sops.secrets/template placeholders and any
-  # of the three fails.
+  # DEPLOY-READINESS (see default.nix): every sops.secrets name must exist in
+  # the real secrets.sops.yaml, and its .example and every fixture must carry
+  # the same key SET (order is irrelevant — both sides are compared as sets).
+  # sops-nix fails at ACTIVATION when one is missing; sops-yaml keys stay
+  # plaintext, so all of this is checkable without the production key.
   sops-declared =
     let
+      # sops.templates need no leg of their own: a placeholder that is not a
+      # declared secret fails evaluation outright.
       declared = cfg: lib.attrNames cfg.sops.secrets;
-      # No separate leg for sops.templates placeholders: a template can only
-      # interpolate config.sops.placeholder.<name>, and sops-nix defines that
-      # attrset from sops.secrets — referencing an undeclared name fails
-      # evaluation outright, so every placeholder is already a declared secret
-      # and the declared-secrets comparison below covers it. (An earlier leg
-      # tried to regex `placeholder.NAME` back out of t.content, but by the
-      # time content is a string the placeholders are rendered sentinel
-      # strings — it matched nothing and vacuously asserted nothing.)
+
+      # The desktop flake tracks nixos-unstable and pulls home-manager, so the
+      # harness cannot evaluate it the way it does the two servers. Both of its
+      # generated secret families come from modules that are pure functions of
+      # `lib`, so the names still come from the config's own source rather than
+      # from a second list here. SAMBA_IDAN_PASSWORD is not derivable (its
+      # module needs `config`); the example-vs-real leg below covers it.
+      desktopDeclared =
+        map (n: "ssh/${n}") (lib.attrNames (import (repo + "/nixos-de/ssh-identities.nix")))
+        ++ lib.attrNames
+          (import (repo + "/nixos-de/modules/nixos/work-vpn.nix") { inherit lib; }).sops.secrets;
+
+      # The two sops DOTENV files on the services VM. Same contract, different
+      # format: their consumers are EnvironmentFile= units, so a key that is in
+      # the example and not in the real file fails at unit start.
+      dotenvCase =
+        name:
+        {
+          inherit name;
+          real = dotenvKeys (repo + "/nixos/${name}.sops.env");
+          example = dotenvKeys (repo + "/nixos/${name}.sops.env.example");
+        };
     in
     mkLint "sops-declared" ''
       ${py} - <<'PY'
-      import sys, yaml
+      import json, sys, yaml
 
       def keys(path):
           with open(path) as f:
@@ -451,81 +428,84 @@ in
           if not isinstance(doc, dict):
               print(f"{path}: not a yaml mapping", file=sys.stderr)
               sys.exit(1)
+          # sops-nix addresses a nested value as "a/b", which is what the
+          # desktop's ssh/<name> and workvpn/<param> declarations use — so
+          # flatten to that shape rather than reading only the top level.
           # 'sops' is the metadata block sops appends on encryption.
-          return {k for k in doc if k != "sops"}
+          out = set()
+          def walk(prefix, node):
+              for k, v in node.items():
+                  if not prefix and k == "sops":
+                      continue
+                  name = f"{prefix}/{k}" if prefix else k
+                  walk(name, v) if isinstance(v, dict) else out.add(name)
+          walk("", doc)
+          return out
 
+      # (host, real file, [(label, parity file)], names declared in Nix)
       cases = [
           ("headscale-vps",
            "${(repo + "/headscale-vps/secrets.sops.yaml")}",
-           "${(repo + "/headscale-vps/secrets.sops.yaml.example")}",
-           "${../fixtures/vps.sops.yaml}",
+           [("example", "${(repo + "/headscale-vps/secrets.sops.yaml.example")}"),
+            ("test fixture", "${../fixtures/vps.sops.yaml}"),
+            # The rotation suite's second-generation file. It was a stale
+            # SUBSET once, which makes `rotation` prove less than it reads.
+            ("rotation fixture", "${../fixtures/vps-rotated.sops.yaml}")],
            ${builtins.toJSON (declared vpsConfig)}),
           ("nixos",
            "${(repo + "/nixos/secrets.sops.yaml")}",
-           "${(repo + "/nixos/secrets.sops.yaml.example")}",
-           "${../fixtures/services-vm.sops.yaml}",
+           [("example", "${(repo + "/nixos/secrets.sops.yaml.example")}"),
+            ("test fixture", "${../fixtures/services-vm.sops.yaml}")],
            ${builtins.toJSON (declared servicesConfig)}),
+          ("nixos-de",
+           "${(repo + "/nixos-de/secrets.sops.yaml")}",
+           [("example", "${(repo + "/nixos-de/secrets.sops.yaml.example")}")],
+           ${builtins.toJSON desktopDeclared}),
       ]
 
       errs = []
-      for host, real, example, fixture, needed in cases:
-          real_keys, ex_keys, fix_keys = keys(real), keys(example), keys(fixture)
+      for host, real, parity, needed in cases:
+          real_keys = keys(real)
 
           missing = sorted(set(needed) - real_keys)
           if missing:
               errs.append(f"{host}: declared in Nix but absent from the real "
                           f"secrets.sops.yaml (activation will fail): {missing}")
 
-          for label, other in [("example", ex_keys), ("test fixture", fix_keys)]:
+          for label, path in parity:
+              other = keys(path)
               if other != real_keys:
-                  extra = sorted(other - real_keys)
-                  gone = sorted(real_keys - other)
                   errs.append(f"{host}: {label} drifted from secrets.sops.yaml "
-                              f"(extra: {extra}, missing: {gone})")
+                              f"(extra: {sorted(other - real_keys)}, "
+                              f"missing: {sorted(real_keys - other)})")
+
+      dotenv = json.loads(${builtins.toJSON (builtins.toJSON (map dotenvCase [ "forgejo-runner" "renovate" ]))})
+      for case in dotenv:
+          if case["real"] is None or case["example"] is None:
+              errs.append(f"nixos/{case['name']}.sops.env: the file or its "
+                          f".example does not exist")
+              continue
+          if set(case["real"]) != set(case["example"]):
+              errs.append(f"nixos/{case['name']}.sops.env.example drifted from "
+                          f"the real file (extra: "
+                          f"{sorted(set(case['example']) - set(case['real']))}, "
+                          f"missing: "
+                          f"{sorted(set(case['real']) - set(case['example']))})")
 
       if errs:
           print("SOPS declaration problems:", file=sys.stderr)
           for e in errs:
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
-      print("SOPS declarations OK (real file, example and fixture all agree)")
+      print(f"SOPS declarations OK ({len(cases)} hosts, "
+            f"{sum(len(c[2]) for c in cases)} parity files, "
+            f"{len(dotenv)} dotenv pairs)")
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # sops-nix ignores the per-secret key for dotenv files
-  # ---------------------------------------------------------------------------
-  # sops-install-secrets treats dotenv exactly like binary:
-  #
-  #   switch s.Format {
-  #   case Binary, Dotenv, Ini:
-  #       s.value = sourceFile.binary      // whole file; s.Key is never applied
-  #
-  # (pkgs/sops-install-secrets/main.go). validateSopsFile skips key validation
-  # for the same three formats, so nothing warns either. The option
-  # documentation says only "ignored if format is binary", which is what makes
-  # this easy to walk into.
-  #
-  # Consequence for this repo: with defaultSopsFormat = "dotenv", every
-  # /run/secrets/<name> contains the ENTIRE decrypted document rather than that
-  # key's value. Concretely —
-  #
-  #   nixos/configuration.nix    tailscale up --authkey "$(cat …)" is handed a
-  #                              multi-line dotenv file; registration fails.
-  #   modules/headscale.nix      oidc.client_secret_path likewise; OIDC login
-  #                              breaks, and silently, because
-  #                              only_start_if_oidc_is_available = false.
-  #   modules/authentik.nix      sops.templates substitutes the secret's value,
-  #                              so PG_PASS becomes the whole document and the
-  #                              database password is garbage.
-  #
-  # decrypt-sops-envs.service on the services VM is NOT affected: it shells out
-  # to the sops CLI, where the whole file genuinely is the artifact.
-  #
-  # Fix: per-key extraction needs yaml or json. Keep dotenv only where the whole
-  # file is what you want (the stack .env files), and move the OS-level secrets
-  # that sops-nix extracts individually into a .sops.yaml with
-  # defaultSopsFormat = "yaml".
+  # finding #2: sops-install-secrets treats dotenv exactly like binary — the
+  # per-secret key is never applied, so every /run/secrets/<name> would hold
+  # the WHOLE decrypted document. OS-level secrets must therefore be yaml.
   sops-dotenv-extraction =
     let
       offenders =
@@ -572,12 +552,9 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Image pins resolve, and match what compose asks for
-  # ---------------------------------------------------------------------------
-  # A tag that does not exist in its registry cannot be pulled on the real host
-  # either. Three such references were already shipped in this repo, so this is
-  # not hypothetical.
+  # Every compose `image:` is pinned in lib/images.nix, resolves in its
+  # registry, and no pin outlives its reference. A tag that does not exist
+  # cannot be pulled on the real host either — three already shipped.
   image-pins =
     mkLint "image-pins" ''
       ${py} - <<'PY'
@@ -620,13 +597,8 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # env_file coverage
-  # ---------------------------------------------------------------------------
-  # decrypt-sops-envs.service only writes a .env when a .sops.env exists beside
-  # it. A compose file naming `env_file: .env` with no .sops.env in the same
-  # directory aborts `docker compose up` on the real host with "env file not
-  # found" — and the stack simply never starts.
+  # decrypt-sops-envs only writes a .env where a .sops.env sits beside it, so a
+  # compose naming env_file without one never starts on the host (finding #11).
   env-file-coverage =
     mkLint "env-file-coverage" ''
       ${py} - <<'PY'
@@ -660,12 +632,8 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Caddy routes vs published ports
-  # ---------------------------------------------------------------------------
-  # Caddy is now the only path in on both hosts, so a route pointing at a port
-  # nothing publishes is a 502 with no other symptom, and a service that
-  # publishes a port with no route is unreachable.
+  # Caddy is the only path in on both hosts: a route to a port nothing
+  # publishes is a 502 with no other symptom.
   caddy-routes =
     mkLint "caddy-routes" ''
       ${py} - <<'PY'
@@ -674,9 +642,8 @@ in
       ${pyNoComment}
       manifest = json.load(open("${manifest}"))
       caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
-      # Strip comments. The file documents a not-yet-enabled forward-auth
-      # snippet with a sample reverse_proxy in it; matching that would report a
-      # route to a service nobody has deployed.
+      # Comments stripped: the file documents a sample reverse_proxy that would
+      # otherwise report as a route to a service nobody deployed.
       caddyfile = "\n".join(re.sub(r"#.*$", "", l) for l in caddyfile.splitlines())
 
       # Ports published by any services-VM stack, as host-side port numbers.
@@ -685,10 +652,9 @@ in
           if c["stack"] == "authentik":
               continue  # VPS host, fronted by its own Caddy
           for line in map(nocomment, open(c["path"])):
-              # Optional /tcp|/udp suffix (mirrors lib/mk-stack-suite.nix):
-              # without it a suffixed publish — Phase-4 media will use UDP —
-              # silently drops out of `published` and its route reports as a
-              # phantom 502.
+              # The /tcp|/udp suffix is optional: without it in the regex, a
+              # suffixed publish drops out of `published` and its route
+              # reports as a phantom 502.
               m = re.search(
                   r"^\s*-\s*['\"]?(?:127\.0\.0\.1:)?(\d+):(\d+)(?:/(?:tcp|udp))?['\"]?\s*$",
                   line)
@@ -698,15 +664,10 @@ in
       routed = set(re.findall(r"reverse_proxy\s+localhost:(\d+)", caddyfile))
 
       # 🚨 A `network_mode: host` service has NO ports: entry, so it is absent
-      # from `published` and its route looks like a phantom 502 — the same
-      # blind spot host-network-declared exists for, arriving through a third
-      # door (loopback-binding and mk-stack-suite's probe were the first two).
-      # It cannot be inferred from the compose file: where such a service binds
-      # is decided by its OWN config (gatus.yaml's web.address/web.port), which
-      # this lint does not read.
-      #
-      # So it is declared, port -> (stack, reason) — and the declaration is
-      # checked against reality below rather than taken on trust.
+      # from `published` and looks like a phantom 502. Where it binds is
+      # decided by its own config, which this lint does not read — so it is
+      # declared here, port -> (stack, reason), and checked against reality
+      # below rather than taken on trust.
       HOST_NETWORK_ROUTED = {
           "10450": ("gatus",
                     "network_mode: host with no ports: entry. It binds itself "
@@ -718,10 +679,9 @@ in
 
       errs = []
 
-      # A declaration is only honoured if that stack really does have a
-      # host-networked service. Otherwise this table becomes a way to excuse an
-      # ordinary missing publish, which is exactly the failure it exists to
-      # report.
+      # A declaration is only honoured if the stack really is host-networked;
+      # otherwise this table becomes a way to excuse an ordinary missing
+      # publish, the failure it exists to report.
       host_net_stacks = set()
       for c in manifest:
           for line in map(nocomment, open(c["path"])):
@@ -757,57 +717,18 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Forward-auth coverage: every protected Caddy host has a blueprint entry
-  # ---------------------------------------------------------------------------
-  # The Caddyfile's (protected) snippet forward_auths to authentik's embedded
-  # outpost, which routes BY X-Forwarded-Host against the external_host of the
-  # providers assigned to it. A route that imports `protected` for a host the
-  # blueprint does not know is therefore a production LOCKOUT, not a login
-  # page: the outpost matches nothing and every request 404s or redirect-loops
-  # (the Caddyfile header mandates blueprint-first rollout for exactly this
-  # reason — and six media routes were once flipped without entries anyway,
-  # which is why this lint exists). Two files nothing else links:
-  # stacks/caddy/Caddyfile and headscale-vps/authentik/blueprints/custom/
-  # forward-auth.yaml. This makes the sync a failing check instead of a
-  # comment.
-  #
-  # Also enforced: every proxyprovider in the blueprint is listed in the
-  # embedded outpost's `providers:` — that list REPLACES on apply, so an
-  # entry added without extending it is the same lockout by another door.
-  #
-  # Warn-only leg: _overview.md rows whose Auth column says FwdAuth but whose
-  # service is not (yet) behind `import protected` — roadmap visibility, not
-  # drift, so it prints without failing (mirrors overview-sync's
-  # one-directional stance).
+  # A route that imports `protected` for a host forward-auth.yaml does not
+  # know is a production LOCKOUT, not a login page: the outpost routes by
+  # X-Forwarded-Host and matches nothing. Same for a proxyprovider missing
+  # from the outpost's `providers:` — that list REPLACES on apply.
   forward-auth-coverage =
     mkLint "forward-auth-coverage" ''
       ${py} - <<'PY'
       import re, sys, yaml
 
-      # --- Caddyfile: hosts whose handle block imports `protected` ---------
-      matchers = {}    # matcher name -> host
-      protected = {}   # matcher name -> host (or None if matcher unknown)
-      current = None   # matcher of the handle block we are inside, if any
-      current_depth = 0
-      depth = 0
-      for raw in open("${(repo + "/stacks/caddy/Caddyfile")}"):
-          # Comments stripped first: the header documents `import protected`
-          # in prose and sample blocks, which must not count as routes.
-          line = re.sub(r"#.*$", "", raw)
-          m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
-          if m:
-              matchers[m.group(1)] = m.group(2)
-          h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
-          if h and current is None:
-              current, current_depth = h.group(1), depth
-          if current is not None and re.match(r"\s*import\s+protected\s*$", line):
-              protected[current] = matchers.get(current)
-          # Depth tracked per line; inline {$VAR}/{env.*} placeholders open
-          # and close on the same line so they cancel out.
-          depth += line.count("{") - line.count("}")
-          if current is not None and depth <= current_depth:
-              current = None
+      ${pyCaddyHandles}
+      handles = caddy_handles("${(repo + "/stacks/caddy/Caddyfile")}")
+      protected = {n: r["host"] for n, r in handles.items() if r["protected"]}
 
       errs = []
       for name, host in sorted(protected.items()):
@@ -817,10 +738,8 @@ in
                           f"verify its blueprint coverage")
       caddy_hosts = {h for h in protected.values() if h}
 
-      # Parser-rot sentinel: the bentopdf pilot is permanently protected, so
-      # an empty/pilot-less parse means the regexes no longer match the
-      # Caddyfile's shape — that would be a false green on every lockout this
-      # lint exists to catch.
+      # Parser-rot sentinel: the bentopdf pilot is permanently protected, so a
+      # parse without it is a false green on every lockout this lint catches.
       assert "bentopdf.svc.idanreed.com" in caddy_hosts, (
           f"forward-auth-coverage parser found {sorted(caddy_hosts)} but not "
           "the bentopdf pilot — the Caddyfile parser has rotted; fix it "
@@ -829,10 +748,8 @@ in
 
       # --- Blueprint: external_host per provider, outpost assignment -------
       with open("${(repo + "/headscale-vps/authentik/blueprints/custom/forward-auth.yaml")}") as f:
-          # !Find / !KeyOf are authentik tags PyYAML lacks. Unlike
-          # oidc-contract we must KEEP !KeyOf's scalar (the provider id) to
-          # check the outpost list, so unknown tags resolve to their raw
-          # scalar rather than None.
+          # Unlike oidc-contract, !KeyOf's scalar (the provider id) is needed
+          # to check the outpost list, so unknown tags keep their scalar.
           class Loose(yaml.SafeLoader):
               pass
           def keep_scalar(loader, suffix, node):
@@ -898,14 +815,9 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Loopback binding
-  # ---------------------------------------------------------------------------
-  # nixos/configuration.nix trusts tailscale0 wholesale, so the host firewall
-  # does not filter tailnet traffic at all. The only thing keeping a stack off
-  # the tailnet is binding its published port to 127.0.0.1. A bare "10100:8000"
-  # silently republishes to every tailnet peer, bypassing Caddy and any forward
-  # auth in front of it.
+  # tailscale0 is a trusted interface, so binding 127.0.0.1 is the ONLY thing
+  # keeping a stack off the tailnet. A bare "10100:8000" republishes to every
+  # peer, bypassing Caddy and whatever forward auth sits in front of it.
   loopback-binding =
     mkLint "loopback-binding" ''
       ${py} - <<'PY'
@@ -915,14 +827,9 @@ in
       manifest = json.load(open("${manifest}"))
       errs = []
 
-      # ---- Named exemptions -------------------------------------------------
-      # A bare (0.0.0.0) publish is the exact thing this lint exists to stop;
-      # the one case it cannot serve is a protocol whose peers must dial THIS
-      # host. Per-entry allow-list only, each entry stating why the publish
-      # grants nobody anything (mutual authentication, not convenience).
-      #
-      # Unused entries are an ERROR: a stale exemption is a standing
-      # permission that would silently cover the next stack to reuse the port.
+      # Named exemptions, for protocols whose peers must dial THIS host. Each
+      # entry states why the publish grants nobody anything; an unused entry is
+      # an ERROR, not dead weight — see the staleness loop below.
       EXEMPT = {
           ("notes-sync", "22000:22000/tcp"):
               "Syncthing BEP. Peers dial THIS host; a loopback publish makes "
@@ -943,27 +850,22 @@ in
       for c in manifest:
           for n, raw in enumerate(open(c["path"]), 1):
               line = nocomment(raw)
-              # Long-form ports entries put host_ip on a DIFFERENT line, so a
-              # line-oriented scan cannot check the binding. Skipping silently
-              # would let a long-form 0.0.0.0 publish onto the tailnet with a
-              # green lint, so an unparseable 'published:' is an error, not a
-              # gap: use the short form (or teach this lint real YAML first).
+              # Long form puts host_ip on a DIFFERENT line, which a
+              # line-oriented scan cannot check — so it is an error, not a
+              # silent gap.
               if re.match(r"\s*-?\s*published:", line):
                   errs.append(f"{c['stack']} compose.yaml:{n}: long-form ports "
                               f"entry ('published:') — this line-based lint "
                               f"cannot verify its host_ip; use the short form "
                               f"'127.0.0.1:HOST:CONTAINER[/tcp|/udp]'")
                   continue
-              # Optional /tcp|/udp suffix (mirrors lib/mk-stack-suite.nix):
-              # without it a suffixed publish — Phase-4 media will use UDP —
-              # escapes the loopback check entirely.
+              # The /tcp|/udp suffix is optional: without it in the regex, a
+              # suffixed publish escapes the loopback check entirely.
               m = re.search(
                   r"^\s*-\s*['\"]?([0-9.:]+):(\d+)(?:/(?:tcp|udp))?['\"]?\s*$",
                   line)
               if not m:
                   continue
-              # Split on ':' only — a /tcp|/udp suffix rides along on the last
-              # part and does not affect the host-address check.
               spec = m.group(0).strip().lstrip("- ").strip("'\"")
               parts = spec.split(":")
               key = (c["stack"], spec)
@@ -974,7 +876,7 @@ in
                   errs.append(f"{c['stack']} compose.yaml:{n}: '{spec}' binds "
                               f"0.0.0.0 — reachable from the whole tailnet, "
                               f"bypassing Caddy. Use 127.0.0.1:{parts[0]}:{parts[1]}")
-              elif len(parts) == 3 and parts[0] not in ("127.0.0.1",):
+              elif len(parts) == 3 and parts[0] != "127.0.0.1":
                   errs.append(f"{c['stack']} compose.yaml:{n}: '{spec}' binds "
                               f"{parts[0]} rather than 127.0.0.1")
 
@@ -993,15 +895,9 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Overview inventory sync
-  # ---------------------------------------------------------------------------
-  # ServerNotes/designs/_overview.md is the authoritative service inventory and
-  # CLAUDE.md says it is kept in sync with stacks/ BY HAND. This makes the sync
-  # a failing check instead of a memory: every host-published port in a compose
-  # file must have an inventory row, and where a row pins an image tag it must
-  # match the compose tag. One-directional on purpose — inventory rows for
-  # not-yet-built services are the roadmap, not drift.
+  # _overview.md is the authoritative inventory, kept in sync BY HAND: every
+  # published port needs a row, and a row that pins a tag must match the
+  # compose. One-directional — a row without a stack is the roadmap.
   overview-sync =
     mkLint "overview-sync" ''
       ${py} - <<'PY'
@@ -1036,13 +932,9 @@ in
           if c["stack"] == "authentik":
               continue  # VPS host: inventoried under its own section semantics
           text = open(c["path"]).read()
-          # Comments stripped for the PORT scan only: the tag check below
-          # searches the raw text on purpose, so a pin that appears solely in a
-          # comment still counts rather than turning into inventory drift.
+          # Comments stripped for the PORT scan only: the tag check below reads
+          # raw text on purpose, so a pin named in a comment still counts.
           ports_text = "\n".join(map(nocomment, text.splitlines()))
-          # Optional /tcp|/udp suffix (mirrors lib/mk-stack-suite.nix): a
-          # suffixed publish — Phase-4 media will use UDP — must still demand
-          # an inventory row rather than silently skipping the check.
           for m in re.finditer(
               r"^\s*-\s*['\"]?(?:127\.0\.0\.1:)?(\d{4,5}):\d+(?:/(?:tcp|udp))?['\"]?\s*$",
               ports_text, re.M):
@@ -1055,8 +947,7 @@ in
               # Tag agreement, when the row pins one.
               for r in hits:
                   if ":" in r["image"]:
-                      img_re = re.escape(r["image"])
-                      if not re.search(img_re, text):
+                      if r["image"] not in text:
                           errs.append(
                               f"{c['stack']}: _overview row '{r['name']}' pins "
                               f"image {r['image']!r} but the compose file does "
@@ -1071,18 +962,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Flake input parity across the host flakes
-  # ---------------------------------------------------------------------------
-  # The harness pins its sources from headscale-vps/flake.lock. Every input
-  # the two locks SHARE must agree, not just nixpkgs: the sops-dotenv-
-  # extraction lint, for one, asserts behaviour of sops-nix internals, so a
-  # sops-nix that drifted on the nixos/ side would be reasoned about from the
-  # wrong revision — with the suites still green. Inputs are resolved through
-  # each lock's root inputs mapping rather than top-level node labels, because
-  # an input's name is not its node label (`follows`/duplicates yield labels
-  # like "nixpkgs_2") and comparing labels can silently compare a transitive
-  # input instead of the flake's own.
+  # The harness pins its sources from headscale-vps/flake.lock, so every input
+  # the two locks SHARE must agree — not just nixpkgs. Resolved through each
+  # lock's root inputs mapping: a node LABEL is not an input name (`follows`
+  # and duplicates yield "nixpkgs_2"), so labels can compare the wrong node.
   flake-input-parity =
     mkLint "flake-input-parity" ''
       ${py} - <<'PY'
@@ -1093,8 +976,7 @@ in
           "nixos":         "${(repo + "/nixos/flake.lock")}",
       }
 
-      # Both flakes commit their lock, so a missing one is a broken checkout,
-      # not a host that has "not locked yet" — hard error, no skip.
+      # Both flakes commit their lock, so a missing one is a broken checkout.
       data = {host: json.load(open(path)) for host, path in locks.items()}
 
       def root_inputs(lock):
@@ -1130,16 +1012,9 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # fail2ban <-> docker journald tag contract
-  # ---------------------------------------------------------------------------
   # Three strings must agree or the authentik jail reads zero journal lines
-  # FOREVER while fail2ban-client still lists it active: the compose logging
-  # tag on the server container, the jail's journalmatch, and the filter
-  # file's journalmatch. Nothing else couples them — rename any one and every
-  # suite stays green (the fail2ban-regex drift leg feeds the filter a FILE,
-  # not the journal), which is exactly the silent-death mode the jail exists
-  # to prevent.
+  # FOREVER while fail2ban-client still lists it active: the compose journald
+  # tag, the jail's journalmatch, and the filter file's. No suite sees it.
   fail2ban-journal-contract =
     mkLint "fail2ban-journal-contract" ''
       ${py} - <<'PY'
@@ -1183,28 +1058,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # VPS journal shipping: collector <-> caddy vhost <-> secret, across 6 files
-  # ---------------------------------------------------------------------------
-  # The headscale VPS ships its journal — every fail2ban ban, every authentik
-  # login_failed — into the services VM's VictoriaLogs. Nothing links the two
-  # ends: the collector is a nix module on one host, the gate is a Caddyfile on
-  # another, and the token that joins them is a cross-host sops twin. Every
-  # possible drift here is SILENT IN BOTH DIRECTIONS — the shipper keeps
-  # retrying into its WAL, caddy keeps answering 401, no unit fails, and the
-  # only symptom is that host="headscale-vps" is missing from a dashboard
-  # nobody looks at until they need it.
-  #
-  # Six couplings, all of them a rename away from breaking:
-  #   1. sink hostname          == the Caddyfile's @vlogs_ingest host matcher
-  #   2. sink path              == the path the vhost's allowlist permits
-  #   3. sink _stream_fields    == stacks/logging/config.alloy's (else the two
-  #                                collectors define different streams from the
-  #                                same labels and cross-host queries lie)
-  #   4. token key name         == the Caddyfile's Authorization matcher env var
-  #   5. token declared in both .example files (so a fresh host has it)
-  #   6. the vhost does NOT import protected (a forward-auth 302 on a push
-  #      endpoint is silently discarded telemetry, not a login prompt)
+  # The VPS ships its journal into the services VM's VictoriaLogs across six
+  # couplings that nothing else links — sink host, sink path, _stream_fields,
+  # token name, the token in both .example files, and the vhost NEVER gaining
+  # `import protected`. Every drift is silent in both directions.
   vlogs-ingest-contract =
     mkLint "vlogs-ingest-contract" ''
       ${py} - <<'PY'
@@ -1226,9 +1083,8 @@ in
                    "textually; fix the lint before trusting it")
       host, path, fields = host.group(1), path.group(1), fields.group(1)
 
-      # The url must actually be BUILT from those lets, over https. An
-      # interpolation that stopped referring to them would leave this lint
-      # checking three variables nothing uses.
+      # The url must really be BUILT from those lets, or this lint is checking
+      # three variables nothing uses.
       if 'url = "https://''${ingestHost}''${ingestPath}?_stream_fields=''${streamFields}"' not in shipper:
           errs.append("log-shipper.nix's sink url is no longer assembled from "
                       "ingestHost/ingestPath/streamFields over https — this "
@@ -1294,14 +1150,10 @@ in
                           f"`respond`s to a mismatch — the matcher is inert")
 
           # --- 4b: the unset-token guard, and it must come FIRST ------------
-          # `{$VLOGS_INGEST_TOKEN}` is substituted at ADAPT time, so between a
-          # push (stack-git-sync delivers the Caddyfile within the minute) and
-          # `sopsgen apply` (which is when the token first exists) the check
-          # degrades to the literal "Bearer " — an OPEN write endpoint onto
-          # the fleet's log store for anything on the tailnet. That window was
-          # real, not hypothetical: it was the live state on 2026-09-06.
-          # Same-directive `respond`s keep source order, so the guard is only
-          # a guard if it is written above the token check.
+          # The var is substituted at ADAPT time, so between a push and
+          # `sopsgen apply` the check degrades to a literal "Bearer " — an
+          # OPEN write endpoint (the live state on 2026-09-06). Caddy keeps
+          # same-directive `respond`s in source order.
           if 'header Authorization "Bearer "' not in body:
               errs.append(f"the {host} handle has no unset-token guard. Add a "
                           f'@empty_token matcher on the literal "Bearer " '
@@ -1341,9 +1193,8 @@ in
                           f"unset var makes the matcher expect a bare "
                           f'"Bearer ")')
 
-      # sops-gen is what actually fills both sides with ONE draw; declared as
-      # two independent secrets they would be generated to different values and
-      # the failure is a permanent 401 loop.
+      # sops-gen fills both sides with ONE draw; two independent secrets would
+      # be generated to different values and 401 forever.
       man = yaml.safe_load(open("${repo + "/secrets-gen/manifest.yaml"}"))
       twins = [s for s in man["secrets"]
                if any(t["key"] == "VLOGS_INGEST_TOKEN" for t in s["targets"])]
@@ -1370,19 +1221,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # /srv/stacks tmpfiles ownership
-  # ---------------------------------------------------------------------------
-  # nixos/hardware-configuration.nix (plus the generated ./stack-dirs.nix it
-  # imports) owns the production tmpfiles rules, and the VM suites REPLACE that
-  # file with tmpfs stubs plus their own rules — so
-  # nothing else evaluates it, and reverting 'd /srv/stacks 0755 1000 1000 -'
-  # to root ownership (review finding #10) would keep every suite green while
-  # breaking the delivery contract in production: delivered stacks and their
-  # 0600 .env files are deliberately uid-1000 (finding #10 — stack-git-sync
-  # and decrypt-sops-envs both chown to it, and the suites' seed path assumes
-  # it). This asserts the rule on servicesFullConfig, the one eval that
-  # includes the real hardware config (see default.nix).
+  # findings #10 and #14, on servicesFullConfig — the ONE eval that includes
+  # the real hardware config, since every VM suite replaces it with tmpfs
+  # stubs: /srv/stacks stays 1000:1000, and every /mnt bind source has a
+  # tmpfiles 'd' rule so docker cannot create it root-owned.
   tmpfiles-ownership =
     mkLint "tmpfiles-ownership" ''
       ${stackDirsJson} > dirs.json
@@ -1396,9 +1238,8 @@ in
              if len(r.split()) >= 5 and r.split()[1] == "/srv/stacks"]
 
       errs = []
-      # A 'd' rule specifically: configuration.nix also carries a 'Z' (chown)
-      # rule for /srv/stacks, which adjusts but never CREATES — losing the 'd'
-      # rule alone would leave first boot with no /srv/stacks at all.
+      # A 'd' rule specifically: the 'Z' rule beside it adjusts but never
+      # CREATES, so losing 'd' leaves first boot with no /srv/stacks at all.
       if not any(f[0].lower().startswith("d") for f in srv):
           errs.append("no tmpfiles 'd' rule creates /srv/stacks — "
                       "stack-git-sync has nowhere to deliver stacks on "
@@ -1411,21 +1252,10 @@ in
                           f"files owned uid 1000) silently breaks")
 
       # --- bind-source parity ---------------------------------------------
-      # Every /mnt directory the compose files imply must have a 'd' rule in
-      # the EVALUATED services-VM config, or docker creates it root-owned on
-      # first deploy (the seerr crash-loop class, review finding #14 — and
-      # even root-is-fine stacks like immich want the parent dirs to exist
-      # with deliberate ownership, not docker's).
-      #
-      # The enumeration comes from nixos/generate-stack-dirs.py over a
-      # readDir'd manifest — there is NO list to extend (see the generator
-      # note above stackDirsGenerator for the 17-of-22 hand-list history).
-      #
-      # This leg is NOT redundant with stack-dirs-generated (which compares
-      # the generator's output to the checked-in file): it measures the other
-      # end of the chain, the config that would actually be deployed. It is
-      # what fails if hardware-configuration.nix stops importing
-      # stack-dirs.nix, or if something mkForces the rule list away.
+      # Not redundant with stack-dirs-generated: that compares the generator's
+      # output to the checked-in file, this measures the DEPLOYED config — so
+      # it is what fails if hardware-configuration.nix stops importing
+      # stack-dirs.nix, or something mkForces the rule list away.
       enum = json.load(open("dirs.json"))
       d_paths = {r.split()[1] for r in rules
                  if len(r.split()) >= 5 and r.split()[0].lower().startswith("d")}
@@ -1450,23 +1280,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # nixos/stack-dirs.nix is what the generator would write
-  # ---------------------------------------------------------------------------
-  # The services VM's ~112 per-stack `d /mnt/...` rules are GENERATED from the
-  # compose files (nixos/generate-stack-dirs.sh) and checked in, because
-  # nixos/ is its own flake root and a flake cannot reference ../stacks/ — the
-  # same constraint that triplicates ssh-pubkeys.nix, and the same remedy:
-  # regenerate here and byte-compare, so drift is a build failure instead of a
-  # silent gap.
-  #
-  # Byte comparison, not rule-set equality, on purpose. The prose explaining
-  # WHY mosquitto is 1883 or docspace's datadir is 999 is the load-bearing part
-  # of those lines; a check that ignored comments would let it rot away from
-  # the value it explains.
-  #
-  # What this does NOT prove: that an ownership is CORRECT for its image. Only
-  # a suite that boots the container can, and each stack suite does.
+  # finding #51: nixos/stack-dirs.nix is generated from the compose files and
+  # checked in (a flake cannot reference ../stacks/), so regenerate and
+  # byte-compare. Bytes, not rule-set equality — the prose explaining each
+  # ownership is the load-bearing half and must not rot from its value.
   stack-dirs-generated =
     mkLint "stack-dirs-generated" ''
       ${py} ${stackDirsGenerator} --manifest ${stackDirsManifest} > generated.nix
@@ -1483,18 +1300,10 @@ in
       echo "nixos/stack-dirs.nix matches the generator ($(grep -c '^    "d ' generated.nix) rules)"
     '';
 
-  # ---------------------------------------------------------------------------
-  # Stack dotenv key drift (fixture vs real vs example)
-  # ---------------------------------------------------------------------------
-  # Three dotenv surfaces can exist per stack — the encrypted production
-  # .sops.env, its .sops.env.example template, and the test fixture the suites
-  # decrypt instead — and nothing else compares them (sops-declared covers
-  # only the yaml OS secrets). Drift fails silently at the worst spot: docker
-  # compose substitutes an EMPTY STRING for any env_file variable the
-  # delivered .env lacks, so a key present in the fixture (suite green) but
-  # missing from the real .sops.env starts the production container with the
-  # variable unset and no error anywhere. Keys are plaintext in encrypted
-  # dotenv files, so all three are comparable without a decryption key.
+  # The three dotenv surfaces per stack (.sops.env, its .example, the fixture)
+  # must carry the same keys. Compose substitutes an EMPTY STRING for a key the
+  # delivered .env lacks, so a fixture-only key is a green suite and a
+  # production container started with the variable silently unset.
   stack-env-drift =
     mkLint "stack-env-drift" ''
       ${py} - <<'PY'
@@ -1533,21 +1342,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # VPS module list parity with headscale-vps/flake.nix
-  # ---------------------------------------------------------------------------
-  # tests/default.nix re-evaluates the VPS from its own hand-mirrored module
-  # list (the harness is deliberately not a flake, so it cannot import the
-  # real one). A module added to headscale-vps/flake.nix alone would be
-  # deployed yet invisible to every lint here — its sops.secrets, ports and
-  # settings simply absent from vpsConfig — so the flake's text is scanned for
-  # ./configuration.nix and ./modules/*.nix entries and compared to the list
-  # the harness evaluates. disk-config.nix is excluded by the regex on
-  # purpose: it needs disko's module, which evalHost does not load, and
-  # diskoTest covers it instead. Only headscale-vps is checked: nixos/
-  # composes an inline baseModule whose only file modules are
-  # configuration.nix + hardware-configuration.nix, both already evaluated
-  # (servicesConfig / servicesFullConfig), so there is no list to drift.
+  # default.nix hand-mirrors the VPS module list (the harness is not a flake),
+  # so a module added to the flake alone is deployed yet invisible to every
+  # lint. disk-config.nix is excluded by the regex on purpose — it needs
+  # disko's module and diskoTest covers it. nixos/ has no list to drift.
   module-list-parity =
     mkLint "module-list-parity" ''
       ${py} - <<'PY'
@@ -1578,27 +1376,14 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # ssh-pubkeys.nix parity across the three flakes
-  # ---------------------------------------------------------------------------
-  # nixos-de/ssh-pubkeys.nix is the canonical identity list; nixos/ and
-  # headscale-vps/ carry byte-identical copies because a flake cannot
-  # reference paths outside its own root. Nothing else links the three, and a
-  # drifted copy fails at the worst spot: a pubkey updated in one place only
-  # means the next deploy of the other host silently authorises a stale key
-  # (or none), and the mismatch surfaces as an ssh refusal long after the
-  # edit. Byte comparison, not attrset equality, on purpose — the comments
-  # carry the where-do-private-halves-live contract and must not rot apart
-  # either.
-  #
-  # Warn-only leg: entries still null (keypair not generated yet). Consumers
-  # filter nulls so this is "no access granted", not breakage — roadmap
-  # visibility, mirroring overview-sync's stance.
+  # nixos-de/ssh-pubkeys.nix is canonical; the other two flakes carry
+  # byte-identical copies because a flake cannot reference paths outside its
+  # root. A drifted copy silently authorises a stale key on the next deploy of
+  # the other host. Bytes, not attrset equality: the comments are contract too.
   ssh-pubkey-parity =
     let
       readOrNull = f: if builtins.pathExists (repo + "/${f}") then builtins.readFile (repo + "/${f}") else null;
-      # Canonical copy FIRST: the python below compares the rest against
-      # element 0 and reports drift relative to it.
+      # Canonical copy FIRST: the rest are compared against element 0.
       copies = map (f: {
         name = f;
         text = readOrNull f;
@@ -1629,9 +1414,8 @@ in
                               f"file; a stale copy deploys stale authorized "
                               f"keys")
 
-      # WARN leg: null identities in the canonical copy (or the first
-      # existing one, so the warn still prints while the canonical is the
-      # missing file).
+      # WARN leg: null = keypair not generated, no access granted. Read from
+      # the first EXISTING copy so it still prints when canonical is missing.
       source = next((c for c in copies if c["text"] is not None), None)
       if source is not None:
           nulls = re.findall(r"^\s*([A-Za-z0-9_-]+)\s*=\s*null\s*;",
@@ -1649,22 +1433,10 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # network_mode must be declared, because it makes a service INVISIBLE
-  # ---------------------------------------------------------------------------
-  # `loopback-binding` and `mk-stack-suite`'s probe list are both built from
-  # `ports:` entries. A service with `network_mode: host` has no `ports:`, so it
-  # does not FAIL those checks — it passes them with an empty set, while being
-  # bound to every interface the host has. `trustedInterfaces = ["tailscale0"]`
-  # means there is no firewall backstop either. The same is true of
-  # `network_mode: service:<x>`, which silently moves a service's publishing
-  # decisions into another service's stanza.
-  #
-  # So host networking converts a decision into an invisibility, and the only
-  # defence is to make the set enumerable: every non-default network_mode must
-  # be listed here with the argument for it. An unused entry is an error — a
-  # stale declaration is a standing permission for a service that no longer
-  # exists, and it would silently cover the next one to take the name.
+  # loopback-binding and mk-stack-suite's probe list are both built from
+  # `ports:`, which a `network_mode:` service has none of — so it PASSES them
+  # with an empty set while bound to every interface. The only defence is to
+  # make the set enumerable: declare each one, and error on a stale entry.
   host-network-declared =
     mkLint "host-network-declared" ''
       ${py} - <<'PY'
@@ -1682,9 +1454,9 @@ in
           ("gatus", "gatus"):
               "host — the prober. Every stack in this fleet publishes on "
               "127.0.0.1:PORT, and a container on a bridge network CANNOT "
-              "reach a loopback-bound host port (stacks/ntfy's header records "
-              "that the old design's host.docker.internal webhooks failed for "
-              "exactly this reason). The shared `homelab` network is not a "
+              "reach a loopback-bound host port (stacks/gatus/compose.yaml's "
+              "own header records the same constraint). The shared `homelab` "
+              "network is not a "
               "workaround either: only backrest, ntfy and part of media join "
               "it. On the host, one prober sees every loopback publish, every "
               "vhost through Caddy on the tailnet IP, and the VPS across the "
@@ -1770,77 +1542,30 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Backup coverage: backup-prepare.sh <-> the compose files
-  # ---------------------------------------------------------------------------
-  # `sqlite_backup` returns 0 for a MISSING source — `[ -f "$src" ] || return 0`
-  # — so a wrong path backs up nothing, forever, with a clean exit and no
-  # notification. That is not hypothetical: the Karakeep line pointed at
-  # /mnt/fast/karakeep/data.db, a file the app never creates, and nothing
-  # noticed until someone read the script. The pg_dumpall loop has the mirror
-  # problem: it builds `container_name` as "<svc>_db" and runs
-  # `pg_dumpall -U <svc>`, so a stack that names its database container
-  # anything else is silently skipped by `running "$container" || continue`.
-  #
-  # This lint checks the halves that are checkable without a running host:
-  # every sqlite path must live under a directory some compose file actually
-  # bind-mounts, and every service in the pg loop must have a compose service
-  # with the matching container_name AND POSTGRES_USER. Whether the file is
-  # really THERE is a suite assertion — each stack suite asserts its own paths.
-  #
-  # Services named in the loop but not yet built are a WARNING, not an error:
-  # the loop legitimately runs ahead of the campaign.
-  #
-  # ---------------------------------------------------------------------------
-  # And the REVERSE direction, which is the one that actually lost data
-  # ---------------------------------------------------------------------------
-  # Everything above walks FROM backup-prepare.sh TO the compose files, so it
-  # can only find a declaration that is wrong. A stack nobody ever mentioned
-  # passes it in silence — which is exactly what happened to Forgejo, the git
-  # root for the whole homelab: no dump line, so its WAL-mode sqlite database
-  # was in the backups only as a torn file copy, and no check had an opinion
-  # because no check ever started from the list of stacks.
-  #
-  # The three reverse legs below start from the compose files instead, using
-  # the same enumeration the tmpfiles rules are generated from
-  # (nixos/generate-stack-dirs.py), so a new stack enters them by existing:
-  #
-  #   1. every /mnt bind source is either inside a Backrest plan and not
-  #      swallowed by one of its excludes, or covered by a dump, or explicitly
-  #      allowlisted with a reason;
-  #   2. every stack has at least one dump, or is allowlisted with a reason
-  #      saying why a raw file copy is consistent for it;
-  #   3. every container running a real database ENGINE is dumped logically —
-  #      a file-level copy of a live datadir generally does not restore.
-  #
-  # Both allowlists are stale-checked: an entry that stops being needed is an
-  # error, so they cannot silently become a list of things nobody rechecked.
+  # backup-prepare.sh vs the stacks, BOTH directions (findings #36, #70).
+  # Forward: sqlite_backup returns 0 for a missing source, so a wrong path
+  # backs up nothing forever with a clean exit. Reverse (the direction that
+  # actually lost Forgejo): every bind source is in a plan or a dump or
+  # allowlisted, every stack has a dump or says why not, every database ENGINE
+  # is dumped logically. Both allowlists are stale-checked.
   backup-coverage =
     mkLint "backup-coverage" ''
       ${stackDirsJson} > dirs.json
       ${py} - <<'PY'
-      import json, re, sys, os
+      import json, re, sys, yaml
 
       manifest = json.load(open("${manifest}"))
       script = open("${(repo + "/nixos/backup-prepare.sh")}").read()
 
-      import yaml
-      # Every /mnt bind-mount source across every compose file, plus each
-      # service's container_name and environment.
-      #
-      # 🚨 WHOLE-TIER MOUNTS ARE EXCLUDED, and without that this lint is
-      # VACUOUS. stacks/backrest declares `- /mnt/fast:/mnt/fast:ro` so it can
-      # snapshot everything, which means EVERY path under /mnt/fast sits inside
-      # a declared bind mount — including the Karakeep path that pointed at a
-      # file the app never creates. The first version of this check passed that
-      # bug happily. Only a SERVICE-SPECIFIC mount is evidence that some
-      # container actually writes there.
+      # 🚨 finding #36: whole-tier mounts MUST be excluded or this lint is
+      # vacuous — backrest binds /mnt/fast:ro, so every path sits inside a
+      # declared mount. Only a SERVICE-SPECIFIC mount is evidence that some
+      # container writes there.
       TIER_MOUNTS = {"/mnt", "/mnt/fast", "/mnt/slow"}
       mounts = set()
       containers = {}   # container_name -> {stack, env, mounts, image}
-      nameless = []     # services WITHOUT container_name — invisible to
-                        # every container-keyed leg below, so leg 3 checks
-                        # them separately
+      nameless = []     # no container_name: invisible to every keyed leg
+                        # below, so leg 3 checks them separately
       for c in manifest:
           with open(c["path"]) as f:
               compose = yaml.safe_load(f)
@@ -2152,12 +1877,8 @@ in
               f"file-level copy of a live datadir does not reliably restore, "
               f"and the plans exclude **/pgdata/** precisely because of that "
               f"— so this database is currently in no backup at all.")
-      # A service without container_name never enters `containers`, so the
-      # loop above cannot see it — and backup-prepare.sh execs FIXED names, so
-      # a compose-generated one can never be dumped at all. For an engine the
-      # missing name is therefore itself the defect (and legs 1/2 do not
-      # catch it: a whole-tier raw copy satisfies leg 1 and any other dump in
-      # the stack satisfies leg 2 — the Forgejo shape again).
+      # backup-prepare.sh execs FIXED names, so for an ENGINE the missing
+      # container_name is itself the defect — and legs 1/2 both pass it.
       for info in sorted(nameless, key=lambda i: (i["stack"], i["service"])):
           if not ENGINE_RE.search(info["image"]):
               continue
@@ -2184,70 +1905,33 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # _overview.md's Auth column <-> what is actually configured
-  # ---------------------------------------------------------------------------
-  # The inventory's Auth cell is the only place the intended posture for a
-  # service is written down, and it has been wrong three times in one campaign:
-  # rmfakecloud was marked FwdAuth when forward auth would break the tablet
-  # entirely, Syncthing was marked LDAP, and ExcaliDash was marked FwdAuth when
-  # it drives its own OIDC. Each was caught by a human reading the row, which
-  # is not a control.
-  #
-  # This checks the direction that is mechanically decidable: a row that claims
-  # FwdAuth must have a Caddy handle that imports `protected`. The reverse
-  # direction (a protected host with no row) is already covered by
-  # overview-sync, and the blueprint half by forward-auth-coverage.
-  #
-  # A row whose service has NO Caddy route at all is a WARNING: the inventory
-  # is deliberately a roadmap, and rows routinely land before stacks do.
+  # An _overview.md row claiming FwdAuth must have a Caddy handle that imports
+  # `protected` — the Auth cell is the only written record of intended posture
+  # and it has been wrong three times. The reverse direction is overview-sync's
+  # job and the blueprint half is forward-auth-coverage's.
   auth-column-parity =
     mkLint "auth-column-parity" ''
       ${py} - <<'PY'
       import re, sys
 
       overview = open("${overviewMd}").read()
-      caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
 
-      # --- Caddyfile: upstream PORT -> (host, does its handle import protected?)
-      # Keyed on the port rather than on the row's NAME. Names do not survive
-      # the trip: "Firefly III" is served at firefly.svc, "OnlyOffice DocSpace"
-      # at onlyoffice.svc, and any slug heuristic silently degrades those to a
-      # warning — i.e. to no coverage at all, for exactly the rows most worth
-      # covering. The port is in both files and is unambiguous.
-      matchers, routes = {}, {}
-      current, current_depth, depth = None, 0, 0
-      for raw in caddyfile.splitlines():
-          line = re.sub(r"#.*$", "", raw)
-          m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
-          if m:
-              matchers[m.group(1)] = m.group(2)
-          h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
-          if h and current is None:
-              current, current_depth = h.group(1), depth
-          if current is not None:
-              if re.match(r"\s*import\s+protected\s*$", line):
-                  routes.setdefault(current, {"protected": False})["protected"] = True
-              p = re.search(r"\breverse_proxy\s+localhost:(\d+)", line)
-              if p:
-                  r = routes.setdefault(current, {"protected": False})
-                  r["port"] = int(p.group(1))
-                  r["host"] = matchers.get(current)
-          depth += line.count("{") - line.count("}")
-          if current is not None and depth <= current_depth:
-              current = None
-
+      ${pyCaddyHandles}
+      # Keyed on PORT, not on the row's name: "Firefly III" is served at
+      # firefly.svc and "OnlyOffice DocSpace" at onlyoffice.svc, so any slug
+      # heuristic degrades exactly the rows most worth covering to a warning.
       by_port = {}
-      for name, r in routes.items():
-          if "port" in r:
-              # A handle may hold several reverse_proxy lines (vaultwarden
-              # splits /admin from the rest); `protected` is true if ANY path
-              # in it is protected, which is what the row can honestly claim.
-              prev = by_port.get(r["port"])
-              by_port[r["port"]] = {
-                  "host": r.get("host") or (prev or {}).get("host"),
-                  "protected": r["protected"] or bool((prev or {}).get("protected")),
-              }
+      for r in caddy_handles("${(repo + "/stacks/caddy/Caddyfile")}").values():
+          if not r["ports"]:
+              continue
+          # A handle may hold several reverse_proxy lines (vaultwarden splits
+          # /admin off); `protected` is true if ANY path in it is.
+          port = r["ports"][-1]
+          prev = by_port.get(port)
+          by_port[port] = {
+              "host": r["host"] or (prev or {}).get("host"),
+              "protected": r["protected"] or bool((prev or {}).get("protected")),
+          }
 
       assert by_port.get(10401, {}).get("protected"), (
           "auth-column-parity found no protected bentopdf pilot on 10401 — the "
@@ -2290,63 +1974,160 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Gatus target coverage
-  # ---------------------------------------------------------------------------
-  # Every vhost in the Caddyfile must be probed by Gatus BOTH ways, because
-  # each probe is blind to exactly what the other catches:
-  #
-  #   path probe    https://<host>/ with the real Host: header — proves Caddy,
-  #                 the wildcard cert, DNS, and (for protected routes) the
-  #                 tailnet and the VPS outpost. Blind to the service itself
-  #                 when the route 302s before reaching it.
-  #   service probe http://127.0.0.1:<port>/ — proves the app answers. Blind to
-  #                 Caddy, TLS, host routing and forward auth.
-  #
-  # This exists because adding a vhost is a two-file change that nothing
-  # previously enforced, and the failure mode is silent: the service works and
-  # is simply never watched. A monitoring gap has no symptom until the outage
-  # it would have caught.
-  #
-  # The path-probe half is also the only structural guard on findings #27 and
-  # #15 — Dawarich's host_authorization and qBittorrent's Host-port 401 are
-  # both "healthy container, every browser request fails", which a container
-  # healthcheck is incapable of seeing because it dials loopback with the
-  # wrong Host.
+  # The one lint that IMPOSES auth rather than validating an opt-in.
+  # forward-auth-coverage and auth-column-parity both start from a route that
+  # already claims protection, so `handle @new { reverse_proxy localhost:X }`
+  # passed the whole gate — and several apps here make the FIRST caller to log
+  # in the owner (docs/for-shame.md). Every vhost must now be forward-authed,
+  # in the OIDC contract, or named below with the reason its own auth is
+  # enough. Stale entries are an error, so closing a hole forces the note out.
+  # arch-security AS-5.
+  auth-coverage-required =
+    mkLint "auth-coverage-required" ''
+      ${py} - <<'PY'
+      import glob, re, sys, yaml
+
+      ${pyCaddyHandles}
+      handles = caddy_handles("${(repo + "/stacks/caddy/Caddyfile")}")
+
+      # The OIDC contract is read from the blueprints that ARE it, not from a
+      # second list here that could drift. redirect_uris ONLY: a blueprint also
+      # names the issuer and sometimes an icon URL, and counting those would
+      # hand a vhost an authentication it does not have.
+      class Loose(yaml.SafeLoader):
+          pass
+      Loose.add_multi_constructor(
+          "!", lambda loader, suffix, node:
+          loader.construct_scalar(node)
+          if isinstance(node, yaml.ScalarNode) else None)
+
+      def redirect_hosts(node):
+          if isinstance(node, dict):
+              for k, v in node.items():
+                  if k == "redirect_uris" and isinstance(v, list):
+                      for uri in v:
+                          url = uri.get("url", "") if isinstance(uri, dict) else uri
+                          m = re.match(r"https?://([A-Za-z0-9.-]+)", str(url))
+                          if m:
+                              yield m.group(1)
+                  else:
+                      yield from redirect_hosts(v)
+          elif isinstance(node, list):
+              for item in node:
+                  yield from redirect_hosts(item)
+
+      oidc_hosts = set()
+      for f in sorted(glob.glob(
+              "${(repo + "/headscale-vps/authentik/blueprints/custom")}/*-oidc.yaml")):
+          with open(f) as fh:
+              oidc_hosts |= set(redirect_hosts(yaml.load(fh, Loose)))
+
+      protected_hosts = {r["host"] for r in handles.values()
+                         if r["protected"] and r["host"]}
+
+      # Parser-rot sentinels, one per leg: a Caddyfile that stops parsing, or a
+      # blueprint glob that stops matching, would otherwise turn this lint into
+      # a demand that every vhost be exempted — loud — OR, with the table
+      # already seeded, a false green on the hosts in it.
+      assert "bentopdf.svc.idanreed.com" in protected_hosts, (
+          f"auth-coverage-required parsed {len(handles)} handles but found no "
+          "protected bentopdf pilot — the Caddyfile parser has rotted")
+      assert "paperless.svc.idanreed.com" in oidc_hosts, (
+          f"auth-coverage-required found OIDC hosts {sorted(oidc_hosts)} but "
+          "not paperless — the blueprint glob has rotted")
+
+      # Every vhost that answers on the tailnet without forward auth and
+      # without a native OIDC login. A reason beginning TODO plus decide (with
+      # the em dash) is deliberate and still passes; run.sh deploy-check greps
+      # for that marker and lists them for the operator.
+      UNAUTHENTICATED_OK = {
+          "jellyfin.svc.idanreed.com":
+              "Jellyfin's own login. A 302 breaks every native client app.",
+          "seerr.svc.idanreed.com":
+              "session auth against Jellyfin accounts; its mobile and API "
+              "clients authenticate themselves.",
+          "homeassistant.svc.idanreed.com":
+              "/api/webhook/* is unauthenticated BY DESIGN — it is what the "
+              "mobile app posts location to — and every bearer-token REST and "
+              "websocket client would be bounced to a login page.",
+          "rmfakecloud.svc.idanreed.com":
+              "the tablet is a non-interactive client holding an rmfakecloud "
+              "JWT that cannot follow a 302, and only /ui/* is a browser path.",
+          "docspace.svc.idanreed.com":
+              "real accounts of its own, plus desktop and mobile clients a 302 "
+              "would break; its SSO is SAML 2.0, not OIDC.",
+          "vlogs-ingest.svc.idanreed.com":
+              "a bearer-token write endpoint for Alloy, which cannot follow a "
+              "302. The Caddyfile's fail-closed guard is the control.",
+          "backrest.svc.idanreed.com":
+              "TODO: decide — no reason is stated in the Caddyfile. Backrest "
+              "has its own bcrypt login (config.template.json), so this is "
+              "probably intentional; confirm it, or import protected.",
+          "ntfy.svc.idanreed.com":
+              "TODO: decide — anonymous read-write, ACCEPTED for now in "
+              "stacks/ntfy/server.yml (arch-security AS-2). Forward auth is "
+              "NOT the fix: the VPS publishes alerts through Caddy and a 302 "
+              "would swallow them, so closing it means deny-all plus tokens.",
+      }
+
+      errs, routed = [], {}
+      for name, r in sorted(handles.items()):
+          host = r["host"]
+          if host is None:
+              errs.append(f"handle @{name} has no `@{name} host ...` matcher, "
+                          f"so its auth posture cannot be classified")
+              continue
+          routed[host] = r
+          covered = r["protected"] or host in oidc_hosts
+          if covered and host in UNAUTHENTICATED_OK:
+              errs.append(f"stale exemption for {host} — it is now "
+                          f"{'forward-authed' if r['protected'] else 'in the OIDC contract'}. "
+                          f"Remove the entry rather than leaving a standing "
+                          f"permission.")
+          elif not covered and host not in UNAUTHENTICATED_OK:
+              errs.append(f"vhost {host} (handle @{name}) neither imports "
+                          f"protected nor appears in an Authentik OIDC "
+                          f"blueprint, and has no UNAUTHENTICATED_OK entry. Any "
+                          f"tailnet peer reaches it — and for the first-login-"
+                          f"owns-it apps that is the whole account. Add "
+                          f"`import protected`, wire OIDC, or add an entry here "
+                          f"with the reason its own auth is sufficient.")
+
+      for host in sorted(set(UNAUTHENTICATED_OK) - set(routed)):
+          errs.append(f"stale exemption for {host} — no Caddy handle serves it "
+                      f"any more. Remove the entry.")
+
+      if errs:
+          print("Auth coverage problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      todo = sorted(h for h, why in UNAUTHENTICATED_OK.items()
+                    if why.startswith("TODO: decide"))
+      print(f"Auth coverage OK ({len(routed)} vhosts: "
+            f"{len(protected_hosts & set(routed))} forward-authed, "
+            f"{len(oidc_hosts & set(routed))} OIDC, "
+            f"{len(UNAUTHENTICATED_OK)} exempt of which {len(todo)} "
+            f"still 'TODO: decide')")
+      PY
+    '';
+
+  # Every Caddy vhost must be probed BOTH ways, because each probe is blind to
+  # what the other catches: the path probe traverses Caddy, TLS and the outpost
+  # but stops at a 302; the service probe proves the app answers but sees none
+  # of that. The path half is the only structural guard on findings #15 and #27
+  # — healthy container, every browser request failing on the Host header.
   gatus-target-coverage =
     mkLint "gatus-target-coverage" ''
       ${py} - <<'PY'
       import re, sys, yaml
 
-      caddyfile = open("${(repo + "/stacks/caddy/Caddyfile")}").read()
       gatus = yaml.safe_load(open("${(repo + "/stacks/gatus/gatus.yaml")}"))
 
-      # The same parser as auth-column-parity, deliberately: two lints
-      # disagreeing about what the Caddyfile says would be worse than either
-      # one being wrong.
-      matchers, routes = {}, {}
-      current, current_depth, depth = None, 0, 0
-      for raw in caddyfile.splitlines():
-          line = re.sub(r"#.*$", "", raw)
-          m = re.match(r"\s*@(\S+)\s+host\s+(\S+)", line)
-          if m:
-              matchers[m.group(1)] = m.group(2)
-          h = re.match(r"\s*handle\s+@(\S+)\s*\{", line)
-          if h and current is None:
-              current, current_depth = h.group(1), depth
-          if current is not None:
-              p = re.search(r"\breverse_proxy\s+localhost:(\d+)", line)
-              if p:
-                  r = routes.setdefault(current, {"ports": set()})
-                  r["ports"].add(int(p.group(1)))
-                  r["host"] = matchers.get(current)
-          depth += line.count("{") - line.count("}")
-          if current is not None and depth <= current_depth:
-              current = None
-
+      ${pyCaddyHandles}
       vhosts = {}
-      for r in routes.values():
-          if r.get("host"):
+      for r in caddy_handles("${(repo + "/stacks/caddy/Caddyfile")}").values():
+          if r["host"] and r["ports"]:
               vhosts.setdefault(r["host"], set()).update(r["ports"])
       if "bentopdf.svc.idanreed.com" not in vhosts:
           sys.exit("gatus-target-coverage found no bentopdf vhost — the "
@@ -2395,8 +2176,7 @@ in
                   f"app whenever a protected route 302s first — it would stay "
                   f"green with the service dead")
 
-      # An exemption that no longer applies is a silent hole — the same
-      # discipline host-network-declared enforces on its DECLARED dict.
+      # An exemption that no longer applies is a silent hole.
       routed_ports = {p for ports in vhosts.values() for p in ports}
       for port in EXEMPT_SERVICE:
           if port not in routed_ports:
@@ -2416,38 +2196,23 @@ in
       PY
     '';
 
-  # ---------------------------------------------------------------------------
-  # Headscale ACL policy
-  # ---------------------------------------------------------------------------
-  # policy.hujson switches the tailnet to default-deny. A syntax error or an
-  # unresolvable user reference means headscale refuses to load the policy, and
-  # the failure mode is "nothing on the tailnet can reach anything".
+  # policy.hujson switches the tailnet to default-deny, so a policy headscale
+  # refuses to load means nothing reaches anything.
   headscale-policy =
-    runCommand "lint-headscale-policy"
-      {
-        nativeBuildInputs = [ pkgs.headscale ];
-      }
-      ''
-        set -eu
-        cp ${repo + "/headscale-vps/policy.hujson"} ./policy.hujson
-        echo "==> headscale version: $(headscale version 2>&1 | head -1)"
-        if headscale policy check --file ./policy.hujson; then
-          echo "policy OK"
-        else
-          echo "headscale policy check failed" >&2
-          exit 1
-        fi
-        touch $out
-      '';
+    mkLintDrv "headscale-policy" { nativeBuildInputs = [ pkgs.headscale ]; } ''
+      cp ${repo + "/headscale-vps/policy.hujson"} ./policy.hujson
+      echo "==> headscale version: $(headscale version 2>&1 | head -1)"
+      if headscale policy check --file ./policy.hujson; then
+        echo "policy OK"
+      else
+        echo "headscale policy check failed" >&2
+        exit 1
+      fi
+    '';
 
-  # ---------------------------------------------------------------------------
-  # Timer accuracy pins
-  # ---------------------------------------------------------------------------
-  # Both minutely timers set AccuracySec = "1s"; without it systemd's 1min
-  # default lets a "minutely" tick slip ~120s, which turns the suites' 150s
-  # delivery waits marginal — and the flake presents as a decrypt bug, not a
-  # timer setting. Nothing but this lint holds the pin (the suites use the
-  # timers, they never read their config).
+  # Without AccuracySec=1s systemd's 1min default lets a minutely tick slip
+  # ~120s, which presents as a decrypt bug rather than a timer setting. The
+  # suites use the timers but never read their config, so only this holds it.
   timer-accuracy =
     let
       acc = t: servicesConfig.systemd.timers.${t}.timerConfig.AccuracySec or null;
@@ -2467,14 +2232,8 @@ in
       echo "timer accuracy OK (decrypt-sops-envs + stack-git-sync pin AccuracySec=1s)"
     '';
 
-  # ---------------------------------------------------------------------------
-  # run.sh <-> suites parity
-  # ---------------------------------------------------------------------------
-  # The named-suite case arm in tests/run.sh and default.nix's `suites` are
-  # hand-mirrored — the same two-list shape module-list-parity guards for the
-  # VPS. A suite added to default.nix alone is unreachable via `run.sh <name>`
-  # (and absent from the usage block people copy from); a run.sh arm without a
-  # suite fails at build with a bare attribute error.
+  # run.sh's named-suite case arm and default.nix's `suites` are hand-mirrored:
+  # a suite in one only is either unreachable or a bare attribute error.
   run-sh-suite-parity =
     mkLint "run-sh-suite-parity" ''
       ${py} - <<'PY'

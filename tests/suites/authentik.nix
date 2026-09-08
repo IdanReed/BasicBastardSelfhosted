@@ -142,6 +142,17 @@ pkgs.testers.runNixOSTest {
 
   testScript =
     { nodes, ... }:
+    let
+      # Subtest (b)'s key set, read off the module's OWN template: a variable
+      # added there cannot leave the assertion behind on a stale hand-kept list.
+      envKeys = lib.concatMap (
+        line:
+        let
+          m = builtins.match "([A-Z][A-Z0-9_]*)=.*" line;
+        in
+        lib.optional (m != null) (builtins.head m)
+      ) (lib.splitString "\n" nodes.vps.sops.templates."authentik.env".content);
+    in
     ''
       import json
 
@@ -251,25 +262,47 @@ pkgs.testers.runNixOSTest {
               mode = headscale_vps.succeed(f"stat -c '%a' {tmpl}").strip()
               assert mode == "400", f"{tmpl} is mode {mode}, expected 400"
 
-              # Exact set equality on purpose: with the old dotenv layout each
-              # placeholder expanded to the WHOLE decrypted document (sops-nix
-              # never applies the per-key extraction for dotenv — the finding
-              # that forced the migration to secrets.sops.yaml). One line per
-              # variable, bare values, nothing else, is what keeps that fixed.
-              lines = set(headscale_vps.succeed(f"cat {tmpl}").splitlines()) - {""}
-              expected = {
-                  "PG_PASS=test_pg_password_not_secret",
-                  "AUTHENTIK_SECRET_KEY=test_authentik_secret_key_not_secret_0000000000",
-                  "HEADSCALE_OIDC_CLIENT_SECRET=test0oidc0client0secret0deadbeef0deadbeef0dead",
-                  "AUTHENTIK_BOOTSTRAP_PASSWORD=test_bootstrap_password",
-                  "AUTHENTIK_BOOTSTRAP_TOKEN=test0bootstrap0token0deadbeef0deadbeef0deadbeef",
-                  "IMMICH_OIDC_CLIENT_SECRET=test_immich_oidc_client_secret_not_secret",
-                  "OUTLINE_OIDC_CLIENT_SECRET=test_outline_oidc_client_secret_not_secret",
-              }
-              assert lines == expected, (
-                  f"template did not render bare per-key values:\n"
-                  f"missing: {expected - lines}\nunexpected: {lines - expected}"
+              # One line per variable, bare values, nothing else: with the old
+              # dotenv layout each placeholder expanded to the WHOLE decrypted
+              # document (sops-nix never applies the per-key extraction for
+              # dotenv — the finding that forced the migration to
+              # secrets.sops.yaml), which the line count and the KEY=-inside-a-
+              # value check below each catch. expected_keys is DERIVED from the
+              # module's template, so it cannot drift out of date.
+              expected_keys = set(json.loads('${builtins.toJSON envKeys}'))
+              assert len(expected_keys) > 20, (
+                  f"only {len(expected_keys)} keys parsed out of the module's "
+                  f"template — the derivation has rotted, fix it before "
+                  f"trusting this subtest"
               )
+              lines = [l for l in headscale_vps.succeed(f"cat {tmpl}").splitlines() if l]
+              assert len(lines) == len(expected_keys), (
+                  f"{tmpl} has {len(lines)} non-empty lines for "
+                  f"{len(expected_keys)} variables"
+              )
+
+              rendered = {}
+              for line in lines:
+                  key, sep, value = line.partition("=")
+                  assert sep and key.isidentifier() and key.isupper(), \
+                      f"not a KEY=value line: {line!r}"
+                  assert key not in rendered, f"{key} rendered twice"
+                  rendered[key] = value
+              assert set(rendered) == expected_keys, (
+                  f"template did not render the module's key set:\n"
+                  f"missing: {expected_keys - set(rendered)}\n"
+                  f"unexpected: {set(rendered) - expected_keys}"
+              )
+              for key, value in rendered.items():
+                  assert value and value == value.strip(), \
+                      f"{key} rendered empty or padded: {value!r}"
+                  assert '"' not in value and "'" not in value, \
+                      f"{key} rendered quoted: {value!r}"
+                  assert not value.lower().startswith("changeme"), \
+                      f"{key} is still a placeholder: {value!r}"
+                  assert not any(f"{k}=" in value for k in expected_keys), \
+                      f"{key}'s value carries another variable — the dotenv "\
+                      f"whole-document expansion is back: {value!r}"
           except Exception:
               authentik_diag()
               raise

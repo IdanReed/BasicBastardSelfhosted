@@ -303,8 +303,10 @@ pkgs.testers.runNixOSTest {
         # mysqldump — finding #35 was MariaDB 11 dropping its mysql* symlinks
         # and does not apply here, which is exactly the sort of thing worth
         # proving rather than assuming twice. MYSQL_PWD instead of -p on argv
-        # mirrors backup-prepare.sh:192 exactly (the password used to be
-        # host-visible in /proc/<pid>/cmdline).
+        # mirrors backup-prepare.sh's `require_running docspace_db` block
+        # exactly (the password used to be host-visible in
+        # /proc/<pid>/cmdline). Named, not line-numbered: that reference had
+        # already rotted once.
         services_vm.succeed(
             "docker exec docspace_db sh -c "
             "'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\"; export MYSQL_PWD; "

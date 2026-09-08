@@ -127,7 +127,8 @@
 
         "(tests/update-images.sh has the mirror of this fact in its",
         "SUBSTITUTES table, which is what lets the offline suites pull",
-        "upstream caddy in place of an image that is not published yet.)"
+        "upstream caddy in place of the fork image — the suites force",
+        "`tls internal`, so the DNS-01 plugin is never exercised.)"
       ],
       "matchManagers": ["docker-compose"],
       "matchPackageNames": ["ghcr.io/idanreed/caddy-cloudflare"],
@@ -193,10 +194,21 @@
         "The published fork tag, resolved against UPSTREAM caddy — see the",
         "packageRule above that disables the docker-compose manager for this",
         "same line. Without this, bumping the Dockerfile would leave",
-        "compose.yaml pinning the old fork tag and the two would drift."
+        "compose.yaml pinning the old fork tag and the two would drift.",
+
+        "The tag is COMPOSITE (`<caddy>-cf<plugin>`) and only the caddy half",
+        "is captured, for the same reason the `v` sits outside the capture in",
+        "the xcaddy manager above: Renovate rewrites only the captured span,",
+        "and docker versioning would otherwise read `-cf0.2.4` as a suffix",
+        "and never offer an upgrade at all. The `-cf` literal after the group",
+        "is what stops the capture running to the end of the tag.",
+
+        "NOT covered: the plugin half. A plugin-only bump moves this tag too",
+        "(see the Dockerfile header) and no manager writes it — that edit is",
+        "still by hand."
       ],
       "managerFilePatterns": ["/^stacks/caddy/compose\\.yaml$/"],
-      "matchStrings": ["image:\\s*ghcr\\.io/idanreed/caddy-cloudflare:(?<currentValue>[^\\s]+)"],
+      "matchStrings": ["image:\\s*ghcr\\.io/idanreed/caddy-cloudflare:(?<currentValue>[0-9][^-\\s]*)-cf"],
       "depNameTemplate": "caddy",
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker"

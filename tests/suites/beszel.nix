@@ -65,6 +65,7 @@
 let
   stackImages = [
     images."alpine_3_21"
+    images."python_3_13-alpine" # beszel-role
     images."henrygd_beszel_0_18_8"
     images."henrygd_beszel-agent_0_18_8"
   ];
@@ -326,6 +327,37 @@ pkgs.testers.runNixOSTest {
             assert "services-vm" in cfg, cfg
             logs = services_vm.succeed("docker logs beszel-init 2>&1")
             assert "CHANGE: wrote /beszel_data/id_ed25519" in logs, logs
+
+        with subtest("the app user is an ADMIN, not the default 'user'"):
+            # initial-settings.go seeds email/password/verified and never
+            # role; InitializeUserRole then defaults it to "user", so the
+            # env-seeded account is silently a non-admin. beszel-role fixes it
+            # post-boot — asserted through the API rather than the log, so a
+            # sidecar that logs a CHANGE and writes nothing fails here.
+            services_vm.wait_until_succeeds(
+                "docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                "beszel-role | grep -qx exited/0",
+                timeout=180,
+            )
+            token = superuser_token()
+            rows = json.loads(services_vm.succeed(
+                f"curl -fsS --max-time 30 -H 'Authorization: {token}' "
+                f"'{BASE}/api/collections/users/records?perPage=50'"
+            ))["items"]
+            assert len(rows) == 1, f"expected one app user, got {rows!r}"
+            assert rows[0]["role"] == "admin", (
+                f"the env-seeded app user has role {rows[0]['role']!r} — "
+                f"beszel-role did not promote it"
+            )
+            role_log = services_vm.succeed("docker logs beszel-role 2>&1")
+            assert "CHANGE:" in role_log, role_log
+
+        with subtest("beszel-role is idempotent (a second run changes nothing)"):
+            out = services_vm.succeed(
+                f"{BZ} run --rm --no-deps beszel-role 2>&1"
+            )
+            assert "CHANGE:" not in out, out
+            assert "already has role 'admin'" in out, out
 
         with subtest("beszel-init is idempotent (a second run changes nothing)"):
             # Every Komodo redeploy reruns it. House rule: a second run against

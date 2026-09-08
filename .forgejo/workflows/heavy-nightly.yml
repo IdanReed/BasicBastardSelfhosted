@@ -7,7 +7,7 @@
 #
 # RUNNER ASSUMPTION: same as suites.yml — self-hosted NixOS runner, labels
 # nix + kvm (see lints.yml for the full contract, and
-# nixos/modules/forgejo-runner.nix for the sketch). Placement note: a full
+# nixos/modules/forgejo-runner.nix for the wiring). Placement note: a full
 # sweep is hours cold / tens of minutes warm and peaks at several GB of guest
 # RAM per suite — if the runner lands on the services VM, 03:00 collides
 # with the 02:45 backup-prepare window; pick a later slot or the desktop.
@@ -17,9 +17,12 @@
 name: heavy-nightly
 
 on:
+  # Manual re-run: a nightly failure is otherwise only retryable through the
+  # Forgejo UI, and nothing notifies on it (ntfy covers systemd units, not
+  # Actions).
+  workflow_dispatch:
   schedule:
-    # 04:17 America/Chicago-ish is not expressible: Forgejo evaluates cron in
-    # the SERVER's timezone (UTC on the planned deployment). 09:17 UTC =
+    # Forgejo evaluates cron in the SERVER's timezone (UTC). 09:17 UTC =
     # 03:17/04:17 Chicago depending on DST — clear of the 02:45 backup window
     # either way. Odd minute on purpose: never compete with on-the-hour timers.
     - cron: "17 9 * * *"

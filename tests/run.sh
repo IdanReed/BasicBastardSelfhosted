@@ -56,7 +56,7 @@ TARGET="${1:-lints}"
 # ServerNotes is a sibling repo, so ../ServerNotes does not exist inside a
 # linked git worktree and the lints that read _overview.md cannot evaluate
 # there. Point at the main checkout instead:
-#   SERVER_NOTES=~/local/projects/server-bkg-stacks/ServerNotes ./tests/run.sh
+#   SERVER_NOTES=~/local/projects/server/ServerNotes ./tests/run.sh
 NIX_ARGS=()
 if [ -n "${SERVER_NOTES:-}" ]; then
   NIX_ARGS+=(--arg serverNotes "$SERVER_NOTES")
@@ -65,10 +65,6 @@ fi
 case "$TARGET" in
   debug)
     SUITE="${2:?usage: run.sh debug <suite> — any suite target from the list above}"
-    # driverInteractive drops you into a Python REPL with the machines
-    # available. start_all(), then e.g. headscale_vps.shell_interact() for a
-    # root shell inside the guest. This is the only sane way to work out why an
-    # assertion failed six minutes into a boot sequence.
     echo "==> Building interactive driver for '$SUITE'"
     nix-build tests "${NIX_ARGS[@]}" -A "driver.$SUITE" -o "result-driver-$SUITE"
     echo
@@ -81,15 +77,11 @@ case "$TARGET" in
     ;;
 
   lints)
-    # Pure contract checks. No VM, no images. If these fail, no VM suite is
-    # worth starting.
-    #
     # One check lives HERE and not in lints.nix: the nix derivations see a
     # copied source tree with no .git, so only this script can ask what is
-    # TRACKED. Build artifacts have been committed twice (images.nix.tmp
-    # three times in campaign 1, two __pycache__/*.pyc from locally-executed
-    # init scripts in campaign 2) — a silent gap of exactly the shape the
-    # lint set exists to close.
+    # TRACKED. Build artifacts have been committed five times across two
+    # campaigns — a silent gap of exactly the shape the lint set exists to
+    # close.
     if git rev-parse --git-dir >/dev/null 2>&1; then
       tracked_artifacts=$(git ls-files | grep -E '__pycache__|\.pyc$|\.tmp$|^result' || true)
       if [ -n "$tracked_artifacts" ]; then
@@ -103,24 +95,28 @@ case "$TARGET" in
     ;;
 
   deploy-check)
-    # Intentional pre-deploy verification: the structural gate PLUS the
-    # deploy-readiness lints (sops-declared) PLUS the operator to-do scan.
     # A RED here does not mean the code is broken — it means the live host is
-    # not yet ready to activate. Run it when heading toward a deploy.
+    # not yet ready to activate.
     echo "==> deploy-check: structural + deploy-readiness lints"
     nix-build tests "${NIX_ARGS[@]}" -A checks.deploy-check --no-out-link || rc=1
     echo
     echo "==> operator readiness (informational — not part of the exit code)"
     if git rev-parse --git-dir >/dev/null 2>&1; then
       root=$(git rev-parse --show-toplevel)
-      # Secrets still holding the committed changeme_ placeholder. Real
-      # .sops.env values are encrypted, so a decrypted changeme_ cannot leak
-      # here — only the .example/committed-placeholder lines match.
+      # Real .sops.env values are encrypted, so a decrypted changeme_ cannot
+      # leak here — only committed placeholders match.
       pending=$(git -C "$root" grep -lE 'changeme_' -- 'stacks/**/.sops.env.example' 'headscale-vps/**/*.example' 2>/dev/null || true)
       [ -n "$pending" ] && { echo "  .sops.env still on placeholders (fill before deploy):"; echo "$pending" | sed 's/^/    /'; } || echo "  .sops.env placeholders: none flagged"
-      # ssh-pubkeys entries still null (identity not yet generated).
       nulls=$(git -C "$root" grep -n '= null' -- 'nixos-de/ssh-pubkeys.nix' 2>/dev/null || true)
       [ -n "$nulls" ] && { echo "  ssh-pubkeys.nix null entries (generate keypairs before deploy):"; echo "$nulls" | sed 's/^/    /'; } || echo "  ssh-pubkeys null entries: none"
+      # An exemption a lint accepts but nobody has actually ruled on — today
+      # auth-coverage-required's unauthenticated vhosts. Green build, open
+      # question: exactly what this scan is for. The em dash is the marker (an
+      # entry always reads "TODO: decide — <why it is still open>"), so prose
+      # ABOUT the convention does not report itself; this file is excluded for
+      # the same reason.
+      undecided=$(git -C "$root" grep -n 'TODO: decide —' -- ':!tests/run.sh' 2>/dev/null || true)
+      [ -n "$undecided" ] && { echo "  exemptions still marked TODO: decide (rule on these before opening the tailnet up):"; echo "$undecided" | sed 's/^/    /'; } || echo "  TODO: decide exemptions: none"
     fi
     exit "${rc:-0}"
     ;;
@@ -135,35 +131,29 @@ case "$TARGET" in
     ;;
 
   proxmox-boot)
-    # Boots the image recipe with a NoCloud seed and asserts the age key +
-    # sops decryption via the guest agent. `proxmox` (below) is the build-only
-    # gate for the real VMA artifact.
     exec nix-build tests "${NIX_ARGS[@]}" -A proxmoxBoot --no-out-link
     ;;
 
+  # Keep this arm one line starting with `vps |` — run-sh-suite-parity reads it.
   vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 
   proxmox)
-    # Build gate for the Proxmox image path (nixos-generators + cloud-init +
-    # qemu guest wiring). A flake build, not a tests attr: the image recipe
-    # lives in nixos/flake.nix. Catches eval/build breakage long before a
-    # re-image day; the boot-the-image cloud-init suite covers the runtime
-    # contract separately.
+    # A flake build, not a tests attr: the image recipe lives in nixos/flake.nix.
     exec nix build ./nixos#proxmox-image --no-link --print-build-logs
     ;;
 
   all)
     nix-build tests "${NIX_ARGS[@]}" -A all --no-out-link
     # The image build gate rides along: "all" should mean all.
-    exec nix build ./nixos#proxmox-image --no-link
+    exec nix build ./nixos#proxmox-image --no-link --print-build-logs
     ;;
 
   *)
     echo "unknown target: $TARGET" >&2
     # Print the usage block above: everything from line 3 down to the first
-    # non-comment line (so new targets never silently fall off the help).
+    # non-comment line, so a new target never silently falls off the help.
     sed -n '3,/^set /p' "$0" | sed '$d' >&2
     exit 1
     ;;
