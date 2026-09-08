@@ -1,18 +1,20 @@
 #!/bin/sh
-# forgejo-init — seed the Authentik OAuth2/OIDC auth source (login-tiers tier 1).
+# forgejo-init — seed the Authentik OAuth2/OIDC auth source. Forgejo stores auth
+# sources in its DATABASE, not app.ini, so `forgejo admin auth add-oauth` is the
+# only declarative route. Runs as uid 1000 against the live instance's /data.
 #
-# WHY A CONTAINER, not env: Forgejo stores auth sources in its DATABASE, not in
-# app.ini/env — so a one-shot `forgejo admin auth add-oauth` is the only
-# declarative way to make the OIDC source exist. Runs AFTER forgejo is healthy
-# (depends_on) as uid 1000, so it shares the /data sqlite the live instance uses
-# (a brief busy-wait on the lock is fine; the suite proves `admin` ops work
-# against a running instance). The source NAME "authentik" is load-bearing:
-# Forgejo's callback is /user/oauth2/<name>/callback, matched strict by the
-# blueprint's redirect_uri.
+# The source NAME "authentik" is load-bearing: the callback is
+# /user/oauth2/<name>/callback, matched strictly by the blueprint's redirect_uri.
 #
-# Idempotent: every mutation logs "forgejo-init: CHANGE:"; a second run must log
-# none. The secret is RE-ASSERTED each run (update-oauth) so a rotation
-# propagates — that is a no-op write, not a CHANGE line.
+# Idempotent: every mutation logs "forgejo-init: CHANGE:"; a second run logs
+# none. The secret is re-asserted each run so a rotation propagates.
+#
+# ACCEPTED: --secret puts FORGEJO_OIDC_CLIENT_SECRET on argv, which is
+# host-visible in /proc/<pid>/cmdline for the life of the command, on every
+# deploy. cmd/admin_auth_oauth.go defines `secret` as a plain StringFlag — no
+# --secret-file, no EnvVars — so there is no alternative in this version, and
+# the CLI is the only declarative route (see above). Same tradeoff as
+# stacks/tracking/bookstack-admin-init.sh. arch-security / declarative E1.
 set -eu
 
 export GITEA_WORK_DIR=/data
@@ -32,12 +34,10 @@ esac
 
 [ -f "$CONF" ] || die "$CONF not found — forgejo volume unmounted or instance not initialised"
 
-# add-oauth --auto-discover-url makes Forgejo FETCH the discovery doc. If
-# Authentik is unreachable — the offline VM tests, or early bring-up before DNS
-# / the VPS is up — that would hard-fail and abort the stack. Probe first: skip
-# (exit 0) when unreachable (the init re-runs every redeploy, so it seeds as
-# soon as Authentik answers), but let a REACHABLE-but-rejected discovery fall
-# through to a loud failure below.
+# --auto-discover-url makes Forgejo FETCH the discovery doc, which would
+# hard-fail and abort the stack offline. Probe first and skip when unreachable
+# (the init re-runs every redeploy); a reachable-but-rejected discovery still
+# falls through to a loud failure below.
 if ! curl -fsS --max-time 10 "$DISCOVERY" >/dev/null 2>&1; then
   log "WARN: $DISCOVERY unreachable (offline test, or Authentik/DNS not up yet) — skipping auth-source seed; re-runs next deploy"
   exit 0

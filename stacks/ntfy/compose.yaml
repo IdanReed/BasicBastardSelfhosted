@@ -1,10 +1,9 @@
-# Ntfy — the single place failures get reported: systemd OnFailure= on the
-# services VM, Backrest's snapshot hooks.
+# Ntfy — the single place failures get reported (systemd OnFailure= on the
+# services VM, Backrest snapshot hooks).
 #
-# Reachable two ways on purpose:
-#   - 127.0.0.1:10001 for host systemd units (notify-failure@.service)
-#   - http://ntfy/ on the shared `homelab` docker network, for containers —
-#     containers cannot reach a loopback-bound host port.
+# Reachable two ways on purpose: 127.0.0.1:10001 for host systemd units, and
+# http://ntfy/ on the shared `homelab` network for containers — a container
+# cannot reach a loopback-bound host port.
 services:
   ntfy:
     image: binwiederhier/ntfy:v2.11.0
@@ -20,9 +19,6 @@ services:
       - '127.0.0.1:10001:80'
     networks:
       - homelab
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
     env_file:
       - path: .env
         required: false

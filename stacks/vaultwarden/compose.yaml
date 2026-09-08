@@ -1,127 +1,88 @@
-# Vaultwarden — Bitwarden-compatible password vault (Util range, port 10400).
+# Vaultwarden — Bitwarden-compatible password vault (10400).
 # Design: ServerNotes/designs/service-util-stack-research.md.
-# _overview.md owns the port/auth row.
 #
-# ITS OWN STACK, not stacks/util — three independent reasons, any one
-# sufficient:
-#   - Blast radius: the deploy plane deploys per PROJECT, so an IT-Tools tag
-#     bump would restart the password manager.
-#   - Key sets: stack-env-drift requires identical key sets PER STACK —
-#     folding ADMIN_TOKEN into util puts the fleet's most sensitive rotation
-#     beside a static PDF toolkit.
-#   - Backup: the only Util service with a dump line, an attachments tree,
-#     and a non-database artifact (rsa_key.pem) that must travel WITH the
-#     database — plus the documented circular dependency with
-#     stacks/backrest/.sops.env.example (the restic password protects
-#     Vaultwarden's own backup, so it must not live only in Vaultwarden).
+# Its own stack rather than part of stacks/util: the deploy plane deploys per
+# project (an IT-Tools bump would restart the password manager), stack-env-drift
+# keys per stack, and this is the only Util service with a dump line.
 #
-# 10400 sits inside the Util block while being a separate stack (the
-# Tracking-domain deviation); lints key on PORTS, not stack names.
-#
-# Backup contract: `sqlite_backup vaultwarden /mnt/fast/vaultwarden/db.sqlite3`
-# is correct as long as the bind mount stays `/mnt/fast/vaultwarden:/data`.
-# The dump alone is NOT a Vaultwarden backup: rsa_key.pem (JWT signing key),
-# attachments/, sends/ and config.json are non-derivable state covered only
-# by the raw /mnt/fast include set. The suite asserts db.sqlite3 and
-# rsa_key.pem both exist — sqlite_backup returns 0 for a MISSING source and
-# would otherwise back up nothing forever, silently (finding #25's class,
-# exactly what happened to Karakeep).
+# Backup: `sqlite_backup vaultwarden /mnt/fast/vaultwarden/db.sqlite3` — correct
+# only while the bind mount stays /mnt/fast/vaultwarden:/data. The dump alone is
+# NOT a backup: rsa_key.pem, attachments/, sends/ and config.json are covered
+# only by the raw /mnt/fast include set.
 
 services:
   vaultwarden:
-    # No `v` prefix — `vaultwarden/server:v1.37.2` is a 404. `latest` moves,
-    # and `testing` has been pushed more recently than 1.37.2 without being
-    # newer stable.
+    # No `v` prefix — `vaultwarden/server:v1.37.2` is a 404.
     image: vaultwarden/server:1.37.2
     container_name: vaultwarden
     ports:
       - '127.0.0.1:10400:80'
     volumes:
-      # Exactly this path. backup-prepare.sh's sqlite_backup line hardcodes
-      # /mnt/fast/vaultwarden/db.sqlite3, and moving the mount would make that
-      # line a permanent silent no-op rather than an error.
+      # Exactly this path: backup-prepare.sh hardcodes its host-side twin, and
+      # sqlite_backup returns 0 for a missing source — a moved mount is a
+      # permanent silent no-op, not an error.
       - /mnt/fast/vaultwarden:/data
     environment:
       - TZ=America/Chicago
-      # LOAD-BEARING, failure deferred: the SSO callback URI, attachment/Send
-      # links and websocket URL are all GENERATED from DOMAIN — changing it
-      # without updating the Authentik provider gives every SSO login a
-      # redirect_uri mismatch. No trailing slash, no subpath (a subpath also
-      # breaks the image's own healthcheck).
+      # SSO callback URI, attachment/Send links and the websocket URL are all
+      # generated from this. No trailing slash, no subpath.
       - DOMAIN=https://vaultwarden.svc.idanreed.com
-      # SHIPS CLOSED, deliberately — and no headless first-account init
-      # should ever exist: Bitwarden registration is CLIENT-SIDE CRYPTOGRAPHY
-      # (key derivation, wrapped symmetric key, RSA keypair), and an init
-      # that got any step subtly wrong yields a vault NO REAL CLIENT CAN
-      # EVER OPEN, surfacing the first time you actually need a password.
-      # Two operator paths (see .sops.env.example):
-      #   (a) flip true, register from the web vault, flip back
-      #   (b) log into /admin with ADMIN_TOKEN and invite yourself
-      # (b) preferred: never ships open, and "briefly" on a tailnet means
-      # every device ever enrolled.
+      # Closed to PASSWORD registration; SSO has its own gate below. No
+      # headless first-account init should ever exist: Bitwarden registration
+      # is client-side cryptography, and an init that got a step subtly wrong
+      # yields a vault no client can open.
       - SIGNUPS_ALLOWED=false
-      # Registration by invitation stays available so path (b) works.
       - INVITATIONS_ALLOWED=true
-      # No egress from a tailnet-only host — and per-credential icon fetches
-      # are a quiet metadata leak anyway.
+      # No egress from a tailnet-only host, and per-credential icon fetches are
+      # a metadata leak.
       - DISABLE_ICON_DOWNLOAD=true
       - ICON_CACHE_TTL=0
-      # Default already; explicit because ON would be a PERMANENT hard
-      # dependency on push.bitwarden.com — the one setting that would make
-      # an offline vault stop working.
+      # Default already; explicit because ON is a permanent hard dependency on
+      # push.bitwarden.com.
       - PUSH_ENABLED=false
-      # Default true; named because the notification hub shares this port —
-      # why forward auth cannot front this vhost (see the Caddyfile).
-      # Turning it off degrades every client to polling.
+      # Default true; named because the notification hub shares this port, which
+      # is why forward auth cannot front this vhost (see the Caddyfile). Off
+      # degrades every client to polling.
       - ENABLE_WEBSOCKET=true
-      # No SMTP on this host, unconfigured on purpose: invite emails will
-      # not send; /admin surfaces a copyable link instead.
-      #
-      # ---- OIDC/SSO — ENABLED (fleet rollout 2026-09-05, vaultwarden-oidc.yaml).
-      # server 1.37.2 has native SSO (1.34+) — no separate -sso build.
-      # Discovery is LAZY (authorize/token path, not boot), so this starts fine
-      # with Authentik unreachable — master-password login stays as fallback
-      # (SSO_ONLY left unset/false).
+      # OIDC
+      # Native SSO since 1.34 — no separate -sso build. Discovery is lazy, so
+      # this starts fine with Authentik unreachable; master-password login stays
+      # as fallback (SSO_ONLY unset).
       - SSO_ENABLED=true
-      # Issuer base — NO /.well-known suffix, vaultwarden appends it.
-      # 🚨 Trailing slash is LOAD-BEARING: Authentik advertises its issuer as
-      # .../o/vaultwarden/ (with slash), and vaultwarden's OIDC library does a
-      # STRICT issuer==authority match on the discovery doc. Without the slash:
-      # "unexpected issuer URI .../vaultwarden/ (expected .../vaultwarden)".
+      # 🚨 Trailing slash is LOAD-BEARING: Authentik advertises the issuer with
+      # one, and vaultwarden does a strict issuer==authority match. No
+      # /.well-known suffix — vaultwarden appends it.
       - SSO_AUTHORITY=https://auth.idanreed.com/application/o/vaultwarden/
-      # client_id is public; pinned here (overrides the vestigial .sops.env
-      # stub). SSO_CLIENT_SECRET arrives from .env.
       - SSO_CLIENT_ID=vaultwarden
       - SSO_SCOPES=email profile
-      # Link an SSO identity to an existing/invited account by verified email.
-      # ⚠ NOT full auto-provision: Bitwarden vaults are client-side E2EE, so a
-      # brand-new vault still needs client registration — invite via /admin.
-      # SIGNUPS_ALLOWED stays false by design (see above); onboarding is the
-      # invite flow, then SSO links by email.
+      # Links an SSO identity to an existing account by verified email.
       - SSO_SIGNUPS_MATCH_EMAIL=true
-      # Per-user SSO/login rate-limit bucket keyed on the real client IP, not
-      # the shared docker gateway (research §6.3).
-      - IP_HEADER=X-Forwarded-For
-      # ⚠ Do NOT register `bitwarden://sso-callback` with Authentik — those
-      # per-client redirects never reach the IdP. The single provider URI is
-      # https://vaultwarden.svc.idanreed.com/identity/connect/oidc-signin
+      # 🚨 SPELLED OUT because the default is TRUE and it is easy to believe
+      # SIGNUPS_ALLOWED=false covers it. It does not: config.rs has two gates,
+      # is_signup_allowed (SIGNUPS_ALLOWED) and is_sso_signup_allowed
+      # (SSO_SIGNUPS_ALLOWED + SIGNUPS_DOMAINS_WHITELIST), and the SSO path
+      # reads only the second. So any Authentik identity can already create a
+      # Vaultwarden row — the /admin invite is redundant, and the Authentik
+      # user list is the real gate. Set false + invite to change that posture.
       #
-      # ADMIN_TOKEN arrives from .env.
-      # 🚨 MUST be single-quoted in the plaintext .sops.env: Compose
+      # What SSO still cannot do is FINISH an account: vaults are client-side
+      # E2EE, so User::new leaves password_hash empty and private_key None.
+      # Setting a master password in the web vault is one browser step per
+      # user, forever (docs/for-shame.md).
+      - SSO_SIGNUPS_ALLOWED=true
+      # Rate-limit bucket keyed on the real client IP, not the docker gateway.
+      - IP_HEADER=X-Forwarded-For
+      # The single registered redirect is
+      # https://vaultwarden.svc.idanreed.com/identity/connect/oidc-signin — do
+      # NOT register bitwarden://sso-callback, those never reach the IdP.
+      #
+      # SSO_CLIENT_SECRET and ADMIN_TOKEN arrive from .env.
+      # 🚨 ADMIN_TOKEN must be single-quoted in the plaintext .sops.env: Compose
       # interpolates env_file values, so a bare argon2 PHC has $argon2id/$v/$m
-      # expanded to nothing — a DIFFERENT STRING (verified, finding #30).
-      # Vaultwarden then plaintext-compares against the mangled string and
-      # /admin never accepts anything. Do not $$-escape either: that advice
-      # is for inline `environment:` blocks, not env_file.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
+      # expanded away and /admin then accepts nothing. Do not $$-escape either.
     env_file:
       - path: .env
         required: false
-    # NO healthcheck stanza ON PURPOSE: the builtin is honest for once —
-    # healthcheck.sh curls /alive, whose handler takes a DbConn guard
-    # specifically so the probe verifies the database connection (upstream
-    # says so at both mount points). A dead or locked SQLite fails it;
-    # overriding would replace an honest check with a worse one.
+    # NO healthcheck stanza: the builtin curls /alive, whose handler takes a
+    # DbConn guard, so it really does verify the database.
     restart: unless-stopped

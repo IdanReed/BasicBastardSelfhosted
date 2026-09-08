@@ -1,32 +1,23 @@
-# Tandoor Recipes (Food range, port 10350).
+# Tandoor Recipes (10350).
 # Design: ServerNotes/designs/service-food-stack-research.md.
-# _overview.md owns the port/auth row.
 #
-# SEPARATE FROM WGER — a real collision, not tidiness: both Django apps read
-# the BARE name `SECRET_KEY` (and `POSTGRES_PASSWORD`), and `env_file` hands
-# every service the whole .env — one stack would silently share one
-# session-signing key. Prefixing does not help (finding #25 in reverse).
-# Two stacks, two .env files, no collision.
+# SEPARATE FROM WGER — a real collision, not tidiness: both are Django apps
+# reading the BARE names `SECRET_KEY` and `POSTGRES_PASSWORD`, and `env_file`
+# hands every service the whole .env, so one stack would share one
+# session-signing key.
 #
-# Backup contract: `tandoor` is named in nixos/backup-prepare.sh's pg_dumpall
-# loop, so `container_name: tandoor_db` and `POSTGRES_USER=tandoor` are
-# load-bearing.
+# Backup: `tandoor` is named in backup-prepare.sh's pg_dumpall loop, so
+# `container_name: tandoor_db` and POSTGRES_USER=tandoor are load-bearing.
 
 services:
-  # ---------------------------------------------------------------------------
-  # tandoor — recipe manager.
-  #
-  # 🚨 DATABASE SETTINGS LIVE HERE, NOT IN .env — THE WHOLE POINT.
-  # settings.py falls back to sqlite when DB_ENGINE/POSTGRES_DB are absent,
-  # with no error, warning, or log line (boot.sh's Postgres wait is itself
-  # gated on DB_ENGINE). So finding #11's residual window is NOT a loud
-  # guard for Tandoor: a deploy that races the decrypt gets a green
-  # healthcheck, an ephemeral SQLite in the writable layer, a working setup
-  # wizard, and an idle tandoor_db — recipes vanish on the next `up` while
-  # backup-prepare.sh dumps the real (empty) Postgres nightly with rc=0.
-  # None of the five is a secret; pinning them here turns that silent
-  # failure into a Postgres authentication error.
-  # ---------------------------------------------------------------------------
+  # App
+  # 🚨 DATABASE SETTINGS LIVE HERE, NOT IN .env — the whole point. settings.py
+  # falls back to sqlite when DB_ENGINE/POSTGRES_DB are absent, with no error,
+  # warning or log line, so a deploy that races the decrypt would get a green
+  # healthcheck, an ephemeral SQLite in the writable layer, and an idle
+  # tandoor_db — recipes vanishing on the next `up` while backup-prepare.sh
+  # dumps the real (empty) Postgres nightly with rc=0. None of the five is a
+  # secret; pinning them turns that into a Postgres authentication error.
   tandoor:
     # No `v` prefix.
     image: ghcr.io/tandoorrecipes/recipes:2.6.13
@@ -39,10 +30,9 @@ services:
     volumes:
       # Recipe images — the payload, and the only thing here worth backing up.
       - /mnt/fast/tandoor/mediafiles:/opt/recipes/mediafiles
-      # staticfiles is a NAMED volume because boot.sh runs
-      # `collectstatic --clear` on every start: it is derived, it is rewritten
-      # wholesale, and a bind mount would put churn into the /mnt/fast include
-      # set for no benefit.
+      # NAMED volume: boot.sh runs `collectstatic --clear` on every start, so
+      # this is derived and rewritten wholesale — a bind mount would put churn
+      # into the /mnt/fast include set.
       - tandoor_staticfiles:/opt/recipes/staticfiles
     environment:
       - TZ=America/Chicago
@@ -53,50 +43,40 @@ services:
       - POSTGRES_DB=tandoor
       - POSTGRES_USER=tandoor
       # ⚠ DATABASE_URL is deliberately UNSET and must stay that way: it is
-      # checked BEFORE the POSTGRES_* branch, so setting it silently
-      # overrides everything above (and accepts sqlite://).
+      # checked BEFORE the POSTGRES_* branch, so setting it silently overrides
+      # everything above (and accepts sqlite://).
       - ALLOWED_HOSTS=tandoor.svc.idanreed.com,127.0.0.1,localhost
       - CSRF_TRUSTED_ORIGINS=https://tandoor.svc.idanreed.com
       # Nginx inside the container serves media; gunicorn should not.
       - GUNICORN_MEDIA=0
-      # No open (local) registration. The superuser is created by tandoor_init.
+      # No open local registration; the superuser comes from tandoor_init.
       - ENABLE_SIGNUP=0
-      # OIDC — ENABLED (fleet rollout 2026-09-05, tandoor-oidc.yaml blueprint)
-      # via django-allauth's openid_connect provider. Lazy discovery (first
-      # login), so no boot hazard; local superuser stays as fallback.
-      # 🚨 Python-literal JSON (True, not true): settings.py runs ast.literal_eval
-      # FIRST and lowercase true is a ValueError. ${TANDOOR_OIDC_CLIENT_SECRET}
-      # is interpolated by compose from .env at parse time. provider_id
-      # "authentik" fixes the callback path /accounts/authentik/login/callback/
-      # (must match the blueprint redirect_uri).
+      # OIDC
+      # django-allauth, lazy discovery (first login), so no boot hazard; the
+      # local superuser stays as fallback.
+      # 🚨 Python-literal JSON (True, not true): settings.py runs
+      # ast.literal_eval first and lowercase true is a ValueError. provider_id
+      # "authentik" fixes the callback path the blueprint registers.
       - SOCIAL_PROVIDERS=allauth.socialaccount.providers.openid_connect
       - 'SOCIALACCOUNT_PROVIDERS={"openid_connect":{"OAUTH_PKCE_ENABLED":True,"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"tandoor","secret":"${TANDOOR_OIDC_CLIENT_SECRET}","settings":{"server_url":"https://auth.idanreed.com/application/o/tandoor/.well-known/openid-configuration"}}]}}'
-      # Auto-provision an account on first OIDC login (allauth default True;
-      # pinned so a future default change can't silently close it). ⚠ HIDE_LOGIN_FORM
-      # left unset and REMOTE_USER_AUTH must NEVER be set (removes /setup/).
+      # allauth's default, pinned so a future change cannot silently close it.
+      # ⚠ REMOTE_USER_AUTH must NEVER be set — it removes /setup/.
       - SOCIALACCOUNT_AUTO_SIGNUP=1
       # POSTGRES_PASSWORD, SECRET_KEY and TANDOOR_OIDC_CLIENT_SECRET arrive from .env.
       # ⚠ An unset SECRET_KEY does NOT crash: settings.py falls back to the
       # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a
-      # [WARNING] — every session cookie signed with a public, CONSTANT key,
-      # so nothing looks wrong across restarts. Same class as finding #17.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
+      # [WARNING], so every session cookie is signed with a public constant key
+      # and nothing looks wrong across restarts.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # ⚠ `wget`, not `curl`: the image apk-dels curl with its build-deps;
-      # busybox wget is what is left.
-      # /openapi/ is drf-spectacular's schema view, AllowAny. It introspects
-      # every serializer — not free; keep the interval at 30s.
-      # ⚠ A `/`-shaped probe proves nothing: cookbook.urls ends in a
-      # CATCH-ALL to the Vue frontend, so any path returns 200 with the SPA
-      # shell — "path → 200" is meaningless without checking the body.
-      # NOT covered: a Postgres that dies AFTER start (boot.sh only gates
-      # start). The honest mitigation is Gatus on a real page, not a
-      # cleverer probe.
+      # ⚠ `wget`, not `curl`: the image apk-dels curl with its build-deps.
+      # /openapi/ is drf-spectacular's AllowAny schema view — it introspects
+      # every serializer, so keep the interval at 30s. A `/`-shaped probe would
+      # prove nothing: cookbook.urls ends in a CATCH-ALL to the Vue frontend, so
+      # any path returns 200 with the SPA shell.
+      # NOT covered: a Postgres that dies AFTER start (boot.sh only gates start).
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '10', 'http://127.0.0.1:80/openapi/']
       interval: 30s
       timeout: 15s
@@ -104,6 +84,7 @@ services:
       start_period: 120s
     restart: unless-stopped
 
+  # Database
   tandoor_db:
     image: postgres:17.9-alpine
     container_name: tandoor_db
@@ -118,8 +99,7 @@ services:
       - path: .env
         required: false
     healthcheck:
-      # -U is required: pg_isready defaults to the OS user (root here), which
-      # does not exist as a role.
+      # -U is required: pg_isready defaults to the OS user (root), not a role.
       test: ['CMD-SHELL', 'pg_isready -U tandoor -d tandoor']
       interval: 10s
       timeout: 5s
@@ -127,24 +107,21 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # tandoor_init — headless first-run (annex §3.1; see tandoor-init.py):
-  # Tandoor's only path to a first superuser is a browser form, no management
-  # command. Runs from the SAME image so the ORM/settings/django-scopes are
-  # the app's own — a python:alpine sidecar could not import cookbook.
-  # ---------------------------------------------------------------------------
+  # Init
+  # Tandoor's only path to a first superuser is a browser form. Runs from the
+  # SAME image so the ORM/settings/django-scopes are the app's own — a
+  # python:alpine sidecar could not import cookbook. See tandoor-init.py.
   tandoor_init:
     image: ghcr.io/tandoorrecipes/recipes:2.6.13
     container_name: tandoor_init
     depends_on:
-      # service_healthy, not service_started: boot.sh runs the migrations, and
-      # this script queries tables they create.
+      # service_healthy: boot.sh runs the migrations this script's queries need.
       tandoor:
         condition: service_healthy
     volumes:
       - ./tandoor-init.py:/init/tandoor-init.py:ro
     # `venv/bin/python`, not the system python3: the image installs its
-    # dependencies into /opt/recipes/venv, and /usr/local/bin/python3 cannot
+    # dependencies into /opt/recipes/venv and /usr/local/bin/python3 cannot
     # import django at all.
     entrypoint: ['/bin/sh', '-c']
     command:
@@ -161,5 +138,4 @@ services:
     restart: "no"
 
 volumes:
-  # Derived: collectstatic --clear rewrites it on every start.
   tandoor_staticfiles:

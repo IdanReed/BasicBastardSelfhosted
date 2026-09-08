@@ -1,20 +1,14 @@
 #!/bin/sh
-# Headless first-run for Windmill (annex §3.4).
+# Headless first-run for Windmill (annex §3.4). Upstream's documented setup is
+# "log in as admin@windmill.dev / changeme, then use the UI" with no forced
+# password change, so the published default is live until a human intervenes.
+# SUPERADMIN_SECRET presented as a bearer token authenticates against the
+# ordinary API without ever using `changeme`.
 #
-# WHY THIS EXISTS: upstream's documented setup is "log in as
-# admin@windmill.dev / changeme, then use the UI" — no forced password
-# change, so the published default is live until a human intervenes.
-# SUPERADMIN_SECRET is the way out (the binary's --help: "virtual superadmin
-# token"): presented as a bearer token it authenticates against the ordinary
-# API without ever using `changeme`.
-#
-# ROSTER (rollout 2026-09-05): idan is the super_admin; the other 6 are regular
-# instance users (tier-2b "declarative user accounts"). Each password arrives
-# from .env as <USER>_INITIAL_PASSWORD — a copy_only twin of that user's
-# Authentik password (secrets-gen/manifest.yaml user/*), so one memorable
-# password is their login for Authentik + Windmill + Samba. Multi-user +
-# workspaces are OSS; only SSO federation is Enterprise (login-tiers.md), which
-# is why these are local accounts + a second login.
+# Roster: idan is the super_admin, the other six are regular instance users
+# (tier-2b local accounts — only SSO federation is Enterprise, see
+# login-tiers.md). Each password is a copy_only twin of that user's Authentik
+# password, so one memorable password covers Authentik, Windmill and Samba.
 #
 # Every mutation logs "windmill-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must log ZERO change lines.
@@ -31,15 +25,8 @@ import urllib.request
 WM = "http://windmill_server:8000"
 DEFAULT_ADMIN = "admin@windmill.dev"
 
-# (email, password_env, super_admin). idan is the super_admin; the 6 friends
-# are regular users. Every password arrives from .env as <USER>_INITIAL_PASSWORD
-# — a copy_only twin of that user's one memorable password (secrets-gen manifest
-# user/*), so idan's windmill login is the SAME password as Authentik/Samba/etc.
-# All admin ops below use the SUPERADMIN_SECRET bearer (never a login-as-user),
-# so this stays correct even when idan's stored password differs (a create is a
-# no-op for an existing account — on the current instance idan keeps whatever
-# password his account already has until windmill_data is reset or he changes it
-# in the UI; a fresh windmill gets IDAN_INITIAL_PASSWORD at creation).
+# (email, password_env, super_admin). A create is a no-op for an existing
+# account, so an already-provisioned user keeps whatever password they have.
 USERS = [
     ("idan@idanreed.com",               "IDAN_INITIAL_PASSWORD",    True),
     ("apcalondraperezcortez@gmail.com", "ALONDRA_INITIAL_PASSWORD", False),
@@ -63,9 +50,9 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly: unset means the .env did not decrypt or the password was
-        # never hand-set, and "unprovisioned" means admin@windmill.dev /
-        # changeme stays live on a service that runs arbitrary code.
+        # Unset means the .env did not decrypt, and "unprovisioned" means
+        # admin@windmill.dev / changeme stays live on a service that runs
+        # arbitrary code.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -114,16 +101,11 @@ for email, pw_env, is_super in USERS:
 
 wait_for_server()
 
-# All admin operations use the SUPERADMIN_SECRET bearer directly — no
-# login-as-a-user session. idan is managed out of band (already superadmin),
-# and a friend's own session is not needed to create them or add them to the
-# workspace. This also sidesteps the "log in as idan" 401 when idan's real
-# password differs from any sops value.
-token = secret
+# Every admin operation below uses the SUPERADMIN_SECRET bearer, never a
+# login-as-a-user session — which also sidesteps a 401 when a stored password
+# differs from the account's real one.
 
-# ---------------------------------------------------------------------------
-# 1. Create the friend users (idempotent — 400 "already exists" is a no-op)
-# ---------------------------------------------------------------------------
+# Users — idempotent, 400 "already exists" is a no-op
 for email, pw, is_super in roster:
     code, body = request(
         f"{WM}/api/users/create",
@@ -136,15 +118,12 @@ for email, pw, is_super in roster:
     elif code == 400 and "already exists" in body.lower():
         log(f"{email} already exists")
     else:
-        # 401/403 here means SUPERADMIN_SECRET is not being accepted, which is
-        # the difference between "provisioned" and "changeme is still live".
-        # Never swallow it.
+        # 401/403 means SUPERADMIN_SECRET is not being accepted — the difference
+        # between "provisioned" and "changeme is still live". Never swallow it.
         fatal(f"POST /api/users/create ({email}) returned {code}: {body[:400]}")
 
-# ---------------------------------------------------------------------------
-# 3. The workspace
-# ---------------------------------------------------------------------------
-code, body = request(f"{WM}/api/workspaces/list", token=token)
+# Workspace
+code, body = request(f"{WM}/api/workspaces/list", token=secret)
 existing = set()
 if code < 300 and body:
     try:
@@ -163,12 +142,12 @@ else:
     # way rather than pinning to whichever behaviour today's image has.
     payload = {"id": workspace, "name": workspace}
     code, body = request(
-        f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
+        f"{WM}/api/workspaces/create", method="POST", body=payload, token=secret
     )
     if code == 400 and "username" in body.lower() and "not allowed" not in body.lower():
         payload["username"] = "idan"
         code, body = request(
-            f"{WM}/api/workspaces/create", method="POST", body=payload, token=token
+            f"{WM}/api/workspaces/create", method="POST", body=payload, token=secret
         )
 
     if code < 300:
@@ -178,14 +157,10 @@ else:
     else:
         fatal(f"POST /api/workspaces/create returned {code}: {body[:400]}")
 
-# ---------------------------------------------------------------------------
-# 4. Add the non-admin users to the workspace (BEST-EFFORT)
-# ---------------------------------------------------------------------------
-# The instance accounts (step 1) are what let them log in — that is the tier-2b
-# guarantee. Workspace membership is a convenience on top, and the add endpoint
-# is version-sensitive (add vs invite; body shape), so a non-2xx here is a
-# WARNING, never fatal — it must not break the idempotency contract or the
-# stack. Re-runs: an already-member response is treated as a no-op.
+# Workspace membership — BEST-EFFORT
+# The instance accounts above are what let people log in; membership is a
+# convenience on top, and this endpoint is version-sensitive (add vs invite,
+# body shape), so a non-2xx is a WARNING and never fatal.
 for email, _, is_super in roster:
     if is_super:
         continue  # superadmins already have access to every workspace
@@ -193,7 +168,7 @@ for email, _, is_super in roster:
         f"{WM}/api/w/{workspace}/users/add",
         method="POST",
         body={"email": email, "is_admin": False, "operator": False},
-        token=token,
+        token=secret,
     )
     low = body.lower()
     if code < 300:
@@ -207,19 +182,16 @@ for email, _, is_super in roster:
             f"UI if workspace membership is wanted"
         )
 
-# ---------------------------------------------------------------------------
-# 5. Retire the default account
-# ---------------------------------------------------------------------------
-# ⚠ The verb is DELETE — a POST to the same path 405s, an easy way to
-# "retire" an account that is still live.
-# 🚨 THE DELETE IS NOT DISTINGUISHABLE: 2xx whether or not the account
-# existed, so deleting unconditionally + logging CHANGE prints a change line
-# EVERY run and breaks the idempotency contract (the suite caught exactly
-# this). Look first; claim a change only when there was one.
+# Retire the default account
+# ⚠ The verb is DELETE — a POST to the same path 405s, an easy way to "retire"
+# an account that is still live.
+# 🚨 The DELETE answers 2xx whether or not the account existed, so deleting
+# unconditionally and logging CHANGE would print a change line EVERY run. Look
+# first; claim a change only when there was one.
 def default_admin_exists():
     """None when the answer cannot be determined."""
     code, body = request(
-        f"{WM}/api/users/list_as_super_admin?per_page=1000", token=token
+        f"{WM}/api/users/list_as_super_admin?per_page=1000", token=secret
     )
     if code >= 300 or not body:
         return None
@@ -238,7 +210,7 @@ if present is False:
     log(f"{DEFAULT_ADMIN} already gone")
 else:
     code, body = request(
-        f"{WM}/api/users/delete/{DEFAULT_ADMIN}", method="DELETE", token=token
+        f"{WM}/api/users/delete/{DEFAULT_ADMIN}", method="DELETE", token=secret
     )
     if code >= 300 and code not in (404, 400):
         fatal(
@@ -248,10 +220,8 @@ else:
     if present is True:
         log(f"CHANGE: deleted the default {DEFAULT_ADMIN} account")
     else:
-        # Could not read the user list, so the delete was issued blind. Say so
-        # rather than claiming a change — a wrong CHANGE line is worse than an
-        # honest unknown, because the whole contract is "a second run prints
-        # none".
+        # The delete was issued blind, so say so: a wrong CHANGE line breaks the
+        # "a second run prints none" contract.
         log(
             f"delete requested for {DEFAULT_ADMIN}; could not determine "
             f"whether it existed (user list unavailable)"

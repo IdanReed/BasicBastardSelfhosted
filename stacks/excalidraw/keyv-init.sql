@@ -1,37 +1,22 @@
--- Create a SEPARATE database for keyv scene-blob storage, with the keyv
--- table pre-created. Two failure modes are being defused at once, and the
--- separate database is what lets both fixes coexist — both MEASURED against
--- the pinned images, not inferred:
+-- A SEPARATE database for keyv scene blobs, with the keyv table pre-created.
+-- Two measured failure modes, defused together:
 --
---   1. THE KEYV CREATE RACE. @keyv/postgres 1.4.11 lazily runs CREATE TABLE
---      IF NOT EXISTS on connect, and the api opens FOUR keyv connections at
---      boot. On a missing table they race, the losers' connections reject
---      (duplicate pg_type key) and stay broken until the next restart —
---      boots coin-flip between healthy and 500-on-every-scene-read.
---      Pre-creating the table makes the CREATE a deterministic no-op.
+--   1. @keyv/postgres lazily CREATEs its table on connect and the api opens
+--      four keyv connections at boot; on a missing table they race and the
+--      losers stay broken until the next restart. Pre-creating makes the
+--      CREATE a deterministic no-op.
+--   2. But pre-creating it in PRISMA'S database makes `prisma migrate deploy`
+--      fail P3005 on every boot, so the entrypoint falls back to
+--      `prisma db push --accept-data-loss`, which DROPS the keyv table with
+--      every stored scene in it.
 --
---   2. PRISMA P3005 + THE db-push DATA SHREDDER. The api entrypoint runs
---      `prisma migrate deploy` and falls back to `prisma db push
---      --accept-data-loss` on failure. Pre-creating the keyv table in
---      PRISMA'S OWN database makes migrate deploy fail P3005 ("schema is
---      not empty") on EVERY boot, so every boot reaches db push, and db
---      push DROPS any table not in schema.prisma — i.e. the keyv table,
---      WITH every stored scene in it. Measured: that exact chain shredded
---      the blob table on each restart. Hence a second database: Prisma's
---      `excalidraw` db is empty at first migrate (P3005 impossible, history
---      recorded, db push never runs), and nothing Prisma does can ever
---      touch `excalidraw_storage`.
+-- Hence the split: Prisma's `excalidraw` db is empty at first migrate, and
+-- nothing Prisma does can reach `excalidraw_storage`.
 --
--- The DDL matches @keyv/postgres 1.4.11's own defaults byte-for-byte
--- (schema 'public', table 'keyv', keySize 255 — read out of the pinned
--- image at node_modules/@keyv/postgres/dist/index.js). If a bump changes
--- those defaults the race returns; the suite's zero-"Connection Error"
--- assertion across a restart is the tripwire.
---
--- Runs from /docker-entrypoint-initdb.d, i.e. exactly once, when initdb
--- first creates the cluster — during which postgres accepts no TCP, so the
--- api cannot connect before this exists. STORAGE_URI in .sops.env must
--- point at THIS database (see .sops.env.example).
+-- The DDL matches @keyv/postgres 1.4.11's defaults byte-for-byte; a bump that
+-- changes them brings the race back, and the suite's zero-"Connection Error"
+-- assertion across a restart is the tripwire. STORAGE_URI in .sops.env must
+-- point at THIS database.
 CREATE DATABASE excalidraw_storage OWNER excalidraw;
 
 \connect excalidraw_storage

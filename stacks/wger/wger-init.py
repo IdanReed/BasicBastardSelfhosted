@@ -1,21 +1,13 @@
-# Headless first-run for Wger (annex §3.2).
+# Headless first-run for Wger. Fed to `manage.py shell` on stdin, so the ORM
+# and settings are already loaded.
 #
-# Fed to `manage.py shell` on stdin, so this is a Django shell script — the ORM
-# and settings are already loaded. DJANGO_SETTINGS_MODULE=settings.main and
-# PYTHONPATH=/home/wger/src are baked into the image, so the container needs
-# nothing but the env_file.
+# It exists because `wger bootstrap` loaddata's a users.json carrying username
+# `admin`, is_staff true, is_superuser FALSE and the published `adminadmin`
+# hash, with no env var to change any of it and no API path either (password
+# changes need an authenticated allauth session).
 #
-# WHY IT EXISTS: Wger creates the admin FOR you with no password choice —
-# `wger bootstrap` on a fresh DB loaddata's users.json: pk 1, username
-# `admin`, is_staff true, **is_superuser FALSE**, and the literal pbkdf2
-# hash for `adminadmin`. No env var exists (not DJANGO_SUPERUSER_*, not
-# anything), and `load_fixtures` loads the same users.json, so blocking only
-# `create_or_reset_admin` would achieve nothing. The API is no option
-# either: password changes need an authenticated allauth session, and the
-# DRF user endpoints are read-only.
-#
-# Every mutation prints "wger-init: CHANGE: ...". A second run — every
-# redeploy reruns this container — must print ZERO change lines.
+# Every mutation prints "wger-init: CHANGE: ...". A second run must print
+# ZERO change lines.
 
 import os
 import sys
@@ -56,17 +48,14 @@ if admin is None:
 else:
     changed = []
 
-    # ⚠ Compare BEFORE setting. set_password() always produces a different hash
-    # (new salt), so writing unconditionally and then reporting a change would
-    # print a CHANGE line on every single redeploy and destroy the idempotency
-    # contract every other init in this fleet is held to.
+    # ⚠ Compare BEFORE setting: set_password() re-salts, so an unconditional
+    # write would print a CHANGE line on every redeploy.
     if not check_password(password, admin.password):
         admin.set_password(password)
         changed.append("password")
 
-    # The fixture leaves the account is_staff but NOT is_superuser, which means
-    # it can reach /django-admin/ and do almost nothing there. That surprises
-    # people the first time they try to configure anything.
+    # The fixture leaves the account is_staff but NOT is_superuser, so it can
+    # reach /django-admin/ and do almost nothing there.
     if not admin.is_superuser:
         admin.is_superuser = True
         changed.append("is_superuser")
@@ -80,9 +69,9 @@ else:
     else:
         log("admin already provisioned")
 
-# Post-condition, asserted here as well as in the suite: the published default
-# must not authenticate. If a future upstream change re-runs
-# create_or_reset_admin on a non-fresh database, this is where it surfaces.
+# Post-condition: the published default must not authenticate. If a future
+# upstream re-runs create_or_reset_admin on a non-fresh database, it surfaces
+# here.
 admin.refresh_from_db()
 if check_password("adminadmin", admin.password):
     fatal("admin still accepts the published default password 'adminadmin'")

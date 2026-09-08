@@ -1,60 +1,43 @@
-# Gatus — availability monitoring for the whole fleet.
-# Design: ServerNotes/designs/service-monitoring-stack-research.md.
+# Gatus — availability monitoring for the whole fleet. This file IS the
+# deployment. Design: ServerNotes/designs/service-monitoring-stack-research.md.
 #
-# WHY GATUS AND NOT UPTIME KUMA. Kuma has no headless path at all: its v2
-# removed the JSON backup/restore ("backing up the data directory is the only
-# supported method"), its first admin exists only as a socket.io event on an
-# API whose own wiki disclaims stability, and its image healthcheck LOGS the
-# status code and exits 0 regardless — green on a 500, green on the setup
-# wizard. Gatus is a config file. This file IS the deployment.
-#
-# 🚨 TWO PROBES PER SERVICE, MEASURING DIFFERENT THINGS. Monitoring only
-# through Caddy is wrong here, and monitoring only loopback is wrong here, for
-# opposite reasons:
-#
-#   path probe    https://<svc>.svc.idanreed.com/  proves Caddy is up, the
-#                 wildcard cert is valid, DNS resolves, and — for protected
-#                 hosts — that the tailnet hop and the VPS outpost work.
-#                 BLIND to the service, because a protected route 302s before
-#                 reaching it.
+# 🚨 TWO PROBES PER SERVICE, MEASURING DIFFERENT THINGS:
+#   path probe    https://<svc>.svc.idanreed.com/  proves Caddy, the wildcard
+#                 cert, DNS and — for protected hosts — the tailnet hop and the
+#                 VPS outpost. BLIND to the service, because a protected route
+#                 302s before reaching it.
 #   service probe http://127.0.0.1:<port>/         proves the app answers.
 #                 BLIND to Caddy, TLS, host routing and forward auth.
+# gatus-target-coverage in tests/lib/lints.nix enforces both halves per vhost.
 #
-# 🚨 A PATH PROBE AGAINST A PROTECTED VHOST MEASURES AUTHENTIK, NOT THE
-# SERVICE. The (protected) snippet 302s an unauthenticated request, so a
-# default `[STATUS] == 200` marks every forward-auth service DOWN forever — and
-# "fixing" that by accepting 200-399 turns the probe into an Authentik liveness
-# check wearing the service's name. Protected hosts therefore assert `== 302`
-# explicitly and are NAMED as what they measure.
+# 🚨 A PATH PROBE AGAINST A PROTECTED VHOST MEASURES AUTHENTIK, NOT THE SERVICE.
+# Those assert `== 302` explicitly and are NAMED as what they measure —
+# "fixing" a default 200 by accepting 200-399 turns the probe into an Authentik
+# liveness check wearing the service's name.
 #
 # 🚨 SERVICE PROBES SEND THE REAL Host HEADER where the app is host-sensitive.
-# Findings #27 and #15: Dawarich's host_authorization explicitly EXCLUDES
-# /api/v1/health, so a wrong APPLICATION_HOSTS is invisible to a health
-# endpoint and fatal to every browser request; qBittorrent 401s when the Host
-# port differs. One line each, and it is the highest-value thing in this file.
+# Dawarich's host_authorization excludes /api/v1/health and qBittorrent 401s on
+# a wrong Host port: both are "healthy container, every browser request fails",
+# which no container healthcheck can see.
 #
-# ⚠ NO `security:` BLOCK. Gatus's OIDC calls oidc.NewProvider at startup with
-# no retry and PANICS on failure, so a tailnet blip during a redeploy would
-# restart-loop the monitoring service. And its own security block does not
-# protect the uptime history anyway — the SPA, /api/v1/config and every
-# /v1/endpoints/:key/uptimes route are on the UNPROTECTED router. Caddy's
-# forward auth plus the loopback bind is the real control.
+# ⚠ NO `security:` BLOCK. Gatus's OIDC calls oidc.NewProvider at startup with no
+# retry and PANICS on failure, so a tailnet blip during a redeploy would
+# restart-loop the monitoring service — and its security block does not protect
+# the uptime history anyway (the SPA, /api/v1/config and the uptimes routes are
+# on the unprotected router). Caddy's forward auth plus the loopback bind is the
+# real control.
 #
-# ⚠ Gatus expands $VAR in this YAML, and Compose expands env_file values too
-# (finding #30) — any secret reaching here passes TWO expansion layers. Keep
-# values $-free.
+# ⚠ Gatus expands $VAR in this YAML and Compose expands env_file values too, so
+# any secret reaching here passes TWO expansion layers. Keep values $-free.
 
 storage:
   type: sqlite
   path: /data/gatus.db
 
 web:
-  # Bound to loopback even though the container is on the HOST network, which
-  # is the whole reason this stack needs a host-network-declared entry: it has
-  # no `ports:` for loopback-binding to check. A container on a bridge cannot
-  # reach a 127.0.0.1 publish, and only three stacks join the shared `homelab`
-  # network — so a prober that wants to see the services themselves has to be
-  # here.
+  # Loopback, even though the container is on the HOST network — this bind IS
+  # the boundary a `ports:` entry would otherwise provide, which is why the
+  # stack needs a host-network-declared entry.
   address: 127.0.0.1
   port: 10450
 
@@ -63,17 +46,16 @@ alerting:
     url: http://127.0.0.1:10001
     topic: monitoring
     priority: 4
-    # NO `token`. Validate() rejects any token not starting with `tk_`, and the
-    # fleet's ntfy sets auth-default-access: read-write, so anonymous publish
-    # works. A placeholder here would reject the whole provider.
+    # NO `token`: Validate() rejects anything not starting with `tk_`, and the
+    # fleet's ntfy allows anonymous publish. A placeholder rejects the provider.
     default-alert:
       failure-threshold: 3
       success-threshold: 2
       send-on-resolved: true
 
 endpoints:
-  # Actual is NOT behind forward auth (native login), so the path probe
-  # expects the SPA shell, not a 302.
+  # Not behind forward auth (native login), so the path probe expects the SPA
+  # shell, not a 302.
   - name: "actual (path: caddy -> service)"
     group: "path"
     url: "https://actual.svc.idanreed.com/"
@@ -87,10 +69,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /health is LIVENESS-ONLY — a bare express 200 {"status":"UP"} with no
-  # storage check behind it (src/app.ts at v26.9.0). Still the right probe:
-  # `/` is a static SPA shell that stays green with the API dead, and
-  # [BODY].status pins the one bit of meaning /health does carry.
+  # Liveness only — a bare express 200 with no storage check. Still better than
+  # `/`, a static SPA shell that stays green with the API dead.
   - name: "actual (service)"
     group: "service"
     url: "http://127.0.0.1:10308/health"
@@ -235,18 +215,11 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Unlike most service probes this one asserts the BODY, because Beszel gives
-  # us something worth asserting: /api/health is PocketBase's and answers
-  # {"message":"API is healthy.","code":200}. A bare [STATUS] == 200 here would
-  # be satisfied by the SPA shell.
-  #
-  # ⚠ What neither probe can see is whether the AGENT is reporting. The hub
-  # answers /api/health perfectly happily with zero connected systems, and the
-  # agent's own healthcheck stats a file it touches every 90s whether or not it
-  # has ever reached the hub. The systems row is the only honest signal and it
-  # needs an authenticated call, so it is asserted by tests/suites/beszel.nix
-  # instead of here. This is a real monitoring gap, written down rather than
-  # papered over.
+  # Asserts the BODY: a bare [STATUS] == 200 would be satisfied by the SPA shell.
+  # ⚠ Neither probe can see whether the AGENT is reporting — the hub answers
+  # /api/health happily with zero connected systems. The systems row needs an
+  # authenticated call and is asserted by tests/suites/beszel.nix instead. A real
+  # monitoring gap, written down rather than papered over.
   - name: "beszel (service)"
     group: "service"
     url: "http://127.0.0.1:10452/api/health"
@@ -345,11 +318,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # NOT protected — DocSpace has real accounts of its own and desktop/mobile
-  # clients a 302 would break — so this probe expects a real answer, not a
-  # redirect. The Host header is set for the same reason it is on dawarich:
-  # a host-sensitive app 400s or 401s on the wrong one while its container
-  # healthcheck stays green (findings #27 and #15).
+  # NOT protected — DocSpace has its own accounts and desktop/mobile clients a
+  # 302 would break. The Host header is set because the app is host-sensitive.
   - name: "docspace (service)"
     group: "service"
     url: "http://127.0.0.1:10404/"
@@ -363,8 +333,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # AstraDraw is NOT behind forward auth (native login + OIDC-ready), so the
-  # path probe expects the SPA shell, not a 302 — the `actual` pattern.
+  # Not behind forward auth (native login), so the path probe expects the SPA
+  # shell, not a 302.
   - name: "excalidraw (path: caddy -> service)"
     group: "path"
     url: "https://excalidraw.svc.idanreed.com/"
@@ -397,10 +367,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /api/v2/auth/status is liveness + "auth config parsed" — it touches no
-  # table (a dead Postgres leaves it green; the api PROCESS exits on db loss,
-  # so container state is that signal). The body pins keep the auth posture
-  # from drifting: registration must stay closed.
+  # Liveness plus "auth config parsed" — it touches no table, so a dead Postgres
+  # leaves it green (the api process exits on db loss, which is that signal).
+  # The body pins keep registration closed.
   - name: "excalidraw-api (service)"
     group: "service"
     url: "http://127.0.0.1:10409/api/v2/auth/status"
@@ -510,17 +479,11 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Gatus probing its own vhost. This is NOT circular vanity: the path probe
-  # traverses Caddy, so it proves the route, the wildcard cert and the outpost
-  # for this hostname — none of which Gatus can observe from the inside, and
-  # all of which failing would make the dashboard unreachable during exactly
-  # the outage it is reporting. (The alert path does not traverse Caddy, so
-  # ntfy still gets through.)
-  #
-  # There is deliberately NO matching service probe: Gatus fetching
-  # http://127.0.0.1:10450/ is a tautology — if it can run the check, the
-  # answer is yes. gatus-target-coverage carries 10450 in EXEMPT_SERVICE with
-  # this reason rather than letting a meaningless probe satisfy it.
+  # Not circular vanity: this traverses Caddy, so it proves the route, the cert
+  # and the outpost — none of which Gatus can see from the inside, and all of
+  # which failing would hide the dashboard during the outage it is reporting.
+  # No service twin: 10450 is in gatus-target-coverage's EXEMPT_SERVICE, because
+  # probing itself is a tautology.
   - name: "gatus (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://gatus.svc.idanreed.com/"
@@ -533,10 +496,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Ghostfolio is NOT behind forward auth (it has its own security-token
-  # login), so the path probe expects a normal 2xx/3xx, not the 302 the
-  # protected routes get. `/` is an Angular SPA shell that 302s to a
-  # locale-prefixed route, which is why ignore-redirect is still set.
+  # Not behind forward auth (own security-token login), so no 302 is expected.
+  # `/` is an Angular SPA shell that 302s to a locale-prefixed route, hence
+  # ignore-redirect.
   - name: "ghostfolio (path: caddy -> service)"
     group: "path"
     url: "https://ghostfolio.svc.idanreed.com/"
@@ -550,11 +512,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # The service probe deliberately hits /api/v1/health rather than `/`: it is
-  # the one endpoint here that means something, returning 200 only once the app
-  # has finished the `npx prisma migrate deploy` its entrypoint runs at every
-  # start. A probe of `/` would go green off the static SPA shell while the
-  # backend was still migrating or had failed to.
+  # /api/v1/health, not `/`: it returns 200 only once the boot-time
+  # `prisma migrate deploy` has finished. `/` would go green off the SPA shell.
   - name: "ghostfolio (service)"
     group: "service"
     url: "http://127.0.0.1:10306/api/v1/health"
@@ -604,10 +563,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Asserts the BODY, because Grafana gives us something worth asserting:
-  # /api/health returns {"database":"ok","version":...} and the "ok" is a real
-  # query against grafana.db, not a static string. A bare [STATUS] == 200 here
-  # would be satisfied by a Grafana whose database is unwritable.
+  # Asserts the BODY: "database":"ok" is a real query against grafana.db, so a
+  # bare [STATUS] == 200 would be satisfied by an unwritable database.
   - name: "grafana (service)"
     group: "service"
     url: "http://127.0.0.1:10455/api/health"
@@ -786,12 +743,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # 🚨 THE ONLY LIVENESS SIGNAL VICTORIALOGS HAS. Its image is distroless —
-  # one static binary, no shell — so the container carries no healthcheck at
-  # all (see stacks/logging/compose.yaml) and the host-side
-  # unhealthy-containers timer is therefore blind to it. Nothing routes to it
-  # through Caddy either — no vhost, so no path probe and none possible.
-  # /health answers a literal "OK" with 200.
+  # 🚨 THE ONLY LIVENESS SIGNAL VICTORIALOGS HAS: its distroless image carries
+  # no healthcheck, so the unhealthy-containers timer is blind to it, and it has
+  # no vhost, so no path probe is possible.
   - name: "victorialogs (service)"
     group: "service"
     url: "http://127.0.0.1:10456/health"
@@ -801,15 +755,10 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # 🚨 THE INGEST PROBE THE LOKI ERA COULD NOT HAVE: any {job="systemd-journal"}
-  # line from the last 15 minutes (URL-encoded LogsQL `_time:15m
-  # {job="systemd-journal"}`, limit=1). The Loki-era comment here said this
-  # needed "a LogQL-aware prober gatus is not"; VL's query API answers plain
-  # GETs, and an empty result is 200 with a ZERO-BYTE body — pinned by the
-  # victorialogs suite — so len([BODY]) > 0 means "the pipeline shipped
-  # something recently". A healthy-but-collecting-nothing Alloy (wrong journal
-  # path, lost bind mount, a stray `user:`) fails THIS while passing every
-  # healthcheck.
+  # 🚨 THE INGEST PROBE: any journal line from the last 15 minutes. An empty
+  # result is 200 with a ZERO-BYTE body, so len([BODY]) > 0 means the pipeline
+  # shipped something recently — a healthy-but-collecting-nothing Alloy fails
+  # THIS while passing every healthcheck.
   - name: "victorialogs (ingest)"
     group: "service"
     url: "http://127.0.0.1:10456/select/logsql/query?query=_time%3A15m%20%7Bjob%3D%22systemd-journal%22%7D&limit=1"
@@ -820,25 +769,12 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # The same check for the OTHER collector — the headscale VPS
-  # (headscale-vps/modules/log-shipper.nix). It needs its own probe because the
-  # one above is satisfied entirely by this host's own Alloy: the VPS's stream
-  # could stop for days without moving it.
-  #
-  # 🚨 THIS IS THE ONLY ALARM ON THE VPS SHIPPER, and the failure it catches is
-  # a silent one by construction. Every part of that path fails QUIETLY: a
-  # rotated-on-one-side ingest token makes caddy 401 while Alloy retries into
-  # its WAL, a lost tailnet route does the same, and alloy.service itself stays
-  # `active` through all of it. The symptom in every case is an absence of
-  # logs, in exactly the place you would go to look for the absence. (The unit
-  # genuinely dying is covered separately, by notify-failure@ on the VPS.)
-  #
-  # 30m rather than the 15m above: the shipper's WAL deliberately rides out
-  # short outages and then replays, so a 15m window would alert on the
-  # recovery it is supposed to make invisible. With failure-threshold 3 at a
-  # 5m interval this still reports inside an hour, which is the right latency
-  # for "my log shipping broke" — the "the VPS is GONE" question is answered
-  # much faster by the public probes at the bottom of this file.
+  # 🚨 THE ONLY ALARM ON THE VPS SHIPPER, and every part of that path fails
+  # QUIETLY: a one-sided token rotation or a lost tailnet route makes caddy 401
+  # while Alloy retries into its WAL and alloy.service stays `active`. The probe
+  # above cannot cover it — this host's own Alloy satisfies that one alone.
+  # 30m, not 15m: the WAL rides out short outages and then replays, so a shorter
+  # window would alert on the recovery it exists to make invisible.
   - name: "victorialogs (vps ingest)"
     group: "service"
     url: "http://127.0.0.1:10456/select/logsql/query?query=_time%3A30m%20%7Bhost%3D%22headscale-vps%22%7D&limit=1"
@@ -849,15 +785,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # The ingest vhost itself. 401 IS the healthy answer (the CardDAV probe
-  # below is the precedent for a non-200 healthy status): an unauthenticated
-  # GET / must hit the token gate in stacks/caddy/Caddyfile and go no further.
-  #
-  # So this probe does double duty — it proves the route, the wildcard cert and
-  # the tailnet bind are live, AND that the gate is still closed. A 200 here
-  # would mean the Authorization matcher stopped matching (an empty
-  # VLOGS_INGEST_TOKEN, a reordered directive) and the fleet's log store had
-  # become writable by anything on the tailnet.
+  # 401 IS the healthy answer: an unauthenticated GET must hit the Caddyfile's
+  # token gate and go no further. A 200 would mean the log store had become
+  # writable by anything on the tailnet.
   - name: "vlogs-ingest (path: caddy -> token gate)"
     group: "path"
     url: "https://vlogs-ingest.svc.idanreed.com/"
@@ -868,11 +798,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Proton bridge (10003-10005): liveness only — a TCP accept proves `serve`
-  # is up, NEVER that anyone is logged in or Proton is reachable (the stack's
-  # compose header carries that gap). The first non-http probes in this file:
-  # SMTP/IMAP have no path to GET, and gatus's tcp:// scheme with
-  # [CONNECTED] == true is the upstream-documented idiom for them.
+  # Liveness only: a TCP accept proves `serve` is up, never that anyone is
+  # logged in or that Proton is reachable. SMTP/IMAP have no path to GET, so
+  # these are the file's only tcp:// probes.
   - name: "proton-smtp (service)"
     group: "service"
     url: "tcp://127.0.0.1:10003"
@@ -891,8 +819,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # CardDAV is HTTP; an anonymous request is ALWAYS a 401 challenge, so 401
-  # is the healthy status — a 200 here would mean auth vanished.
+  # An anonymous CardDAV request is ALWAYS a 401 challenge, so 401 is healthy —
+  # a 200 would mean auth vanished.
   - name: "proton-carddav (service)"
     group: "service"
     url: "http://127.0.0.1:10005/"
@@ -939,10 +867,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /api/app/about is the HONEST probe: unauthenticated and it runs a real
-  # query against the configured database (verified in app_about.py) — the
-  # same path the container healthcheck uses. Its /startup-info sibling is
-  # fine too; nothing under /api/app/about makes outbound calls.
+  # Unauthenticated, and it runs a real query against the configured database —
+  # the same path the container healthcheck uses. No outbound calls.
   - name: "mealie (service)"
     group: "service"
     url: "http://127.0.0.1:10352/api/app/about"
@@ -980,8 +906,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Outline is UNPROTECTED at the Caddy layer on purpose (it drives its own
-  # OIDC), so the path probe expects a real page, not a 302 to Authentik.
+  # Unprotected at the Caddy layer on purpose (Outline drives its own OIDC), so
+  # this expects a real page, not a 302 to Authentik.
   - name: "outline (path: caddy -> service)"
     group: "path"
     url: "https://outline.svc.idanreed.com/"
@@ -995,14 +921,10 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /_health, not `/`: Outline's FORCE_HTTPS default 301s a plain-http request
-  # to `/` (measured), so a probe of `/` would be satisfied by the redirect
-  # alone. /_health is exempt from that redirect and returns the literal body
-  # OK — which is why the body condition is here and not just a status check.
-  #
-  # ⚠ Still blind to the thing most likely to break: Outline has no local
-  # accounts, so a wrong OIDC client secret leaves this green and nobody able
-  # to log in. Nothing automated can see that.
+  # /_health, not `/`: FORCE_HTTPS 301s a plain-http `/`, so that probe would be
+  # satisfied by the redirect alone. /_health is exempt and returns literal OK.
+  # ⚠ Blind to the likeliest failure: Outline has no local accounts, so a wrong
+  # OIDC client secret leaves this green with nobody able to log in.
   - name: "outline (service)"
     group: "service"
     url: "http://127.0.0.1:10203/_health"
@@ -1015,11 +937,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # 🚨 Owl has NO authentication of its own — none, not a default account — so
-  # this 302 is not a formality. It is the only evidence anywhere that the
-  # outpost is still in front of the app. If this probe ever starts returning
-  # 200, Owl is not "logged in", it is OPEN: fix the route, do not relax the
-  # condition.
+  # 🚨 Owl has NO authentication of its own, so this 302 is the only evidence
+  # anywhere that the outpost is still in front of it. A 200 here means Owl is
+  # OPEN: fix the route, never relax the condition.
   - name: "owl (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://owl.svc.idanreed.com/"
@@ -1033,10 +953,8 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /_stcore/health rather than `/`: Streamlit serves its static index shell
-  # before the script runtime is ready, so `/` goes 200 on an app that cannot
-  # yet run a session. The health route answers only once the runtime accepts
-  # connections. Blind to forward auth by design — that is the path probe's job.
+  # /_stcore/health, not `/`: Streamlit serves its index shell before the script
+  # runtime is ready, so `/` goes 200 on an app that cannot run a session.
   - name: "owl (service)"
     group: "service"
     url: "http://127.0.0.1:10307/_stcore/health"
@@ -1325,10 +1243,9 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # Vaultwarden is the one split vhost: Caddy wraps only /admin* in
-  # (protected); the bare `/` serves the web vault directly (its own login is
-  # the auth). So the outpost probe must hit /admin — `== 302` on `/` would
-  # be permanently DOWN against the vault's 200.
+  # The one split vhost: Caddy wraps only /admin* in (protected), while `/`
+  # serves the web vault directly. So the outpost probe must hit /admin —
+  # `== 302` on `/` would be permanently DOWN against the vault's 200.
   - name: "vaultwarden (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://vaultwarden.svc.idanreed.com/admin"
@@ -1378,14 +1295,10 @@ endpoints:
     alerts:
       - type: ntfy
 
-  # /api/v1/healthz is a STATIC "ok" (no DB query, no auth check) — but the
-  # Axum server only binds AFTER its embedded SQLite migrations, so a 200
-  # still means a live listener over a migrated schema. /api/v1/readyz is
-  # byte-identical; never probe it expecting readiness semantics. A mangled
-  # WF_AUTH_PASSWORD_HASH is boot-fatal at 3.7.0 (startup parse — this probe
-  # goes red with everything else); what no probe can see is a VALID hash
-  # for the wrong password — the wealthfolio suite covers that with a real
-  # login.
+  # A STATIC "ok", but the Axum server only binds AFTER its embedded migrations,
+  # so 200 means a live listener over a migrated schema. /api/v1/readyz is
+  # byte-identical — never probe it expecting readiness semantics. What no probe
+  # can see is a VALID hash for the wrong password; the suite covers that.
   - name: "wealthfolio (service)"
     group: "service"
     url: "http://127.0.0.1:10309/api/v1/healthz"
@@ -1451,32 +1364,19 @@ endpoints:
       - type: ntfy
 
 
-  # ---------------------------------------------------------------------------
-  # The VPS (headscale-vps) — the only endpoints in this file that are NOT on
-  # the services VM.
-  # ---------------------------------------------------------------------------
-  # 🚨 THESE ARE THE ONLY OUT-OF-BAND ALERT PATH THE FLEET HAS. Everything
-  # above measures a host Gatus shares with ntfy. These three dial the VPS's
-  # PUBLIC names, which resolve to its public IP and route over the internet,
-  # not the tailnet — so they still work, and still alert, when the tailnet is
-  # exactly what has failed. That matters because the VPS's own systemd
-  # OnFailure notifiers publish to ntfy OVER the tailnet
-  # (headscale-vps/configuration.nix, notify-failure@): a VPS that has fully
-  # left the tailnet cannot report anything about itself, and this group is
-  # what notices.
-  #
-  # No `service` twin for any of them: a loopback probe of the VPS would have
-  # to run ON the VPS, and there is no Gatus there (monitoring outside the
-  # services VM is explicitly out of scope). The path probe is the whole story
-  # here, so each one is aimed at a health endpoint that actually exercises the
+  # The VPS
+  # 🚨 THE ONLY OUT-OF-BAND ALERT PATH THE FLEET HAS. Everything above measures
+  # a host Gatus shares with ntfy; these three dial the VPS's PUBLIC names over
+  # the internet, so they still alert when the tailnet is what has failed —
+  # which matters because the VPS's own OnFailure notifiers publish to ntfy OVER
+  # the tailnet. No service twins: that would need a Gatus on the VPS, which is
+  # out of scope, so each is aimed at a health endpoint that exercises the
   # backend rather than at `/`.
   #
-  # ⚠ If headscale `extra_records` is ever configured to map these names to
-  # the VPS's tailnet IP (the operator step described in
-  # headscale-vps/modules/caddy.nix), these probes silently become tailnet
-  # probes and lose the independence that is their entire point. Split-DNS
-  # that name to the tailnet IP for admin access only, or pin these three to
-  # the public IP with `client.dns-resolver`.
+  # ⚠ Configuring headscale `extra_records` to map these names to the VPS's
+  # tailnet IP would silently turn them into tailnet probes and destroy that
+  # independence. Split-DNS for admin access only, or pin these three to the
+  # public IP with `client.dns-resolver`.
 
   - name: "headscale (vps: public https -> caddy -> headscale)"
     group: "vps"
@@ -1485,13 +1385,9 @@ endpoints:
     client:
       ignore-redirect: true
     conditions:
-      # /health is headscale's own handler (hscontrol/handlers.go
-      # HealthHandler): it PINGS THE DATABASE and answers
-      # {"status":"pass"} / 200, or {"status":"fail"} / 500. Asserting the body
-      # and not just the status is what makes this more than a Caddy probe —
-      # Caddy answering 200 for a dead headscale is not possible here, but a
-      # headscale that is up with an unreadable sqlite file is, and that is the
-      # state where the whole tailnet stops being able to re-register.
+      # headscale's own handler PINGS THE DATABASE. Asserting the body is what
+      # catches an up-but-unreadable-sqlite headscale — the state where the
+      # tailnet stops being able to re-register.
       - "[STATUS] == 200"
       - "[BODY].status == pass"
       - "[CERTIFICATE_EXPIRATION] > 240h"
@@ -1505,14 +1401,10 @@ endpoints:
     client:
       ignore-redirect: true
     conditions:
-      # /-/health/ready/ (authentik/root/monitoring.py ReadyView) forces a
-      # database connection and returns 200, or 503 if postgres is down.
-      # /-/health/live/ is deliberately NOT used: it returns 200
-      # unconditionally as long as the process exists, which is the failure
-      # mode a container healthcheck already covers. Neither path is under
-      # /api/v3, so the @restricted matcher in
-      # headscale-vps/modules/caddy.nix does not block this probe's
-      # off-tailnet source.
+      # ready/ forces a database connection; live/ is deliberately NOT used —
+      # it returns 200 as long as the process exists. Neither path is under
+      # /api/v3, so the VPS Caddy's @restricted matcher does not block this
+      # probe's off-tailnet source.
       - "[STATUS] == 200"
       - "[CERTIFICATE_EXPIRATION] > 240h"
     alerts:
@@ -1525,14 +1417,12 @@ endpoints:
     client:
       ignore-redirect: true
     conditions:
-      # The named regression this probe exists for is in the header comment of
-      # headscale-vps/modules/caddy.nix: auth.idanreed.com once had nothing
-      # listening on it, so OIDC discovery fell through to headscale and 404'd
-      # — and because oidc.only_start_if_oidc_is_available is false, headscale
-      # stayed green while every browser login was broken. Both other probes
-      # in this group stay green in that state; this one does not.
-      # Pinning the issuer catches the blueprint being un-applied or the
-      # provider being renamed, which present identically to a 404 to a user.
+      # The regression: auth.idanreed.com once had nothing listening on it, so
+      # discovery fell through to headscale and 404'd — and with
+      # oidc.only_start_if_oidc_is_available false, headscale stayed green while
+      # every browser login was broken. Both other probes stay green in that
+      # state; this one does not. Pinning the issuer also catches the blueprint
+      # being un-applied or the provider renamed.
       - "[STATUS] == 200"
       - "[BODY].issuer == https://auth.idanreed.com/application/o/headscale/"
       - "[CERTIFICATE_EXPIRATION] > 240h"

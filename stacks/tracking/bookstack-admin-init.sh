@@ -1,27 +1,20 @@
 #!/usr/bin/with-contenv bash
 # bookstack-admin-init — replaces BookStack's seeded admin, from INSIDE the
-# bookstack container (annex §3).
+# bookstack container. LSIO runs every script in /custom-cont-init.d as root
+# during s6 init, before the app.
 #
-# Why here rather than an init container: BookStack's initial migration
-# seeds `admin@admin.com` / `password` (no env override), its REST API needs
-# a UI-minted token, and the only tool is an artisan command — so something
-# must run inside this container. The alternatives were worse: a
-# socket-mounting oneshot widens socket access (the exact thing
-# keep-decryption-on-the-host exists to avoid), and a host-side `docker
-# exec` unit puts a piece of this stack outside the deploy plane.
-#
-# LSIO runs every script in /custom-cont-init.d as root during s6 init,
-# before the app — documented extension point, no socket, ships with the
-# stack. `with-contenv` gives it the container's environment.
+# Here rather than an init container because the only tool is an artisan
+# command: a socket-mounting oneshot would widen socket access, and a
+# host-side `docker exec` unit would put part of this stack outside the deploy
+# plane.
 #
 # Contract:
-#   - `--initial` is what makes this idempotent: it UPDATES the seeded admin
-#     in place, and warns-and-no-ops if a real admin already exists. WITHOUT
-#     it the command blocks on an interactive prompt — a hang, not an error,
-#     which in s6 init means the container never finishes starting.
-#   - Unset credentials are NOT fatal here. This runs before the app, and
-#     failing the boot over a missing optional secret would take the wiki
-#     down; the seeded admin remains and the log says so loudly.
+#   - `--initial` is what makes this idempotent: it updates the seeded admin
+#     in place and no-ops if a real one exists. WITHOUT it the command blocks
+#     on an interactive prompt, which in s6 init means the container never
+#     finishes starting.
+#   - Unset credentials are NOT fatal: this runs before the app, and failing
+#     the boot over a missing optional secret would take the wiki down.
 set -u
 
 log() { echo "[bookstack-admin-init] $*"; }
@@ -43,19 +36,16 @@ esac
 # The app root is fixed by the image layout.
 cd /app/www || { log "FATAL: /app/www missing — image layout changed"; exit 0; }
 
-# On a truly fresh volume there may be no users table yet — the command
-# fails harmlessly and the next boot picks it up. Deliberately not retried
-# in a loop: s6 init blocking on a database is how a container never starts.
+# On a fresh volume there may be no users table yet; the command fails
+# harmlessly and the next boot picks it up. Deliberately not retried in a
+# loop — s6 init blocking on a database is how a container never starts.
 #
-# ACCEPTED argv exposure: --password= is visible in /proc/<pid>/cmdline
-# (world-readable in the host PID namespace) while this runs.
-# create-admin takes the password only as a CLI option — no env var, no
-# file — and its fallback prompt needs a TTY s6 init does not give it.
-# ServerNotes/issues/code-review-2026-08-31.md, "Accepted".
+# 🚨 ACCEPTED argv exposure: --password= is visible in /proc/<pid>/cmdline
+# while this runs. create-admin takes the password only as a CLI option (no
+# env var, no file) and its fallback prompt needs a TTY s6 init cannot give.
 #
-# Captured rather than piped through sed in the `if`: without pipefail the
-# pipeline's status is sed's (always 0) — CHANGE logged every boot, exit-2
-# branch unreachable. Capturing also tells exit 2 from a real failure.
+# Captured rather than piped through sed inside the `if`: without pipefail the
+# pipeline's status would be sed's, i.e. always 0.
 out=$(php artisan bookstack:create-admin \
         --initial \
         --email="$BOOKSTACK_ADMIN_EMAIL" \

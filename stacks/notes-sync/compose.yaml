@@ -1,38 +1,26 @@
-# Notes/Sync — rmfakecloud + Syncthing (Notes range, ports 10200-10249).
+# Notes/Sync — rmfakecloud + Syncthing (10200, 10201, 22000).
 # Design: ServerNotes/designs/service-notes-sync-stack-research.md (the annex)
-# and ServerNotes/designs/custom-remarkable-notes.md.
-# _overview.md owns the port/auth rows.
+# and custom-remarkable-notes.md.
 #
-# The reMarkable pipeline: the tablet syncs to rmfakecloud, Syncthing moves
-# the resulting vault around. (Samba and Windmill live elsewhere — operator
-# decision 2026-08-31, recorded in the annex.)
-#
-# Backup contract: NO dump step and no `sqlite_backup` line, deliberately.
-# rmfakecloud has no database (users are YAML, notebooks are blob trees —
-# the /mnt/fast include set covers it whole); Syncthing's index-v2/ SQLite
-# is WAL-mode and entirely DERIVED (a rescan rebuilds it), EXCLUDED in
-# stacks/backrest instead. A speculative sqlite_backup line would be a
-# karakeep-shaped silent no-op — the helper returns 0 for a missing source.
+# Backup: no dump and no sqlite_backup line, deliberately. rmfakecloud has no
+# database (YAML users, blob notebooks — the /mnt/fast include set covers it);
+# Syncthing's index-v2/ is WAL-mode and entirely DERIVED, excluded in
+# stacks/backrest. A speculative sqlite_backup line would be a silent no-op —
+# the helper returns 0 for a missing source.
 
 services:
-  # ---------------------------------------------------------------------------
-  # rmfakecloud — a reMarkable cloud replacement.
-  #
+  # rmfakecloud
   # 🚨 THE FIRST LOGIN CREATES THE ADMIN, AND THE ENDPOINT IS UNAUTHENTICATED.
-  # On an empty data directory the first POST to /ui/api/login owns the
-  # instance permanently; no switch closes the window. The loopback-only
-  # publish and notes-sync-init racing to be first are the only guards — so
-  # nothing may point Caddy here before the admin exists.
+  # No switch closes the window; the loopback publish and notes-sync-init racing
+  # to be first are the only guards, so nothing may point Caddy here before the
+  # admin exists.
   #
-  # Runs as 1000:1000 ON PURPOSE (image is FROM scratch, no PUID/PGID, would
-  # run as root): Windmill mounts this data dir read-only to scan .rm files
-  # and runs as 1000 — a root-owned tree would make that scan silently see
-  # nothing. Changing the uid later means chowning every notebook, so it has
-  # to be right from first boot.
-  # ---------------------------------------------------------------------------
+  # Runs as 1000:1000 (the image is FROM scratch with no PUID/PGID and would run
+  # as root): Windmill mounts this tree read-only as uid 1000, and a root-owned
+  # tree would make that scan silently see nothing. Changing the uid later means
+  # chowning every notebook.
   rmfakecloud:
-    # No `v` prefix. ghcr.io/ddvk/rmfakecloud does NOT exist — Docker Hub is
-    # the only publication.
+    # No `v` prefix; ghcr.io/ddvk/rmfakecloud does not exist.
     image: ddvk/rmfakecloud:0.0.31
     container_name: rmfakecloud
     user: "1000:1000"
@@ -44,40 +32,31 @@ services:
       - TZ=America/Chicago
       - PORT=3000
       - DATADIR=/data
-      # 🚨 MUST be https:// and MUST NOT carry a port — tablet software
-      # >= 3.15 rejects both, as a log.Warn plus sync simply failing (no
-      # error the tablet surfaces). And *.svc.idanreed.com resolves into
-      # 100.64.0.0/10, so THE REMARKABLE MUST BE ON THE TAILNET — a
-      # prerequisite, not a detail.
+      # 🚨 MUST be https:// and MUST NOT carry a port — tablet software >= 3.15
+      # rejects both, as a log.Warn plus sync simply failing. And *.svc resolves
+      # into 100.64.0.0/10, so THE REMARKABLE MUST BE ON THE TAILNET.
       - STORAGE_URL=https://rmfakecloud.svc.idanreed.com
       # Without this, SetTrustedProxies(nil) runs and every log line and rate
-      # decision sees the docker bridge gateway instead of the real client.
+      # decision sees the docker bridge gateway.
       - RM_TRUST_PROXY=true
-      # Caddy terminates TLS. Unset = non-Secure session cookie + a warning
-      # every start. Set, a browser on the plain-HTTP loopback publish cannot
-      # hold a session — fine: init and the suite use the bearer token, and
-      # the UI middleware falls back from cookie to Authorization.
+      # Caddy terminates TLS; unset means a non-Secure session cookie and a
+      # warning every start. A browser on the plain-http loopback publish cannot
+      # then hold a session — fine, init and the suite use the bearer token.
       - RM_HTTPS_COOKIE=true
       # JWT_SECRET_KEY arrives from .env.
-      # 🚨 NEVER ROTATE IT, never let it go unset. It signs device tokens and
-      # the UI cookie — rotation invalidates EVERY TABLET ENROLMENT. Unset is
-      # worse: config.go generates random bytes, warns, and carries on — the
-      # NEXT RESTART silently invalidates every token, presenting as "the
-      # tablet stopped syncing after a reboot" with no error anywhere.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
+      # 🚨 NEVER ROTATE IT, and never let it go unset. It signs device tokens —
+      # rotation invalidates every tablet enrolment, and unset is worse: config.go
+      # generates random bytes and carries on, so the NEXT restart silently
+      # invalidates every token with no error anywhere.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # FROM-scratch image: no shell/curl/wget, so an HTTP probe is
-      # IMPOSSIBLE from inside. This CLI verb runs before the server starts:
-      # exit 0 = user store readable. It does NOT prove the HTTP server is
-      # listening — chosen because the realistic failure is a bind-mount
-      # ownership/path mistake (the uid decision above makes that live), and
-      # this catches exactly that. HTTP is covered by the suite and, in
-      # production, Gatus (probes the Caddy vhost and the loopback publish).
+      # FROM-scratch image: no shell, curl or wget, so an HTTP probe is
+      # impossible from inside. This CLI verb runs before the server starts —
+      # exit 0 means the user store is readable, which is exactly the bind-mount
+      # ownership mistake the uid decision above makes possible. HTTP is covered
+      # by the suite and by Gatus.
       test: ['CMD', '/rmfakecloud-docker', 'listusers']
       interval: 30s
       timeout: 10s
@@ -85,24 +64,27 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # syncthing_generate — writes cert.pem/key.pem and GUI credentials into the
-  # config volume before syncthing starts. `generate` refuses to overwrite an
-  # existing key, so redeploys are no-ops — and that refusal protects the
-  # DEVICE IDENTITY: key.pem IS the device ID; regenerating it makes every
-  # peer treat this host as a stranger to re-accept by hand. Reuses the
-  # image's own entrypoint (keeps the su-exec uid drop, credentials via
-  # env_file).
-  # ---------------------------------------------------------------------------
+  # Syncthing identity
+  # Writes cert.pem/key.pem and GUI credentials before syncthing starts.
+  # `generate` refuses to overwrite an existing key, which protects the DEVICE
+  # IDENTITY: key.pem IS the device ID, and regenerating it makes every peer
+  # treat this host as a stranger.
   syncthing_generate:
     image: syncthing/syncthing:2.1.3
     container_name: syncthing_generate
     entrypoint: ['/bin/sh', '-c']
-    # ⚠ NO `--config` FLAG: syncthing 2.x rejects it given alone ("either
-    # both or none of --config and --data"), which would exit-1 this oneshot
-    # and starve the app container of credentials. The image's STHOMEDIR
-    # also guarantees both containers resolve the SAME directory — the
-    # property that actually matters.
+    # ⚠ NO `--config` flag: syncthing 2.x rejects it given alone ("either both
+    # or none of --config and --data"), which would exit-1 this oneshot and
+    # starve the app container of credentials. STHOMEDIR already guarantees both
+    # containers resolve the same directory. Reuses the image's entrypoint to
+    # keep its su-exec uid drop.
+    #
+    # ACCEPTED: the shell expands $$ST_GUI_PASSWORD into argv, so it is
+    # host-visible in /proc/<pid>/cmdline for the second this oneshot runs.
+    # Syncthing has env vars for STGUIADDRESS and STGUIAPIKEY but none for the
+    # GUI user/password, and `generate` takes them as flags only — the only
+    # alternative is hand-writing a bcrypt hash into config.xml, which would
+    # also have to reproduce the cert/key half this command exists for.
     command:
       - 'exec /bin/entrypoint.sh /bin/syncthing generate --gui-user "$$ST_GUI_USER" --gui-password "$$ST_GUI_PASSWORD"'
     volumes:
@@ -110,26 +92,17 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
     env_file:
       - path: .env
         required: false
     restart: "no"
 
-  # ---------------------------------------------------------------------------
-  # syncthing — file synchronisation.
-  #
-  # 🚨 Every bind-mounted tree here must be PRE-OWNED 1000:1000 by tmpfiles:
-  # the entrypoint's chown is NON-RECURSIVE with a swallowed failure (`||
-  # true`), so it fixes /var/syncthing and nothing beneath. Get it wrong and
-  # the container reports HEALTHY while the folder errors on first scan —
-  # finding #14 with the crash-loop replaced by silence, which is worse.
-  #
-  # ⚠ VERSION-LOCK, one-way: 2.0 migrated the index DB to SQLite; NO
-  # downgrade once index-v2/ exists. Treat a major bump like the tracking
-  # annex treats Meilisearch. Keep update-images.sh off the `-rc` tags —
-  # 2.1.4-rc.1/-rc.2 exist and would pass a registry check.
-  # ---------------------------------------------------------------------------
+  # Syncthing
+  # 🚨 Every bind-mounted tree must be PRE-OWNED 1000:1000 by tmpfiles: the
+  # entrypoint's chown is non-recursive with a swallowed failure, so a wrong
+  # owner yields a HEALTHY container whose folder errors on first scan.
+  # ⚠ VERSION-LOCK, one-way: 2.0 migrated the index DB to SQLite and there is no
+  # downgrade once index-v2/ exists. Keep update-images.sh off the `-rc` tags.
   syncthing:
     image: syncthing/syncthing:2.1.3
     container_name: syncthing
@@ -138,22 +111,14 @@ services:
         condition: service_completed_successfully
     ports:
       - '127.0.0.1:10201:8384'
-      # 🚨 BARE PUBLISHES — the only ones in the fleet. BEP peers dial THIS
-      # host; a loopback publish leaves only the slow public relay pool.
-      # Safe in a way an admin UI never is: BEP is MUTUALLY AUTHENTICATED BY
-      # DEVICE CERTIFICATE — peers added by device ID on both sides, unknown
-      # devices rejected at the TLS layer.
-      #
-      # Reach, honestly: 22000 IS reachable from the whole LAN. The host
-      # firewall only filters INPUT (no `filterForward`), while docker's
-      # publish installs DNAT in nat/PREROUTING + ACCEPT in FORWARD — so
-      # `allowedTCPPorts` never sees this packet. Device-cert auth is the
-      # ONLY control in front of this port.
-      #
-      # The loopback-binding lint carries a NAMED EXEMPTION for exactly these
-      # two lines (tests/lib/lints.nix) and errors if it goes unused. Do not
-      # bind the tailnet IP instead: headscale assigns it at runtime — it
-      # cannot be a literal in a git-tracked compose file.
+      # 🚨 BARE PUBLISHES — the only ones in the fleet, and 22000 is reachable
+      # from the whole LAN (docker DNATs in nat/PREROUTING, which the host
+      # firewall's INPUT-only filtering never sees). BEP peers must dial THIS
+      # host, and a loopback publish would leave only the public relay pool.
+      # The only control in front of this port is BEP's mutual device-certificate
+      # authentication. tests/lib/lints.nix carries a named loopback-binding
+      # exemption for exactly these two lines. Do not bind the tailnet IP
+      # instead: headscale assigns it at runtime.
       - '22000:22000/tcp'
       - '22000:22000/udp'
     volumes:
@@ -163,41 +128,32 @@ services:
       - TZ=America/Chicago
       - PUID=1000
       - PGID=1000
-      # 🚨 KEEP THIS. Unset (as upstream's README says) installs
-      # localhostMiddleware, and every request with
-      # `Host: syncthing.svc.idanreed.com` gets a bare 403 "Host check
-      # error" with nothing in the logs — finding #15 (qBittorrent) in a
-      # different coat. The netns is the boundary; the GUI publish is
+      # 🚨 KEEP THIS. Unset installs localhostMiddleware, and every request with
+      # `Host: syncthing.svc.idanreed.com` gets a bare 403 "Host check error"
+      # with nothing in the logs. The netns is the boundary; the GUI publish is
       # loopback-only.
       - STGUIADDRESS=0.0.0.0:8384
       # The baked healthcheck hardcodes 127.0.0.1:8384, but ProbeFreePorts()
-      # will MOVE the GUI on first run if 8384 looks taken — a permanently
-      # unhealthy container with a fine application.
+      # will MOVE the GUI on first run if 8384 looks taken.
       - STNOPORTPROBING=1
       # STGUIAPIKEY, ST_GUI_USER and ST_GUI_PASSWORD arrive from .env.
-      # ⚠ The API key is a FULL-ADMIN credential bypassing GUI auth — hence
-      # a sops value, and the Caddy vhost must never forward an
-      # attacker-supplied X-API-Key.
-      # ⚠ It does NOT override the random key `generate` wrote into
-      # config.xml — either is accepted, so rotating this revokes nothing.
+      # ⚠ The API key is a FULL-ADMIN credential that bypasses GUI auth, so the
+      # Caddy vhost must never forward an attacker-supplied X-API-Key. It does
+      # NOT override the random key `generate` wrote into config.xml — either is
+      # accepted, so rotating this revokes nothing.
       #
-      # The four egress switches (global announce, relays, NAT, usage
-      # reporting) are turned off by notes-sync-init via the REST API: they
-      # live in config.xml, not the environment.
-    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
+      # The four egress switches are set by notes-sync-init over the REST API:
+      # they live in config.xml, not the environment.
     env_file:
       - path: .env
         required: false
-    # NO healthcheck stanza ON PURPOSE: the builtin is honest — a real HTTP
-    # probe of /rest/noauth/health. It says nothing about the database or
-    # folder sync state; that is the suite's job.
+    # NO healthcheck stanza: the builtin is a real HTTP probe of
+    # /rest/noauth/health. Folder sync state is the suite's job.
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # notes-sync-init — headless first-run for both services (annex §3).
-  # Every mutation logs "notes-sync-init: CHANGE: ...". A second run — every
-  # redeploy reruns this container — must log ZERO change lines.
-  # ---------------------------------------------------------------------------
+  # Init
+  # Headless first-run for both services. Every mutation logs
+  # "notes-sync-init: CHANGE: ..."; a second run must log ZERO.
   notes-sync-init:
     image: python:3.13-alpine
     container_name: notes_sync_init
@@ -209,13 +165,10 @@ services:
         condition: service_healthy
     volumes:
       - ./notes-sync-init.sh:/init/notes-sync-init.sh:ro
-      # READ-ONLY, only so the CHANGE line can be honest: the script checks
-      # whether the user store is empty BEFORE logging in (login is
-      # create-or-authenticate — no way to tell afterwards which happened).
-      # Unexpected layout = say so, never guess: a wrong CHANGE line breaks
-      # the "second run prints none" contract.
+      # READ-ONLY, and only so the CHANGE line can be honest: rmfakecloud's
+      # login is create-or-authenticate, so the user store must be inspected
+      # before logging in.
       - /mnt/fast/rmfakecloud/data:/rmdata:ro
-    # Long form with required:false ON PURPOSE (finding #11): see rmfakecloud.
     env_file:
       - path: .env
         required: false

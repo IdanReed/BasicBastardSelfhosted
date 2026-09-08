@@ -1,26 +1,22 @@
 # Caddy with the cloudflare-dns plugin, for DNS-01 ACME on a tailnet-only host.
 #
-# Uses a prebuilt image rather than `build: .`, to keep a build toolchain out of
-# the deploy path. The image is built by .github/workflows/build-caddy.yml; run
-# that workflow once before first deploy, or this will fail to pull.
-#
-# The sibling Caddyfile is delivered by the stack git sync with the rest of
-# the compose directory.
+# A prebuilt image rather than `build: .`, to keep a build toolchain out of the
+# deploy path. It is built by .github/workflows/build-caddy.yml; run that
+# workflow once before the first deploy or this fails to pull.
 services:
   caddy:
     image: ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4
     container_name: caddy
     # Host networking so Caddy can bind the tailnet IP directly and reach
-    # every service on 127.0.0.1 — which is where they all publish now, so
-    # Caddy is the only path in.
+    # every service's loopback publish — which is what makes it the only way
+    # in. Declared in tests/lib/lints.nix's host-network-declared table.
     network_mode: host
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/fast/caddy/data:/data
       - /mnt/fast/caddy/config:/config
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the host-side decrypt (.env not yet written; timer lands it ≤~1min
-    # after delivery), and the plain form aborts the whole stack.
+    # Long form: a deploy can race the host-side decrypt, and the plain form
+    # aborts the whole stack when .env is absent.
     env_file:
       - path: .env
         required: false

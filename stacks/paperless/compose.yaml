@@ -1,3 +1,6 @@
+# Paperless-ngx — document management (10100).
+# _overview.md owns the port/auth row.
+
 services:
   paperless:
     image: ghcr.io/paperless-ngx/paperless-ngx:2.20
@@ -7,8 +10,6 @@ services:
       - db
       - tika
       - gotenberg
-    # Loopback: Caddy (host network) is the only path in — on 0.0.0.0 this
-    # was reachable from the tailnet, bypassing reverse-proxy auth.
     ports:
       - '127.0.0.1:10100:8000'
     volumes:
@@ -21,40 +22,31 @@ services:
       - PAPERLESS_DBENGINE=postgresql
       - PAPERLESS_DBHOST=db
       - PAPERLESS_DBUSER=paperless
-      # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_USER, PAPERLESS_ADMIN_PASSWORD
-      # and PAPERLESS_DBPASS arrive from .env (DBPASS was a committed literal
-      # `paperless` until 2026-08-31 — see the db service's initdb note).
+      # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_USER/_PASSWORD and PAPERLESS_DBPASS
+      # arrive from .env.
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000
       - PAPERLESS_TIKA_ENDPOINT=http://tika:9998
       - PAPERLESS_TIME_ZONE=America/Chicago
       - PAPERLESS_OCR_LANGUAGE=eng
-      # Feeds CSRF_TRUSTED_ORIGINS / ALLOWED_HOSTS / CORS. Without it Django
-      # 403s every POST through the https vhost — login form included, and
-      # that login IS the auth here. The suite can't see the break: it probes
-      # loopback, where the Origin matches.
+      # Feeds CSRF_TRUSTED_ORIGINS / ALLOWED_HOSTS / CORS. Without it Django 403s
+      # every POST through the https vhost, login included — and the suite cannot
+      # see it, because it probes loopback where the Origin matches.
       - PAPERLESS_URL=https://paperless.svc.idanreed.com
-      # OIDC — ENABLED (fleet rollout 2026-09-05, paperless-oidc.yaml blueprint)
-      # via django-allauth's openid_connect provider. Lazy discovery (first
-      # login), so no boot hazard; the local PAPERLESS_ADMIN_USER superuser
-      # stays as break-glass. ${PAPERLESS_OIDC_CLIENT_SECRET} is interpolated by
-      # compose from .env at parse time. provider_id "authentik" fixes the
-      # callback path /accounts/oidc/authentik/login/callback/ (must match the
-      # blueprint redirect_uri). Do NOT set PAPERLESS_DISABLE_REGULAR_LOGIN or
-      # PAPERLESS_REDIRECT_LOGIN_TO_SSO until a first SSO login is verified.
+      # OIDC
+      # django-allauth, lazy discovery (first login), so no boot hazard; the
+      # local PAPERLESS_ADMIN_USER superuser stays as break-glass. provider_id
+      # "authentik" fixes the callback path the blueprint registers. Do NOT set
+      # PAPERLESS_DISABLE_REGULAR_LOGIN or _REDIRECT_LOGIN_TO_SSO until a first
+      # SSO login is verified.
       - PAPERLESS_APPS=allauth.socialaccount.providers.openid_connect
       - 'PAPERLESS_SOCIALACCOUNT_PROVIDERS={"openid_connect":{"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"paperless","secret":"${PAPERLESS_OIDC_CLIENT_SECRET}","settings":{"server_url":"https://auth.idanreed.com/application/o/paperless/.well-known/openid-configuration"}}]}}'
-      # Auto-provision SSO users (allauth SOCIALACCOUNT_AUTO_SIGNUP); accounts
-      # link by email and land as regular (non-staff) users — grant admin in
-      # /admin if needed. Local self-registration stays closed.
+      # SSO users are auto-provisioned and linked by email, landing as regular
+      # (non-staff) users; local self-registration stays closed.
       - PAPERLESS_SOCIAL_AUTO_SIGNUP=true
       - PAPERLESS_ACCOUNT_ALLOW_SIGNUPS=false
-      # PAPERLESS_OIDC_CLIENT_SECRET arrives from .env.
       - USERMAP_UID=1000
       - USERMAP_GID=1000
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
@@ -69,14 +61,9 @@ services:
       - POSTGRES_DB=paperless
       - POSTGRES_USER=paperless
       # POSTGRES_PASSWORD arrives from .env and must equal PAPERLESS_DBPASS.
-      #
-      # 🚨 initdb applies it on FIRST start only. A cluster already
-      # initialised with the old hardcoded `paperless` keeps that password
-      # forever no matter what this file says — see .sops.env.example for the
-      # ALTER USER one-liner.
-    # Same long form and same reason as the app service above (finding #11):
-    # this stack's secrets are one .env shared by both containers, so the db
-    # needs the env_file it never had.
+      # 🚨 initdb applies it on FIRST start only — an already-initialised
+      # cluster keeps its old password whatever this file says (.sops.env.example
+      # has the ALTER USER one-liner).
     env_file:
       - path: .env
         required: false

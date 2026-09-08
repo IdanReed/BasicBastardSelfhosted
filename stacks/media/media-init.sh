@@ -1,29 +1,18 @@
 #!/bin/sh
 # media-init — idempotent, health-gated reconciliation of the media stack's
-# inter-service wiring (annex §6, nixflix pattern: keys pushed down via env,
-# a oneshot does the rest over REST — no UI clicks). Runs in
-# python:3.13-alpine (see compose.yaml for why not curl+jq).
+# inter-service wiring. Runs in python:3.13-alpine as a oneshot.
 #
 # Contract:
 #   - Every mutation logs "media-init: CHANGE: ...". A second run must log
-#     ZERO change lines — the idempotence property the media suite asserts.
-#   - x265 GUARD (x265/H265 ENFORCED — LONGRUN rule), BOTH sides of the bias,
-#     per quality profile: (a) any CF matching /x265|h.?265|hevc/i with a
-#     NEGATIVE score is zeroed (inverts TRaSH's "x265 (HD) at -10000" golden
-#     rule); (b) any CF matching /x264|h.?264|\bavc\b/i with a POSITIVE
-#     score is INVERTED — rewarding x264 defeats the policy as effectively
-#     as punishing x265; (c) with both kinds present, the best x265 score
-#     must STRICTLY outrank the best x264 (ties demoted). Profilarr owns the
-#     profiles; the guard only stops x264-biased scoring.
-#     Deliberate consequences of (b): under the arrs' default minFormatScore
-#     of 0 an inverted x264 CF makes x264-only releases un-grabbable — no
-#     x264 fallback tier. And a legitimately-positive synced x264 CF churns
-#     forever (Profilarr sync restores, guard re-inverts): "second run is a
-#     no-op" only holds between syncs; GUARD log lines are the tell.
-#   - Profilarr: links the Dictionarry database (the ONLY allowed source);
-#     hard-fails if trash-pcd is ever linked. Linking needs egress, so a
-#     failed link is a loud WARN with the UI fallback, not fatal — the
-#     offline suite runs without egress.
+#     ZERO change lines; the media suite asserts exactly that.
+#   - The x265 guard rewrites scoring, not profiles — Profilarr still owns
+#     those. Its two costs are accepted: an inverted x264 CF makes x264-only
+#     releases un-grabbable under the default minFormatScore of 0, and a
+#     legitimately-positive synced x264 CF churns forever (sync restores,
+#     guard re-inverts), so "no-op on the second run" only holds between
+#     Profilarr syncs. GUARD lines in the log are the tell.
+#   - Linking Dictionarry needs egress, so a failed link is a WARN with a UI
+#     fallback rather than fatal; a linked trash-pcd is fatal.
 set -eu
 exec python3 -u - <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
@@ -93,23 +82,20 @@ required = [
 ]
 missing = [k for k in required if not env.get(k)]
 if missing:
-    # Usually the deploy raced the first .env decrypt (finding #11's residual
-    # window) — fail loudly, the next redeploy retries.
-    sys.exit(f"media-init: FATAL: unset env: {missing} (decrypt race? see finding #11)")
+    # Usually a deploy that raced the first .env decrypt; the next retries.
+    sys.exit(f"media-init: FATAL: unset env: {missing} (decrypt race?)")
 
 QBIT_USER = env["QBIT_WEBUI_USER"]
 QBIT_PASS = env["QBIT_WEBUI_PASSWORD"]
 
 # ---------------------------------------------------------------------------
-# /data skeleton (hardlink-friendly single-filesystem layout, owned 1000:1000)
+# /data skeleton (one filesystem so *arr imports hardlink; owned 1000:1000)
 # ---------------------------------------------------------------------------
 SKELETON = [
     "media/movies", "media/tv",
     "downloads/movies", "downloads/tv",
-    # Audiobook category dir — nothing *arr-shaped imports it;
-    # scan-downloads.sh promotes clean entries to the books drop (Option C,
-    # ServerNotes/designs/audiobook-acquisition.md). Created here so the
-    # category save path exists before the first torrent lands.
+    # No *arr imports this one; scan-downloads.sh promotes clean entries to
+    # the books drop. Created here so the category save path exists first.
     "downloads/audiobooks",
     "downloads/.incomplete", "downloads/.quarantine",
 ]
@@ -125,9 +111,8 @@ log("OK", "/data skeleton present")
 # ---------------------------------------------------------------------------
 # Radarr / Sonarr: root folder, download client, TRaSH naming
 # ---------------------------------------------------------------------------
-# TRaSH's recommended naming schemes — codec-neutral; the MediaInfo
-# VideoCodec/VideoDynamicRangeType tokens make the x265 policy auditable on
-# disk (annex §2).
+# TRaSH's naming schemes. The MediaInfo VideoCodec token is what makes the
+# x265 policy auditable on disk.
 RADARR_NAMING = {
     "renameMovies": True,
     "replaceIllegalCharacters": True,
@@ -186,11 +171,8 @@ for name, a in ARRS.items():
     if any(c.get("name") == "qbittorrent" for c in clients):
         log("OK", f"{name}: qbittorrent download client present")
     else:
-        # This POST runs a live connection test and forceSave=true does NOT
-        # override severity:error failures (proven by the media suite,
-        # contra the Servarr lore). qbit's WebUI answers even with the
-        # tunnel down, but only once the container is up — retry briefly,
-        # then degrade to a loud WARN the next media-init run reconciles.
+        # This POST runs a live connection test, and forceSave=true does NOT
+        # override severity:error failures — so retry briefly, then WARN.
         body = from_schema(
             req("GET", f"{base}{api}/downloadclient/schema", key),
             "QBittorrent",
@@ -232,16 +214,12 @@ for name, a in ARRS.items():
         change(f"{name}: naming config set (TRaSH tokens incl. MediaInfo VideoCodec)")
 
 # ---------------------------------------------------------------------------
-# qBittorrent: the `audiobooks` category (Option C acquisition path)
+# qBittorrent: the `audiobooks` category
 # ---------------------------------------------------------------------------
-# Radarr/Sonarr create their own categories via the download-client config;
-# nothing creates this one (audiobooks have no *arr), and scan-downloads.sh
-# promotes clean entries OUT of its save path. Over the API, NOT
-# qBittorrent.conf: qbit-init only writes that file when absent, so a
-# category added there would never reach an existing deployment.
-# Best-effort like the download-client POST: anything keeping qbit from
-# starting must be a WARN the next run reconciles, never a failure that
-# blocks the rest.
+# Audiobooks have no *arr, so nothing else creates this category. Over the API
+# rather than qBittorrent.conf, which qbit-init only writes when absent — a
+# category added there would never reach an existing deployment. Best-effort:
+# anything keeping qbit down must WARN, never block the rest.
 QBIT = "http://gluetun:8080"
 AUDIOBOOK_CATEGORY = "audiobooks"
 AUDIOBOOK_SAVE_PATH = "/data/downloads/audiobooks"
@@ -254,8 +232,7 @@ def qbit(sid, path, form=None):
         headers["Cookie"] = sid
     if data is not None:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        # A MISMATCHED Origin/Referer is 403'd as cross-site; absent is fine,
-        # but sending the right one costs nothing.
+        # A mismatched Origin/Referer is 403'd as cross-site.
         headers["Referer"] = QBIT
     r = urllib.request.Request(
         QBIT + path, data=data, headers=headers,
@@ -267,21 +244,16 @@ def qbit(sid, path, form=None):
 try:
     status, hdrs, body = qbit(None, "/api/v2/auth/login",
                               {"username": QBIT_USER, "password": QBIT_PASS})
-    # SUCCESS IS NOT ONE SHAPE. qBittorrent 5.2.3 answers 204 with an EMPTY
-    # body (the media suite pins exactly that); older builds 200/"Ok.".
-    # Wrong password = 401 (urlopen raises). Do NOT require a non-empty
-    # body — that once turned a successful login into a permanent WARN.
+    # Success is not one shape: 5.2.3 answers 204 with an EMPTY body, older
+    # builds 200/"Ok.". Requiring a non-empty body breaks the 5.2.3 case.
     if not (status == 204 or (status == 200 and body.strip() == "Ok.")):
         raise RuntimeError(f"login refused: HTTP {status} {body.strip()[:80]!r}")
-    # 🚨 THE COOKIE IS NOT CALLED "SID". 5.2.3 names it QBT_SID_<WebUI port>
-    # (QBT_SID_8080 here) — checking for "SID" (as every API snippet online
-    # says) finds nothing, sends no cookie, and 403s the next call. Take
-    # whatever name=value the server issued.
+    # The cookie is NOT called "SID" — 5.2.3 names it QBT_SID_<port>. Take
+    # whatever name=value the server issued rather than looking for a name.
     sid = (hdrs.get("Set-Cookie") or "").split(";")[0].strip()
     if "=" not in sid:
-        # No cookie: qbit skips the session when auth is not needed
-        # (WebUI\LocalHostAuth=false, local source). Carry on; the next call
-        # 403s loudly if it was needed.
+        # No cookie: qbit skips the session under LocalHostAuth=false. The
+        # next call 403s loudly if one was needed after all.
         sid = ""
 
     _, _, raw = qbit(sid, "/api/v2/torrents/categories")
@@ -292,9 +264,8 @@ try:
              {"category": AUDIOBOOK_CATEGORY, "savePath": AUDIOBOOK_SAVE_PATH})
         change(f"qbittorrent: created category {AUDIOBOOK_CATEGORY!r} "
                f"-> {AUDIOBOOK_SAVE_PATH}")
-    # rstrip("/") both sides: qbit normalises stored paths; a returned
-    # trailing separator would mean an editCategory — a CHANGE line — every
-    # run, breaking the idempotence contract the suite asserts.
+    # rstrip both sides: qbit normalises stored paths, and a returned
+    # trailing separator would mean a CHANGE line on every run.
     elif (cur.get("savePath") or "").rstrip("/") != AUDIOBOOK_SAVE_PATH.rstrip("/"):
         qbit(sid, "/api/v2/torrents/editCategory",
              {"category": AUDIOBOOK_CATEGORY, "savePath": AUDIOBOOK_SAVE_PATH})
@@ -392,19 +363,24 @@ try:
     dbs = req("GET", f"{PROFILARR}/databases", PFKEY)
     if isinstance(dbs, dict):  # v2 API shape is not pinned down — accept both
         dbs = dbs.get("databases") or dbs.get("items") or []
-    blob = json.dumps(dbs).lower()
-    if "trash" in blob:
+    def ident(d):
+        # IDENTITY fields only. A substring match on the serialised blob
+        # hard-failed the whole init on any database whose description or
+        # mirror URL merely contained "trash", and read a trash database whose
+        # URL mentioned dictionarry as "already linked".
+        return " ".join(str(d.get(k) or "") for k in
+                        ("name", "repository_url", "repo_url", "url")).lower()
+
+    idents = [ident(d) for d in dbs if isinstance(d, dict)]
+    if any("trash" in i for i in idents):
         log("FATAL", "profilarr: a TRaSH-converted database is linked — x265 is "
                      "ENFORCED and trash-pcd reintroduces the x264 bias. Unlink it.")
         sys.exit(1)
-    if "dictionarry" in blob:
+    if any("dictionarry" in i for i in idents):
         log("OK", "profilarr: Dictionarry database already linked")
     else:
         try:
-            # repository_url verified against v2.2.0 (its validation error
-            # names it; a live POST succeeds). With egress profilarr may
-            # pre-link Dictionarry on first boot — the "already linked"
-            # branch catches that.
+            # `repository_url` is the field name v2.2.0 wants.
             req("POST", f"{PROFILARR}/databases", PFKEY,
                 {"name": "Dictionarry", "repository_url": DICTIONARRY},
                 timeout=120)

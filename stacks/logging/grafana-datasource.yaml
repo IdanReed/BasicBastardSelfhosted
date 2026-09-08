@@ -1,27 +1,15 @@
-# Grafana datasource provisioning — the VictoriaLogs connection, declared.
+# Grafana datasource provisioning — the VictoriaLogs connection, declared as a
+# file so it is not a grafana.db row that exists only in the nightly dump.
+# Mounted read-only; Grafana reconciles this directory at every start.
 #
-# Mounted at /etc/grafana/provisioning/datasources/victorialogs.yaml
-# (read-only). Grafana reads this directory at every start and reconciles, so
-# the datasource exists before anyone logs in and re-asserts itself on every
-# redeploy. A hand-clicked datasource would live only in grafana.db, i.e. only
-# in the nightly sqlite dump — "zero-UI deployment" is a stated principle of
-# this fleet and this is what it means in practice.
+# 🚨 THE TYPE BELOW IS A PLUGIN, AND INSTALLING IT IS AN OPERATOR STEP (see
+# compose.yaml's grafana block). VictoriaLogs has no Loki-compatible query
+# api, so `type: loki` cannot point at it. Provisioning this without the
+# plugin present is safe and measured: startup, provisioning and /api/health
+# are unaffected, and the datasource just sits unusable until it lands.
 #
-# 🚨 THE TYPE BELOW IS A PLUGIN, AND THE PLUGIN IS AN OPERATOR STEP.
-# VictoriaLogs has no Loki-compatible query API (verified against the v1.52
-# docs — ingestion speaks Loki's push protocol, querying is LogsQL only), so
-# a `type: loki` datasource cannot point at it and the
-# victoriametrics-logs-datasource plugin is required. It is installed ONCE,
-# by hand, into /mnt/fast/grafana/plugins — the exact commands and the
-# reasoning (no runtime downloads, offline suites) are in compose.yaml's
-# grafana block. Provisioning this file WITHOUT the plugin present is safe
-# and measured against grafana:13.2.0: startup, provisioning and /api/health
-# are all unaffected; the datasource just sits unusable until the plugin
-# lands. The victorialogs suite pins exactly that (grafana healthy, offline,
-# plugin absent).
-#
-# ⚠ `apiVersion: 1` is Grafana's provisioning schema version, not a Grafana
-# version. It is still 1 in 13.x; do not "update" it.
+# ⚠ `apiVersion: 1` is the provisioning schema version, not a Grafana
+# version. Still 1 in 13.x; do not "update" it.
 
 apiVersion: 1
 
@@ -29,37 +17,26 @@ datasources:
   - name: VictoriaLogs
     type: victoriametrics-logs-datasource
 
-    # 🚨 PINNED, NOT GENERATED, and that is what makes a provisioned DASHBOARD
-    # possible. Without a uid here Grafana mints a random one per install, and
-    # a dashboard JSON can then only reference the datasource by a value that
-    # differs on every fresh host — every panel comes up "datasource not
-    # found". dashboards/login-attempts.json hardcodes this string.
+    # 🚨 PINNED, NOT GENERATED, which is what makes a provisioned dashboard
+    # possible: without it Grafana mints a random uid per install and every
+    # panel comes up "datasource not found" on a fresh host.
+    # dashboards/login-attempts.json hardcodes this string.
     uid: victorialogs
-    # The service name on the compose project's own bridge network. NOT
-    # 127.0.0.1:10456 (a bridged container cannot reach a loopback-bound host
-    # publish) and NOT a Caddy vhost (there is none, and forward auth would
-    # 302 every query).
+    # The service name on the compose bridge. NOT 127.0.0.1:10456 (a bridged
+    # container cannot reach a loopback-bound host publish) and not a vhost.
     url: http://victorialogs:9428
     access: proxy
 
-    # The only datasource, so it is the default: Explore opens on it with no
-    # selection step.
     isDefault: true
 
-    # Reconcile on every start. Without this, a change here is ignored once
-    # the datasource exists in grafana.db — the provisioning file becomes
-    # documentation of what the datasource used to be.
+    # Reconcile on every start; without it a change here is ignored once the
+    # datasource exists in grafana.db.
     editable: false
 
     jsonData:
-      # Caps the number of log lines a single query returns — the plugin's
-      # "maximum lines" setting, same semantic as the old Loki datasource's
-      # (the plugin's query UI is a fork of Loki's); raised from the 1000
-      # default to 5000 for incident scrollback. Nothing to do with
-      # retention — that lives in the victorialogs command flags.
+      # Lines per query, raised from the 1000 default for incident
+      # scrollback. Unrelated to retention, which is a victorialogs flag.
       maxLines: 5000
 
-    # No `secureJsonData`: VictoriaLogs runs unauthenticated (single tenant,
-    # reachable only from inside this compose project plus the loopback
-    # publish), so there is no credential to provision and nothing here
-    # belongs in .sops.env.
+    # No `secureJsonData`: VictoriaLogs runs unauthenticated, so there is no
+    # credential to provision and nothing here belongs in .sops.env.

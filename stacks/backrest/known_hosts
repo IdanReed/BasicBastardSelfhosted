@@ -1,21 +1,14 @@
 # Hetzner Storage Box SSH host keys — the PIN behind `StrictHostKeyChecking
-# yes` in the ssh_config beside this file. Mounted read-only at
-# /etc/ssh/ssh_known_hosts inside the Backrest container.
+# yes` in the ssh_config beside this file, mounted read-only at
+# /etc/ssh/ssh_known_hosts. Without it, a known_hosts in the container's
+# writable layer is discarded on every recreate, so `accept-new` becomes TOFU
+# over and over for a peer whose credentials can `forget --prune` every backup.
 #
-# WHY: without this pin, `accept-new` + a known_hosts in the container's
-# WRITABLE LAYER (discarded on every recreate) means TOFU over and over, each
-# accepting whatever answered — for a peer holding credentials that can
-# `forget --prune` every backup this fleet has.
+# All Storage Boxes share one key set, so this needs no edit per account.
 #
-# All Storage Boxes share one set of host keys, so this file is not
-# per-account and needs no edit when uXXXXXX changes.
-#
-# ⚠ VERIFICATION (2026-08-31). The keys below were not taken on trust. Hetzner
-# publishes FINGERPRINTS, not keys, at
+# ⚠ VERIFIED 2026-08-31, not taken on trust: Hetzner publishes FINGERPRINTS at
 #   https://docs.hetzner.com/storage/storage-box/general/#ssh-host-keys
-# so the keys were obtained separately and then checked against the published
-# fingerprints with `ssh-keygen -l -f known_hosts`, which reproduced all three
-# EXACTLY:
+# and `ssh-keygen -l -f known_hosts` reproduced all three exactly:
 #
 #   ED25519  SHA256:XqONwb1S0zuj5A1CDxpOSuD2hnAArV1A3wKY7Z3sdgM
 #   RSA      SHA256:EMlfI8GsRIfpVkoW1H2u0zYVpFGKkIMKHFZIRkf2ioI

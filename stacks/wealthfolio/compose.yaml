@@ -1,104 +1,73 @@
-# Wealthfolio — wealth / portfolio tracker (Tracking range, port 10309).
+# Wealthfolio — wealth / portfolio tracker (10309). EVALUATION stack, the other
+# half of the portfolio bake-off with stacks/ghostfolio: one container and one
+# SQLite file vs app+Postgres+Redis. Deliberately lean — no SimpleFIN, no
+# Firefly linkage, no OIDC.
 #
-# ⚠ EVALUATION STACK — the other half of the portfolio bake-off
-# (service-bakeoff.md): same job as stacks/ghostfolio (10306), ONE container
-# + ONE SQLite file vs app+Postgres+Redis. Deliberately LEAN like its rival:
-# no SimpleFIN, no Firefly linkage, no OIDC. Wins = integration is a
-# separate decision; loses = deleting this directory is the whole rollback.
+# Rust/Axum with EMBEDDED migrations before the listener binds; nothing is
+# fetched at boot, and the suite boots it with no route to the internet to keep
+# that true.
 #
-# Server ("web") mode is real: the `wealthfolio` Docker Hub org since v3.4.0
-# (2026-05-15, the breaking self-host release: non-root uid 1000, port
-# 8088); native OIDC since v3.6.0 (2026-07-05). Rust/Axum with EMBEDDED
-# migrations before the listener binds — nothing fetched at boot (the
-# ExcaliDash class does not apply; the suite boots it with no route to the
-# internet to keep that true).
-#
-# Backup contract: everything under /mnt/fast/wealthfolio (bind of /data):
-# wealthfolio.db (SQLite, WAL) + secrets.json (API keys, encrypted with
-# WF_SECRET_KEY). backup-prepare.sh needs exactly ONE line:
+# Backup: everything is under /mnt/fast/wealthfolio (bind of /data) —
+# wealthfolio.db plus secrets.json, which is only useful with WF_SECRET_KEY from
+# .sops.env. backup-prepare.sh needs exactly one line:
 #   sqlite_backup wealthfolio /mnt/fast/wealthfolio/wealthfolio.db
-# sqlite_backup returns 0 for a MISSING source (finding #25, the Karakeep
-# failure), so the suite pins the db's real path. A dump alone is not a full
-# restore: secrets.json is only useful with WF_SECRET_KEY, which lives in
-# .sops.env — in git, which is the point.
+# sqlite_backup returns 0 for a MISSING source, so the suite pins the real path.
 
 services:
   wealthfolio:
-    # Docker Hub `wealthfolio/` org — NOT `afadil/wealthfolio`, which is the
-    # pre-v3.4.0 name kept publishing only for backward compatibility. The
-    # tag is BARE (3.7.0, 3.7, 3.6.3 …); no `v`-prefixed tag exists. A ghcr
-    # mirror exists (ghcr.io/wealthfolio/wealthfolio) but Docker Hub is the
-    # documented primary.
+    # Docker Hub `wealthfolio/` org — NOT `afadil/wealthfolio`, the pre-v3.4.0
+    # name kept only for backward compatibility. The tag is BARE; no `v`-prefixed
+    # tag exists.
     image: wealthfolio/wealthfolio:3.7.0
     container_name: wealthfolio
     ports:
-      # Loopback only: the way in is Caddy at wealthfolio.svc.idanreed.com.
       - '127.0.0.1:10309:8088'
     volumes:
-      # The WHOLE stack state. 🚨 Must be owned 1000:1000: the Dockerfile
-      # ends on USER 1000:1000 with no root entrypoint and no chown, so a
-      # root-owned bind is not healed — the first write fails and the
-      # container exits (upstream's own upgrade doc says chown by hand).
-      # nixos/stack-dirs.nix owns the rule.
+      # The whole stack state. 🚨 Must be owned 1000:1000: the Dockerfile ends on
+      # USER 1000:1000 with no root entrypoint and no chown, so a root-owned bind
+      # is not healed — the first write fails and the container exits.
       - /mnt/fast/wealthfolio:/data
     environment:
       - TZ=America/Chicago
-      # In-container bind. Explicit for two reasons: the published port above
-      # is a separate decision from the image's default, and config.rs
-      # REFUSES to start on a non-loopback listen without auth — so this line
-      # and WF_AUTH_PASSWORD_HASH arriving from .env are a pair. (Under the
-      # finding-#11 decrypt race the missing WF_SECRET_KEY aborts boot first:
-      # this stack fails CLOSED and loud, the opposite of tandoor's silent
-      # SQLite fallback.)
+      # In-container bind. Explicit because config.rs REFUSES to start on a
+      # non-loopback listen without auth, so this line and WF_AUTH_PASSWORD_HASH
+      # are a pair. Under a decrypt race the missing WF_SECRET_KEY aborts boot
+      # first: this stack fails CLOSED and loud, the opposite of tandoor.
       - WF_LISTEN_ADDR=0.0.0.0:8088
-      # Image default already; explicit because backup-prepare.sh's
-      # sqlite_backup line hardcodes the host-side twin of this path, and a
-      # silent upstream move would turn that backup into a permanent no-op
-      # (finding #25).
+      # Image default already; explicit because backup-prepare.sh hardcodes the
+      # host-side twin of this path and a silent upstream move would turn that
+      # backup into a permanent no-op.
       - WF_DB_PATH=/data/wealthfolio.db
-      # 🚨 REQUIRED, and it must be EXACT (scheme, host, port). Two failure
-      # modes, one loud, one quiet:
-      #   - unset while auth is enabled = the default "*" and config.rs
-      #     PANICS at boot (good — loud);
-      #   - set to the wrong origin = every curl probe stays green while
-      #     every BROWSER login fails on CORS. Renaming the vhost means
-      #     changing this line in the same commit.
+      # 🚨 REQUIRED and EXACT (scheme, host, port). Unset while auth is enabled
+      # means the default "*" and config.rs PANICS at boot — loud. Set to the
+      # wrong origin, every curl probe stays green while every BROWSER login
+      # fails on CORS. Renaming the vhost means changing this in the same commit.
       - WF_CORS_ALLOW_ORIGINS=https://wealthfolio.svc.idanreed.com
-      # Default, pinned: `auto` sets the session cookie's Secure flag iff
-      # X-Forwarded-Proto is https — which Caddy sends, so production cookies
-      # are Secure and the suite's plain-http loopback login still works.
+      # Default, pinned: `auto` sets the cookie's Secure flag iff
+      # X-Forwarded-Proto is https, so production cookies are Secure and the
+      # suite's plain-http loopback login still works.
       - WF_COOKIE_SECURE=auto
-      # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from .env — the
-      # rotation rules and the 🚨 $-quoting trap on the hash (finding #30
-      # class, verified for vaultwarden's identical Argon2 PHC shape) are
-      # documented in .sops.env.example.
+      # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from .env; the rotation
+      # rules and the 🚨 $-quoting trap on the Argon2 hash are in .sops.env.example.
       #
-      # ---- OIDC ships OFF, and OFF is load-bearing ----
-      # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server —
-      # Ghostfolio's boot-fatal trap but WORSE: no escape hatch (Ghostfolio
-      # skips discovery with all three URL overrides set). Enabled, every
-      # `docker compose up` depends on a cross-tailnet call to the VPS. If
-      # taken knowingly: WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret
-      # via .env) + WF_OIDC_REDIRECT_URL
-      # (https://wealthfolio.svc.idanreed.com/api/v1/auth/oidc/callback) +
-      # WF_OIDC_ALLOWED_EMAILS — FAIL-CLOSED: empty without an explicit
+      # OIDC ships OFF, and OFF is load-bearing
+      # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server — the
+      # Ghostfolio trap with no escape hatch. Enabled, every `docker compose up`
+      # would depend on a cross-tailnet call to the VPS. If taken knowingly:
+      # WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret via .env) +
+      # WF_OIDC_REDIRECT_URL (.../api/v1/auth/oidc/callback) +
+      # WF_OIDC_ALLOWED_EMAILS, which is fail-closed — empty without an explicit
       # WF_OIDC_ALLOW_ANY=true refuses to boot.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # No builtin. /api/v1/healthz is a STATIC "ok" — but the Axum server
-      # only binds AFTER its embedded migrations, so 200 does mean a live
-      # listener over a migrated schema. CanNOT see: a mangled password hash
-      # (login 404s while this stays green — the suite covers it) or a
-      # locked SQLite after start. /api/v1/readyz is byte-identical — never
-      # probe it expecting readiness semantics.
-      # ⚠ busybox `wget`, not curl: bare alpine base, curl never installed —
-      # a curl probe would fail forever while the app serves fine (finding
-      # #34's failure mode).
+      # /api/v1/healthz is a STATIC "ok", but the Axum server only binds AFTER
+      # its embedded migrations, so 200 does mean a live listener over a migrated
+      # schema. Cannot see a mangled password hash (login 404s while this stays
+      # green — the suite covers it) or a locked SQLite after start.
+      # /api/v1/readyz is byte-identical; never probe it expecting readiness.
+      # ⚠ busybox `wget`, not curl: bare alpine base, curl never installed.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8088/api/v1/healthz']
       interval: 30s
       timeout: 10s

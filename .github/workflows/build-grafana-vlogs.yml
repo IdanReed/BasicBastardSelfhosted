@@ -1,0 +1,83 @@
+# Builds Grafana with the VictoriaLogs datasource baked in and publishes it to
+# GHCR, so the services VM can pull a pinned image instead of an operator
+# curl-and-unzip on the host (docs/for-shame.md, "Grafana").
+#
+# Run manually, or on a push that touches the Dockerfile.
+#
+# Injection safety: this workflow reads no attacker-controllable event fields
+# (no github.event.*, no github.head_ref). The only interpolations are
+# github.actor and secrets.GITHUB_TOKEN, neither user-supplied, and nothing is
+# interpolated into a run: block.
+name: Build Grafana (victorialogs datasource)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'stacks/logging/Dockerfile'
+      - '.github/workflows/build-grafana-vlogs.yml'
+
+env:
+  # Hardcoded lowercase, not ${{ github.repository_owner }}: the owner is
+  # 'IdanReed' and docker rejects mixed-case repository names — and this
+  # exact string is what stacks/logging/compose.yaml will pin, so they must
+  # agree.
+  IMAGE: ghcr.io/idanreed/grafana-vlogs
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # BOTH versions are read out of stacks/logging/Dockerfile rather than
+      # duplicated here, and the published tag is <grafana>-vl<plugin>: the
+      # artifact is a function of both, and a tag that changes whenever the
+      # binary changes forces an explicit compose-pin edit. Same reasoning as
+      # build-caddy.yml, which learned it the hard way.
+      #
+      # Both values come from a file in the checkout, are matched against a
+      # digits-and-dots pattern, and pass through step outputs rather than
+      # being interpolated into a run: block.
+      - name: Determine Grafana and plugin versions
+        id: ver
+        run: |
+          version=$(grep -oP '^FROM grafana/grafana:\K[0-9]+\.[0-9]+\.[0-9]+$' \
+            stacks/logging/Dockerfile | tail -1)
+          plugin=$(grep -oP 'victoriametrics-logs-datasource/versions/\K[0-9]+\.[0-9]+\.[0-9]+' \
+            stacks/logging/Dockerfile | tail -1)
+          if [ -z "$version" ]; then
+            echo "Could not determine Grafana version from Dockerfile" >&2
+            exit 1
+          fi
+          if [ -z "$plugin" ]; then
+            echo "Could not determine plugin version from Dockerfile" >&2
+            exit 1
+          fi
+          echo "tag=$version-vl$plugin" >> "$GITHUB_OUTPUT"
+          echo "Building Grafana $version + victorialogs $plugin as $version-vl$plugin"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: stacks/logging
+          push: true
+          # No bare `<grafana>` tag: it would be mutable, and the compose file
+          # pins it.
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.ver.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

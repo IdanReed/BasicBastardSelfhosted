@@ -1,32 +1,21 @@
 # Wger — workout and nutrition tracker (Food range, port 10351).
-# Design: ServerNotes/designs/service-food-stack-research.md.
-# _overview.md owns the port/auth row.
+# Design: ServerNotes/designs/service-food-stack-research.md; _overview.md owns
+# the port/auth row.
 #
-# SEPARATE FROM TANDOOR — see stacks/tandoor/compose.yaml's header (bare
-# `SECRET_KEY` collision through env_file).
+# Its own stack rather than sharing tandoor's: both read a bare `SECRET_KEY`
+# through env_file and would collide.
 #
-# THREE containers plus a cache; the nginx one is not optional — wger/server
-# serves no static files at all.
-#
-# Backup contract: `wger` is named in nixos/backup-prepare.sh's pg_dumpall
-# loop, so `container_name: wger_db` and `POSTGRES_USER=wger` are
-# load-bearing.
+# `container_name: wger_db` and `POSTGRES_USER=wger` are load-bearing —
+# nixos/backup-prepare.sh's pg_dumpall loop names `wger`.
 
 services:
-  # ---------------------------------------------------------------------------
-  # wger — workout and nutrition tracker.
+  # 🚨 NOT PUBLISHED. `wger/server` serves NO static files (no whitenoise in
+  # INSTALLED_APPS), so publishing gunicorn gives an app that renders, answers
+  # the API, and has no CSS and no JS. The nginx sidecar gets the port.
   #
-  # 🚨 NOT PUBLISHED. `wger/server` serves NO static files — there is no
-  # whitenoise in INSTALLED_APPS — so publishing gunicorn directly gives an app
-  # that renders, answers the API, and has no CSS and no JS. The nginx sidecar
-  # below is what gets the port.
-  #
-  # Runs as uid 1000, hard-coded: the base Dockerfile does `deluser ubuntu` then
-  # `adduser wger --uid 1000`, and the production image ends on `USER wger`.
-  # There is no PUID/PGID and no chown-on-start, so /mnt/fast/wger/media must be
-  # pre-owned 1000:1000 or `collectstatic` fails on the first boot — finding
-  # #14's crash-loop pattern.
-  # ---------------------------------------------------------------------------
+  # Runs as uid 1000, hard-coded in the image with no PUID/PGID and no
+  # chown-on-start, so /mnt/fast/wger/media must be pre-owned 1000:1000 or
+  # `collectstatic` fails on first boot.
   wger:
     # `2.6`, NOT `2.6.0` (which tracks master) and NOT `latest` (a 2.7 alpha).
     image: wger/server:2.6
@@ -43,19 +32,17 @@ services:
       - TIME_ZONE=America/Chicago
       - SITE_URL=https://wger.svc.idanreed.com
       - DJANGO_DEBUG=False
-      # 🚨 REQUIRED, and its absence is silent: without it the entrypoint runs
-      # `wger bootstrap` on a fresh database and then NEVER MIGRATES AGAIN, so
-      # every subsequent image bump leaves the schema behind the code.
+      # 🚨 REQUIRED, silently: without it the entrypoint bootstraps a fresh
+      # database and then NEVER MIGRATES AGAIN, so every image bump leaves the
+      # schema behind the code.
       - DJANGO_PERFORM_MIGRATIONS=True
-      # 🚨 ALSO REQUIRED. Without it SECURE_PROXY_SSL_HEADER is never set, so
-      # Django believes every request is plain HTTP and the https CSRF origin
-      # below can never match — every POST fails with a CSRF error that points
-      # at the wrong thing.
+      # 🚨 ALSO REQUIRED: without it SECURE_PROXY_SSL_HEADER is never set,
+      # Django believes every request is plain HTTP, and the https CSRF origin
+      # below can never match — every POST fails on CSRF.
       - X_FORWARDED_PROTO_HEADER_SET=True
       - CSRF_TRUSTED_ORIGINS=https://wger.svc.idanreed.com
-      # BOTH default to TRUE in settings_global.py — the "prod.env has them
-      # off" belief is about a file that is not in this image. Leave either
-      # unset and the instance is open to anyone who can reach the vhost.
+      # Both default to TRUE in this image; unset means open to anyone who can
+      # reach the vhost.
       - ALLOW_REGISTRATION=False
       - ALLOW_GUEST_USERS=False
       - DJANGO_DB_ENGINE=django.db.backends.postgresql
@@ -68,10 +55,8 @@ services:
       - DJANGO_CACHE_CLIENT_CLASS=django_redis.client.DefaultClient
       - DJANGO_MEDIA_ROOT=/home/wger/media
       - DJANGO_STATIC_ROOT=/home/wger/static
-      # 🚨 EVERY ONE OF THESE IS EGRESS AT STARTUP (finding #4's class): any
-      # true and a tailnet-only boot hangs on the internet (and the offline
-      # suite with it). Named explicitly so "what does this fetch at start"
-      # is answerable from the compose file.
+      # 🚨 EVERY ONE OF THESE IS EGRESS AT STARTUP: any true and a
+      # tailnet-only boot hangs on the internet.
       - LOAD_ONLINE_FIXTURES_ON_STARTUP=False
       - DOWNLOAD_EXERCISE_IMAGES_ON_STARTUP=False
       - DOWNLOAD_EXERCISE_VIDEOS_ON_STARTUP=False
@@ -82,27 +67,21 @@ services:
       - USE_CELERY=False
       - ENABLE_EMAIL=False
       - EXPOSE_PROMETHEUS_METRICS=False
-      # Behind Caddy AND the nginx sidecar. django-axes keys lockouts on
-      # client IP; every request arrives from the bridge gateway, so a wrong
-      # proxy count = a few typos lock out everyone.
+      # Two hops (Caddy, then the nginx sidecar). django-axes keys lockouts
+      # on client IP, so a wrong count locks everyone out after a few typos.
       - AXES_IPWARE_PROXY_COUNT=2
       - NUMBER_OF_PROXIES=2
-      # SECRET_KEY and DJANGO_DB_PASSWORD arrive from .env — bare names,
-      # because this stack has its own .env and nothing else reads them.
-      # ⚠ An unset SECRET_KEY is NEARLY INVISIBLE: main.py falls back to
-      # `secrets.token_urlsafe(50)` with a `warnings.warn` and nothing else, so
-      # a NEW key is generated on every restart. The symptom is "everyone is
-      # logged out after every restart", diagnosed weeks later.
+      # SECRET_KEY and DJANGO_DB_PASSWORD arrive from .env.
+      # ⚠ An unset SECRET_KEY is nearly invisible: the image falls back to a
+      # fresh random key per restart with only a warnings.warn, and the symptom
+      # is "everyone is logged out after every restart".
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # Upstream's own probe. A liveness check — it does not touch the database
-      # — but its 300s start period is justified: the first boot migrates and
-      # loads 872 exercise bases plus 2429 translations. The suite asserts
-      # /api/v2/ingredient/?limit=1 instead, which is a real DB read.
-      # ⚠ Do NOT use /api/v2/language/ for that: LanguageViewSet.dispatch is
-      # wrapped in @cache_page and answers from cache.
+      # Upstream's own liveness probe — it does not touch the database. The
+      # 300s start period is real: first boot migrates and loads 872 exercise
+      # bases plus 2429 translations.
       test: ['CMD-SHELL', 'wget -q -O /dev/null -T 10 http://127.0.0.1:8000/api/v2/version/']
       interval: 30s
       timeout: 15s
@@ -110,11 +89,10 @@ services:
       start_period: 300s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # wger_nginx — serves /static/ and /media/ and proxies the rest. NOT optional;
-  # see the wger service above and nginx.conf's header for why the config is
-  # written here rather than copied from upstream.
-  # ---------------------------------------------------------------------------
+  # Static files
+  #
+  # Serves /static/ and /media/ and proxies the rest. Not optional — see the
+  # wger service above.
   wger_nginx:
     image: nginx:1.30.4-alpine
     container_name: wger_nginx
@@ -130,9 +108,8 @@ services:
     environment:
       - TZ=America/Chicago
     healthcheck:
-      # Probes THROUGH nginx to the app: upstream's `service nginx status`
-      # cannot detect a broken proxy_pass or unresolvable upstream — the
-      # only interesting way this container fails (finding #16).
+      # THROUGH nginx to the app: `service nginx status` cannot see a broken
+      # proxy_pass or an unresolvable upstream, the only interesting failure.
       test: ['CMD-SHELL', 'wget -q -O /dev/null -T 10 http://127.0.0.1:80/api/v2/version/']
       interval: 30s
       timeout: 15s
@@ -164,9 +141,8 @@ services:
   wger_cache:
     image: redis:7.4-alpine
     container_name: wger_cache
-    # No volume: this is a CACHE. Nothing here is worth persisting, and giving
-    # it a bind mount would put churn into the /mnt/fast include set for state
-    # that is regenerated on demand.
+    # No volume: a bind mount would put regenerable churn into the /mnt/fast
+    # backup include set.
     environment:
       - TZ=America/Chicago
     healthcheck:
@@ -177,21 +153,17 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # wger_init — headless first-run (annex §3.2). See wger-init.py: Wger creates
-  # an `admin` account for you with the published password `adminadmin` and
-  # gives you no env var to change it.
+  # Admin seed
   #
-  # Same image as the app, because this is a Django shell script against the
-  # real ORM. DJANGO_SETTINGS_MODULE and PYTHONPATH are already baked in.
-  # ---------------------------------------------------------------------------
+  # Wger creates an `admin` account with the published password `adminadmin`
+  # and no env var to change it; see wger-init.py. Same image as the app,
+  # because this is a Django shell script against the real ORM.
   wger_init:
     image: wger/server:2.6
     container_name: wger_init
     depends_on:
-      # service_healthy: the entrypoint's bootstrap and migrations must have
-      # finished, or `admin` does not exist yet and this would create a second
-      # one that the real bootstrap then overwrites.
+      # service_healthy: bootstrap and migrations must have finished, or
+      # `admin` does not exist yet and the real bootstrap overwrites ours.
       wger:
         condition: service_healthy
     volumes:

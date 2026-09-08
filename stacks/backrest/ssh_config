@@ -1,14 +1,14 @@
-# Mounted at /etc/ssh/ssh_config (system-wide) inside the Backrest container
-# — NOT /root/.ssh/config, which ssh refuses unless root-owned; the stack git
-# sync delivers files owned by PUID 1000.
-# Referenced by the repo URI "sftp:storagebox:/home/restic".
+# Mounted at /etc/ssh/ssh_config (system-wide) inside the Backrest container —
+# NOT /root/.ssh/config, which ssh refuses unless root-owned, and the stack git
+# sync delivers files owned by uid 1000. Referenced by the repo URI
+# "sftp:storagebox:/home/restic".
 #
-# Replace uXXXXXX with the Hetzner Storage Box sub-account username. Use a
-# SUB-ACCOUNT scoped to its own directory, not the main account — restic
-# authenticates with full write access to whatever it can see, so a compromised
-# or malfunctioning services VM can `forget --prune` the entire repository.
-# Storage Box snapshots (enabled in the Hetzner console) are what makes that
-# recoverable; see README.md.
+# The User below must stay a Hetzner Storage Box SUB-ACCOUNT scoped to its own
+# directory, never the main account: restic has full write access to whatever
+# it can see, so a compromised services VM can `forget --prune` the whole
+# repository. Storage Box snapshots are what make that recoverable — see
+# README.md. config-init.sh refuses to seed while the username is still the
+# committed placeholder.
 
 Host storagebox
     HostName u662946.your-storagebox.de

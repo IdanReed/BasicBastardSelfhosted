@@ -1,19 +1,15 @@
 #!/bin/sh
-# automation-init — headless Home Assistant onboarding (annex §3.1). Runs in
-# python:3.13-alpine as a oneshot once HA is healthy.
+# automation-init — headless Home Assistant onboarding. Runs in
+# python:3.13-alpine as a oneshot once HA is healthy; the browser wizard makes
+# the same four REST calls.
 #
-# HA's onboarding is normally a browser wizard, but it is four plain REST
-# calls and the wizard uses the same ones. Contract (media-init pattern):
-#   - Every mutation logs "automation-init: CHANGE: ...". A second run —
-#     every redeploy reruns this container — must log ZERO change lines.
-#   - Unset credentials are a HARD error (decrypt race, finding #11).
+# Every mutation logs "automation-init: CHANGE: ..." and a second run must log
+# ZERO change lines. Unset credentials are a hard error.
 #
-# Idempotence here has TWO regimes and both mean "already done":
-#   - 403 "<step> step already done"  — same process, step already run.
-#   - 404                              — onboarding is complete AND HA has
-#     restarted since; the component returns before registering any view, so
-#     the whole /api/onboarding* namespace stops existing.
-# Treat {200, 403, 404} as success on every step.
+# Idempotence has TWO regimes and both mean "already done": 403 "<step> step
+# already done" within a process, and a bare 404 once onboarding is complete
+# and HA has restarted — the component returns before registering any view, so
+# the whole /api/onboarding* namespace stops existing.
 set -eu
 
 exec python3 - <<'PY'
@@ -80,7 +76,7 @@ required = ("HA_ADMIN_NAME", "HA_ADMIN_USER", "HA_ADMIN_PASSWORD",
 missing = [k for k in required if not os.environ.get(k)]
 if missing:
     sys.exit(f"automation-init: FATAL: unset or empty in .env: "
-             f"{', '.join(missing)} (decrypt race? finding #11)")
+             f"{', '.join(missing)} (decrypt race?)")
 
 
 def seed_mqtt(token):
@@ -98,7 +94,7 @@ def seed_mqtt(token):
     password = os.environ.get("MQTT_HA_PASSWORD", "")
     if not password:
         sys.exit("automation-init: FATAL: MQTT_HA_PASSWORD unset or empty in "
-                 ".env (decrypt race? finding #11)")
+                 ".env (decrypt race?)")
     try:
         _, flow = call("/api/config/config_entries/flow", "POST",
                        {"handler": "mqtt", "show_advanced_options": False},
@@ -119,17 +115,10 @@ def seed_mqtt(token):
         sys.exit(f"automation-init: FATAL: mqtt config flow returned no "
                  f"flow_id: {flow!r}")
 
-    # The broker step. Reached by service name on the compose network — the
-    # same address frigate uses, and the reason mosquitto needs no host
-    # publish for the stack's own event chain to work.
-    #
     # `other_settings` is REQUIRED and is a voluptuous *section*, so the
     # browser's collapsed "advanced" panel is not optional over the API — its
-    # absence is a 400 `{"other_settings": "required key not provided"}`. Two
-    # of its members are required in turn (`set_client_cert`, `set_ca_cert`),
-    # and `transport` carries a default that only applies if the key is
-    # present. Plain TCP, no client certificate, no CA verification: the
-    # broker is on the compose network and speaks plaintext MQTT.
+    # absence is a 400. Two of its members are required in turn, and
+    # `transport` only defaults when the key is present.
     try:
         _, res = call(f"/api/config/config_entries/flow/{flow_id}", "POST", {
             "broker": os.environ.get("MQTT_BROKER", "mosquitto"),
@@ -161,10 +150,9 @@ def seed_mqtt(token):
 # ---------------------------------------------------------------------------
 # Step 1: the owner account.
 # ---------------------------------------------------------------------------
-# POST /api/onboarding/users is unauthenticated and works exactly once. All
-# five fields are required (the schema is PREVENT_EXTRA, so no extras either).
-# `language` must be real — a bogus one KeyErrors into a 500 on the
-# default-area translation lookup.
+# Unauthenticated and works exactly once. All five fields are required and the
+# schema is PREVENT_EXTRA, so no extras either; `language` must be real, since
+# a bogus one 500s on the default-area translation lookup.
 auth_code = None
 try:
     _, res = call("/api/onboarding/users", "POST", {
@@ -183,11 +171,9 @@ except urllib.error.HTTPError as e:
     log(f"onboarding already done (HTTP {e.code}) - no change")
 
 if auth_code is None:
-    # Already onboarded. Log in with the seeded credentials instead of
-    # stopping here: the MQTT config entry below has to be REACHABLE on a
-    # re-run, or a first run that created the owner and then failed at the
-    # broker step could never be repaired by redeploying. Convergent, not
-    # once-only.
+    # Already onboarded, but log in rather than stopping: the MQTT step below
+    # must stay reachable on a re-run, or a first run that created the owner
+    # and then failed at the broker step could never be repaired.
     try:
         _, flow = call("/auth/login_flow", "POST", {
             "client_id": CLIENT_ID,
@@ -237,14 +223,12 @@ if not token:
 # ---------------------------------------------------------------------------
 # Steps 3-5: finish the wizard.
 # ---------------------------------------------------------------------------
-# core_config takes NO body in the current line — latitude/longitude/units are
-# not parameters (older docs say otherwise). It does fire a few config flows
-# as detached tasks, some of which need the internet; they fail harmlessly
-# offline.
+# core_config takes NO body in the current line, contrary to older docs. It
+# fires a few config flows as detached tasks, some needing the internet; they
+# fail harmlessly offline.
 #
-# integration needs {client_id, redirect_uri} and returns a second auth code
-# that nothing here consumes — it exists so a UI client can pick up a session.
-# Keep the two same-origin, or HA makes an outbound request to verify the
+# integration returns a second auth code nothing here consumes. Keep its two
+# arguments same-origin, or HA makes an outbound request to verify the
 # redirect URI.
 if not onboarding_done:
     for step, body in [

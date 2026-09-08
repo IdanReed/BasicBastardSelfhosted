@@ -1,56 +1,40 @@
-# Glance dashboard configuration.
+# Glance dashboard configuration. Shipped in the stack directory so the git sync
+# delivers it with compose.yaml; mounted :ro at the path the ENTRYPOINT hardcodes.
 #
-# Shipped in the stack directory rather than /mnt/fast so stack-git-sync
-# delivers it alongside compose.yaml; the container mounts it read-only at the
-# path its ENTRYPOINT hardcodes.
+# Three rules, all load-bearing:
 #
-# THREE RULES, all load-bearing:
+#   1. NO WIDGET MAY REQUIRE EGRESS. Widget fetches run inside the page-content
+#      handler with wg.Wait() on every goroutine, so a widget that cannot reach
+#      the internet stalls the WHOLE page until its HTTP client times out. Hence
+#      no rss/weather/hacker-news, and no `monitor` widget even for
+#      tailnet-reachable targets — one wedged service would hold the dashboard
+#      hostage, and status is Gatus's job anyway. Icons are the same trap: the
+#      `si:`/`di:` prefixes resolve to CDN URLs the BROWSER fetches, so every
+#      link here is text-only.
 #
-#   1. NO WIDGET MAY REQUIRE EGRESS. Widget fetches run inside the
-#      page-content handler with wg.Wait() on every goroutine, so a widget
-#      that cannot reach the internet stalls the WHOLE page until its HTTP
-#      client times out. Hence no rss/reddit/weather/hacker-news — and no
-#      `monitor` widget even though targets are tailnet-reachable: N
-#      services = N serial-ish round trips before render, and one WEDGED
-#      service (never RSTs) holds the dashboard hostage. Status is Gatus's
-#      job; this file LINKS to Gatus (duplicated checks = two threshold
-#      sets drifting). Icons are the same trap one layer out: `si:`/`di:`
-#      prefixes resolve to CDN URLs fetched by the BROWSER — broken images
-#      offline — so every link is text-only on purpose.
+#   2. NO `auth:` BLOCK. Caddy's (protected) does the work — one login, not two.
+#      Sharp edge: docker-proxy re-dials from the bridge gateway, so every
+#      request shares one address, and Glance blocks an IP after 5 failed logins
+#      in 5 minutes — turning auth on WITHOUT `server.proxied: true` means five
+#      typos lock out everybody at once.
 #
-#   2. NO `auth:` BLOCK. Caddy's (protected) does the work — one login, not
-#      two. Sharp edge: docker-proxy re-dials from the bridge gateway, so
-#      every request shares one address, and Glance blocks an IP after 5
-#      failed logins in 5 minutes — turning auth on WITHOUT
-#      `server.proxied: true` means five typos lock out everybody at once.
+#   3. EVERY CADDY-ROUTED SERVICE APPEARS ON EXACTLY ONE OF THE TWO PAGES. The
+#      split is ORGANISATION, NOT A SECURITY BOUNDARY — same login, same tailnet,
+#      and page nav is client-side. An unlisted service is one nobody remembers
+#      exists at 2am. No lint parses this file; the check when adding a stack is
+#      `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the URLs
+#      below. Two deliberate omissions: `glance` itself, and `vlogs-ingest`
+#      (a token-gated ingest endpoint with no browser UI).
 #
-#   3. EVERY CADDY-ROUTED SERVICE APPEARS ON EXACTLY ONE OF THE TWO PAGES.
-#      The split is ORGANISATION, NOT A SECURITY BOUNDARY (same login, same
-#      tailnet; page nav is client-side). "Admin" = "open when something
-#      needs tending", not "restricted". An unlisted service is one nobody
-#      remembers exists at 2am.
-#      Invariant: every `*.svc` host in stacks/caddy/Caddyfile is linked
-#      below except `glance` itself; any future omission gets a line here
-#      saying why. No lint parses this file — the check is
-#      `grep -E '^\s*@[a-z0-9_-]+ host ' ../caddy/Caddyfile` against the
-#      URLs below, worth doing when adding a stack.
-#      `headscale.idanreed.com` is not a Caddy route on this host (VPS
-#      coordination API, no browser UI) — its liveness belongs in Gatus.
-#
-# 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML
-# PARSING — COMMENTS ARE NOT EXEMPT. A dollar-brace reference anywhere,
-# including in a comment, is resolved; a missing variable is a hard startup
-# error, repeated forever as the container restarts. An earlier version of
-# THIS COMMENT spelled the syntax out to warn about it and broke the file:
-# describe the syntax in words; never write it. (The behaviour itself is
-# the good kind of loud — a typo'd name fails at boot, not as an empty
-# string in a widget.)
+# 🚨 GLANCE SUBSTITUTES ENV REFERENCES OVER THE RAW FILE, BEFORE YAML PARSING —
+# COMMENTS ARE NOT EXEMPT, and a missing variable is a hard startup error
+# repeated forever. Describe the syntax in words here; never write it.
 
 server:
   host: 0.0.0.0
   port: 8080
-  # Read X-Forwarded-* from Caddy. Currently only affects logging, since auth
-  # is off — but it must be true before auth is ever turned on (see rule 2).
+  # Only affects logging while auth is off, but it must be true before auth is
+  # ever turned on (rule 2).
   proxied: true
 
 theme:
@@ -58,17 +42,11 @@ theme:
   primary-color: 210 60 70
   contrast-multiplier: 1.1
 
-# Column layout note (applies to both pages): Glance allows at most 3 columns
-# and requires either 1 or 2 of them to be `full`, so the only legal shapes are
-# small-full-small, small-full and full-full. "Home" uses small-full-small
-# (clock / links / calendar); "Admin" uses small-full — there is no ambient
-# information worth a third column on a page you open to fix something.
+# Glance allows at most 3 columns and requires 1 or 2 of them to be `full`, so
+# the only legal shapes are small-full-small, small-full and full-full.
 pages:
-  # ===========================================================================
-  # Page 1 — HOME. Things a person opens on purpose. The *arr suite is on
-  # Admin: it is how the library gets filled, not how it gets used, and it
-  # buried Jellyfin/Seerr under six management UIs.
-  # ===========================================================================
+  # Home — things a person opens on purpose. The *arr suite is on Admin: it is
+  # how the library gets filled, not how it gets used.
   - name: Home
     slug: home
     columns:
@@ -80,8 +58,7 @@ pages:
               - timezone: America/Chicago
                 label: Home
 
-          # The one piece of status on this page, and it is a LINK, not a
-          # check (rule 1). Gatus owns uptime; this is the door to it.
+          # A LINK, not a check (rule 1) — Gatus owns uptime.
           - type: bookmarks
             groups:
               - title: Status
@@ -146,19 +123,24 @@ pages:
                   - title: SilverBullet
                     url: https://silverbullet.svc.idanreed.com
 
-              # Firefly III here; its DATA IMPORTER is on Admin — separate
-              # hostnames, separate Authentik applications (the importer
-              # holds a full-privilege PAT, no login of its own).
+              # The Firefly DATA IMPORTER is on Admin — separate hostname,
+              # separate Authentik application.
               - title: Money and Health
                 links:
                   - title: Firefly III
                     url: https://firefly.svc.idanreed.com
                   - title: Ghostfolio ✅
                     url: https://ghostfolio.svc.idanreed.com
+                  - title: Wealthfolio
+                    url: https://wealthfolio.svc.idanreed.com
+                  - title: Actual Budget
+                    url: https://actual.svc.idanreed.com
                   - title: Owl
                     url: https://owl.svc.idanreed.com
                   - title: Tandoor ✅
                     url: https://tandoor.svc.idanreed.com
+                  - title: Mealie
+                    url: https://mealie.svc.idanreed.com
                   - title: wger
                     url: https://wger.svc.idanreed.com
 
@@ -166,6 +148,8 @@ pages:
                 links:
                   - title: DocSpace
                     url: https://docspace.svc.idanreed.com
+                  - title: Excalidraw
+                    url: https://excalidraw.svc.idanreed.com
                   - title: BentoPDF
                     url: https://bentopdf.svc.idanreed.com
                   - title: Mazanoke
@@ -178,11 +162,8 @@ pages:
           - type: calendar
             first-day-of-week: monday
 
-  # ===========================================================================
-  # Page 2 — ADMIN. Things you open when something needs tending.
-  #
-  # Not a privilege tier (rule 3). Same login, same tailnet, same trust.
-  # ===========================================================================
+  # Admin — things you open when something needs tending. Not a privilege tier
+  # (rule 3).
   - name: Admin
     slug: admin
     columns:
@@ -190,10 +171,8 @@ pages:
         widgets:
           - type: bookmarks
             groups:
-              # Repeated from Home on purpose: this is the first thing you
-              # want on the page you opened BECAUSE something is wrong, and a
-              # duplicated link costs nothing (rule 1 — these are links, so
-              # there is no second set of checks to drift).
+              # Repeated from Home on purpose — these are links, so there is
+              # no second set of checks to drift (rule 1).
               - title: Status
                 links:
                   - title: Gatus
@@ -205,8 +184,8 @@ pages:
 
               - title: Identity
                 links:
-                  # On the VPS, not this host — the only link here that does
-                  # not resolve to a *.svc.idanreed.com Caddy route.
+                  # On the VPS — the only link here that is not a
+                  # *.svc.idanreed.com Caddy route.
                   - title: Authentik
                     url: https://auth.idanreed.com
 
@@ -227,10 +206,8 @@ pages:
                   - title: Grafana
                     url: https://grafana.svc.idanreed.com
 
-              # The library-filling half of the media stack. Everything here
-              # is behind the same gluetun kill-switch as qBittorrent; if
-              # these are unreachable while Jellyfin is fine, suspect the VPN
-              # container before the services.
+              # Behind the same gluetun kill-switch as qBittorrent: unreachable
+              # here while Jellyfin is fine means suspect the VPN container.
               - title: Media management
                 links:
                   - title: Radarr
@@ -246,12 +223,9 @@ pages:
                   - title: Cleanuparr
                     url: https://cleanuparr.svc.idanreed.com
 
-              # 🚨 The importer's UI has NO authentication of its own and
-              # holds a Firefly personal access token with full access to
-              # every transaction. It is reachable only through its OWN
-              # Authentik application (firefly-importer, forward_single,
-              # external_host firefly-importer.svc.idanreed.com). This
-              # bookmark is convenience; the lock is in Caddy and Authentik.
+              # 🚨 The importer's UI has NO authentication of its own and holds
+              # a Firefly PAT with full access to every transaction. Its own
+              # Authentik application is the lock; this is only a bookmark.
               - title: Data import
                 links:
                   - title: Firefly III importer

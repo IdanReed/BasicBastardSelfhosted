@@ -1,28 +1,16 @@
 #!/bin/sh
-# books-init — headless seeding for BOTH library apps (annex §3.1/§3.3). Runs
-# in python:3.13-alpine as a oneshot once kavita and audiobookshelf are
-# healthy.
+# books-init — headless seeding for BOTH library apps. Runs in
+# python:3.13-alpine as a oneshot once kavita and audiobookshelf are healthy.
 #
-# Contract (media-init pattern):
-#   - Every mutation logs "books-init: CHANGE: ...". A second run — every
-#     redeploy reruns this container — must log ZERO change lines. The books
-#     suite asserts exactly that.
-#   - Unset credentials are a HARD error (decrypt race, finding #11): exiting
-#     nonzero fails the deploy loudly instead of leaving library apps nobody
-#     can log in to.
+# Every mutation logs "books-init: CHANGE: ...". A second run must log ZERO
+# change lines; the books suite asserts that. Unset credentials are a hard
+# error, so a deploy that raced the decrypt fails loudly instead of leaving
+# library apps nobody can log in to.
 #
-# What it deliberately does NOT do:
-#   - It never touches Kavita's OIDC settings over the API. Three reasons, all
-#     from the annex §3.1: POST /api/Settings takes the WHOLE ServerSettingDto
-#     (absent fields deserialize to false/null and overwrite live settings);
-#     changing oidcConfig.authority clears every user's OIDC link; and the
-#     update path validates a changed authority by FETCHING its discovery
-#     document, which fails outright with no egress. The authority, client id
-#     and secret go through appsettings.json instead, which
-#     Seed.SetOidcSettingsFromDisk re-applies at every boot and which bypasses
-#     that validation entirely.
-#   - It never pre-mints API keys. The post-download hook authenticates with
-#     the same admin credentials, which it already has from the shared .env.
+# appsettings.json is Kavita's OIDC channel, not this script — POST
+# /api/Settings takes the WHOLE ServerSettingDto, so it is only used for the
+# two settings that have no on-disk path, and NEVER for oidcConfig.authority
+# (changing it clears every user's OIDC link and needs egress to revalidate).
 set -eu
 
 exec python3 - <<'PY'
@@ -77,22 +65,18 @@ required = ("KAVITA_ADMIN_USER", "KAVITA_ADMIN_PASSWORD",
 missing = [k for k in required if not os.environ.get(k)]
 if missing:
     sys.exit(f"books-init: FATAL: unset or empty in .env: {', '.join(missing)} "
-             f"(decrypt race? finding #11)")
+             f"(decrypt race?)")
 
 # ===========================================================================
 # Kavita
 # ===========================================================================
-# POST /api/Account/register is [AllowAnonymous] and works exactly once: it
-# opens with "if any admin exists, return BadRequest". On success it returns a
-# UserDto that already carries the api key — no second call needed.
+# POST /api/Account/register is anonymous and works exactly once, returning a
+# UserDto that already carries the api key.
 #
-# BUT a 400 is AMBIGUOUS, and treating it as "already seeded" hides real
-# failures. Kavita's register handler catches its own exceptions, deletes the
-# half-created user and returns 400 as well — so a genuinely broken register
-# (e.g. a KAVITA_TOKEN_KEY under 512 bits, which makes JWT signing throw)
-# looks exactly like an idempotent no-op, and the only symptom is the login
-# that follows failing with 401. The register body is therefore kept and
-# reported if the login does not then succeed.
+# But a 400 is AMBIGUOUS: Kavita's register handler catches its own
+# exceptions, deletes the half-created user and returns 400 too — so a broken
+# register looks exactly like an idempotent no-op. The register body is kept
+# and reported if the login that follows does not succeed.
 kavita_user = {
     "username": os.environ["KAVITA_ADMIN_USER"],
     "password": os.environ["KAVITA_ADMIN_PASSWORD"],
@@ -132,32 +116,21 @@ if not api_key:
 # admin calls below.
 kv_auth = {"x-api-key": api_key}
 
-# POST /api/Library/create takes an UpdateLibraryDto (there is no
-# CreateLibraryDto in 0.9.1). Its OpenAPI `required` array lists all of these,
-# `id` included, though only some are enforced at runtime — [Required] on a
-# non-nullable bool/int is satisfied by false/0, and `id` is never read by
-# AddLibrary. The full body is sent anyway: it costs nothing and it is what
-# the schema documents.
-#   type 2          = Book
-#   fileGroupTypes  = [2, 3] = EPub + Pdf (§8.3 if you want EPUB-only)
+# POST /api/Library/create takes an UpdateLibraryDto; the full body is sent
+# because that is what the schema documents.
+#   type 2          = Book; fileGroupTypes [2, 3] = EPub + Pdf (paired with
+#                     SUPPORTED_FORMATS in compose.yaml)
 #   folderWatching  = false: inotify against a bind mount is unreliable in
 #                     Docker, and the post-download hook is a precise trigger.
-#   enableMetadata  = TRUE — the name is a trap: it means "parse the metadata
-#                     INSIDE the file", not "fetch from the internet".
-#                     BookParser only calls BookService.ParseInfo when set;
-#                     false falls back to the FILENAME, which for a Book
-#                     library yields an empty Series and the scanner indexes
-#                     NOTHING ("Unable to parse any meaningful information").
-#                     No egress: GetComicInfo reads the epub itself — and
-#                     reading the OPF is why Kavita was chosen over Calibre.
-#   allowMetadataMatching / allowScrobbling = false: THESE are the external
-#                     ones — this stack is designed to need no egress.
-#   metadataProvider = 2 (Hardcover), REQUIRED even with matching disabled:
-#                     MetadataProvider has no zero member, so an omitted field
-#                     binds 0, fails [EnumDataType] -> automatic 400 (and past
-#                     that, ValidateMetadataProvider throws -> unlocalized
-#                     500). It selects WHICH provider, not WHETHER; the two
-#                     allow* flags keep it dormant.
+#   enableMetadata  = TRUE, and the name is a trap: it means "parse the
+#                     metadata INSIDE the file", not "fetch from the
+#                     internet". False falls back to the FILENAME, which for a
+#                     Book library yields an empty Series and indexes NOTHING.
+#   allowMetadataMatching / allowScrobbling = false: these are the external
+#                     ones, and this stack needs no egress.
+#   metadataProvider = 2, REQUIRED even with matching disabled: the enum has
+#                     no zero member, so an omitted field binds 0 and 400s. It
+#                     selects WHICH provider, not WHETHER.
 library = {
     "id": 0,
     "name": "Books",
@@ -177,19 +150,13 @@ library = {
     "fileGroupTypes": [2, 3],
     "excludePatterns": [],
 }
-# GET /api/Library/name-exists is the idempotence guard, rather than creating
-# and reading the 400 back: a create that fails for some OTHER reason then
-# still surfaces as a failure instead of being swallowed by a substring match
-# on the error text (that 400's body is a LOCALIZED message, not the token
-# `library-name-exists`, so matching the token would never match). The 400
-# branch below stays as belt-and-braces for a race — and as the fallback if
-# this probe is unavailable, which is why its failure is not fatal: a
-# read-only existence check must never be what fails a deploy.
+# The idempotence guard, rather than creating and reading the 400 back: that
+# 400's body is a LOCALIZED message, so a substring match on it would swallow
+# unrelated failures. The 400 branch below stays for the race, and this probe
+# failing is not fatal — a read-only existence check must never fail a deploy.
 #
-# Known idempotence hole, accepted: renaming the library by hand makes this
-# probe miss and the script create a SECOND library over the same folder.
-# Keying on the folder instead would be robust, but the name is what the
-# create API collides on.
+# Known hole, accepted: renaming the library by hand makes this probe miss and
+# a SECOND library gets created over the same folder.
 try:
     _, exists = call(
         f"{KAVITA}/api/Library/name-exists"
@@ -216,24 +183,56 @@ else:
             sys.exit(f"books-init: FATAL: kavita library create HTTP "
                      f"{e.code}: {body}")
 
-# Anonymous usage stats are seeded ON and the job runs daily. Nothing else in
-# this stack needs egress, so turn it off — and it is the one setting worth
-# the whole-DTO round trip (GET -> mutate -> POST) that the header warns about.
-# The masked secret in oidcConfig survives that round trip: the update path
-# recognises the asterisk string and restores the stored value.
+# Two DB-only settings, one whole-DTO round trip (GET -> mutate -> POST). The
+# masked secret in oidcConfig survives it — the update path recognises the
+# asterisk string and restores the stored value.
+#
+#   allowStatCollection            seeded ON with a daily job; nothing else
+#                                  here needs egress.
+#   oidcConfig.provisionAccounts   the one OIDC field with no appsettings.json
+#                                  path (Seed.SetOidcSettingsFromDisk copies
+#                                  exactly Authority/ClientId/Secret/
+#                                  CustomScopes), so it is a DB write or
+#                                  nothing. Without it OIDC login works and no
+#                                  account is ever created.
+#
+# 🚨 NEVER mutate oidcConfig.authority from here. Both hazards — ClearOidcIds()
+# wiping every user's OIDC link, and the discovery-document fetch that cannot
+# work offline — live inside `if (currentConfig.Authority != submitted)`.
 try:
     _, settings = call(f"{KAVITA}/api/Settings", "GET", None, kv_auth)
     if not isinstance(settings, dict):
         raise ValueError("unexpected settings payload")
+    wanted = []
     if "allowStatCollection" not in settings:
         log("kavita settings carry no allowStatCollection key "
             "(renamed upstream?) - skipping")
     elif settings["allowStatCollection"]:
         settings["allowStatCollection"] = False
-        call(f"{KAVITA}/api/Settings", "POST", settings, kv_auth)
-        change("kavita anonymous stat collection disabled")
+        wanted.append("anonymous stat collection disabled")
     else:
         log("kavita stat collection already off - no change")
+
+    oidc = settings.get("oidcConfig")
+    if not isinstance(oidc, dict):
+        log("kavita settings carry no oidcConfig object (renamed upstream?) "
+            "- skipping provisionAccounts")
+    elif not oidc.get("authority"):
+        # OIDC ships READY and OFF: with no client secret kavita-config-init
+        # blanks the authority, and flipping a switch on a disabled provider
+        # would be a CHANGE line with no effect.
+        log("kavita OIDC not configured (empty authority) - leaving "
+            "provisionAccounts alone")
+    elif not oidc.get("provisionAccounts"):
+        oidc["provisionAccounts"] = True
+        wanted.append("OIDC provisionAccounts enabled")
+    else:
+        log("kavita OIDC provisionAccounts already on - no change")
+
+    if wanted:
+        call(f"{KAVITA}/api/Settings", "POST", settings, kv_auth)
+        for msg in wanted:
+            change(f"kavita {msg}")
 except (urllib.error.HTTPError, ValueError) as e:
     # Not worth failing a deploy over: it costs one outbound request a day.
     log(f"WARN: could not adjust kavita settings ({e}) - continuing")
@@ -251,11 +250,10 @@ except urllib.error.HTTPError as e:
 # ===========================================================================
 # Audiobookshelf
 # ===========================================================================
-# GET /status is unauthenticated and reports isInit. The guard is not optional:
-# a second POST /init returns 500, and a MALFORMED /init body kills the server
-# outright — the route calls initializeServer without await and without a
-# catch, so the TypeError becomes an unhandled rejection and the process
-# handler does Logger.fatal + process.exit(1) (annex §3.3).
+# The isInit guard is not optional: a second POST /init returns 500, and a
+# MALFORMED /init body kills the server outright — the route calls
+# initializeServer without await or catch, so the TypeError becomes an
+# unhandled rejection and the process exits.
 try:
     _, status = call(f"{ABS}/status")
 except (urllib.error.HTTPError, urllib.error.URLError) as e:
@@ -305,27 +303,17 @@ if not token:
     sys.exit("books-init: FATAL: audiobookshelf login returned no accessToken")
 abs_auth = {"Authorization": f"Bearer {token}"}
 
-# TWO folders, and the second one is the whole of the audiobook acquisition
-# path (ServerNotes/designs/audiobook-acquisition.md, Option C):
-#   /audiobooks  the curated tree, filled by hand/Samba
-#   /drop        the media stack's hand-off. qBittorrent downloads under its
-#                `audiobooks` category and stacks/media/scan-downloads.sh
-#                moves an entry in here ONLY after a clean ClamAV verdict on
-#                every file in it. Registering it as a library FOLDER rather
-#                than a staging area is deliberate: both mounts are read-only,
-#                so audiobookshelf could not move an item out of a staging
-#                area anyway, and a book that lands here is immediately
-#                playable where it lies. Organising it into /audiobooks later
-#                is optional and happens outside these containers.
+# /audiobooks is the curated tree; /drop is the media stack's hand-off, and
+# registering it as a library FOLDER rather than a staging area is deliberate
+# — both mounts are read-only, so nothing could move an item out of a staging
+# area anyway, and a book that lands there is playable where it lies.
 ABS_FOLDERS = ["/audiobooks", "/drop"]
 
-# Nothing WATCHES the drop directory: disableWatcher is on (below) and the
-# post-download hook that triggers Kavita's and audiobookshelf's scans is
-# shelfmark's, and shelfmark has no part in this path. So the library carries
-# a scan cron instead — hourly, which is the latency between a clean
-# audiobook landing in the drop dir and appearing in the library. A watcher
-# would be immediate but takes one inotify watch per directory across BOTH
-# folders, including the whole curated tree.
+# Nothing watches the drop directory (disableWatcher below, and the
+# post-download hook is shelfmark's), so the library carries a scan cron
+# instead. Hourly is the latency between a clean audiobook landing and it
+# appearing; a watcher would be immediate at one inotify watch per directory
+# across both trees.
 ABS_SCAN_CRON = os.environ.get("ABS_AUTOSCAN_CRON", "0 * * * *")
 
 # POST /api/libraries is NOT idempotent — it happily creates a second library
@@ -334,11 +322,10 @@ _, libs = call(f"{ABS}/api/libraries", "GET", None, abs_auth)
 existing = [lib for lib in (libs or {}).get("libraries", [])
             if lib.get("name") == "Audiobooks"]
 if existing:
-    # The library predates this folder list on any deployment that was seeded
-    # before the drop directory existed, so RECONCILE rather than assume. The
-    # PATCH must carry the folders that already exist WITH their ids —
-    # audiobookshelf treats a folder missing from the payload as a removal,
-    # and removing a folder deletes its library items.
+    # Reconcile: a deployment seeded before the drop directory existed has a
+    # shorter folder list. The PATCH must carry the existing folders WITH
+    # their ids — a folder missing from the payload is a removal, and removing
+    # one deletes its library items.
     lib = existing[0]
     lib_id = lib.get("id")
     have = {f.get("fullPath"): f for f in (lib.get("folders") or [])}
@@ -366,13 +353,8 @@ if existing:
             change(f"audiobookshelf library 'Audiobooks' auto-scan cron set to "
                    f"{ABS_SCAN_CRON!r}")
 else:
-    # fs.ensureDir() runs on every folder here, which makes this the
-    # bind-mount permission canary: a nonexistent path under the read-only
-    # mount comes back as a 400.
-    #
-    # disableWatcher: the recursive watcher takes one inotify watch per
-    # directory across the whole tree; the post-download hook triggers scans
-    # precisely, so the watcher only buys inotify pressure.
+    # fs.ensureDir() runs on every folder, so this is also the bind-mount
+    # permission canary: a nonexistent path under the read-only mount 400s.
     _, created = call(f"{ABS}/api/libraries", "POST", {
         "name": "Audiobooks",
         "mediaType": "book",
@@ -388,10 +370,9 @@ else:
         call(f"{ABS}/api/libraries/{lib_id}/scan", "POST", None, abs_auth)
         change("audiobookshelf initial scan triggered")
 
-# OIDC: configured only when a secret is present. Empty is the shipping state
-# (annex §8.4) — the VPS-side client secret needs the production age key, so
-# until the operator lands it, audiobookshelf runs local-auth-only rather than
-# advertising a login button that cannot work.
+# OIDC is configured only when a secret is present. Empty is the shipping
+# state: until the operator lands the VPS-side secret, audiobookshelf runs
+# local-auth-only rather than advertising a login button that cannot work.
 oidc_secret = os.environ.get("ABS_OIDC_CLIENT_SECRET", "")
 if not oidc_secret:
     log("ABS_OIDC_CLIENT_SECRET empty - leaving audiobookshelf on local auth")
@@ -413,17 +394,15 @@ else:
                                              "audiobookshelf"),
         "authOpenIDClientSecret": oidc_secret,
         "authOpenIDTokenSigningAlgorithm": "RS256",
-        # MUST be sent, and MUST be "": the default is the literal string
-        # `undefined`, and the redirect URI is built by interpolating it — so
-        # omitting this key makes audiobookshelf send Authentik a redirect_uri
-        # of https://host/undefined/auth/openid/callback and every login dies
-        # on a redirect_uri mismatch (annex §3.3). The settings UI hides this
-        # by defaulting the field itself.
+        # MUST be sent and MUST be "": the default is the literal string
+        # `undefined` and the redirect URI interpolates it, so omitting this
+        # sends Authentik https://host/undefined/auth/openid/callback and
+        # every login dies on a redirect_uri mismatch.
         "authOpenIDSubfolderForRedirectURLs": "",
         "authOpenIDMatchExistingBy": "email",
         "authOpenIDAutoRegister": True,
-        # Password login stays the default path: auto-launch would make the
-        # break-glass route (…/login/?autoLaunch=0) the only way to reach it.
+        # Auto-launch would make …/login/?autoLaunch=0 the only way back to
+        # the password login.
         "authOpenIDAutoLaunch": False,
         "authOpenIDButtonText": "Login with Authentik",
         "authOpenIDMobileRedirectURIs": ["audiobookshelf://oauth"],
@@ -440,11 +419,9 @@ else:
         change("audiobookshelf OIDC configured")
     else:
         log("audiobookshelf OIDC already configured - no change")
-    # PATCH returns 200 even for values it rejected (wrong type => Logger.warn
-    # + continue), and a missing required field makes ServerSettings.construct
-    # silently strip 'openid' from the active methods on the NEXT load. So
-    # read it back and say so loudly here rather than discovering it at the
-    # first login attempt.
+    # PATCH returns 200 even for values it rejected, and a missing required
+    # field makes the NEXT load silently strip 'openid' from the active
+    # methods — so read it back rather than discovering that at first login.
     _, readback = call(f"{ABS}/api/auth-settings", "GET", None, abs_auth)
     applied = (readback or {}).get("authOpenIDSubfolderForRedirectURLs")
     if applied != "":

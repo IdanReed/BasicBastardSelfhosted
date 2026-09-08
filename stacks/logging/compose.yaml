@@ -1,204 +1,99 @@
-# Logging — VictoriaLogs + Alloy + Grafana (Monitoring range, 10455 and 10456).
-# Design: ServerNotes/designs/service-monitoring-stack-research.md; the
-# retention arithmetic lives in the victorialogs block below (there is no
-# config file any more — VictoriaLogs is flag-driven) and the journald half of
-# it in nixos/configuration.nix.
+# Logging — VictoriaLogs + Alloy + Grafana (Monitoring range, 10455/10456).
+# Design: ServerNotes/designs/service-monitoring-stack-research.md.
 #
-# WHY THIS EXISTS, when gatus probes every vhost and beszel trends every
-# resource: both of those answer "is it up". Neither can answer "why did it
-# stop", and the fleet's only tool for that today is `docker logs` on a
-# guessed container name — which shows one container, only while it still
-# exists, with no search and no history across a restart. Grafana over
-# VictoriaLogs turns the whole fleet's output into one queryable window.
+# 🚨 JOURNALD, NOT THE DOCKER SOCKET, and that is a hard rule: Alloy's
+# discovery.docker/loki.source.docker path (and every "read-only" socket
+# proxy) needs the root-equivalent docker socket in a networked container.
+# nixos/configuration.nix sets docker's daemon-level log driver to journald
+# with tag={{.Name}} instead, so Alloy reads the host journal through two
+# read-only bind mounts. That switch also needs
+# services.journald.rateLimitBurst = 0 — journald's rate limit drops lines
+# from `docker logs` too. Never move one without the other.
 #
-# 🔄 VICTORIALOGS REPLACED LOKI HERE (2026-09). The reason is the one knob
-# Loki structurally lacks: SIZE-BASED RETENTION. Loki's only retention is
-# time, so the 100 GB budget was a 720h window plus a daily du alarm and a
-# human; VictoriaLogs enforces it natively with
-# -retention.maxDiskSpaceUsageBytes (details in the victorialogs block).
-# The old store at /mnt/slow/loki is ABANDONED — it was reconstructible
-# telemetry, deliberately never backed up, and nothing migrates from it;
-# delete the directory whenever the space is wanted. Alloy stays; only its
-# sink URL changed (see config.alloy).
-#
-# 🚨 JOURNALD, NOT THE DOCKER SOCKET. This is the load-bearing decision of the
-# whole stack and it is Idan's hard rule. The obvious design — Alloy with
-# discovery.docker + loki.source.docker, or a "read-only" socket proxy —
-# requires mounting /var/run/docker.sock into a networked container, and that
-# socket is root on this host. Instead nixos/configuration.nix sets docker's
-# DAEMON-LEVEL log driver to journald with `tag={{.Name}}`, so every container's
-# stdout lands in the host journal, and Alloy reads the journal through two
-# READ-ONLY bind mounts with no privilege whatsoever. See config.alloy.
-#
-#   ⚠ That switch is fleet-wide and it changes `docker logs`, which 131 call
-#   sites in tests/ depend on. It was measured, not assumed: under the journald
-#   driver `docker logs` returns every line, keeps stdout and stderr on
-#   separate streams, and orders `2>&1` byte-identically to json-file. The one
-#   thing that genuinely changes is journald's rate limit, which silently drops
-#   lines from `docker logs` too — hence services.journald.rateLimitBurst = 0
-#   in the SAME commit. Never move one without the other.
-#
-# Three services:
-#
-#   victorialogs  the store. Runs as ROOT (image config User "0"; unlike
-#                 loki's 10001), data on /mnt/slow. NO healthcheck is
-#                 possible — see its block.
-#   alloy         the collector. Runs as ROOT (the image sets no USER), which
-#                 is what lets it read root:systemd-journal 0640 journal
-#                 files. No published port, no socket, no vhost.
-#   grafana       the UI. uid 472, published loopback-only, behind Caddy with
-#                 `import protected`. Needs the victoriametrics-logs-datasource
-#                 plugin, installed by a ONE-TIME operator step — see its block.
-#
-# Everything talks over the compose project's own default bridge network, by
-# SERVICE NAME. Nothing here joins `homelab`: the only cross-container traffic
-# is alloy -> victorialogs and grafana -> victorialogs, and both are inside
-# this project.
+# Uid conventions, all deliberate: victorialogs and alloy run as root (alloy
+# needs it to read root:systemd-journal 0640 journal files), grafana as 472.
+# Everything talks over the project's own bridge network by service name.
 
 services:
-  # ---------------------------------------------------------------------------
-  # VictoriaLogs — the log store
-  # ---------------------------------------------------------------------------
+  # Store
   victorialogs:
     image: victoriametrics/victoria-logs:v1.52.0
     container_name: victorialogs
     restart: unless-stopped
 
-    # ⚠ The tag has a `v` AND no suffix. Older VictoriaLogs tags looked like
-    # `v1.0.0-victorialogs`; the suffix is gone as of the 2026 releases
-    # (v1.52.0 verified to exist on Docker Hub, pushed 2026-07-16 — the
-    # chronologically newer v1.51.1 is a cluster-upgrade backport, not the
-    # latest release). Run ./tests/update-images.sh after any change here.
-
-    # VictoriaLogs has NO config file — every knob is a flag, so the whole
-    # config surface is this list (loki.yaml is gone with Loki). Spelled out
-    # rather than defaulted so the retention contract is visible in one place.
+    # VictoriaLogs has NO config file — every knob is a flag, so this list is
+    # the whole config surface.
     command:
-      # The bind target below. The image default is a RELATIVE
-      # "victoria-logs-data" under WorkingDir "/", which happens to be the
-      # same path — pinned absolutely anyway so the bind mount and the flag
-      # cannot drift apart.
       - -storageDataPath=/victoria-logs-data
 
-      # 🚨 THE 100 GB CAP, NATIVE AT LAST — the headline reason this replaced
-      # Loki. When total disk usage at -storageDataPath exceeds this,
-      # VictoriaLogs drops the OLDEST per-day partitions until it fits.
-      # Honest fine print (upstream-documented): it always keeps at least the
-      # two most recent days, so a burst bigger than 100 GiB in two days
-      # would overshoot the cap rather than drop today's logs — for this
-      # fleet that failure mode is science fiction, but it is why the
-      # du-quota alarm in nixos/configuration.nix survives as a failsafe
-      # (retargeted at this directory) instead of being retired.
-      # Verified against this pinned image: the flag parses and the process
-      # boots with exactly this value; the victorialogs suite asserts it in
-      # the running argv.
+      # THE 100 GB CAP: over this, the oldest per-day partitions are dropped.
+      # It always keeps the two most recent days, so a >100GiB two-day burst
+      # overshoots — which is why the du-quota alarm in
+      # nixos/configuration.nix survives as a failsafe.
       - -retention.maxDiskSpaceUsageBytes=100GiB
 
-      # Time-based retention is SECONDARY now — the disk cap is the budget.
-      # 1y is an honesty bound, not a target: at the ingest rates this fleet
-      # has measured, the 100 GiB cap trims the window long before a year.
-      # Side effect worth knowing: ingested entries with timestamps older
-      # than now-retentionPeriod are REJECTED (this replaces Loki's
-      # reject_old_samples; at 1y it only ever bites a clock catastrophe,
-      # and Alloy's max_age=12h bounds cold-start replay anyway).
+      # Secondary to the disk cap; an honesty bound, not a target. Entries
+      # older than this are REJECTED at ingest (Alloy's max_age=12h bounds
+      # cold-start replay anyway).
       - -retentionPeriod=1y
 
-      # The image default already listens on 9428 on all interfaces of the
-      # container's own network namespace — spelled out so the listener is
-      # visible. Only the compose bridge and the loopback publish below can
-      # reach it.
       - -httpListenAddr=:9428
 
-      # No analytics flag, and none is needed: unlike Loki (reporting to
-      # stats.grafana.org unless disabled) and Grafana (four env vars below),
-      # VictoriaLogs has no usage-reporting to turn off — verified against
-      # the pinned binary's full flag list. It boots and serves fully
-      # offline, which the suites depend on.
-
     volumes:
-      # 🚨 /mnt/slow, not /mnt/fast. Log data is append-mostly and
-      # query-rarely, which is exactly what _overview.md's hardware section
-      # says belongs on the 80 TB HDD tier; 100 GB of it is 0.125% of that
-      # volume, against ~1.25% of the SSD. Everything lives under this ONE
-      # directory (per-day partitions carry their own indexes — there is no
-      # separate index tier to place): one directory is one thing to reason
-      # about for the retention cap, for the disk alarm and for
-      # `NOT_BACKED_UP`. Owner is root:root — the image runs as uid 0
-      # (config User "0", read from the pinned image), NOT loki's 10001;
-      # nixos/generate-stack-dirs.py carries the note.
+      # /mnt/slow, not /mnt/fast: append-mostly, query-rarely. One directory
+      # holds everything (per-day partitions carry their own indexes), which
+      # is what the retention cap, the disk alarm and NOT_BACKED_UP key on.
       - /mnt/slow/victorialogs:/victoria-logs-data
 
     ports:
-      # Loopback only. Nothing routes to it through Caddy — Grafana is the UI
-      # and Alloy pushes over the compose network — so this publish exists
-      # for the host-side consumers: gatus's /health probe (the container
-      # cannot carry a healthcheck, below, so without this publish its
-      # liveness would be observed by nothing), the query API for an ingest
-      # probe (`/select/logsql/query` answers plain GETs — something Loki
-      # never offered gatus), and vmui at /select/vmui/ for debugging when
-      # Grafana itself is the broken thing. The `caddy-routes` lint prints a
-      # NOTE about the unrouted publish; that NOTE is correct and this
-      # comment is the answer to it. Same port Loki held — same role.
+      # Loopback only, and unrouted by Caddy on purpose — Grafana and Alloy
+      # reach it over the compose network. This publish is for the host-side
+      # consumers: gatus's /health probe (the only liveness signal, since the
+      # container can carry no healthcheck), the query API for the ingest
+      # probe, and vmui when Grafana itself is the broken thing.
+      #
+      # 🚨 UNAUTHENTICATED, AND NOT ONLY TO THE LISTED CONSUMERS. VictoriaLogs
+      # has no auth; this publish exposes /select/* (query) AND /insert/*
+      # (write) to EVERY local uid on this host — including the Forgejo
+      # runner's DynamicUser, which runs workflow code and cannot read
+      # /var/log/journal (0640 root:systemd-journal). ACCEPTED, carried over
+      # from code-review-2026-08-31 #11, whose marker lived in the deleted
+      # loki.yaml: the same data is already on this host in the journal, and
+      # dropping the publish costs gatus its liveness and ingest probes.
+      # WIDER than Loki was: /insert/* means a local uid can also poison the
+      # store, which is now where fail2ban and Authentik login_failed
+      # forensics land. arch-security AS-9.
       - "127.0.0.1:10456:9428"
 
-    # NO healthcheck stanza, and none is possible: the image is DISTROLESS
-    # (v1.52.0 switched from Alpine precisely to shed the shell) — one static
-    # binary at /victoria-logs-prod, no sh, no wget, no curl (verified:
-    # `docker exec ... sh` fails with "executable file not found"). This is
-    # the loki/gatus/karakeep-chrome situation and it gets the same
-    # treatment: declare nothing rather than something that lies, and NEVER
-    # make anything `depends_on: {condition: service_healthy}` against it —
-    # compose errors outright (finding #42). GET /health (a literal "OK",
-    # 200) is the probe, asserted by gatus and the victorialogs suite, not
-    # by Docker.
-    #
-    # For sizing expectations: measured cold start to HTTP 200 on /health
-    # with an empty data dir was under 3 s — a single binary opening an
-    # empty directory, nothing like Loki's 17 s ring-and-WAL dance.
+    # NO healthcheck stanza, and none is possible: the image is DISTROLESS —
+    # one static binary, no shell. So nothing may ever `depends_on:
+    # {condition: service_healthy}` against it; compose errors outright.
+    # GET /health is the probe, run by gatus and the victorialogs suite.
 
-  # ---------------------------------------------------------------------------
-  # Alloy — the collector
-  # ---------------------------------------------------------------------------
+  # Collector
   alloy:
     image: grafana/alloy:v1.19.2
     container_name: alloy
     restart: unless-stopped
 
-    # ⚠ Note the `v`. grafana/alloy tags carry one and grafana/grafana does
-    # not — two images from the same vendor, two conventions (victorialogs
-    # above also carries one). Run ./tests/update-images.sh after any change
-    # here; the image-pins lint is what stops a tag that does not exist from
-    # shipping.
-
-    # No `user:` — and that is deliberate, not an omission. The image sets no
-    # USER, so this runs as uid 0, which is what makes the journal readable:
-    # journal files are root:systemd-journal 0640 and the directories are
-    # 2755, so a reader is either root (owner-read) or in gid 62. Adding
-    # `user:` here without also granting group 62 turns this container into a
-    # healthy process that collects nothing.
+    # No `user:` — deliberate. The image sets no USER, so this runs as uid 0,
+    # which is what makes the journal readable (root:systemd-journal 0640).
+    # A `user:` without gid 62 gives a healthy container that collects nothing.
     volumes:
       - ./config.alloy:/etc/alloy/config.alloy:ro
-      # 🚨 THE TWO READ-ONLY MOUNTS THAT REPLACE THE DOCKER SOCKET.
-      #   /var/log/journal  the persistent journal (services.journald.storage
-      #                     is pinned to "persistent" for this reason).
-      #   /etc/machine-id   the host's id, so the reader can find the
-      #                     per-machine journal directory by name.
-      # Together with config.alloy's `path = "/var/log/journal"` these are
-      # belt AND braces: measured, EITHER the path or the machine-id mount is
-      # enough on its own, and losing BOTH gives a healthy container that
-      # forwards zero entries forever. The matrix is in config.alloy.
-      # /run/log/journal is deliberately absent — see config.alloy.
+      # THE TWO READ-ONLY MOUNTS THAT REPLACE THE DOCKER SOCKET: the
+      # persistent journal, and the host's machine-id so the reader can find
+      # the per-machine journal directory. Either alone is sufficient
+      # (measured); losing BOTH gives a healthy container forwarding zero
+      # entries forever, so both are configured. See config.alloy.
       - /var/log/journal:/var/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
-      # Positions file + the write-ahead log that survives a VictoriaLogs
-      # restart.
+      # Positions file + the WAL that survives a VictoriaLogs restart.
       - /mnt/fast/alloy:/var/lib/alloy/data
 
-    # Spelled out rather than inherited from the image's CMD so the listen
-    # address is visible: Alloy's UI/metrics server is bound to the
-    # container's own loopback and is NOT published, has no Caddy route and no
-    # Authentik application. It would otherwise be a second, unauthenticated
-    # window onto the same data Grafana guards.
+    # Spelled out so the listen address is visible: Alloy's UI/metrics server
+    # is container-loopback only, unpublished and unrouted — it would
+    # otherwise be a second unauthenticated window onto Grafana's data.
     command:
       - run
       - /etc/alloy/config.alloy
@@ -206,23 +101,13 @@ services:
       - --server.http.listen-addr=127.0.0.1:12345
 
     healthcheck:
-      # The image has bash but NO curl, wget or nc (verified by exporting its
-      # filesystem), so this speaks HTTP over bash's /dev/tcp. Measured
-      # working inside the pinned image — /-/ready answers "HTTP/1.1 200 OK".
+      # The image has bash but no curl, wget or nc, so this speaks HTTP over
+      # bash's /dev/tcp.
       #
-      # ⚠ What it proves: the config parsed and the HTTP server is serving.
-      # What it does NOT prove — and this is the failure mode that matters —
-      # is that a single journal entry has been read or shipped. A wrong
-      # `path`, a lost bind mount or a `user:` added to this service all leave
-      # this container green and forwarding nothing.
-      #
-      # The victorialogs suite now covers that gap (it was uncovered in the
-      # Loki era, stated loudly here): a container writes a marker line and
-      # the suite polls VictoriaLogs' query API until it arrives — the whole
-      # journald -> alloy -> store chain, or a red build. In production the
-      # same check is the recommended gatus ingest probe against
-      # /select/logsql/query; Alloy's loki_source_journal_target_lines_total
-      # metric (loopback:12345, unpublished) is the manual cross-check.
+      # ⚠ It proves the config parsed and the server is serving — NOT that a
+      # single journal entry was read. A wrong `path`, a lost bind mount or an
+      # added `user:` all leave this green and forwarding nothing; the
+      # victorialogs suite and the gatus ingest probe cover that gap.
       test:
         - CMD
         - bash
@@ -234,14 +119,10 @@ services:
       start_period: 30s
 
     depends_on:
-      # Ordering only, NOT service_healthy — VictoriaLogs has no healthcheck
-      # and naming it in a health condition is a hard compose error. Alloy
-      # tolerates an absent store anyway: its WAL buffers and it retries.
+      # Ordering only, never service_healthy — see the victorialogs block.
       - victorialogs
 
-  # ---------------------------------------------------------------------------
-  # Grafana — the UI
-  # ---------------------------------------------------------------------------
+  # UI
   grafana:
     image: grafana/grafana:13.2.0
     container_name: grafana
@@ -254,35 +135,20 @@ services:
 
     volumes:
       - /mnt/fast/grafana:/var/lib/grafana
-      # Provisioned datasource — the VictoriaLogs connection exists before
-      # anyone logs in, and re-asserts itself on every deploy. Zero-UI
-      # deployment is a stated principle of this fleet (_overview.md), and a
-      # hand-clicked datasource lives only in grafana.db, i.e. only in the
-      # backup.
-      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/victorialogs.yaml:ro
-
-      # Provisioned dashboards, same argument as the datasource above: a
-      # dashboard built by clicking lives only in grafana.db, and the day you
-      # discover the nightly sqlite dump was the only copy is a bad day. The
-      # provider config points at the directory; the directory is the mount
-      # below. Both read-only — Grafana never writes back (allowUiUpdates is
-      # false), so a bind that let it try would only produce confusing errors.
+      # Provisioned, not hand-clicked: a datasource or dashboard built in the
+      # UI lives only in grafana.db, i.e. only in the backup. Read-only
+      # because allowUiUpdates is false and Grafana never writes back.
       #
-      # ⚠ These must be WORLD-READABLE on the host: grafana runs as uid 472
-      # in-container and reads them through the bind. That happened (finding
-      # #79) — stack-git-sync's umask-077 checkout + rsync -p delivered them
-      # 0600 uid-1000, the datasource provisioner EACCES'd, and Grafana
-      # treats that as FATAL: a ~11 s crash loop behind Caddy's 502 for the
-      # stack's whole lifetime. The sync unit now normalises delivery to
-      # 0644/0755 (.sops.env excepted); if provisioning ever EACCES-es
-      # again, that normalisation is the first place to look, and it hits
-      # all three of these mounts at once, not just the new ones.
+      # ⚠ All three must be WORLD-READABLE on the host — grafana is uid 472
+      # in-container. A 0600 uid-1000 delivery EACCESes the provisioner,
+      # which Grafana treats as FATAL (an ~11s crash loop behind a 502).
+      # stack-git-sync normalises delivery to 0644/0755; look there first.
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/victorialogs.yaml:ro
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/fleet.yaml:ro
       - ./dashboards:/etc/grafana/dashboards:ro
 
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first decrypt (the .env not yet written), and the plain form
-    # aborts the whole stack.
+    # Long form: a deploy can race the first decrypt, and the plain form
+    # aborts the whole stack when .env is absent.
     env_file:
       - path: .env
         required: false
@@ -290,51 +156,46 @@ services:
     environment:
       - TZ=America/Chicago
 
-      # Grafana builds every absolute link (OAuth redirects, share URLs, alert
-      # links) from this. Without it they point at localhost:3000.
+      # Every absolute link (OAuth redirects, share URLs, alerts) is built
+      # from this; without it they point at localhost:3000.
       - GF_SERVER_ROOT_URL=https://grafana.svc.idanreed.com
 
-      # 🚨 NO SIGN-UP, NO ANONYMOUS ACCESS. Forward auth is the outer gate but
-      # Grafana's own login is the inner one, and its defaults are permissive
-      # enough to matter if the outer gate is ever misconfigured.
+      # Grafana's own login is the inner gate behind forward auth, and its
+      # defaults are permissive.
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
 
-      # 🚨 EGRESS OFF. Grafana phones home on a timer by default: usage
-      # analytics, a version check against grafana.com, and a plugin-update
-      # check, plus a news feed fetched when the home dashboard renders. The
-      # test VMs run fully offline and this host has no reason to dial out;
-      # each of these is a slow spinner or a stalled panel when it cannot.
-      # This is also why the datasource plugin is NOT installed via
-      # GF_INSTALL_PLUGINS, which downloads on every container create — see
-      # the plugin note below.
+      # EGRESS OFF: analytics, version check, plugin-update check and the
+      # news feed all phone home by default, and each is a stalled panel on
+      # an offline host.
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
       - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
       - GF_NEWS_NEWS_FEED_ENABLED=false
 
-      # ⚠ Grafana Live (websockets at /api/live/ws) is the one feature forward
-      # auth will interfere with; the outpost answers the upgrade request with
-      # a 302 and the socket never establishes. Nothing here needs it —
-      # streaming panels are a real-time-dashboard feature and this is a log
-      # search UI — so it is turned OFF explicitly rather than left to fail
-      # confusingly. Turning it back on means carving /api/live/* out in
-      # Authentik, not just flipping this.
+      # Grafana Live (websockets at /api/live/ws) is the one feature forward
+      # auth breaks — the outpost 302s the upgrade. Nothing here needs it.
+      # Turning it back on means an Authentik carve-out for /api/live/*.
       - GF_LIVE_MAX_CONNECTIONS=0
 
-      # GF_SECURITY_ADMIN_USER and GF_SECURITY_ADMIN_PASSWORD come from .env
-      # (see .sops.env.example). They are read ONLY on first start, when
-      # grafana.db is created; changing them later needs `grafana-cli admin
-      # reset-admin-password` or a wiped database.
+      # GF_SECURITY_ADMIN_USER/PASSWORD come from .env. Read ONLY on first
+      # start; changing them later needs `grafana-cli admin
+      # reset-admin-password` or a wiped grafana.db.
 
-    # 🚨 THE DATASOURCE PLUGIN IS A ONE-TIME OPERATOR STEP, NOT PART OF THE
-    # DEPLOY. VictoriaLogs has NO Loki-compatible QUERY API (its ingestion
-    # speaks Loki's push protocol; its query side is LogsQL only — verified
-    # against the v1.52 docs), so a stock Grafana cannot query it: the
-    # victoriametrics-logs-datasource plugin is required. Every hands-off
-    # install path downloads at container create (GF_INSTALL_PLUGINS and
-    # its preinstall successor both), which the offline test VMs and this
-    # fleet's no-runtime-downloads rule forbid. So, ONCE, on the host:
+    # 🚨 THE DATASOURCE PLUGIN IS STILL A ONE-TIME OPERATOR STEP, and this pin
+    # is why. VictoriaLogs has no Loki-compatible QUERY api, so a stock
+    # Grafana cannot query it; until the plugin lands Grafana is HEALTHY BUT
+    # CANNOT QUERY, with vmui at http://127.0.0.1:10456/select/vmui/ as the
+    # stopgap.
+    #
+    # THE FIX IS BUILT AND WAITING: ./Dockerfile bakes the plugin in the way
+    # stacks/caddy does, and .github/workflows/build-grafana-vlogs.yml
+    # publishes ghcr.io/idanreed/grafana-vlogs:<grafana>-vl<plugin>. Moving
+    # this `image:` to that tag deletes the step — deliberately NOT done here,
+    # because the tag does not exist until the workflow has run once (see
+    # docs/decisions.md).
+    #
+    # Interim, once, on the host:
     #
     #   curl -fL -o /tmp/vl-ds.zip \
     #     https://grafana.com/api/plugins/victoriametrics-logs-datasource/versions/0.31.0/download
@@ -343,32 +204,16 @@ services:
     #   chmod +x /mnt/fast/grafana/plugins/victoriametrics-logs-datasource/victoriametrics_logs_backend_plugin_*
     #   docker restart grafana
     #
-    # Grafana's default plugin dir is /var/lib/grafana/plugins — INSIDE the
-    # bind above — so the plugin survives every redeploy with no compose
-    # change. The catalog zip is SIGNED (no allow_loading_unsigned_plugins
-    # needed) and the chmod is load-bearing: an extractor that drops
-    # permission bits leaves the backend binary non-executable, and Grafana
-    # logs "Could not start plugin backend" while reporting itself healthy.
-    # All of this measured against grafana:13.2.0 + plugin v0.31.0 + the
-    # pinned VictoriaLogs: datasource health answers "Data source is
-    # working".
-    #
-    # Until that step runs, Grafana is HEALTHY BUT CANNOT QUERY — the
-    # provisioned datasource sits unusable ("plugin not found" in the UI;
-    # measured: startup, provisioning and /api/health are all unaffected,
-    # which is what keeps the offline suites green with no plugin). The
-    # stopgap log UI is vmui on the store's own loopback publish,
-    # http://127.0.0.1:10456/select/vmui/ — debug-only, no vhost, by design.
+    # The plugin dir is inside the bind above, so it survives redeploys. The
+    # chmod is load-bearing (`grafana cli` in the Dockerfile does it for you):
+    # a non-executable backend binary logs "Could not start plugin backend"
+    # while Grafana still reports itself healthy.
 
     healthcheck:
-      # -O /dev/null, NOT --spider: --spider issues a HEAD, and a route
-      # registered GET-only answers 405, which leaves the container
-      # permanently unhealthy while the app is fine.
-      #
-      # /api/health is honest here in a way most images' are not — it returns
-      # {"database":"ok",...} and the `ok` is a real query against grafana.db,
-      # so this catches an unwritable /mnt/fast/grafana rather than just
-      # proving a socket is open. Measured cold start to healthy: 17 s.
+      # -O /dev/null, NOT --spider: --spider issues a HEAD and a GET-only
+      # route answers 405, leaving the container unhealthy while it is fine.
+      # /api/health really queries grafana.db, so this catches an unwritable
+      # /mnt/fast/grafana rather than just an open socket.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:3000/api/health']
       interval: 30s
       timeout: 10s
@@ -376,7 +221,5 @@ services:
       start_period: 60s
 
     depends_on:
-      # Ordering only; Grafana starts fine against an absent datasource and
-      # the panel simply errors. VictoriaLogs has no healthcheck to condition
-      # on.
+      # Ordering only; a panel against an absent datasource just errors.
       - victorialogs

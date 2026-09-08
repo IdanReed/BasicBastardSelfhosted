@@ -1,20 +1,13 @@
 #!/bin/sh
-# Headless first-run for OnlyOffice DocSpace (annex §5).
+# Headless first-run for OnlyOffice DocSpace (annex §5): drives
+# PUT /api/2.0/settings/wizard/complete.
 #
-# DocSpace ships a browser setup wizard, and behind it a real API:
-#     PUT /api/2.0/settings/wizard/complete
-# guarded by [Authorize(AuthenticationSchemes = "confirm", Roles = "Wizard")].
+# Both things a script would normally lack are handed out by the UNAUTHENTICATED
+# GET /api/2.0/settings, because the wizard page needs them before any account
+# exists: `wizardToken` (populated only while the wizard is incomplete — which
+# is what makes this idempotent for free) and the PBKDF2 `passwordHash` params.
 #
-# The two things that would normally make that unusable from a script are both
-# handed out by the UNAUTHENTICATED `GET /api/2.0/settings`, because the wizard
-# page needs them before any account exists:
-#   - wizardToken   — populated ONLY while WizardSettings.Completed is false
-#   - passwordHash  — the PBKDF2 {size, iterations, salt} the client must use
-#
-# That first one makes this idempotent for free: no token means the wizard is
-# already done, so the script logs no change and exits 0.
-#
-# Every mutation logs "docspace-init: CHANGE: ...". A second run — and every
+# Every mutation logs "docspace-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must log ZERO change lines.
 set -eu
 
@@ -43,8 +36,8 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly. An unset value means the .env did not decrypt, and an
-        # unfinished wizard is reachable by anyone who can reach the port.
+        # An unset value means the .env did not decrypt, and an unfinished
+        # wizard is reachable by anyone who can reach the port.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -87,25 +80,16 @@ data = resp if isinstance(resp, dict) else settings
 
 token = (data or {}).get("wizardToken")
 if not token:
-    # The token exists only while the wizard is incomplete, so its absence is
-    # the idempotency signal — not an error.
+    # Absence is the idempotency signal, not an error.
     log("wizard already completed - no change")
     log("done")
     sys.exit(0)
 
-# ---------------------------------------------------------------------------
-# The password hash
-# ---------------------------------------------------------------------------
-# PBKDF2, HMAC-SHA256, with the salt taken as the UTF-8 BYTES OF THE SALT
-# STRING (not hex-decoded), and the output as lowercase hex of Size/8 bytes.
-#
-# ⚠ READ `iterations` FROM THE RESPONSE; never hardcode it. Upstream's
-# PasswordHasher reads the iteration count with a DOTTED configuration key
-# ("core.password.iterations") while its neighbours use colons — ASP.NET keys
-# are colon-delimited, so that key can never resolve and the value is always
-# the 100000 fallback. Harmless today, but a future upstream fix would change
-# it, and a hardcoded 100000 would then silently produce a hash that no longer
-# matches.
+# Password hash
+# PBKDF2-HMAC-SHA256, salt taken as the UTF-8 BYTES of the salt string (not
+# hex-decoded), output as lowercase hex of size/8 bytes. `iterations` is read
+# from the response and never hardcoded: upstream's config key is misspelled so
+# the value is always the fallback today, but a fix upstream would change it.
 ph = (data or {}).get("passwordHash") or {}
 try:
     salt = ph["salt"]
@@ -114,10 +98,9 @@ try:
 except (KeyError, TypeError, ValueError):
     fatal(f"settings did not carry usable passwordHash parameters: {ph!r}")
 
-# ⚠ If core:password:salt is unset, the salt is DERIVED FROM THE MACHINE KEY.
-# So the stored hash is bound to APP_CORE_MACHINEKEY: change that and every
-# password stops matching. This is why the machine key must come from sops
-# rather than being auto-generated into the data volume.
+# ⚠ With core:password:salt unset the salt is DERIVED FROM THE MACHINE KEY, so
+# the stored hash is bound to APP_CORE_MACHINEKEY — which is why that must come
+# from sops rather than being auto-generated into the data volume.
 digest = hashlib.pbkdf2_hmac(
     "sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations, size // 8
 )

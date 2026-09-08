@@ -1,49 +1,28 @@
 #!/bin/sh
-# scan-downloads.sh — ClamAV poll-watcher for the downloads tree (annex §5).
+# scan-downloads.sh — ClamAV poll-watcher for the downloads tree. Runs in a
+# second container from the same clamav image, talking to clamd over TCP; both
+# see targets at /data/downloads so path-based scan requests resolve.
 #
-# Second container from the SAME pinned clamav/clamav image (clamdscan
-# present, no apk at boot — finding #4), talking to clamd in the `clamav`
-# service over TCP. Both containers see targets at /data/downloads, so
-# path-based scan requests resolve on clamd's side.
+# Every $SCAN_INTERVAL_SECONDS: scan files modified since the last pass;
+# infected files are quarantined and ntfy'd, clean ones left alone. The
+# `audiobooks` category is handled as whole entries instead — one verdict per
+# torrent, and a clean one is moved into the books stack's drop directory.
 #
-# Behaviour:
-#   - every $SCAN_INTERVAL_SECONDS: scan files modified since the last pass
-#     (first pass scans everything);
-#   - infected  -> QUARANTINE BY INODE (see below) + ntfy POST. The arr
-#     import then fails and Cleanuparr removes + blocklists the release —
-#     the ClamAV->Cleanuparr interplay is deliberately indirect;
-#   - clean     -> untouched (the media suite asserts both directions, EICAR
-#     as the trigger);
-#   - the `audiobooks` category is handled as WHOLE ENTRIES, one verdict per
-#     torrent; a clean entry is MOVED into the books stack's drop directory
-#     (see "Audiobook promotion" below).
+# QUARANTINE IS AN INODE OPERATION, NOT A RENAME. /mnt/slow is one filesystem,
+# so *arr imports are hardlinks and a bare `mv` into .quarantine leaves the
+# inode reachable through /data/media. Nothing sequences import against scan,
+# so that window happens in ordinary operation: the original is renamed into
+# .quarantine as evidence and every OTHER link to that inode is unlinked.
 #
-# QUARANTINE IS AN INODE OPERATION, NOT A RENAME  🚨
-# --------------------------------------------------
-# /mnt/slow is ONE filesystem (hardlink imports), so a bare `mv` into
-# .quarantine moves a directory ENTRY and leaves the inode: any hardlink an
-# *arr already made into /data/media still pointed at the infected content
-# while the scanner logged INFECTED. Nothing sequences import vs. scan (arrs
-# import on qBittorrent's completion signal, this loop polls every 60s), so
-# that window is reachable in ordinary operation.
-# So: after the original is renamed into .quarantine (keeps the sample as
-# evidence), every OTHER path sharing that inode under /data is unlinked and
-# logged. The quarantined copy survives by construction — the only link the
-# walk skips.
-#
-# Poll (find -newer) rather than inotify on purpose: simplest, test-friendly,
-# immune to watch-descriptor exhaustion. Filenames with newlines are not
-# handled (find|read) — torrents do not produce them in practice.
+# Poll rather than inotify: simpler and immune to watch exhaustion. Filenames
+# containing newlines are not handled.
 set -u
 
-# Whole /data, not just downloads: unlinking an infected inode's other links
-# means reaching /data/media. clamd's own mount stays narrower and read-only.
+# Whole /data, not just downloads: the other links live in /data/media.
 DATA=/data
 DOWNLOADS="$DATA/downloads"
 QUARANTINE="$DOWNLOADS/.quarantine"
 AUDIOBOOKS="$DOWNLOADS/audiobooks"
-# Clean-audiobook destination: the books stack's drop dir — the ONLY thing
-# the two stacks share (no network path, no download tree mounted there).
 DROP="${AUDIOBOOK_DROP_DIR:-/drop}"
 MARKER=/state/last-scan
 SIZES=/state/audiobook-sizes
@@ -68,10 +47,8 @@ scan_one() {
 # Quarantine ONE file, inode-effectively. See the header.
 quarantine_file() {
   qf=$1
-  # Read the inode BEFORE the move: today `mv` is a rename (same tree) and
-  # the inode survives, but on another filesystem it silently becomes
-  # copy+unlink and $qdest carries a NEW inode — a post-mv stat would hunt
-  # an inode nothing infected has left. Reading first is correct either way.
+  # Inode BEFORE the move: across filesystems `mv` becomes copy+unlink and
+  # $qdest would carry a new inode.
   qino=$(stat -c %i "$qf" 2>/dev/null || echo "")
   qlinks=$(stat -c %h "$qf" 2>/dev/null || echo "")
 
@@ -87,16 +64,12 @@ quarantine_file() {
     echo "scan: ERROR: could not read the inode of $qf — other hardlinks (if any) NOT purged" >&2
     return 0
   fi
-  # One link: the move WAS the whole quarantine (the common case) — skip the
-  # tree walk.
+  # One link: the move was the whole quarantine — skip the tree walk.
   [ "${qlinks:-1}" -gt 1 ] 2>/dev/null || return 0
 
-  # -xdev: hardlinks cannot cross filesystems. The prune on the quarantine
-  # dir is what makes the evidence copy the SURVIVING link.
-  # Status checked and stderr NOT suppressed, both on purpose: a find that
-  # cannot run this expression (busybox without -inum, unreadable subtree)
-  # prints nothing and unlinks nothing — indistinguishable from "no other
-  # links", a silent failure.
+  # -xdev: hardlinks cannot cross filesystems; the prune is what keeps the
+  # evidence copy. Status checked and stderr NOT suppressed: a find that
+  # cannot run this expression looks exactly like "no other links".
   if ! others=$(find "$DATA" -xdev -path "$QUARANTINE" -prune -o \
     -type f -inum "$qino" -print); then
     echo "scan: ERROR: hardlink walk for inode $qino failed — INFECTED CONTENT MAY STILL BE REACHABLE" >&2
@@ -119,27 +92,29 @@ quarantine_file() {
 }
 
 # ---------------------------------------------------------------------------
-# Audiobook promotion (Option C — ServerNotes/designs/audiobook-acquisition.md)
+# Audiobook promotion (ServerNotes/designs/audiobook-acquisition.md)
 # ---------------------------------------------------------------------------
-# The `audiobooks` category is the one thing NOT imported by an *arr, so
-# this loop is also its importer. Rules:
-#   - WHOLE ENTRIES, one verdict per torrent. downloads/audiobooks is pruned
-#     from the per-file pass above; otherwise a per-file quarantine could
-#     strip the infected track and leave the rest looking clean to promote.
-#   - Move ONLY after a clean verdict on every file (the mover IS the scan
-#     loop, so ordering needs no arranging).
-#   - Two-pass size stability before scanning: qBittorrent may still be
-#     writing; a half-written entry would waste a pass or promote a partial
-#     book. `du -s` vs the previous pass is portable (busybox), no clock
-#     arithmetic.
-#   - Cost, accepted: the entry LEAVES the download tree, so seeding stops.
-#     Nothing hardlink-imports audiobooks, so no library link to keep alive.
+# No *arr imports this category, so this loop is also its importer. WHOLE
+# ENTRIES, one verdict per torrent — a per-file quarantine could strip the
+# infected track and leave the rest looking promotable. An entry must settle
+# (identical `du -s` on two passes) before it is scanned, because qBittorrent
+# may still be writing. Accepted cost: a promoted entry leaves the download
+# tree, so seeding stops.
 promote_audiobooks() {
   [ -d "$AUDIOBOOKS" ] || return 0
   if [ ! -d "$DROP" ]; then
     echo "scan: WARN: drop dir $DROP is missing — audiobook promotion skipped" >&2
     return 0
   fi
+  # Settle records are keyed on the basename, so one left behind by an entry
+  # that vanished without a verdict (deleted in qbit, moved by hand) would let
+  # a LATER torrent of the same name look settled on its first pass and be
+  # scanned mid-download. Sweep first.
+  for stale in "$SIZES"/*; do
+    [ -e "$stale" ] || continue
+    [ -e "$AUDIOBOOKS/$(basename "$stale")" ] || rm -f "$stale"
+  done
+
   for entry in "$AUDIOBOOKS"/*; do
     [ -e "$entry" ] || continue          # no glob match
     name=$(basename "$entry")
@@ -156,8 +131,7 @@ promote_audiobooks() {
     fi
 
     # --- verdict for the WHOLE entry --------------------------------------
-    # A pipeline's `while` runs in a subshell, so the verdict travels through
-    # a file rather than a variable.
+    # Pipeline `while` = subshell, so the verdict travels through a file.
     vf="/tmp/audiobook-verdict.$$"
     : > "$vf"
     find "$entry" -type f -print | while IFS= read -r f; do
@@ -189,8 +163,7 @@ promote_audiobooks() {
     else
       dest="$DROP/$name"
       [ -e "$dest" ] && dest="$DROP/$name.$(date +%s)"
-      # Same filesystem => rename: the entry appears in the drop dir
-      # complete or not at all. Ownership rides the inode (1000:1000).
+      # Same filesystem => rename: the entry appears complete or not at all.
       if mv -f "$entry" "$dest"; then
         echo "scan: PROMOTED clean audiobook '$name' -> $dest"
         notify "Audiobook passed the ClamAV scan and is in the drop dir: $name"
@@ -210,37 +183,30 @@ done
 echo "scan: clamd up; polling $DOWNLOADS every ${INTERVAL}s"
 
 while :; do
-  # Timestamp BEFORE scanning, so files modified mid-pass are re-scanned next
-  # pass. Back-dated 2s: `find -newer` is a STRICT '>' at 1s mtime
-  # resolution, so a file whose mtime lands in the SAME wall-clock second as
-  # an un-back-dated marker is `-newer` on NO later pass — scanned NEVER, a
-  # silent permanent AV gap. (An *arr hardlink import finishing as a pass
-  # starts hits exactly this; the media suite's hardlink-race subtest
-  # reproduces it.) The 2s overlap re-scans at most the tail of the previous
-  # window — cheap and idempotent.
+  # Timestamp BEFORE scanning, so files modified mid-pass are re-scanned.
+  # Back-dated 2s because `find -newer` is a strict '>' at 1s resolution: a
+  # file whose mtime lands in the marker's own second would never be scanned.
   touch -d "@$(( $(date +%s) - 2 ))" /tmp/scan-pass
 
-  # A marker with a FUTURE mtime (clock step, restored /state) makes `-newer`
-  # exclude every file forever while the loop keeps running — completely
-  # silent, the worst property a scanner can have. Notice it and start over.
-  # (`find -newer` rather than `test -nt`: -nt is not POSIX test.)
+  # A future-dated marker (clock step, restored /state) would make `-newer`
+  # exclude every file forever, silently. Notice it and start over.
   if [ -f "$MARKER" ] && [ -n "$(find "$MARKER" -newer /tmp/scan-pass)" ]; then
     echo "scan: WARN: $MARKER is dated in the future (clock step?) — discarding it and rescanning everything" >&2
     rm -f "$MARKER"
   fi
 
-  # Errors travel through a file (pipeline `while` = subshell, as in
-  # promote_audiobooks); the marker decision at the bottom needs them.
+  # Errors travel through a file (subshell again); the marker needs them.
   ef="/tmp/scan-errors.$$"
   : > "$ef"
 
-  # downloads/audiobooks is pruned here and handled entry-at-a-time by
-  # promote_audiobooks (see its header).
+  # downloads/audiobooks is pruned here; promote_audiobooks handles it.
+  # .incomplete is deliberately NOT pruned: qBittorrent RENAMES a finished
+  # file out of it, and a rename keeps the mtime — so a file scanned only at
+  # its final path could be older than the marker and never scanned at all.
+  # Scanning in .incomplete is what closes that hole.
   #
-  # Collected into a variable (pipeline `while` = subshell) so the pass can
-  # SAY how many candidates it found — a scanner that finds nothing and one
-  # whose loop has died look identical in the logs otherwise. Prints only
-  # when there is something to scan, so a quiet tree stays quiet.
+  # Collected into a variable so the pass can say how many candidates it
+  # found — otherwise a dead loop and a quiet tree look identical.
   if [ -f "$MARKER" ]; then
     candidates=$(find "$DOWNLOADS" \( -path "$QUARANTINE" -o -path "$AUDIOBOOKS" \) -prune \
       -o -type f -newer "$MARKER" -print)
@@ -258,9 +224,7 @@ while :; do
       if [ "$rc" = 1 ]; then
         quarantine_file "$f"
       elif [ "$rc" != 0 ]; then
-        # 2 = scan error (unreadable, clamd hiccup): log, record, keep going;
-        # the marker advances only on an error-free pass, keeping this file
-        # eligible next pass.
+        # 2 = scan error: record it, so the marker does not advance.
         echo E >> "$ef"
         echo "scan: ERROR: clamdscan rc=$rc on $f" >&2
       fi
@@ -269,10 +233,8 @@ while :; do
 
   promote_audiobooks
 
-  # Advance the marker ONLY on an error-free pass. A settled file that hit a
-  # clamd hiccup has an mtime before the pass start, so advancing anyway
-  # would -newer-exclude it on every later pass — a permanently unscanned
-  # file, silently. Keeping the old marker re-covers the window next pass.
+  # Advance the marker ONLY on an error-free pass: a file that hit a clamd
+  # hiccup would otherwise be -newer-excluded from every later pass.
   if [ -s "$ef" ]; then
     echo "scan: WARN: pass had scan errors — not advancing the marker, so the window is re-scanned next pass" >&2
     rm -f /tmp/scan-pass

@@ -1,48 +1,33 @@
 # Automation — Home Assistant + Mosquitto + Frigate (Automation range, ports
 # 10250-10252). Design:
-# ServerNotes/designs/service-automation-stack-research.md (the annex; it
-# corrects service-ha-frigate-stack.md in 18 places — read its §0 before
-# changing anything here). _overview.md owns the port/auth rows.
+# ServerNotes/designs/service-automation-stack-research.md (the annex, which
+# corrects service-ha-frigate-stack.md); _overview.md owns the port/auth rows.
 #
-# Shape (annex §2):
 #   - BRIDGE networking with loopback-only publishes, NOT the design doc's
-#     `network_mode: host`. Not style: `loopback-binding` and mk-stack-suite's
-#     port probe are built from `ports:` entries, so a host-networked service
-#     PASSES them with an empty set, and `trustedInterfaces = ["tailscale0"]`
-#     means no firewall backstop. For Frigate that would put port 5000 — an
-#     unauthenticated forced-ADMIN bypass, see its block — on every tailnet
-#     peer, invisible to the lint that exists to stop exactly that.
-#   - The subnet is PINNED below: Home Assistant must trust the bridge
-#     gateway by address, and docker reallocates subnets in creation order.
-#   - Mosquitto is reachable in-stack by service name — the whole Frigate ->
-#     MQTT -> HA event chain. Exposing the broker to an IoT VLAN needs a
-#     second NIC that does not exist yet and a firewall rule that cannot be
-#     written until it does (annex §8.4) — an operator step, not a reason to
-#     drop the guardrails now.
-#   - No `privileged:` anywhere (no stack in the fleet uses it): USB dongles
-#     and the Coral get the guarded bind-mount + cgroup-rule pattern (see
-#     frigate).
-#
-# Backup contract (annex §5): no Postgres — all three DBs are SQLite, so
-# backup-prepare.sh's pg_dumpall loop is untouched; its
-# `sqlite_backup homeassistant /mnt/fast/homeassistant/home-assistant_v2.db`
-# line predates this stack and only now stops being a no-op. Both databases
-# are WAL-mode, so the raw files in the /mnt/fast include set are torn
-# snapshots and the `.backup` dumps are the restorable copies.
-# /mnt/slow/frigate is excluded from backup BY OMISSION — the slow plan is an
-# explicit include list and recordings are not on it. Do not add it.
+#     `network_mode: host`, and not style: a host-networked service is
+#     invisible to `loopback-binding` and to mk-stack-suite's port probe,
+#     which build their lists from `ports:`. For Frigate that would put port
+#     5000 — an unauthenticated forced-admin bypass — on every tailnet peer.
+#   - The subnet is PINNED below because Home Assistant must trust the bridge
+#     gateway by address.
+#   - Mosquitto is reachable in-stack by service name; that is the whole
+#     Frigate -> MQTT -> HA event chain. Reaching it from an IoT VLAN needs a
+#     second NIC that does not exist yet.
+#   - No `privileged:` anywhere. USB dongles get the guarded bind-mount +
+#     cgroup-rule pattern instead (see frigate).
+#   - All three databases are SQLite and WAL-mode, so the raw files in the
+#     /mnt/fast include set are torn snapshots and backup-prepare.sh's
+#     `.backup` dumps are the restorable copies. /mnt/slow/frigate is excluded
+#     by omission from the slow plan's include list — do not add it.
 
 networks:
-  # Pinned ON PURPOSE (annex §2.1). A loopback publish does NOT preserve
-  # 127.0.0.1 — docker-proxy re-dials from the bridge gateway, so HA sees
-  # THIS gateway and must trust it by address. Unpinned subnets move with
-  # network-creation order; the day it moves, every proxied request 400s.
+  # Pinned: a loopback publish does NOT preserve 127.0.0.1 — docker-proxy
+  # re-dials from the bridge gateway, which HA must therefore trust by
+  # address, and unpinned subnets move with network-creation order.
   #
-  # 10.89/16 rather than 172.x ON PURPOSE too: docker's default pool is
-  # 172.17.0.0/12 carved into /16s, so pinning inside it risks "Pool overlaps
-  # with other one on this address space" when another network grabs the /16
-  # first — order-dependent, and unreproducible in the test VM (three
-  # networks, fresh daemon).
+  # 10.89/16 rather than 172.x because docker's default pool is 172.17.0.0/12
+  # carved into /16s, so pinning inside it risks an order-dependent "Pool
+  # overlaps" failure.
   default:
     ipam:
       config:
@@ -50,20 +35,16 @@ networks:
           gateway: 10.89.250.1
 
 services:
-  # ---------------------------------------------------------------------------
-  # homeassistant — automations, dashboards, device management.
+  # Home Assistant
   #
-  # Annex §0.1: 2026.8.0 RETIRED the `http:` YAML block — migrated exactly
-  # once into storage-backed config, staged PENDING, reverted after five
-  # minutes unless promoted in the UI (then "never applied again"). A
-  # headless deploy gets working reverse-proxy config for five minutes, then
-  # restarts into one where Caddy is untrusted — passing its healthcheck the
-  # whole time. So: no `http:` block in configuration.yaml; ha-config-init
-  # pre-seeds .storage/http instead.
+  # 🚨 2026.8.0 RETIRED the `http:` YAML block: it is migrated once, staged
+  # PENDING, and reverted after five minutes unless promoted in the UI — so a
+  # headless deploy gets working reverse-proxy config for five minutes and
+  # then restarts into one where Caddy is untrusted, healthcheck green
+  # throughout. ha-config-init pre-seeds .storage/http instead.
   #
-  # Runs as ROOT, no PUID/PGID — opposite of the /srv/stacks 1000:1000
-  # convention; /mnt/fast/homeassistant is declared root:root, do not "fix".
-  # ---------------------------------------------------------------------------
+  # Runs as ROOT with no PUID/PGID, against the 1000:1000 convention;
+  # /mnt/fast/homeassistant is declared root:root. Do not "fix" it.
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:2026.8.3
     container_name: homeassistant
@@ -72,63 +53,46 @@ services:
         condition: service_completed_successfully
       mosquitto:
         condition: service_healthy
-    # Loopback-only; Caddy (network_mode: host) is the only path in.
     ports:
       - '127.0.0.1:10250:8123'
     volumes:
-      # Whole /config tree: .storage/ (credentials + http config),
-      # home-assistant_v2.db (WAL), configuration.yaml, custom_components/.
-      # MUST be writable — .HA_VERSION is rewritten on version change with no
-      # try/except; a read-only mount kills startup.
+      # The whole /config tree, and it MUST be writable: .HA_VERSION is
+      # rewritten on a version change with no try/except.
       - /mnt/fast/homeassistant:/config
-      # Git-managed and read-only-safe: HA's only write path to this file is
-      # dead code behind a pre-0.92 version check. Secrets reach it as
-      # `!env_var` from the .env below — not a secrets.yaml, which would
-      # write decrypted secrets into /config and duplicate the host's
-      # decrypt job.
+      # Read-only-safe: HA's only write path to this file is dead code behind
+      # a pre-0.92 version check. Secrets reach it as `!env_var` from .env
+      # rather than a secrets.yaml, which would write decrypted secrets into
+      # /config and duplicate the host's decrypt job.
       - ./configuration.yaml:/config/configuration.yaml:ro
     environment:
       - TZ=America/Chicago
-      # Deliberately NOT setting http.server_port: the publish above already
-      # satisfies the port convention at the host port, and leaving 8123 alone
-      # keeps one more key out of the storage-config mechanism.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the host-side decrypt (.env not yet written; timer lands it
-    # ≤~1min after delivery), and the plain form aborts the whole stack.
+    # Long form throughout this file: a deploy can race the host-side decrypt,
+    # and the plain form aborts the whole stack when .env is absent.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # Image ships NO healthcheck (upstream declined: users change the port
-      # and disable the frontend); curl IS present. /manifest.json is the
-      # right probe and the only one: requires_auth=False, upstream's "public
-      # resource" for Core availability, 200 BOTH before and after onboarding
-      # (`/` redirects pre-onboarding, `/api/` 401s in both states). The
-      # socket does not accept until the route exists, so listening implies
-      # 200.
+      # The image ships none. /manifest.json is the only right probe: 200 both
+      # before and after onboarding, where `/` redirects pre-onboarding and
+      # `/api/` 401s in both states.
       test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', 'http://127.0.0.1:8123/manifest.json']
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 120s
-    # 60s deliberate cap (s6 would allow 240): long enough for a clean stop's
-    # DB writes, short enough that a wedged container does not stall a
-    # deploy; a pathological shutdown gets SIGKILLed, which WAL survives.
+    # Long enough for a clean stop's DB writes, short enough that a wedged
+    # container does not stall a deploy; a SIGKILL is survivable under WAL.
     stop_grace_period: 60s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # mosquitto — MQTT broker: Frigate publishes events, HA consumes them.
+  # MQTT
   #
-  # Pinned to 2.0.22, NOT 2.1.x (annex §1) — 2.1 is a materially different
-  # broker: anonymous listener AND HTTP dashboard in the default config,
-  # entrypoint chowns only /mosquitto/data (a root-owned config dir now
-  # fails), mosquitto_passwd defaults to argon2id (unreadable by a 2.0
-  # broker), per-listener security options renamed, and it refuses
-  # "sensitive files" through symlinks — exactly how sops-nix materialises
-  # secrets. The 2.1 line is published ONLY as `-alpine`; a bare
-  # `eclipse-mosquitto:2.1.2` is a 404.
-  # ---------------------------------------------------------------------------
+  # 🚨 Pinned to 2.0.x, NOT 2.1: 2.1 is a materially different broker —
+  # anonymous listener and HTTP dashboard in the default config, a chown that
+  # no longer covers the config dir, mosquitto_passwd defaulting to argon2id
+  # (unreadable by a 2.0 broker), renamed per-listener security options, and a
+  # refusal to read "sensitive files" through symlinks, which is exactly how
+  # sops-nix materialises secrets.
   mosquitto:
     image: eclipse-mosquitto:2.0.22
     container_name: mosquitto
@@ -138,65 +102,50 @@ services:
     ports:
       - '127.0.0.1:10251:1883'
     volumes:
-      # mosquitto.conf (git) + the generated passwd. Bind-mounting this
-      # directory WITHOUT a mosquitto.conf is a hard failure — the image's
-      # CMD hardcodes `-c /mosquitto/config/mosquitto.conf` — hence the conf
-      # ships in git and rides the stack git sync.
+      # Bind-mounting this directory WITHOUT a mosquitto.conf is a hard
+      # failure: the image's CMD hardcodes -c /mosquitto/config/mosquitto.conf.
       - /mnt/fast/mosquitto/config:/mosquitto/config
-      # Persistence. Bound explicitly: a declared VOLUME in the image — left
-      # unbound it silently becomes an anonymous volume until a prune.
+      # A declared VOLUME in the image; left unbound it silently becomes an
+      # anonymous volume until a prune.
       - /mnt/fast/mosquitto/data:/mosquitto/data
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-    # No /mosquitto/log mount: `log_dest stdout` routes to journald like
-    # every other stack and removes an ownership trap (broker drops to uid
-    # 1883; 2.1 would no longer chown that path). It IS a declared VOLUME, so
-    # unbound it creates an anonymous volume per recreate — accepted: nothing
-    # ever writes to it, unlike /mosquitto/data above.
+    # No /mosquitto/log mount: `log_dest stdout` routes to journald and
+    # removes an ownership trap. It is a declared VOLUME, so it becomes an
+    # anonymous one per recreate — accepted, since nothing writes to it.
     environment:
       - TZ=America/Chicago
     healthcheck:
-      # No builtin healthcheck, and with allow_anonymous false there is no
-      # credential-free probe — hence the dedicated `healthcheck` account.
-      # -C 1 exits after one message, -W 3 caps the wait.
+      # No builtin, and with allow_anonymous false there is no credential-free
+      # probe — hence the dedicated `healthcheck` account.
       #
-      # TWO expansion layers, different protection each: `$$` survives
-      # compose interpolation as literal `$`, but CMD-SHELL hands the string
-      # to /bin/sh, which expands `$SYS` (unset) inside DOUBLE quotes —
-      # topic becomes `/broker/uptime`, probe never receives. So the topic is
-      # SINGLE-quoted for the shell (forcing double-quoted YAML), while the
-      # password is the opposite case: it MUST be shell-expanded from the
-      # container env that env_file supplies.
+      # 🚨 TWO expansion layers. `$$` survives compose as a literal `$`, but
+      # CMD-SHELL then hands the string to /bin/sh, which would expand the
+      # unset `$SYS` inside double quotes and leave the topic
+      # `/broker/uptime` — so the topic is single-quoted for the shell while
+      # the password must be shell-expanded from the container env.
       test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -p 1883 -u healthcheck -P \"$$MQTT_HEALTHCHECK_PASSWORD\" -t '$$SYS/broker/uptime' -C 1 -W 3"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 20s
-    # Long form with required:false ON PURPOSE (finding #11): see homeassistant.
     env_file:
       - path: .env
         required: false
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # frigate — NVR with object detection. THREE non-obvious traps:
+  # NVR
   #
-  # 1. An invalid config does NOT crash it — SAFE MODE: {"safe_mode": True,
-  #    "cameras": {}, "mqtt": {"enabled": False}}; container up, healthcheck
-  #    green, UI serving with no cameras and no MQTT. `--validate-config` is
-  #    checked AFTER that fallback, so it exits 0 regardless. The suite
-  #    asserts `/api/config` -> safe_mode == false; a plain health assertion
-  #    proves nothing here.
-  # 2. PORT 5000 IS AN UNAUTHENTICATED FORCED-ADMIN BYPASS. api/auth.py:
-  #    `if request.headers.get("x-server-port") == 5000` returns success with
-  #    remote-role: admin. It is in the image's EXPOSE list; 8971, the
-  #    authenticated port, is not. Publish 8971 and only 8971.
-  # 3. A MISSING CORAL IS A CRASH LOOP, not a degradation: the edgetpu
-  #    delegate re-raises and the watchdog SIGTERMs PID 1 within 10s;
-  #    `cameras: {}` does not save you — detectors start unconditionally. So
-  #    production config carries the Coral and the suite overrides
-  #    `detectors:` with `type: cpu` — the tested config differs from the
-  #    deployed one in exactly the block that fails hardest (annex §6, §8.3).
-  # ---------------------------------------------------------------------------
+  # Three non-obvious traps:
+  #   1. An invalid config does NOT crash it — SAFE MODE, with the container
+  #      up, healthcheck green and zero cameras. `--validate-config` runs
+  #      after that fallback and exits 0 regardless, so the only reliable
+  #      signal is `/api/config` -> safe_mode == false.
+  #   2. 🚨 PORT 5000 IS AN UNAUTHENTICATED FORCED-ADMIN BYPASS (api/auth.py
+  #      returns admin for `x-server-port: 5000`), and it is in the image's
+  #      EXPOSE list while the authenticated 8971 is not. Publish 8971 only.
+  #   3. A missing detector accelerator is a CRASH LOOP, not a degradation:
+  #      detectors start unconditionally and the watchdog SIGTERMs PID 1
+  #      within 10s. `cameras: {}` does not save you.
   frigate:
     image: ghcr.io/blakeblackshear/frigate:0.17.2
     container_name: frigate
@@ -204,69 +153,52 @@ services:
       mosquitto:
         condition: service_healthy
     ports:
-      # 8971 = authenticated UI/API. NOT 5000 (see the header), and not
-      # 8554/8555 (go2rtc restream + WebRTC) — nothing consumes them yet and
-      # WebRTC needs a routable path a loopback publish cannot give.
+      # 8971 = the authenticated UI/API. Not 5000, and not go2rtc's 8554/8555
+      # — nothing consumes them and WebRTC needs a routable path a loopback
+      # publish cannot give.
       - '127.0.0.1:10252:8971'
     volumes:
       # Writable: /config holds frigate.db (events, review items, users).
       - /mnt/fast/frigate/config:/config
-      # ...but the config FILE is read-only over that mount: Frigate migrates
-      # config in place and the UI editor writes the same file; :ro logs one
-      # benign "Config file is read-only, unable to migrate" per boot and
-      # keeps git the single source of truth (`version: "0.17-0"` leaves the
-      # migrator nothing to do anyway).
+      # ...but the config FILE is read-only over that mount, so git stays the
+      # single source of truth. Costs one benign "unable to migrate" line per
+      # boot, and `version: "0.17-0"` leaves the migrator nothing to do.
       - ./frigate.yaml:/config/config.yml:ro
-      # Recordings, clips, exports. Bulk and re-recordable — excluded from
-      # backup by omission from the slow plan's include list.
       - /mnt/slow/frigate:/media/frigate
-      # Coral USB, GUARDED so it degrades in a VM: a `devices:` stanza
-      # hard-fails creation when the node is absent, so the TPU rides a bind
-      # mount (docker creates an empty dir if missing) plus the cgroup rule
-      # below (valid either way). Same construct as the Arc A380 in
-      # stacks/media. Whole USB tree, not one node: the Coral re-enumerates
-      # after its firmware upload.
+      # A bind mount, NOT a `devices:` stanza: devices hard-fails creation
+      # when the node is absent, this degrades instead. Whole USB tree, since
+      # a Coral re-enumerates after its firmware upload.
       - /dev/bus/usb:/dev/bus/usb
     device_cgroup_rules:
       # 189 = USB devices major.
       - 'c 189:* rmw'
     tmpfs:
-      # In-flight recording segments. tmpfs so they never thrash the slow
-      # tier. Unrelated to shm_size below — different mount, different budget.
+      # In-flight recording segments, kept off the slow tier.
       - /tmp/cache:size=512m
-    # Per-camera formula from upstream: (w * h * 1.5 * 20 + 270480)/1048576 MB,
-    # PLUS 40MB for logs. ~67MB per 720p camera, ~136MB per 1080p one — so
-    # this covers roughly three 720p cameras, and needs recomputing once the
-    # real camera set is known (annex §8.2). /dev/shm also carries the nginx
-    # proxy cache and go2rtc.yaml.
+    # Upstream's per-camera formula is (w*h*1.5*20 + 270480)/1048576 MB plus
+    # 40MB for logs — roughly three 720p cameras here. Recompute when the real
+    # camera set is known.
     shm_size: '256mb'
     environment:
       - TZ=America/Chicago
-      # FRIGATE_MQTT_PASSWORD and FRIGATE_CAM_* RTSP URLs arrive from .env.
       # Frigate substitutes {FRIGATE_*} (SINGLE braces — python str.format,
-      # not shell) into six EnvString fields (mqtt.host/user/password,
-      # proxy.auth_secret, camera inputs, genai.api_key) — everything secret
-      # here, which is why Frigate needs no config-init container.
-    # Long form with required:false ON PURPOSE (finding #11): see homeassistant.
+      # not shell) into six fields, all of them the secret ones, which is why
+      # this stack needs no config-init container for Frigate.
     env_file:
       - path: .env
         required: false
-    # NO healthcheck stanza ON PURPOSE: the image's builtin is correct and
-    # subtle — it curls http://127.0.0.1:5000/api/version, which works
-    # regardless of the auth config (that is the port-5000 bypass, used here
-    # for the one purpose it is good for), and it short-circuits on a
-    # /dev/shm/.frigate-is-stopping sentinel so a graceful shutdown does not
-    # flap health. Note its start_period is 300s and `up --wait` honours it:
-    # budget the wait, do not shorten the probe.
+    # NO healthcheck stanza: the image's builtin is correct and subtle — it
+    # curls the port-5000 bypass, which works regardless of auth config, and
+    # short-circuits on a /dev/shm/.frigate-is-stopping sentinel so a graceful
+    # shutdown does not flap health. Its start_period is 300s and `up --wait`
+    # honours it: budget the wait, do not shorten the probe.
     stop_grace_period: 30s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # mosquitto-init — generates /mosquitto/config/passwd before the broker
-  # starts. Runs the MOSQUITTO IMAGE ITSELF rather than alpine: mosquitto_passwd
-  # is already in it, so there is no `apk add` in the boot path (finding #4 —
-  # a registry outage at boot must not take the stack down).
-  # ---------------------------------------------------------------------------
+  # Broker credentials
+  #
+  # The mosquitto image itself rather than alpine: mosquitto_passwd is already
+  # in it, so there is no `apk add` in the boot path.
   mosquitto-init:
     image: eclipse-mosquitto:2.0.22
     container_name: automation_mqtt_init
@@ -276,31 +208,24 @@ services:
     volumes:
       - ./passwd-init.sh:/init/passwd-init.sh:ro
       - /mnt/fast/mosquitto/config:/mosquitto/config
-    # Long form with required:false ON PURPOSE (finding #11): see homeassistant.
     env_file:
       - path: .env
         required: false
     restart: "no"
 
-  # ---------------------------------------------------------------------------
-  # ha-config-init — renders /config/.storage/http before Home Assistant
-  # starts. This is the workaround for the five-minute auto-revert described
-  # in the homeassistant block: a pre-seeded `stable` config with
-  # `pending: null` and `yaml_migration_done: true` resolves to
-  # ActiveConfigType.STABLE, so no revert is ever scheduled and the log says
-  # "Using stable HTTP config".
+  # HTTP config seed
   #
-  # MERGE semantics, like kavita-config-init: HA owns everything else under
-  # .storage/, and this must never clobber a key it does not manage.
-  # ---------------------------------------------------------------------------
+  # The workaround for the five-minute auto-revert above: a pre-seeded
+  # `stable` config with `pending: null` and `yaml_migration_done: true`
+  # resolves to STABLE, so no revert is ever scheduled. MERGE semantics — HA
+  # owns everything else under .storage/.
   ha-config-init:
     image: python:3.13-alpine
     container_name: automation_config_init
     entrypoint: ['/bin/sh', '/init/ha-config-init.sh']
     environment:
-      # The address HA must trust as its reverse proxy = the GATEWAY of the
-      # subnet pinned at the top of this file; edit the two together. Not a
-      # secret, so not in .env: a hostile value breaks the site, leaks
+      # The GATEWAY of the subnet pinned at the top of this file — edit the
+      # two together. Not a secret: a hostile value breaks the site and leaks
       # nothing.
       - HA_TRUSTED_PROXY=10.89.250.1/32
     volumes:
@@ -309,19 +234,15 @@ services:
       # The DIRECTORY, never the single file: HA writes .storage/http with an
       # atomic rename, which fails onto a bind-mounted file.
       - /mnt/fast/homeassistant:/config
-    # Long form with required:false ON PURPOSE (finding #11): see homeassistant.
     env_file:
       - path: .env
         required: false
     restart: "no"
 
-  # ---------------------------------------------------------------------------
-  # automation-init — headless Home Assistant onboarding (annex §3.1). Four
-  # steps over REST; the owner account comes from .env. Idempotent in both of
-  # HA's regimes: 403 "step already done" within a process, and a bare 404
-  # once onboarding is complete and HA has restarted (the component returns
-  # before registering any view).
-  # ---------------------------------------------------------------------------
+  # Onboarding
+  #
+  # Four REST steps with the owner account from .env; see automation-init.sh
+  # for the two idempotence regimes.
   automation-init:
     image: python:3.13-alpine
     container_name: automation_init
@@ -331,7 +252,6 @@ services:
         condition: service_healthy
     volumes:
       - ./automation-init.sh:/init/automation-init.sh:ro
-    # Long form with required:false ON PURPOSE (finding #11): see homeassistant.
     env_file:
       - path: .env
         required: false

@@ -1,64 +1,38 @@
 # Reverse proxy for the services VM.
 #
 # Bound to the tailnet IP only — nothing here is reachable from the LAN or the
-# internet. Certificates come from Let's Encrypt via DNS-01, because Let's
-# Encrypt cannot reach a tailnet-only host for HTTP-01. (The VPS is public and
-# uses HTTP-01 instead, so it needs no DNS plugin.)
+# internet — with certificates from Let's Encrypt over DNS-01, because
+# HTTP-01 cannot reach a tailnet-only host. ONE wildcard certificate for
+# *.svc.idanreed.com: per-hostname certs would publish every internal service
+# name to the public Certificate Transparency logs.
 #
-# ONE wildcard certificate for *.svc.idanreed.com rather than a cert per
-# hostname. Per-hostname certs publish every internal service name to public
-# Certificate Transparency logs — a searchable index of what you run.
-#
-# DNS: *.svc.idanreed.com is a public Cloudflare A record pointing at this
-# host's tailnet IP. The address is CGNAT space and only routable from inside
-# the tailnet, so publishing it is not an exposure. This replaces the CoreDNS
-# instance the old design called for and never deployed.
+# *.svc.idanreed.com is a public Cloudflare A record pointing at this host's
+# tailnet IP, which is CGNAT space and only routable from inside the tailnet.
 
 # ---------------------------------------------------------------------------
 # Forward auth
 # ---------------------------------------------------------------------------
-# Import this into a handle block to put Authentik in front of a service that
-# has no usable auth of its own:
-#
-#	handle @dozzle {
-#		import protected
-#		reverse_proxy localhost:10451
-#	}
-#
-# Defined BEFORE the site block on purpose: Caddy resolves `import` while
-# parsing — a snippet defined below its first use fails with "File to import
-# not found".
-#
-# Relies on (all exist now): a Proxy Provider + application per protected
-# service on Authentik's embedded outpost
-# (headscale-vps/authentik/blueprints/custom/forward-auth.yaml; bentopdf is
-# the pilot); AUTHENTIK_COOKIE_DOMAIN=idanreed.com so the session cookie
-# spans auth.idanreed.com and *.svc.idanreed.com; and the VPS Caddy trusting
-# X-Forwarded-* from tailnet sources (headscale-vps/modules/caddy.nix).
+# Import into a handle block to put Authentik in front of a service with no
+# usable auth of its own. Defined BEFORE the site block because Caddy resolves
+# `import` while parsing.
 #
 # The hop rides the TAILNET, not the public route, and that is load-bearing:
 # the outpost routes forward-auth requests BY X-Forwarded-Host, and any Caddy
-# replaces that header unless the source is a trusted proxy. Dialled
-# publicly, the VPS Caddy sees our home IP (untrusted), rewrites
-# X-Forwarded-Host to auth.idanreed.com, and the outpost 404s every check.
-# Over the tailnet the source is our 100.64.0.0/10 address, which
-# modules/caddy.nix trusts. tls_server_name + Host pin the request to the
-# auth vhost (cert is for auth.idanreed.com).
+# rewrites that header unless the source is a trusted proxy. Dialled publicly,
+# the VPS Caddy would see our home IP, rewrite the header to auth.idanreed.com
+# and 404 every check.
 #
-# STILL a lockout hazard per service: importing this into a handle whose
-# external host has no provider entry in that blueprint leaves the outpost
-# nothing to match — every request 404s or redirect-loops. Blueprint entry +
-# VPS deploy FIRST, then flip the import here.
+# 🚨 PER-SERVICE LOCKOUT HAZARD: importing this into a handle whose external
+# host has no provider entry in
+# headscale-vps/authentik/blueprints/custom/forward-auth.yaml leaves the
+# outpost nothing to match, and every request 404s or redirect-loops.
+# Blueprint entry + VPS deploy FIRST, then flip the import here.
 #
-# ⚠ THE CLIENT-SUPPLIED `X-Authentik-*` STRIP IS NOT IN THIS SNIPPET — it is
-# site-level below, and must be: caddy's directiveOrder (v2.11.2) puts
-# `forward_auth` at 44 and `request_header` at 45, so a `request_header`
-# beside this forward_auth runs AFTER it and deletes exactly the headers the
-# outpost just copied in — every protected app silently loses its identity.
-# A `route` wrapper would fix the order but re-indents this block, a
-# documented breaking change for tests/suites/forward-auth.nix (it injects
-# `tls_trust_pool` into the `transport http` block by an indentation-anchored
-# regex and fails loudly when it stops matching). Site level needs neither.
+# ⚠ The client-supplied `X-Authentik-*` strip is SITE-LEVEL below and must
+# be: caddy's directiveOrder runs `request_header` after `forward_auth`, so a
+# strip beside this one would delete exactly the headers the outpost just
+# copied in. A `route` wrapper would fix the order but re-indent this block,
+# which tests/suites/forward-auth.nix anchors on.
 (protected) {
 	forward_auth https://headscale-vps.tailnet.idanreed.com {
 		uri /outpost.goauthentik.io/auth/caddy
@@ -77,70 +51,35 @@
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
 
-	# Nothing outside this proxy may ASSERT an Authentik identity. Applies to
-	# every vhost below, protected or not, and to every route added later
-	# without anyone remembering this line exists — which is the point.
+	# 🚨 Nothing outside this proxy may ASSERT an Authentik identity —
+	# including on routes added later by someone who never read this line.
 	#
-	# HERE AND NOT IN `(protected)`: directiveOrder (v2.11.2) is forward_auth
-	# (44), request_header (45), handle (53). Beside the snippet's
-	# forward_auth this would run AFTER it and delete the outpost's headers;
-	# at SITE level it only has to beat the `handle` blocks at 53, so it runs
-	# before every nested forward_auth. Verified with `caddy adapt`: srv0's
-	# first route, ahead of the vhost subroute.
+	# SITE LEVEL, not inside `(protected)`: directiveOrder puts
+	# `request_header` after `forward_auth`, so beside the snippet it would
+	# delete the outpost's own headers; here it only has to beat `handle`.
 	#
-	# WHAT IT BUYS — the obvious claim is wrong: `caddy adapt` shows
-	# copy_headers already expands into an UNCONDITIONAL strip + guarded set
-	# per named header on every 2xx auth response (including skip_path_regex
-	# paths like Firefly's ^/api/.*), so the FIVE NAMED headers were never
-	# the hole. What was genuinely open, and this closes:
-	#   1. THE REST OF THE FAMILY: X-authentik-jwt and X-authentik-meta-* are
-	#      not in copy_headers, so a client-supplied one forwarded verbatim.
-	#      Nothing consumes them today — precisely the state in which someone
-	#      switches one on.
-	#   2. ORDER INDEPENDENCE: the five are protected only as a side effect
-	#      of copy_headers' expansion; a prefix strip does not depend on it.
-	#   3. UNPROTECTED ROUTES (kavita, audiobookshelf, ntfy, …) never import
-	#      (protected), so nothing was stripping anything there.
-	#
-	# `*` is a real prefix wildcard, case-insensitive (headers.go, the
-	# `HasSuffix(fieldName, "*")` arm) — same move as the X-API-Key strip on
-	# the Syncthing route below.
-	#
-	# MEASURED, not reasoned (caddy 2.11.2, stub outpost + echo backend, a
-	# request carrying `X-Authentik-Username: ATTACKER` and
-	# `X-Authentik-Jwt: FORGED`):
-	#   with this line,    outpost emits Username -> USER=outpost-user JWT=[]
-	#   with this line,    outpost emits nothing  -> USER=[]            JWT=[]
-	#   without it,        outpost emits Username -> USER=outpost-user JWT=FORGED
-	#   without it,        outpost emits nothing  -> USER=[]            JWT=FORGED
-	# i.e. the real identity still arrives (this does not break auth), the
-	# five named headers were never the hole, and X-Authentik-Jwt was.
+	# The five names in copy_headers were never the hole — that expands into
+	# an unconditional strip already. What this closes is the rest of the
+	# family (X-authentik-jwt, X-authentik-meta-*, which nothing consumes
+	# today and which forwarded verbatim), the order dependence, and the
+	# UNPROTECTED routes, where nothing was stripping anything at all. `*` is
+	# a real case-insensitive prefix wildcard.
 	request_header -X-Authentik-*
 
 	@komodo host komodo.svc.idanreed.com
 	handle @komodo {
-		# Forward auth, and of everything in this file it is the entry
-		# with the largest blast radius: Komodo's Core UI drives Periphery,
-		# which mounts the Docker socket — so the UI is a ROOT-EQUIVALENT
-		# interface for this host. The _overview.md row says FwdAuth; this
-		# implements it. Komodo's own local login stays underneath, so it
-		# fails closed either way.
+		# 🚨 The largest blast radius in this file: Core's UI drives
+		# Periphery, which mounts the docker socket, so this is a
+		# root-equivalent interface for the host. Komodo's own local login
+		# stays underneath, so it fails closed either way.
 		#
-		# 🚨 ROLLOUT ORDER IS NOT OPTIONAL HERE. The blueprint entry plus a
-		# VPS rebuild must land BEFORE this route syncs, because the thing
-		# you would normally use to fix a broken deploy IS Komodo. If it
-		# does lock out, the recovery paths are the loopback publish over
-		# SSH (`curl localhost:10000`) and `nixos-rebuild switch
-		# --target-host`, neither of which goes through Caddy — but plan
-		# not to need them.
+		# Rollout order is not optional here, because the thing you would
+		# normally use to fix a broken deploy IS Komodo. If it does lock out,
+		# recovery is `curl localhost:10000` over SSH or `nixos-rebuild
+		# switch --target-host`, neither of which goes through Caddy.
 		#
-		# FULLY protected, no /listener exemption: redeploy webhooks run
-		# Forgejo -> Core on the internal loopback/tailnet path (both are
-		# loopback+tailnet-local), never through Caddy, so invariant #2 stays
-		# clean. The gitops suite drives the API from inside the VM over
-		# loopback; the UI is browser-only. If a webhook ever MUST traverse
-		# Caddy, add `@komodo_listener path /listener/*` bypassing forward_auth
-		# here — a vhost-routing detail, never an Authentik change.
+		# Fully protected, no /listener exemption: redeploy webhooks run
+		# Forgejo -> Core over loopback and never traverse Caddy.
 		import protected
 		reverse_proxy localhost:10000
 	}
@@ -152,11 +91,8 @@
 
 	@immich host immich.svc.idanreed.com
 	handle @immich {
-		# Auth = OIDC (native, per the overview row): Immich drives its own
-		# login against Authentik (oauth block in
-		# stacks/immich/immich.json.template). NO forward auth — it would
-		# break the mobile app's app.immich:// OAuth handoff and every
-		# x-api-key client (jellyfin/seerr precedent).
+		# Native OIDC. NO forward auth: it would break the mobile app's
+		# app.immich:// OAuth handoff and every x-api-key client.
 		reverse_proxy localhost:10102
 	}
 
@@ -244,21 +180,16 @@
 	}
 
 	# ------------------------------------------------------------------
-	# Media stack (stacks/media, ports 10050-10058). Auth per the overview
-	# Auth column: FwdAuth rows import `protected`; Jellyfin is Plugin
-	# (its own login + SSO plugin) and Seerr is session-authed (its
-	# mobile/API clients authenticate themselves), so neither gets
-	# forward auth. qBittorrent (gluetun's 127.0.0.1:10057 publish) has
-	# NO route yet, deliberately: overview marks it FwdAuth and its
-	# blueprint entry does not exist — flipping a route live before the
-	# outpost knows the host is the lockout hazard described above. Add
-	# the blueprint entry + route together in a follow-up.
+	# Media stack (stacks/media, 10050-10058). qBittorrent has NO route
+	# yet, deliberately: _overview marks it FwdAuth and its blueprint
+	# entry does not exist, so flipping the route live first is the
+	# lockout hazard described above. Add both together.
 	# ------------------------------------------------------------------
 
 	@jellyfin host jellyfin.svc.idanreed.com
 	handle @jellyfin {
-		# Auth = Plugin (overview): Jellyfin's own login. NO forward auth —
-		# it would break every native client app.
+		# Jellyfin's own login. NO forward auth: it would break every native
+		# client app.
 		reverse_proxy localhost:10050
 	}
 
@@ -282,8 +213,8 @@
 
 	@seerr host seerr.svc.idanreed.com
 	handle @seerr {
-		# Session auth (Jellyfin accounts) on stable v3.4.1 — NOT forward
-		# auth, per the overview's OIDC* row and the annex security call.
+		# Session auth against Jellyfin accounts; its mobile and API clients
+		# authenticate themselves, so no forward auth.
 		reverse_proxy localhost:10054
 	}
 
@@ -306,51 +237,35 @@
 	}
 
 	# ------------------------------------------------------------------
-	# Books stack (stacks/books, ports 10150-10152). Auth per the overview
-	# Auth column: kavita and audiobookshelf drive their OWN OIDC against
-	# Authentik, so neither gets forward auth; shelfmark has no auth of its
-	# own and does (AUTH_METHOD=proxy in its compose reads the
-	# X-Authentik-* headers the (protected) snippet copies).
-	#
-	# Both OIDC apps ship OIDC-READY and OIDC-OFF today: the client secrets
-	# need the production age key to reach headscale-vps/secrets.sops.yaml,
-	# so until the operator lands them each app authenticates with its own
-	# local accounts (seeded by books-init). Neither is ever unauthenticated
-	# — that is why the OFF state is safe to ship (annex §8.4).
+	# Books stack (stacks/books, 10150-10152). kavita and audiobookshelf
+	# drive their own OIDC and get no forward auth; shelfmark has no auth
+	# of its own and does. Both OIDC apps ship ready-and-OFF on local
+	# accounts until the operator lands the client secrets — neither is
+	# ever unauthenticated, which is what makes the OFF state safe.
 	# ------------------------------------------------------------------
 
 	@kavita host kavita.svc.idanreed.com
 	handle @kavita {
-		# NO forward auth, and this one is not a preference: OPDS
-		# (/api/opds/{key}) and KOReader progress sync
-		# (/api/koreader/{key}/...) authenticate by an API key embedded in
-		# the URL, from non-browser clients that cannot follow an OIDC
-		# redirect or hold a session cookie. Forward auth would have to
-		# exclude both prefixes anyway, at which point the API key is the
-		# only protection and the moving parts have doubled.
+		# NO forward auth, and not a preference: OPDS and KOReader sync
+		# authenticate by an API key in the URL from clients that cannot
+		# follow a redirect. Excluding both prefixes would leave the API key
+		# as the only protection anyway, with twice the moving parts.
 		reverse_proxy localhost:10150
 	}
 
 	@shelfmark host shelfmark.svc.idanreed.com
 	handle @shelfmark {
-		# Forward auth: shelfmark's own AUTH_METHOD defaults to `none`, so
-		# the loopback publish is otherwise the only thing in front of it.
-		# Rollout order is load-bearing — the blueprint entry in
-		# headscale-vps/authentik/blueprints/custom/forward-auth.yaml plus a
-		# VPS rebuild must land BEFORE this route syncs, or every request
-		# here 404s (see the (protected) header above).
+		# Its own AUTH_METHOD defaults to `none`, so the loopback publish is
+		# otherwise the only thing in front of it.
 		import protected
 		reverse_proxy localhost:10151
 	}
 
 	@audiobookshelf host audiobookshelf.svc.idanreed.com
 	handle @audiobookshelf {
-		# NO forward auth: it would break the mobile app's
-		# audiobookshelf://oauth handoff and every API-key client, the same
-		# call as immich and jellyfin. Caddy already sends the two headers
-		# audiobookshelf needs (Host, X-Forwarded-Proto) by default — the
-		# latter matters because the OIDC redirect_uri is built from it, and
-		# without it audiobookshelf offers Authentik an http:// callback.
+		# NO forward auth: it would break the audiobookshelf://oauth handoff
+		# and every API-key client. Caddy's default X-Forwarded-Proto is what
+		# keeps the OIDC redirect_uri https.
 		reverse_proxy localhost:10152
 	}
 
@@ -364,19 +279,13 @@
 
 	@homeassistant host homeassistant.svc.idanreed.com
 	handle @homeassistant {
-		# NO forward auth, and this one is not a preference:
-		# /api/webhook/* is unauthenticated BY DESIGN and is what the
-		# mobile app posts location to, and every bearer-token REST and
-		# websocket client would be bounced to a login page. The
-		# canonical header-auth component for HA is archived, and
-		# hass-oidc-auth's own docs say to remove proxy auth. HA
-		# authenticates itself (local accounts today, Authentik via
-		# hass-oidc-auth later — annex §7.3).
+		# NO forward auth, and not a preference: /api/webhook/* is
+		# unauthenticated by design and is what the mobile app posts location
+		# to, and every bearer-token REST and websocket client would be
+		# bounced to a login page. HA authenticates itself.
 		#
-		# Home Assistant is one long-lived websocket, so without this a
-		# `caddy reload` force-closes every session and the UI visibly
-		# reconnects. Caddy needs nothing else for websockets — do not
-		# port nginx's Connection/Upgrade headers here.
+		# stream_close_delay because HA is one long-lived websocket: without
+		# it a `caddy reload` force-closes every session.
 		reverse_proxy localhost:10250 {
 			stream_close_delay 30s
 		}
@@ -384,36 +293,24 @@
 
 	@frigate host frigate.svc.idanreed.com
 	handle @frigate {
-		# Forward auth, and Frigate meets us more than halfway: its own
-		# auth is disabled (stacks/automation/frigate.yaml) and its
-		# nginx strips every inbound header before re-injecting a
-		# whitelist that contains verbatim the five X-Authentik-*
-		# headers the snippet below already copies. So identity comes
+		# Frigate's own auth is disabled and its nginx re-injects exactly the
+		# five X-Authentik-* headers this snippet copies, so identity comes
 		# from Authentik and Frigate maps it to admin/viewer.
 		#
-		# Rollout order is load-bearing, as always: the blueprint entry
-		# plus a VPS rebuild BEFORE this route syncs. Doubly so here —
-		# with `auth.enabled: false` in its config, an unprotected
-		# Frigate is an unauthenticated NVR.
+		# 🚨 Rollout order matters doubly here: with `auth.enabled: false`, an
+		# unprotected Frigate is an unauthenticated NVR.
 		import protected
 		reverse_proxy localhost:10252
 	}
 
 	# ------------------------------------------------------------------
-	# Tracking domain (10300-10349). Three separate compose stacks share
-	# this range (see stacks/tracking/compose.yaml's header) — the routes
-	# are grouped here by domain rather than by stack, because that is how
-	# they are used.
+	# Tracking domain (10300-10349), three compose stacks, grouped here by
+	# domain because that is how the routes are used.
 	#
-	# bookstack/homebox/karakeep drive their OWN OIDC against Authentik, so
-	# none gets forward auth: each has native support, and every one of them
-	# has API clients or mobile apps that a redirect would break. They ship
-	# OIDC-ready and OIDC-off, authenticating with local accounts until the
-	# client secrets land — never unauthenticated.
-	#
-	# firefly and its importer are the opposite case and are the only
-	# forward-auth entries in this domain; dawarich has native OIDC but
-	# cannot be proxied. See each block.
+	# bookstack/homebox/karakeep drive their own OIDC and each has API or
+	# mobile clients a redirect would break, so none gets forward auth.
+	# firefly and its importer are the opposite case; dawarich has native
+	# OIDC but cannot be proxied. See each block.
 	# ------------------------------------------------------------------
 
 	@bookstack host bookstack.svc.idanreed.com
@@ -440,127 +337,88 @@
 
 	@firefly host firefly.svc.idanreed.com
 	handle @firefly {
-		# Forward auth is Firefly's ONLY SSO path and will be for a long
-		# time: there is no OIDC in core at v6.6.6 or on develop, and the
-		# feature is milestoned v9.0.0 with no date.
+		# Forward auth is Firefly's ONLY SSO path — no OIDC in core, and the
+		# feature is milestoned with no date.
 		#
-		# 🚨 This is the highest-stakes (protected) import in the fleet.
-		# Firefly's remote_user_guard does NO validation of the header —
-		# whatever string arrives IS the account, and the first one seen
-		# becomes the owner. Any path to :10303 that does not traverse this
-		# handle is a total compromise, which is what the loopback-only
-		# publish in stacks/firefly/compose.yaml is for.
+		# 🚨 The highest-stakes (protected) import in the fleet: Firefly's
+		# remote_user_guard does NO validation of the header, so whatever
+		# string arrives IS the account and the first one seen becomes the
+		# owner. Any path to :10303 that skips this handle is a total
+		# compromise — hence the loopback-only publish.
 		#
-		# The provider's skip_path_regex excludes ^/api/.* on the Authentik
-		# side, NOT here — Firefly's API authenticates with Passport PATs
-		# under a separate guard, and forward auth would 302 every API
-		# client before Firefly ever sees the bearer token.
+		# ^/api/.* is excluded on the AUTHENTIK side, not here: Firefly's API
+		# authenticates with Passport PATs under a separate guard, and
+		# forward auth would 302 every API client first.
 		import protected
 		reverse_proxy localhost:10303
 	}
 
 	@firefly-importer host firefly-importer.svc.idanreed.com
 	handle @firefly-importer {
-		# The importer's web UI has NO authentication of its own and cannot
-		# be given any in PAT mode, while holding a full-privilege Firefly
-		# API token. This import is a hard requirement, not defence in
-		# depth — it gets its own provider rather than sharing Firefly's
-		# because the outpost matches on external_host.
+		# 🚨 A hard requirement, not defence in depth: the importer's UI has
+		# no authentication of its own and cannot be given any in PAT mode,
+		# while holding a full-privilege Firefly API token. Its own provider
+		# rather than Firefly's, because the outpost matches on external_host.
 		#
-		# No /api exclusion here: the importer has no API for clients, only
-		# the browser UI and its outbound calls to firefly:8080 on the
-		# compose network, which never traverse Caddy.
+		# No /api exclusion: it has no API for clients, only the browser UI
+		# and outbound calls that never traverse Caddy.
 		import protected
 		reverse_proxy localhost:10305
 	}
 
 	@dawarich host dawarich.svc.idanreed.com
 	handle @dawarich {
-		# NO forward auth, and this one is not a preference: the tracker
-		# clients (Overland, OwnTracks, Traccar, the PWA) authenticate with
-		# an API key IN THE QUERY STRING and cannot follow a redirect. The
-		# exclusion list would have to cover /api/v1/points,
-		# /api/v1/overland/batches, /api/v1/owntracks/points,
-		# /api/v1/traccar/points, /api/v1/auth/*, /s/* and /cable — i.e.
-		# the entire data plane, reopening exactly what forward auth was
-		# meant to close. It has native OIDC instead (SELF_HOSTED=true +
-		# omniauth_openid_connect), shipping ready and off.
+		# NO forward auth, and not a preference: the tracker clients
+		# authenticate with an API key IN THE QUERY STRING and cannot follow
+		# a redirect, and the exclusion list would have to cover the entire
+		# data plane. It has native OIDC instead, shipping ready and off.
 		#
-		# 🚨 Any smoke test of this route must fetch `/` with the real
-		# Host: header, NEVER /api/v1/health — Rails' host_authorization
-		# explicitly EXCLUDES the health path, so a wrong APPLICATION_HOSTS
-		# yields a healthy container and a 403 "Blocked hosts" on every
-		# browser request (annex §6).
-		#
-		# ActionCable lives at /cable; Caddy upgrades websockets with no
-		# extra config.
+		# 🚨 Any smoke test of this route must fetch `/` with the real Host
+		# header, NEVER /api/v1/health — Rails' host_authorization excludes
+		# the health path, so a wrong APPLICATION_HOSTS gives a healthy
+		# container and a 403 on every browser request.
 		reverse_proxy localhost:10304
 	}
 
 	@ghostfolio host ghostfolio.svc.idanreed.com
 	handle @ghostfolio {
-		# NO forward auth, deliberately, and this is the books/tracking
-		# posture rather than an omission: Ghostfolio has authentication of
-		# its own and it is not a password — accounts are identified by a
-		# "security token" whose hash is salted with ACCESS_TOKEN_SALT. So
-		# this route is authenticated, just not by Authentik.
+		# NO forward auth: accounts are identified by a security token whose
+		# hash is salted with ACCESS_TOKEN_SALT, so this route is
+		# authenticated, just not by Authentik. Its native OIDC is still
+		# labelled experimental upstream.
 		#
-		# It also has native OIDC, which is where this should end up, but
-		# upstream still labels that EXPERIMENTAL and turning it on needs an
-		# Authentik client secret that does not exist yet. Shipping
-		# OIDC-ready/OIDC-off on local accounts is the same call made for
-		# bookstack, homebox and karakeep one block up.
-		#
-		# ⚠ If forward auth is ever added here, it cannot be a bare `import
-		# protected`: Ghostfolio's public API under /api/v1/* authenticates
-		# with its own bearer token, so it would need the skip_path_regex
-		# treatment Firefly's provider has.
+		# ⚠ If forward auth is ever added it cannot be a bare `import
+		# protected`: /api/v1/* authenticates with its own bearer token and
+		# would need the skip_path_regex treatment Firefly's provider has.
 		reverse_proxy localhost:10306
 	}
 
 	@owl host owl.svc.idanreed.com
 	handle @owl {
-		# 🚨 THIS IMPORT IS THE ENTIRE ACCESS CONTROL FOR THIS SERVICE. Owl
-		# is a Streamlit app with NO authentication of any kind — no login,
-		# no users, no session isolation. Removing this line does not
-		# "disable SSO", it publishes somebody's retirement plan to every
-		# tailnet user. Same category as firefly-importer.
+		# 🚨 THIS IMPORT IS THE ENTIRE ACCESS CONTROL FOR THIS SERVICE. Owl is
+		# a Streamlit app with no authentication of any kind, so removing this
+		# line publishes somebody's retirement plan to every tailnet user.
 		#
-		# 🚨 DO NOT ADD AN EXCLUSION FOR /_stcore/*, here or in the
-		# provider's skip_path_regex. Streamlit's websocket at
-		# /_stcore/stream is not a side channel — it IS the application;
-		# every interaction and every result rides it, and `/` without it is
-		# an empty shell. Exempting it would leave this handle protecting a
-		# login page in front of a wide-open app. (Dawarich, two blocks up,
-		# is the same reasoning reaching the opposite conclusion: there the
-		# data plane CANNOT be covered, so forward auth is refused outright
-		# rather than faked.)
+		# 🚨 DO NOT EXCLUDE /_stcore/*, here or in the provider's
+		# skip_path_regex: Streamlit's websocket IS the application, and
+		# exempting it would leave this handle protecting a login page in
+		# front of a wide-open app. (Dawarich above is the same reasoning
+		# reaching the opposite conclusion — there the data plane cannot be
+		# covered, so forward auth is refused outright rather than faked.)
 		#
-		# Caddy needs nothing extra for the websocket itself — chain traced
-		# through both codebases, not hoped at:
-		#   - forward_auth is sugar for reverse_proxy + handle_response; the
-		#     snippet's `header_up Host` rewrites only the AUTH SUBREQUEST's
-		#     copy, and the original Host reaches the app — which matters
-		#     here: Streamlit's handshake compares Origin against Host.
-		#   - browsers cannot attach Authorization to a websocket handshake
-		#     but DO attach cookies, and the handshake is an ordinary
-		#     same-origin GET — the authentik_proxy_* cookie rides along.
-		#   - authentik's forwardHandleCaddy is a plain http.HandlerFunc that
-		#     cannot answer 101. An auth upstream that DID answer 101 to the
-		#     forwarded Upgrade would hang forward_auth forever; if that ever
-		#     happens the one-line fix is `header_up -Connection` — still not
-		#     an exclusion.
+		# Caddy needs nothing extra for the websocket: forward_auth rewrites
+		# only the auth subrequest's Host, so the original reaches Streamlit's
+		# Origin check, and the authentik cookie rides the same-origin
+		# handshake. If authentik ever answered 101 to the forwarded Upgrade
+		# this would hang, and the fix is `header_up -Connection`, still not
+		# an exclusion.
 		#
-		# ⚠ NOT VERIFIED END TO END, because it cannot be from here: no suite
-		# has a live outpost. `./tests/run.sh stack owl` proves the container
-		# serves the socket and nothing more. Check by hand on first deploy —
-		# load the page and change a widget.
+		# ⚠ NOT VERIFIED END TO END — no suite has a live outpost. Check by
+		# hand on first deploy.
 		#
-		# ⚠ Known rough edge to expect rather than debug: when the Authentik
-		# session expires (access_token_validity hours=24) with the tab still
-		# open, the socket's reconnect gets a 302, and browsers do not follow
-		# redirects on a handshake — so the UI silently stops updating until
-		# the page is reloaded. Reload is the fix; it is not a Caddy bug.
+		# ⚠ Expected rough edge: on session expiry with the tab open, the
+		# socket's reconnect gets a 302 that browsers will not follow, so the
+		# UI silently stops updating until the page is reloaded.
 		import protected
 		reverse_proxy localhost:10307
 	}
@@ -599,27 +457,18 @@
 
 	@windmill host windmill.svc.idanreed.com
 	handle @windmill {
-		# Forward auth is the ONLY SSO Windmill can have: OIDC/OAuth login
-		# is an Enterprise feature and the OSS build has no path to it.
+		# The only SSO Windmill can have — OIDC login is an Enterprise
+		# feature. It gates ACCESS ONLY: Windmill does not consume
+		# X-Authentik-*, so a local login still follows. Two logins,
+		# permanently; that is the trade.
 		#
-		# ⚠ It gates ACCESS ONLY. Windmill does not consume X-Authentik-*
-		# — there is no remote-user guard here (that is Firefly) — so you
-		# still log in with a local Windmill account afterwards. Two
-		# logins, permanently. That is the trade, not a misconfiguration.
+		# 🚨 IN-FLEET CALLERS MUST NOT USE THIS VHOST — forward auth 302s
+		# every POST /api/w/<ws>/jobs/run/*, and an Authentik carve-out for
+		# ^/api/.* would expose the whole authenticated API. Browsers come
+		# here, machines call 127.0.0.1:10253 direct.
 		#
-		# 🚨 IN-FLEET CALLERS MUST NOT USE THIS VHOST. Windmill's whole
-		# point is POST /api/w/<ws>/jobs/run/* from other services, and
-		# forward auth 302s every one of them. The alternative — an
-		# Authentik "Unauthenticated URL" carve-out for ^/api/.* — would
-		# expose the entire authenticated API to anyone who can reach the
-		# name, since Windmill's own workspace tokens would then be the
-		# only control. So: browsers come here, machines call
-		# 127.0.0.1:10253 (or windmill_server:8000 on the bridge) direct.
-		#
-		# ⚠ Never set `disable_password_login` in Instance Settings. Its
-		# description ("use when you only want OAuth/SAML logins") reads
-		# like advice; with no OAuth provider configured — which is the
-		# permanent state on OSS — it is a self-lockout switch.
+		# ⚠ Never set `disable_password_login` in Instance Settings: with no
+		# OAuth provider — the permanent state on OSS — it is a self-lockout.
 		import protected
 		reverse_proxy localhost:10253
 	}
@@ -632,49 +481,30 @@
 
 	@rmfakecloud host rmfakecloud.svc.idanreed.com
 	handle @rmfakecloud {
-		# NO forward auth, and this one is not close. The tablet is a
-		# non-interactive client holding an rmfakecloud-issued JWT and it
-		# cannot follow a 302. Its routes are /discovery/v1/*,
-		# /token/json/2/*, /service/json/1/*, /document-storage/json/2/*,
-		# /sync/v{2,3,4}/*, /notifications/ws/json/1, /mqtt,
-		# /integrations/v{1,2}/* and about thirty more — essentially the
-		# whole application. Only /ui/* is a browser path, so the
-		# exclusion list would not merely reopen the data plane, it would
-		# BE the data plane.
+		# NO forward auth, and not close: the tablet is a non-interactive
+		# client holding an rmfakecloud JWT that cannot follow a 302, and only
+		# /ui/* is a browser path — the exclusion list would BE the data
+		# plane. rmfakecloud authenticates itself (argon2id, JWT admin claim).
 		#
-		# rmfakecloud authenticates itself: argon2id password hashing,
-		# JWT with an admin claim, guarding /ui/api/*.
-		#
-		# 🚨 Do not enable this route before notes-sync-init has run. On
-		# an empty data directory the first POST to /ui/api/login creates
-		# an admin out of whatever credentials arrive, and there is no
-		# switch that closes that window.
-		#
-		# Websockets on /notifications/ws/json/1; Caddy upgrades with no
-		# extra configuration.
+		# 🚨 Do not enable this route before notes-sync-init has run: on an
+		# empty data directory the first POST to /ui/api/login creates an
+		# admin out of whatever credentials arrive.
 		reverse_proxy localhost:10200
 	}
 
 	@syncthing host syncthing.svc.idanreed.com
 	handle @syncthing {
-		# Forward auth on the GUI, and Syncthing keeps its own seeded
-		# credential underneath — the API key is a full-admin bypass, so
-		# anything that reaches the port directly must still meet a lock.
-		#
-		# Rollout order is load-bearing as always: the blueprint entry in
-		# headscale-vps/authentik/blueprints/custom/forward-auth.yaml plus
-		# a VPS rebuild BEFORE this route syncs.
+		# Forward auth on the GUI, with Syncthing's own seeded credential
+		# underneath — the API key is a full-admin bypass, so anything
+		# reaching the port directly must still meet a lock.
 		#
 		# ⚠ This route only works because the container keeps
-		# STGUIADDRESS=0.0.0.0:8384. Upstream's README tells you to unset
-		# it so the GUI binds 127.0.0.1, which installs lib/api's
-		# localhostMiddleware — after which every request arriving with
-		# this Host gets a bare 403 "Host check error" and nothing in the
-		# logs explains it. That is finding #15 in a different coat.
+		# STGUIADDRESS=0.0.0.0:8384. Unsetting it (as upstream's README says)
+		# installs localhostMiddleware, after which every request with this
+		# Host gets a bare 403 "Host check error" and nothing explains it.
 		#
-		# Do NOT let a client-supplied X-API-Key through: it bypasses GUI
-		# auth entirely. Caddy forwards unknown headers by default, so
-		# strip it here rather than relying on forward auth to stop it.
+		# 🚨 A client-supplied X-API-Key bypasses GUI auth entirely, and Caddy
+		# forwards unknown headers by default.
 		request_header -X-API-Key
 		import protected
 		reverse_proxy localhost:10201
@@ -682,48 +512,29 @@
 
 	@silverbullet host silverbullet.svc.idanreed.com
 	handle @silverbullet {
-		# Forward auth, with SilverBullet's own SB_USER login underneath —
-		# two locks, like Syncthing and Windmill. SilverBullet cannot read
-		# X-Authentik-* headers, so this gates access only and the second
-		# login stays permanent.
+		# Forward auth with SilverBullet's own SB_USER login underneath — two
+		# locks, since it cannot read X-Authentik-* headers.
 		#
-		# NO skip_path_regex on its blueprint provider, and that is a
-		# measured decision rather than an omission. Against the pinned
-		# 2.9.0 with SB_USER set, the only paths that answer without a
-		# session are `/`, `/.ping`, `/.client/*`, `/service_worker.js` and
-		# `/.auth`; `/index.md` and `/.fs/*` 401. Every one of those is a
-		# same-origin browser request that carries the Authentik cookie,
-		# and nothing dials this vhost non-interactively — the git mirror
-		# talks to Forgejo's LOOPBACK publish, not through Caddy. So there
-		# is no API client to carve out (contrast Firefly's ^/api/.*).
-		#
-		# The PWA service worker, which is the part forward auth would
-		# genuinely break, is turned off in the compose file instead of
-		# being exempted here. See the SB_DISABLE_SERVICE_WORKER comment
-		# there for the trade.
-		#
-		# Rollout order as always: blueprint entry + VPS rebuild BEFORE
-		# this route syncs, or the outpost has nothing to match the Host
-		# against and every request 404s.
+		# NO skip_path_regex on its provider, measured rather than omitted:
+		# every path that answers without a session is a same-origin browser
+		# request carrying the Authentik cookie, and nothing dials this vhost
+		# non-interactively — the git mirror uses Forgejo's loopback publish.
+		# The PWA service worker, which forward auth would genuinely break, is
+		# turned off in the compose file instead of exempted here.
 		import protected
 		reverse_proxy localhost:10202
 	}
 
 	@outline host outline.svc.idanreed.com
 	handle @outline {
-		# NO forward auth, and this one is not a preference: Outline has no
-		# local accounts at all and drives its own OIDC against Authentik
-		# (OIDC_* in stacks/outline/compose.yaml, provider in
-		# headscale-vps/authentik/blueprints/custom/outline-oidc.yaml).
-		# Putting the outpost in front would 302 the /auth/oidc.callback
-		# leg of its own login flow — the same reason immich, tandoor and
-		# the books stack are unprotected.
+		# NO forward auth, and not a preference: Outline has no local
+		# accounts at all, so the outpost would 302 the /auth/oidc.callback
+		# leg of its own login flow.
 		#
-		# The consequence is that this vhost is open to the tailnet until
-		# the OIDC client secret is real: Outline will render its sign-in
-		# page to anyone who can reach the name. It has nothing to sign
-		# into and creates no session, but do not treat the route as a
-		# lock. The first successful sign-in becomes the workspace OWNER.
+		# ⚠ Consequently this vhost is open to the tailnet until the OIDC
+		# client secret is real — it renders its sign-in page to anyone who
+		# can reach the name, and the first successful sign-in becomes the
+		# workspace OWNER.
 		reverse_proxy localhost:10203
 	}
 
@@ -781,35 +592,25 @@
 
 	@vaultwarden host vaultwarden.svc.idanreed.com
 	handle @vaultwarden {
-		# /admin gets forward auth AND keeps its ADMIN_TOKEN. Upstream
-		# offers DISABLE_ADMIN_TOKEN for exactly this arrangement — "only
-		# meant to be used with the use of a separate auth layer in
-		# front" — and it is deliberately NOT set: with both, a
-		# forward-auth outage still leaves the token, and a leaked token
-		# still needs an Authentik session. It fails closed in both
-		# directions.
+		# /admin gets forward auth AND keeps its ADMIN_TOKEN.
+		# DISABLE_ADMIN_TOKEN exists for exactly this arrangement and is
+		# deliberately NOT set: with both, a forward-auth outage still leaves
+		# the token and a leaked token still needs an Authentik session.
 		@vaultwarden-admin path /admin*
 		handle @vaultwarden-admin {
 			import protected
 			reverse_proxy localhost:10400
 		}
 
-		# Everything else gets NO forward auth, and this one is not a
-		# preference. The browser extension, the mobile and desktop apps
-		# and the CLI all authenticate with a bearer token against
-		# /identity/connect/token and /api/*; none of them can follow a
-		# 302 to Authentik and they surface it as a generic login
-		# failure. The notification websocket (/notifications/hub, and
-		# /notifications/anonymous-hub for Send links) is on this same
-		# port, and a forward-auth 302 on an Upgrade request makes every
-		# client fall back to polling SILENTLY — the symptom is "my vault
-		# takes minutes to sync", not an error.
+		# Everything else gets NO forward auth, and not as a preference: the
+		# extension, apps and CLI all authenticate with a bearer token and
+		# surface a 302 as a generic login failure, and a 302 on the
+		# notification websocket's Upgrade makes every client fall back to
+		# polling SILENTLY ("my vault takes minutes to sync", no error).
 		#
-		# The exclusion list needed to fix all that would be the entire
-		# data plane, which is the same finding as Dawarich and Kavita.
-		# And Vaultwarden's own auth is stronger here anyway: the vault
-		# is end-to-end encrypted under the master key, so Authentik in
-		# front would add a perimeter around ciphertext.
+		# The exclusion list would be the entire data plane, and the vault is
+		# end-to-end encrypted anyway, so Authentik would only add a perimeter
+		# around ciphertext.
 		handle {
 			reverse_proxy localhost:10400
 		}
@@ -817,110 +618,69 @@
 
 	@docspace host docspace.svc.idanreed.com
 	handle @docspace {
-		# NO forward auth. DocSpace has real accounts of its own (the portal
-		# owner that docspace_init creates through the wizard API), and it has
-		# desktop and mobile clients that a 302 would break — the same call as
-		# Immich, Kavita and audiobookshelf.
+		# NO forward auth: real accounts of its own, plus desktop and mobile
+		# clients a 302 would break. Its SSO is SAML 2.0, not OIDC, and is
+		# free self-hosted; until that exchange with Authentik happens it runs
+		# on the local owner account.
 		#
-		# ⚠ _overview.md's row said OIDC. DocSpace's SSO is **SAML 2.0**, not
-		# OIDC, and it is FREE self-hosted (SsoHandler gates on
-		# `Standalone || quota.Sso`, and Standalone is true here) — the
-		# "Business plan for SSO" note was cloud pricing. Until the SAML
-		# exchange with Authentik happens it runs on the local owner account.
-		#
-		# Document Server has NO route and must never get one: it is served at
-		# /ds-vpath/ by this container's own nginx, and publishing it would
-		# expose an unauthenticated /healthcheck and a converter on a second
-		# door.
+		# 🚨 Document Server has NO route and must never get one: it is served
+		# at /ds-vpath/ by this container's own nginx, and publishing it would
+		# expose an unauthenticated /healthcheck and a converter.
 		reverse_proxy localhost:10404
 	}
 
 	@gatus host gatus.svc.idanreed.com
 	handle @gatus {
-		# Forward auth, and it is the ONLY control. Gatus's own `security`
-		# block does not protect the uptime history: the SPA,
-		# /api/v1/config, every badge and every
-		# /v1/endpoints/:key/uptimes/:duration route are on the UNPROTECTED
-		# router (its api.go marks the boundary with an "ORDER IS IMPORTANT"
-		# comment). So anyone who reaches the port reads everything.
+		# 🚨 The ONLY control: Gatus's own `security` block leaves the SPA,
+		# /api/v1/config and every uptime-history route on an UNPROTECTED
+		# router, so anyone reaching the port reads everything.
 		#
-		# ⚠ And Gatus's OIDC must never be enabled: it calls
-		# oidc.NewProvider at startup with no retry and PANICS on failure, so
-		# a tailnet blip during a redeploy would restart-loop the monitoring
-		# service — the one thing that must stay up when other things do not.
+		# ⚠ Gatus's OIDC must never be enabled: it panics at startup if
+		# discovery fails, which would restart-loop the one service that has
+		# to stay up when others do not.
 		#
-		# ⚠ If external push endpoints are ever used
-		# (POST /api/v1/endpoints/:key/external, a bearer-token route on the
-		# unprotected router), forward auth WILL break them and they need an
-		# Authentik Unauthenticated-URL carve-out. This design does not use
-		# them.
+		# ⚠ External push endpoints would break under forward auth and need an
+		# Authentik carve-out. This design does not use them.
 		import protected
 		reverse_proxy localhost:10450
 	}
 
 	@beszel host beszel.svc.idanreed.com
 	handle @beszel {
-		# Forward auth, with Beszel's own PocketBase login left underneath —
-		# two locks, so it fails closed either way.
+		# Forward auth with Beszel's own PocketBase login underneath. OIDC
+		# cannot work here: its provider config lives inside data.db with no
+		# environment variable for any part of it.
 		#
-		# OIDC cannot work for this row: Beszel's OAuth2 provider config
-		# lives in the users collection's `oauth2` options INSIDE data.db,
-		# with no environment variable for any part of it — upstream's own
-		# procedure is a browser wizard.
+		# 🚨 Browser-only, which is what makes forward auth safe: the AGENT
+		# dials 127.0.0.1:10452 on the host network, and pointed at this
+		# hostname instead it would silently fall back to SSH pull mode rather
+		# than report the 302.
 		#
-		# 🚨 This vhost is browser-only, and that is what makes forward auth
-		# safe here. The AGENT does not come through this route: it dials
-		# http://127.0.0.1:10452 on the host network. Point it at this
-		# hostname instead and the outpost 302s its websocket upgrade — and
-		# the agent does NOT report an error, it silently falls back to SSH
-		# pull mode, which cannot work in this topology. A red system with no
-		# useful message, the same shape as the Vaultwarden websocket note
-		# above.
-		#
-		# ⚠ Do not "improve" this with TRUSTED_AUTH_HEADER=X-Authentik-Email +
-		# DISABLE_PASSWORD_AUTH. Those are real env vars, re-applied on every
-		# boot — but the header would be trusted on EVERY request, and unlike
-		# Firefly's case the port is genuinely reachable without the proxy
-		# (the agent uses it), so anything on the host could set the header
-		# and be an admin. That is a deliberate posture change, not a default.
+		# ⚠ Do not "improve" this with TRUSTED_AUTH_HEADER +
+		# DISABLE_PASSWORD_AUTH: the header would then be trusted on EVERY
+		# request, and unlike Firefly's case the port is genuinely reachable
+		# without the proxy, so anything on the host could set it and be admin.
 		import protected
 		reverse_proxy localhost:10452
 	}
 
 	@grafana host grafana.svc.idanreed.com
 	handle @grafana {
-		# Forward auth, with Grafana's own admin login left underneath — the
-		# beszel arrangement, so it fails closed either way. Two logins
-		# is the deliberate cost: see stacks/logging/.sops.env.example for why
-		# Grafana's auth.proxy header mode is NOT used (it would trust
-		# X-Authentik-* from anything that reaches 127.0.0.1:10455, and this
-		# is the service you want working when the VPS that runs the outpost
-		# is the thing that broke).
+		# Forward auth with Grafana's own admin login underneath. Two logins
+		# is the deliberate cost of not using Grafana's auth.proxy header
+		# mode, which would trust X-Authentik-* from anything reaching
+		# 127.0.0.1:10455 — and this is the service you want working when the
+		# VPS running the outpost is the thing that broke.
 		#
-		# 🚨 This vhost is browser-only, and that is what makes forward auth
-		# safe here. NOTHING in the fleet talks to Grafana programmatically,
-		# and — the part worth stating because it is the beszel trap in a new
-		# shape — the log INGESTION path does not come through here at all:
-		# the local Alloy pushes to victorialogs:9428 over the stack's own
-		# compose network, and Grafana queries the same address. A
-		# forward-auth 302 on a push endpoint is silently dropped telemetry,
-		# so no ingest path may ever `import protected`.
+		# 🚨 Browser-only, which is what makes forward auth safe: nothing
+		# talks to Grafana programmatically, and the log INGESTION path does
+		# not come through here at all (Alloy pushes to victorialogs:9428 over
+		# the compose network). A forward-auth 302 on a push endpoint is
+		# silently dropped telemetry, so no ingest path may ever `import
+		# protected` — see @vlogs_ingest below, the one machine-facing route.
 		#
-		# 🔄 THE STORE NOW HAS EXACTLY ONE CADDY ROUTE, and this comment used
-		# to say it must have none. That was right while the only collector
-		# was on this host. The VPS's journal — every fail2ban ban, every
-		# Authentik login_failed, i.e. the fleet's whole public auth surface —
-		# could not reach the store at all, because a loopback publish is
-		# unreachable from another machine. See @vlogs_ingest below for the
-		# shape that changed and the two properties that did not: no forward
-		# auth on the push path, and no route to the QUERY api.
-		#
-		# ⚠ Grafana Live (websockets on /api/live/ws) is the one feature the
-		# outpost will break — it 302s the upgrade. It is turned OFF in
-		# compose.yaml (GF_LIVE_MAX_CONNECTIONS=0) rather than left to fail
-		# confusingly; log search does not use it. Turning it on means an
-		# Authentik Unauthenticated-URL carve-out for /api/live/*, not just
-		# flipping the env var.
+		# ⚠ Grafana Live is the one feature the outpost breaks, so it is
+		# turned off in compose.yaml rather than left to fail confusingly.
 		import protected
 		reverse_proxy localhost:10455
 	}
@@ -929,100 +689,55 @@
 	# VictoriaLogs ingest — the ONE machine-facing route in this file
 	# -----------------------------------------------------------------------
 	# Exists so the headscale VPS can ship its journal here
-	# (headscale-vps/modules/log-shipper.nix). That journal is where fail2ban
-	# writes its bans and where Authentik's login_failed events land, so
-	# without this the fleet's only publicly-exposed auth surface is also the
-	# only one with no dashboard, no history and no query.
+	# (headscale-vps/modules/log-shipper.nix) — the journal holding every
+	# fail2ban ban and Authentik login_failed, i.e. the fleet's only
+	# publicly-exposed auth surface.
 	#
-	# 🚨 WHY A VHOST AND NOT A TAILNET BIND. The obvious alternative is to
-	# publish VictoriaLogs on ${TAILNET_IP} instead of 127.0.0.1 and point the
-	# VPS straight at :10456. Rejected on two counts: it breaks the
-	# loopback-only publish contract that tests/lib/mk-stack-suite.nix asserts
-	# for EVERY stack generically, and VictoriaLogs has no authentication of
-	# any kind — so it would hand every tailnet peer (and anything that ever
-	# gets a node key) unauthenticated read AND delete over the whole fleet's
-	# logs. Routing through here keeps the publish loopback-only and makes
-	# "which paths answer" the authorization model.
+	# 🚨 A VHOST RATHER THAN A TAILNET BIND, because publishing VictoriaLogs
+	# on ${TAILNET_IP} would break the loopback-only publish contract every
+	# stack is held to AND hand every tailnet peer unauthenticated read and
+	# delete over the fleet's logs — it has no authentication of its own.
 	#
-	# 🚨 THE PATH ALLOWLIST IS THE SECURITY BOUNDARY, not a tidiness measure.
-	# VictoriaLogs serves /insert/*, /select/* (full query API) and
-	# /internal/* (force_merge, and in some builds data deletion) on ONE port.
-	# Only the push endpoint is reachable here; the query API stays
-	# unreachable from off-host and Grafana remains its only client, over the
-	# stack's own compose network. Adding a second path to this allowlist is a
+	# 🚨 THE PATH ALLOWLIST IS THE SECURITY BOUNDARY. VictoriaLogs serves
+	# /insert/*, the full /select/* query api and /internal/* (force_merge,
+	# and in some builds deletion) on ONE port. Adding a second path here is a
 	# posture change, not a convenience.
 	#
-	# 🚨 NO `import protected`, AND THAT IS DELIBERATE — see the grafana note
-	# above. Forward auth answers an unauthenticated push with a 302 to
-	# Authentik; Alloy would treat that as a non-retryable success and the
-	# lines would be gone. Machine ingest authenticates with a bearer token;
-	# browsers get Authentik. Different callers, different gate.
+	# 🚨 NO `import protected`: forward auth answers an unauthenticated push
+	# with a 302, which Alloy treats as a non-retryable success — the lines
+	# are then gone. Machine ingest authenticates with a bearer token.
 	#
-	# The token is a cross-host twin generated by secrets-gen/manifest.yaml:
-	# VLOGS_INGEST_TOKEN here (stacks/caddy/.sops.env) and the same value in
-	# headscale-vps/secrets.sops.yaml. The vlogs-ingest-contract lint checks
-	# all three sides agree.
+	# The token is a cross-host twin from secrets-gen/manifest.yaml, checked
+	# on all three sides by the vlogs-ingest-contract lint.
 	@vlogs_ingest host vlogs-ingest.svc.idanreed.com
 	handle @vlogs_ingest {
-		# Order note, MEASURED rather than reasoned (`caddy adapt` on this
-		# file, cloudflare-dns swapped for `tls internal` so a stock binary
-		# could parse it): the subroute comes out as
-		#   static_response(503) -> static_response(401)
-		#     -> static_response(403) -> reverse_proxy
-		# i.e. `respond` outranks `reverse_proxy` in caddy's directiveOrder no
-		# matter what order they are written in, and the three `respond`s keep
-		# their source order. Worth checking rather than assuming — if the
-		# proxy ran first, this vhost would be an unauthenticated write
-		# endpoint onto the fleet's log store.
+		# Ordering, measured with `caddy adapt` rather than assumed: `respond`
+		# outranks `reverse_proxy` in directiveOrder however they are written,
+		# and same-directive `respond`s keep source order. If the proxy ran
+		# first this vhost would be an unauthenticated write endpoint.
 		#
-		# The same adapt was run with VLOGS_INGEST_TOKEN UNSET, which is the
-		# state that exists between a push and `sopsgen apply`. Result: the
-		# 503 guard matches `Bearer ` and the 401 becomes
-		# `not header Authorization "Bearer "`, so EVERY request gets one or
-		# the other and none reach reverse_proxy. Closed, not open.
+		# ⚠ Not a constant-time comparison — caddy's header matcher is plain
+		# string equality. Against a 256-bit token reachable only over the
+		# tailnet that is a recorded tradeoff, not an oversight.
 		#
-		# ⚠ Not a constant-time comparison — caddy's header matcher is a plain
-		# string equality. Against a 256-bit random token reached only over the
-		# tailnet, a remote timing oracle is not a practical attack; it is
-		# recorded here so the tradeoff is a decision rather than an oversight.
-		#
-		# 🚨 FAIL-CLOSED GUARD FOR AN UNSET TOKEN. `{$VLOGS_INGEST_TOKEN}` is
-		# substituted at ADAPT time, so if the var is missing this vhost's
-		# check degrades to the literal "Bearer " and anything on the tailnet
-		# willing to send that header gets write access to the fleet's log
-		# store.
-		#
-		# An earlier version of this comment argued that could not happen,
-		# because TAILNET_IP comes from the same .env and an empty `bind` is a
-		# parse error, so a missing .env means caddy never starts. That
-		# argument only covers a WHOLLY missing .env, and the state that
-		# actually occurs is different — observed live 2026-09-06: the .env
-		# exists and is correct and only THIS key is absent, because
-		# stack-git-sync delivers the Caddyfile the minute it is pushed while
-		# the token appears only when an operator runs `sopsgen apply`.
-		# Between those two events the degenerate matcher is what a caddy
-		# restart would deploy.
-		#
-		# So reject the degenerate value explicitly, and FIRST (same-directive
-		# `respond`s keep source order). With a real token this never matches —
-		# nothing sends a bare "Bearer " as a credential — and with an unset
-		# one the endpoint is closed instead of open. 503 not 401 on purpose:
-		# this is a server misconfiguration rather than a rejected credential,
-		# and since the gatus probe expects 401 the state alerts rather than
-		# passing silently.
+		# 🚨 FAIL-CLOSED GUARD FOR AN UNSET TOKEN, and it must come FIRST.
+		# `{$VLOGS_INGEST_TOKEN}` is substituted at ADAPT time, so a missing
+		# key degrades the check below to the literal "Bearer " — an open
+		# write endpoint onto the fleet's log store. That state is real, not
+		# hypothetical: stack-git-sync delivers this file the minute it is
+		# pushed, while the token appears only when an operator runs `sopsgen
+		# apply`. 503 rather than 401 because it is a misconfiguration, and
+		# because the gatus probe expects 401 and so alerts on it.
 		@empty_token {
 			header Authorization "Bearer "
 		}
 		respond @empty_token "ingest token not configured on this host" 503
 
-		# ⚠ BLOCK FORM, NOT THE ONE-LINE `@name not header ...` FORM, and that
-		# is a deliberate choice about blast radius rather than a style
-		# preference. This is the only site block in the fleet, so a Caddyfile
-		# that fails to parse takes down EVERY service on the services VM, not
-		# just this route. The block form is the construction
-		# headscale-vps/modules/caddy.nix already uses and that
-		# tests/suites/vps.nix exercises against a real caddy, so it is proven
-		# here; the one-liner is merely documented.
+		# ⚠ BLOCK FORM, not the one-line `@name not header …`: this is the only
+		# site block in the fleet, so a Caddyfile that fails to parse takes
+		# down every service on the VM. The block form is what
+		# headscale-vps/modules/caddy.nix already uses against a real caddy in
+		# tests/suites/vps.nix; the one-liner is only documented.
 		@unauthorized {
 			not header Authorization "Bearer {$VLOGS_INGEST_TOKEN}"
 		}

@@ -1,109 +1,70 @@
-# Forgejo — the git ROOT for everything in this homelab. GitHub is only a
-# push mirror for select public repos (LONGRUN decision); this instance is
-# the source of truth, including the remote the stack git sync pulls from.
+# Forgejo — the git ROOT for this homelab (10550 web, 10551 ssh).
+# Design: ServerNotes/designs/dev-forgejo.md. GitHub is only a push mirror.
 #
-# Access model (v1 HTTPS-only SUPERSEDED 2026-09-03, operator decision "full
-# SSH for git"): SSH is enabled, LOOPBACK-ONLY — the container's sshd is
-# published on 127.0.0.1:10551, same convention as the web port. Caddy cannot
-# proxy SSH, so humans reach it via ProxyJump through the VM's own sshd (the
-# desktop `forgejo` identity in nixos-de/ssh-identities.nix), and
-# stack-git-sync on this host clones over loopback with a per-repo READ-ONLY
-# deploy key (STACK_GIT_SSH_KEY). HTTPS+token is NOT removed: the web UI and
-# git-over-https still ride Caddy at forgejo.svc.idanreed.com, and Renovate +
-# the CI runner stay HTTP API-token consumers.
+# Caddy cannot proxy SSH, so 10551 is loopback-only: humans reach it by
+# ProxyJump through the VM's own sshd (the desktop `forgejo` identity in
+# nixos-de/ssh-identities.nix) and stack-git-sync clones over loopback with a
+# read-only deploy key. The web UI and git-over-https still ride Caddy.
 #
-# NO .sops.env for v1, on purpose: Forgejo self-generates all of its private
-# material — SECRET_KEY, INTERNAL_TOKEN, the JWT secrets — into
-# /data/gitea/conf/app.ini (i.e. /mnt/fast/forgejo/data) on first start and
-# reuses it thereafter. Nothing secret travels through git, so there is
-# nothing to encrypt, no env_file to declare, and (unlike finding #11's
-# stacks) no decrypt race to cover. The consequence is that app.ini is STATE
-# and lives in the volume — which the fast-volume Backrest plan already
-# covers (see designs/dev-forgejo.md).
+# Forgejo self-generates SECRET_KEY, INTERNAL_TOKEN and the JWT secrets into
+# /data/gitea/conf/app.ini, so app.ini is STATE and lives in the volume — the
+# fast-volume Backrest plan covers it. The only sops secret here is the OIDC
+# client secret.
 services:
   forgejo:
     image: codeberg.org/forgejo/forgejo:16.0
     container_name: forgejo
     environment:
-      # The classic (root-entrypoint) image runs its `git` user at this uid,
-      # so everything it writes matches the /srv/stacks + decrypt-chown
-      # 1000:1000 ownership world (finding #10) and the fast-volume backup
-      # reads it without surprises.
+      # The classic image runs its `git` user at this uid, matching the
+      # /srv/stacks + decrypt-chown 1000:1000 ownership world.
       - USER_UID=1000
       - USER_GID=1000
       - TZ=America/Chicago
-      # Headless bring-up: no install wizard. With no DB configured the
-      # image defaults to sqlite3 at /data/gitea/gitea.db — right-sized for
-      # a single-user instance. (`forgejo dump` exists for consistent
-      # exports; deferred — the design note has the backup story.)
+      # Headless bring-up: no install wizard. With no DB configured the image
+      # defaults to sqlite3 at /data/gitea/gitea.db.
       - FORGEJO__security__INSTALL_LOCK=true
-      # What clone URLs and redirects are built from; must match the Caddy
-      # route (the caddy-routes lint ties the published port to it).
+      # Clone URLs and redirects are built from this; must match the Caddy route
+      # (the caddy-routes lint ties the published port to it).
       - FORGEJO__server__ROOT_URL=https://forgejo.svc.idanreed.com/
-      # Explicit false, not merely absent: the classic image's setup runs
-      # environment-to-ini, which PERSISTED the old DISABLE_SSH=true into the
-      # stateful /data/gitea/conf/app.ini — only an explicit false overwrites
-      # it on an instance that ever ran the v1 config.
+      # Explicit false, not merely absent: environment-to-ini PERSISTED the old
+      # DISABLE_SSH=true into the stateful app.ini, and only an explicit false
+      # overwrites it.
       - FORGEJO__server__DISABLE_SSH=false
       # What the UI's ssh clone button advertises: git@forgejo:... where
-      # "forgejo" is the desktop's ssh Host alias (ssh-identities.nix), which
-      # carries the ProxyJump + port. SSH_PORT here is app.ini-level (clone
-      # URLs only); the container's actual sshd listens on 22 — the s6
-      # openssh setup templates its Port from the plain SSH_PORT *container*
-      # env (default 22), which is deliberately left unset.
+      # "forgejo" is the desktop's ssh Host alias, which carries the ProxyJump.
+      # SSH_PORT here is app.ini-level (clone URLs only); the container's sshd
+      # listens on 22 because the plain SSH_PORT container env is left unset.
       - FORGEJO__server__SSH_DOMAIN=forgejo
       - FORGEJO__server__SSH_PORT=10551
-      # Single-user instance: the admin is created headless with the CLI
-      # (`forgejo admin user create`); nobody self-registers.
+      # The admin is created headless with the CLI; nobody self-registers.
       - FORGEJO__service__DISABLE_REGISTRATION=true
-      # Push-to-create: `git push` to a URL whose repo does not exist yet
-      # creates it under the pushing user instead of erroring ("Push to
-      # create is not enabled for users"). Off upstream by default; on here
-      # because this instance is the git ROOT and new repos start life as a
-      # working copy on the desktop. Works on both transports; the path must
-      # be under an owner that already exists (there are no orgs, so
-      # ENABLE_PUSH_CREATE_ORG stays off).
+      # Push-to-create: this instance is the git root and new repos start life
+      # as a working copy on the desktop. Repos born that way are private —
+      # upstream's default already, pinned so a flip cannot silently publish one.
       - FORGEJO__repository__ENABLE_PUSH_CREATE_USER=true
-      # Repos born that way are private. Upstream default is already true —
-      # pinned explicitly so an upstream flip cannot silently publish a repo
-      # that was created by a push rather than through the UI.
       - FORGEJO__repository__DEFAULT_PUSH_CREATE_PRIVATE=true
-      # Actions, off by default in Forgejo and easy to forget because GitHub
-      # has no equivalent switch. This is only HALF the toggle: Actions must
-      # also be turned on PER REPOSITORY (repo Settings -> Units -> Actions),
-      # which is likewise off by default on new repos. Both are required
-      # before nixos/modules/forgejo-runner.nix's registration means anything
-      # or .forgejo/workflows/* ever fires.
+      # Only HALF the toggle: Actions must also be enabled PER REPOSITORY
+      # (Settings -> Units -> Actions) before the runner registration or any
+      # .forgejo/workflows/* means anything.
       - FORGEJO__actions__ENABLED=true
-      # OIDC auto-provisioning (login-tiers tier 1). The auth SOURCE itself is
-      # seeded into the DB by forgejo_init (add-oauth); these app.ini settings
-      # govern what happens on an Authentik login:
-      #   ENABLE_AUTO_REGISTRATION — create a Forgejo account on first OIDC login.
-      #     DISABLE_REGISTRATION stays true above, so ONLY Authentik can mint
-      #     accounts — there is still no open self-signup.
-      #   ACCOUNT_LINKING=auto — link to an existing local account by verified
-      #     email instead of erroring/duplicating, so the seeded admin keeps its
-      #     local (break-glass) password AND can log in via Authentik.
-      #   USERNAME=preferred_username — take the Forgejo username from Authentik's
-      #     preferred_username claim, not the email localpart.
+      # OIDC
+      # The auth SOURCE is seeded into the DB by forgejo_init; these govern what
+      # an Authentik login does. DISABLE_REGISTRATION stays true above, so only
+      # Authentik can mint accounts. ACCOUNT_LINKING=auto keeps the seeded
+      # admin's local break-glass password working alongside SSO.
       - FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true
       - FORGEJO__oauth2_client__ACCOUNT_LINKING=auto
       - FORGEJO__oauth2_client__USERNAME=preferred_username
     volumes:
       - /mnt/fast/forgejo/data:/data
     ports:
-      # Web UI and git-over-https on one port. Loopback-only: Caddy is the
-      # only path in (loopback-binding lint enforces the pattern).
       - '127.0.0.1:10550:3000'
-      # git-over-ssh, loopback-only (host port from the Infra block, next
-      # free after 10550): the container's own sshd on its internal 22.
-      # Consumers are on-host (stack-git-sync) or arrive via ProxyJump
-      # through the VM's sshd — nothing on the LAN or tailnet reaches this
-      # directly. Host keys self-generate into /data/ssh on first start.
+      # git-over-ssh, loopback-only: consumers are on-host (stack-git-sync) or
+      # arrive via ProxyJump. Host keys self-generate into /data/ssh.
       - '127.0.0.1:10551:22'
     healthcheck:
-      # The dedicated health endpoint, not '/': it checks the DB and cache
-      # backends, and both the suites and `up --wait` key off it.
+      # The dedicated endpoint, not '/': it checks the DB and cache backends,
+      # and both the suites and `up --wait` key off it.
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null"]
       interval: 60s
       timeout: 10s
@@ -111,11 +72,10 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # forgejo_init — seed the Authentik OAuth2/OIDC auth source (see
-  # forgejo-init.sh for why a container: the source lives in Forgejo's DB, not
-  # app.ini/env). One-shot after the instance is healthy.
-  # FORGEJO_OIDC_CLIENT_SECRET arrives from .sops.env -> .env — the stack's
-  # FIRST secret (Forgejo otherwise self-generates all its private material).
+  # Init
+  # Seeds the Authentik OAuth2 auth source — it lives in Forgejo's DATABASE, not
+  # app.ini, so a one-shot CLI call is the only declarative route. See
+  # forgejo-init.sh. FORGEJO_OIDC_CLIENT_SECRET arrives from .env.
   forgejo_init:
     image: codeberg.org/forgejo/forgejo:16.0
     container_name: forgejo_init
@@ -127,8 +87,6 @@ services:
     volumes:
       - /mnt/fast/forgejo/data:/data
       - ./forgejo-init.sh:/init/forgejo-init.sh:ro
-    # Long form + required:false (finding #11): a deploy can race the first
-    # decrypt, and the plain form would abort the whole stack.
     env_file:
       - path: .env
         required: false

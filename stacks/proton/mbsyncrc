@@ -1,31 +1,24 @@
-# mbsync (isync 1.5.0) config for the proton-export sidecar — mounted :ro at
-# /mbsyncrc (the image's fixed path; its /sync helper hardcodes it too).
-# ARCHIVE semantics throughout: one-way pull, no expunge, no write-back.
-# compose.yaml's header carries the design; this file only executes it.
+# mbsync config for the proton-export sidecar — mounted :ro at /mbsyncrc, the
+# path the image's /sync helper hardcodes. ARCHIVE semantics throughout: one-way
+# pull, no expunge, no write-back. compose.yaml carries the design.
 
 IMAPAccount proton
-# The bridge, by compose service name over the project's own bridge network —
-# NOT the host's 10004 publish (a container on this network cannot reach a
-# host loopback publish anyway).
+# The bridge by compose service name, not the host's 10004 publish, which a
+# container on this network cannot reach anyway.
 Host hydroxide
 Port 1143
-# Both come from the compose-delivered environment (.sops.env -> .env ->
-# env_file), so the repo copy of this file carries no account-specific value.
-# printenv, not `echo $VAR`: the command line itself stays expansion-free.
+# From the compose environment, so the repo copy carries no account value.
+# printenv, not `echo $VAR`: the command line stays expansion-free.
 UserCmd "printenv PROTON_ACCOUNT"
 PassCmd "printenv PROTON_BRIDGE_PASSWORD"
-# hydroxide's IMAP is plaintext-only by design (upstream README: "only
-# supports unencrypted local connections"); this hop is container-to-container
-# inside one compose project on one host.
+# hydroxide's IMAP is plaintext-only by design; this hop is
+# container-to-container inside one compose project.
 TLSType None
-# 🚨 Load-bearing: with TLSType None, the default `AuthMechs *` deems NO
-# password mechanism secure enough and refuses to authenticate at all
-# (isync 1.5 manpage: * = "mechanisms deemed secure enough for the current
-# TLSType setting"). LOGIN must be allowed by name.
+# 🚨 Load-bearing: with TLSType None the default `AuthMechs *` deems no password
+# mechanism secure enough and refuses to authenticate at all.
 AuthMechs LOGIN
-# hydroxide's IMAP is upstream-flagged WIP ("here be dragons"); serialising
-# commands trades speed for not exercising its concurrency edges. An archive
-# pull has no latency budget.
+# hydroxide's IMAP is upstream-flagged WIP; serialising trades speed for not
+# exercising its concurrency edges. An archive pull has no latency budget.
 PipelineDepth 1
 
 IMAPStore proton-remote
@@ -40,19 +33,13 @@ Inbox /mail/INBOX
 Channel proton
 Far :proton-remote:
 Near :proton-archive:
-# Every folder, including the per-alias folders external-email.md's filter
-# scheme sorts into.
 Patterns *
-# Create maildirs locally as folders appear server-side; never create
-# anything ON the server.
+# Create maildirs locally as folders appear server-side; never on the server.
 Create Near
-# 🚨 The archive contract, in two lines: changes propagate ONLY far->near
-# (Sync Pull), and deletions are never executed locally (Expunge None) — a
-# message deleted, or ransomed, server-side stays in the archive forever.
-# Consequence to know: the archive only grows; pruning is a deliberate
+# 🚨 The archive contract: changes propagate ONLY far->near, and deletions are
+# never executed locally — so the archive only grows and pruning is a deliberate
 # manual act, never mbsync's.
 Sync Pull
 Expunge None
-# State beside the mail itself (.mbsyncstate in each maildir) — the archive
-# directory is self-contained and restores as one tree.
+# State beside the mail itself, so the archive restores as one self-contained tree.
 SyncState *

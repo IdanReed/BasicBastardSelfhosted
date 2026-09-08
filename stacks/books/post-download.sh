@@ -1,39 +1,26 @@
 #!/bin/sh
-# post-download — shelfmark's CUSTOM_SCRIPT hook (annex §3.4). Triggers a
-# library scan in whichever app owns the tree the download landed in, so a new
-# book shows up in seconds instead of at the next scheduled scan. This is what
-# closes the design doc's scan-latency open question.
+# post-download — shelfmark's CUSTOM_SCRIPT hook: triggers a library scan in
+# whichever app owns the tree the download landed in, so a new book shows up
+# in seconds rather than at the next scheduled scan.
 #
 # Upstream's contract, and what it forces:
 #   - Invoked once per successful task as `<script> "<target_path>"`, with a
-#     versioned JSON document on stdin (CUSTOM_SCRIPT_JSON_PAYLOAD=true).
-#   - Runs INSIDE the shelfmark container, so it reaches kavita and
-#     audiobookshelf by compose service name on the stack's default network.
-#     It could not reach them through the host's loopback-bound published
-#     ports (the ntfy/backrest precedent).
-#   - A NON-ZERO EXIT MARKS THE DOWNLOAD AS ERROR in the UI. So every failure
-#     path here logs and exits 0: a scan that did not fire is a few minutes of
-#     latency, while a red "Error" on a file that downloaded perfectly is a
-#     lie that sends you looking for a problem that does not exist.
-#   - It may run CONCURRENTLY (up to MAX_CONCURRENT_DOWNLOADS), so everything
-#     it does must be re-entrant. Both scan endpoints are: Kavita reschedules
-#     a concurrent scan rather than erroring, and audiobookshelf's returns
-#     immediately regardless.
-#   - 300s timeout. Per-request timeouts below are short for that reason.
+#     JSON document on stdin.
+#   - Runs INSIDE the shelfmark container, so it reaches the other two by
+#     compose service name; it could not reach their loopback-bound host
+#     publishes.
+#   - A NON-ZERO EXIT MARKS THE DOWNLOAD AS ERROR in the UI, so every failure
+#     path here logs and exits 0. A missed scan costs minutes of latency; a
+#     red Error on a perfect download sends you hunting a problem that is not
+#     there.
+#   - It may run concurrently, so everything must be re-entrant. Both scan
+#     endpoints are.
+#   - 300s timeout, hence the short per-request timeouts below.
 #
-# THIS FILE MUST BE MODE 755 (unlike the other init scripts in the fleet,
-# which compose invokes as `/bin/sh <script>` and can stay 644): shelfmark
-# execs it directly. If the stack git sync ever fails to preserve the
-# executable bit, the hook stops firing AND — because the exec failure is a
-# non-zero result — every completed download is marked Error. The books suite
-# invokes it exactly the way shelfmark does, so a lost bit fails a test here
-# rather than in production.
-#
-# Credentials: the admin username/password from the shared .env, which
-# shelfmark's container already has (env_file). Nothing is pre-minted and no
-# credential file is written — a derived long-lived key would have to be
-# rotated, tracked by the drift lint, and stored somewhere both containers can
-# read, to buy nothing over a login that costs one request.
+# 🚨 THIS FILE MUST BE MODE 755 — shelfmark execs it directly, unlike the
+# other init scripts, which compose invokes as `/bin/sh <script>`. A lost
+# executable bit stops the hook AND marks every completed download as Error;
+# the books suite invokes it the way shelfmark does, so that fails a test.
 set -u
 
 TARGET="${1:-}"
@@ -50,14 +37,10 @@ if [ -z "$PY" ]; then
     exit 0
 fi
 
-# The payload has to be slurped HERE, not in python: the interpreter is fed
-# its script on stdin (`python3 - <<'PY'`), so by the time python runs,
-# sys.stdin is the heredoc — not shelfmark's JSON document.
-#
-# Bounded, because `cat` on an inherited-but-never-closed stdin would block
-# until shelfmark's 300s hook timeout kills it — and a killed hook is a
-# non-zero exit, i.e. a completed download reported as Error. Five seconds is
-# far more than a local pipe needs, and argv[1] covers an empty read.
+# Slurped HERE, not in python: the interpreter is fed its script on stdin, so
+# by the time python runs sys.stdin is the heredoc. Bounded, because `cat` on
+# an inherited-but-never-closed stdin would block until the 300s hook timeout
+# kills it — and a killed hook is a non-zero exit, i.e. a false Error.
 if command -v timeout >/dev/null 2>&1; then
     PAYLOAD="$(timeout 5 cat 2>/dev/null || true)"
 else
@@ -96,9 +79,8 @@ def call(url, method="GET", body=None, headers=None):
             return raw
 
 
-# The JSON payload's paths.destination is the authoritative answer to "which
-# tree did this land in"; argv[1] is the fallback for a payload-less
-# invocation (CUSTOM_SCRIPT_JSON_PAYLOAD=false) or a malformed one.
+# paths.destination is authoritative; argv[1] is the fallback for a
+# payload-less or malformed invocation.
 path = os.environ.get("TARGET", "")
 try:
     payload = json.loads(os.environ.get("PAYLOAD", ""))
@@ -148,18 +130,15 @@ try:
         if not api_key:
             log("kavita login returned no apiKey - skipping")
             sys.exit(0)
-        # scan-all rather than a library id: no id to look up, and the stack
-        # has exactly one Kavita library.
+        # scan-all rather than a library id: there is exactly one.
         call(f"{KAVITA}/api/Library/scan-all", "POST", None,
              {"x-api-key": api_key})
         log("kavita scan triggered")
 except Exception as exc:
-    # Deliberately catch EVERYTHING (not just URLError/OSError/ValueError):
-    # `call` hands back raw text when a response is not JSON, so a 502 page
-    # from a restarting Kavita turns into an AttributeError or KeyError two
-    # lines later — which would escape a narrower clause as a traceback, exit
-    # 1, and mark a perfectly good download as Error. SystemExit is a
-    # BaseException, so the sys.exit(0) calls above still pass through.
+    # Deliberately EVERYTHING: `call` hands back raw text when a response is
+    # not JSON, so a 502 page from a restarting Kavita becomes an
+    # AttributeError two lines later — which would exit 1 and mark a good
+    # download as Error. SystemExit is a BaseException and still passes.
     log(f"scan trigger failed ({exc!r}) - the scheduled scan will catch it")
 
 sys.exit(0)

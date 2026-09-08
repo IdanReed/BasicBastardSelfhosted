@@ -1,13 +1,22 @@
 # Ntfy server config.
 #
-# Bound behind Caddy on the tailnet, so no public exposure and no auth of its
-# own — reaching it already requires being on the tailnet. If Ntfy is ever
-# published more widely, set auth-default-access: deny-all and create tokens.
+# NO SECRETS HERE: this file gets no variable interpolation, so a "${VAR}" would
+# be stored literally. Ntfy maps every key to an NTFY_<KEY> env var, so the SMTP
+# credentials come from .env instead.
 #
-# NO SECRETS HERE. This file is plain YAML with no variable interpolation —
-# a "${VAR}" would be stored literally. Ntfy maps every config key to an
-# NTFY_<KEY> environment variable, so SMTP credentials come from .env
-# (NTFY_SMTP_SENDER_ADDR / _USER / _PASS) and are picked up automatically.
+# NO AUTH — ACCEPTED, not overlooked. auth-default-access is read-write over an
+# empty auth.db, so any tailnet peer, any container on `homelab`, and any local
+# uid on this host can publish and subscribe on every topic. Three consequences:
+#   - the SMTP sender configured in .env makes any publisher an outbound mail
+#     relay for alerts@idanreed.com (ntfy forwards on an X-Email header);
+#   - notify-failure@ posts `systemctl status --lines=30` bodies to `alerts`, so
+#     any subscriber reads a week (cache-duration) of journal excerpts;
+#   - any publisher can flood `alerts` and drown the backup dead-man.
+# Closing it means deny-all plus tokens at every publisher (both hosts'
+# notify-failure@, firefly-cron, silverbullet's git sync, backrest's shoutrrr
+# hook, gatus, scan-downloads) plus a read token for the phone — and the VPS
+# publishes THROUGH Caddy, so forward-auth is not an option there: a 302 would
+# swallow the alert. See arch-security AS-2.
 
 base-url: "https://ntfy.svc.idanreed.com"
 listen-http: ":80"

@@ -1,16 +1,12 @@
 #!/bin/sh
-# tracking-init — headless first-run for Homebox and Karakeep (annex §3).
-# Runs in python:3.13-alpine as a oneshot once both are healthy.
+# tracking-init — headless first-run for Homebox and Karakeep. Runs in
+# python:3.13-alpine as a oneshot once both are healthy; BookStack has no HTTP
+# path to a first admin and is handled by bookstack-admin-init.sh.
 #
-# BookStack is deliberately NOT handled here (no HTTP path to a first
-# admin) — see bookstack-admin-init.sh.
+# Every mutation logs "tracking-init: CHANGE: ..." and a second run must log
+# ZERO change lines. Unset credentials are a hard error.
 #
-# Contract (media-init pattern):
-#   - Every mutation logs "tracking-init: CHANGE: ...". A second run — every
-#     redeploy reruns this container — must log ZERO change lines.
-#   - Unset credentials are a HARD error (decrypt race, finding #11).
-#
-# Both apps: the FIRST user created becomes the owner/admin, no promotion
+# In both apps the FIRST user created becomes the owner, with no promotion
 # step.
 set -eu
 
@@ -66,16 +62,14 @@ required = ("HOMEBOX_ADMIN_EMAIL", "HOMEBOX_ADMIN_PASSWORD",
 missing = [k for k in required if not os.environ.get(k)]
 if missing:
     sys.exit(f"tracking-init: FATAL: unset or empty in .env: "
-             f"{', '.join(missing)} (decrypt race? finding #11)")
+             f"{', '.join(missing)} (decrypt race?)")
 
 # ===========================================================================
 # Homebox
 # ===========================================================================
-# Registration is open by default, and the first user to register with an
-# EMPTY group token becomes the group owner — that is the whole bootstrap.
-#
-# Two shapes to know: the response is 204 with NO BODY (so anything checking
-# for JSON fails), and the login field is `username`, not `email`.
+# The first user to register with an EMPTY group token becomes the group
+# owner. Two shapes to know: the response is 204 with NO BODY, and the login
+# field is `username`, not `email`.
 _, status = call(f"{HOMEBOX}/api/v1/status")
 if not isinstance(status, dict):
     sys.exit(f"tracking-init: FATAL: unexpected homebox /status: {status!r}")
@@ -91,12 +85,9 @@ try:
     change(f"homebox owner {os.environ['HOMEBOX_ADMIN_EMAIL']} registered")
 except urllib.error.HTTPError as e:
     body = detail(e)
-    # 🚨 Homebox answers **500**, not 4xx, for an already-registered email
-    # ("UNIQUE constraint failed: users.email") — verified from a suite run
-    # where the second pass exited 1, exactly what every redeploy would hit.
-    # So 500 + UNIQUE-constraint body = "already exists", deliberately
-    # narrow: any OTHER 500 stays fatal — only the body distinguishes "the
-    # server broke" from "the user is already there".
+    # 🚨 Homebox answers 500, not 4xx, for an already-registered email, so
+    # every redeploy would otherwise exit 1. Deliberately narrow: only the
+    # UNIQUE-constraint body distinguishes "already there" from "broke".
     already_exists = (
         e.code in (400, 409, 422)
         or (e.code == 500 and "UNIQUE constraint failed: users.email" in body)
@@ -105,9 +96,8 @@ except urllib.error.HTTPError as e:
         sys.exit(f"tracking-init: FATAL: homebox register HTTP {e.code}: {body}")
     log("homebox user already exists - no change")
 
-# Whether it was just created or already existed, prove the credentials work —
-# otherwise "already exists" silently covers "exists with a different
-# password", which is the same ambiguity that bit the books stack.
+# Prove the credentials work either way, so "already exists" cannot silently
+# cover "exists with a different password".
 try:
     call(f"{HOMEBOX}/api/v1/users/login", "POST", {
         "username": os.environ["HOMEBOX_ADMIN_EMAIL"],
@@ -121,14 +111,14 @@ except urllib.error.HTTPError as e:
 # ===========================================================================
 # Karakeep
 # ===========================================================================
-# Signup is a tRPC publicProcedure, not REST: there is no POST /api/v1/users
-# and no /api/auth/signup. The first user created automatically becomes admin.
+# Signup is a tRPC publicProcedure, not REST. The first user created becomes
+# admin automatically.
 #
-# ⚠ The {"json": ...} wrapper is MANDATORY — this is tRPC v11 with the
-# superjson transformer, and a flat body fails validation in a way that reads
-# like a schema error. confirmPassword is a .refine(), not a default.
+# ⚠ The {"json": ...} wrapper is MANDATORY (tRPC v11 + superjson); a flat body
+# fails validation in a way that reads like a schema error, and
+# confirmPassword is a .refine(), not a default.
 #
-# ⚠ Ordering: DISABLE_PASSWORD_AUTH=true disables BOTH users.create and
+# ⚠ DISABLE_PASSWORD_AUTH=true disables BOTH users.create and
 # apiKeys.exchange, so this has to run before any lock-down to OIDC-only.
 karakeep_user = {
     "name": os.environ.get("KARAKEEP_ADMIN_NAME", "Admin"),
@@ -149,19 +139,12 @@ except urllib.error.HTTPError as e:
                  f"{body}")
     log("karakeep user already exists - no change")
 
-# Same reasoning as Homebox: prove the credentials work, rather than letting
-# "already exists" quietly cover "exists with a different password".
-# `exchange` is the headless path — its sibling `apiKeys.create` requires a
-# browser cookie.
+# Same credential proof as Homebox. `exchange` is the headless path — its
+# sibling `apiKeys.create` requires a browser cookie.
 #
-# 🚨 THE KEY NAME MUST BE UNIQUE PER RUN. A fixed name works exactly once:
-# the second call returns 500 INTERNAL_SERVER_ERROR (a unique-constraint
-# violation surfaced generically, indistinguishable from a real fault), so
-# a fixed name made every redeploy exit 1 (found by the suite rerunning
-# this container). Mint under a nonce name, verify, revoke — the credential
-# check runs EVERY time (silent password drift is what it exists for;
-# users.create's duplicate error says nothing about the password) without
-# leaving a key behind.
+# 🚨 THE KEY NAME MUST BE UNIQUE PER RUN: a fixed one works exactly once, and
+# the second call returns a generic 500 that made every redeploy exit 1. Mint
+# under a nonce name, verify, revoke.
 nonce = str(int(time.time()))
 key_name = f"tracking-init-{nonce}"
 try:
@@ -181,14 +164,35 @@ if not key.get("key"):
     sys.exit(f"tracking-init: FATAL: apiKeys.exchange returned no key: {res!r}")
 log("karakeep credentials verified (api key mintable)")
 
-# Best-effort cleanup, deliberately NOT fatal: failing provisioning over a
-# leftover verification key is the wrong trade — but say so out loud; a key
+# Sweep the leftovers first, while this key is still valid. A revoke below
+# that fails is only a WARNING, so a run of failures would accumulate LIVE
+# full-access keys with nothing to clean them up. Best-effort and silent when
+# there is nothing to do: apiKeys.list is a tRPC query, so any shape surprise
+# degrades to one WARNING rather than failing a deploy.
+kk_auth = {"Authorization": f"Bearer {key['key']}"}
+try:
+    _, listed = call(f"{KARAKEEP}/api/trpc/apiKeys.list", "GET", None, kk_auth)
+    existing = ((((listed or {}).get("result") or {}).get("data") or {})
+                .get("json") or {}).get("keys") or []
+    stale = [k for k in existing
+             if isinstance(k, dict)
+             and str(k.get("name", "")).startswith("tracking-init-")
+             and k.get("id") and k["id"] != key.get("id")]
+    for old_key in stale:
+        call(f"{KARAKEEP}/api/trpc/apiKeys.revoke", "POST",
+             {"json": {"id": old_key["id"]}}, kk_auth)
+        change(f"karakeep: revoked a leftover verification key "
+               f"{old_key.get('name')!r} (an earlier revoke had failed)")
+except Exception as exc:  # noqa: BLE001
+    log(f"WARNING: could not sweep leftover verification keys ({exc}) - check "
+        f"Karakeep's settings for stale tracking-init-* keys")
+
+# Best-effort, deliberately not fatal — but said out loud, because a key
 # nobody knows about is worse than one they were told to revoke.
 if key.get("id"):
     try:
         call(f"{KARAKEEP}/api/trpc/apiKeys.revoke", "POST",
-             {"json": {"id": key["id"]}},
-             headers={"Authorization": f"Bearer {key['key']}"})
+             {"json": {"id": key["id"]}}, kk_auth)
     except Exception as exc:
         log(f"WARNING: could not revoke the verification key {key_name!r} "
             f"({exc}) - revoke it by hand in Karakeep's settings")

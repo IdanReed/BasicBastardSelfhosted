@@ -1,16 +1,12 @@
 #!/bin/sh
 # Headless first-run for the notes-sync stack (annex §3).
 #
-# Two bootstrap shapes:
-#   - rmfakecloud has NO provisioning API: the first login CREATES the admin,
-#     unauthenticated — this container's real job is to get there first.
-#   - Syncthing is configured through a REST API guarded by the sops API key,
-#     so it needs no login at all.
+# rmfakecloud has NO provisioning API: the first login CREATES the admin,
+# unauthenticated, so this container's real job is to get there first. Syncthing
+# is configured through a REST API guarded by the sops key and needs no login.
 #
 # Every mutation logs "notes-sync-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must log ZERO change lines.
-#
-# Python heredoc under /bin/sh: python:3-alpine only, urllib, no requests.
 set -eu
 
 python3 - <<'PY'
@@ -38,9 +34,9 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly: unset means the .env did not decrypt, and for
-        # rmfakecloud "unprovisioned" means the next thing to reach
-        # /ui/api/login owns the instance as admin.
+        # Unset means the .env did not decrypt, and for rmfakecloud
+        # "unprovisioned" means the next thing to reach /ui/api/login owns
+        # the instance as admin.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -72,28 +68,19 @@ def wait_for(url, *, headers=None, tries=60, delay=2):
     fatal(f"{url} never answered")
 
 
-# ---------------------------------------------------------------------------
 # rmfakecloud
-# ---------------------------------------------------------------------------
-# 🚨 The first POST to /ui/api/login on an empty data directory CREATES an
-# admin from whatever credentials arrive; no switch closes the window, so
-# being first IS the security model (plus the loopback-only publish).
-#
-# /ui/api/register is deliberately NOT used: gated on RegistrationOpen (bare
-# 400 unset) and then on the client IP being literally 127.0.0.1 — which a
-# loopback publish cannot satisfy (docker-proxy re-dials from the bridge
-# gateway, so the check 403s).
+# 🚨 The first POST to /ui/api/login on an empty data directory CREATES an admin
+# from whatever credentials arrive. /ui/api/register is not usable instead: it
+# requires the client IP to be literally 127.0.0.1, which docker-proxy's re-dial
+# from the bridge gateway can never satisfy.
 rm_email = env("RMFAKECLOUD_ADMIN_EMAIL")
 rm_pass = env("RMFAKECLOUD_ADMIN_PASSWORD")
 
-# 🚨 sanitizeEmail rewrites the identifier ON CREATE ONLY — login looks up
-# the RAW string, so any stripped character produces an account that can
-# never be logged into, presenting as a bare 401 (observed directly: "stat
-# /data/users/rm-admin@test.invalid/.userprofile: no such file" then 401).
-# The whitelist `[^a-zA-Z0-9.@-_]+` parses `@-_` as an ASCII RANGE
-# (0x40-0x5F = @ A-Z [ \ ] ^ _), so the HYPHEN is stripped — far more common
-# in a local part than the '+' upstream discusses. Refuse anything outside
-# the real surviving set rather than create an unreachable account.
+# 🚨 sanitizeEmail rewrites the identifier ON CREATE ONLY, while login looks up
+# the RAW string — so any stripped character yields an account that can never be
+# logged into, presenting as a bare 401. Upstream's whitelist parses `@-_` as an
+# ASCII RANGE (0x40-0x5F), which silently strips the HYPHEN. Refuse anything
+# outside the real surviving set rather than create an unreachable account.
 ALLOWED = set(
     "abcdefghijklmnopqrstuvwxyz"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -146,9 +133,7 @@ else:
         f"whether it created the account (unexpected layout under {RMDATA})"
     )
 
-# ---------------------------------------------------------------------------
 # Syncthing
-# ---------------------------------------------------------------------------
 st_key = env("STGUIAPIKEY")
 st_headers = {"X-API-Key": st_key}
 wait_for(f"{ST}/rest/noauth/health")
@@ -182,10 +167,8 @@ if delta:
 else:
     log("syncthing options already as intended")
 
-# The vault folder. `path` is the CONTAINER path; /mnt/fast/vault is bound
-# there and pre-owned 1000:1000 by tmpfiles (the image's chown is
-# non-recursive and swallows failure — wrongly-owned = healthy container,
-# errored folder, no crash).
+# The vault folder. `path` is the CONTAINER path; /mnt/fast/vault is bound there
+# and pre-owned 1000:1000 by tmpfiles.
 FOLDER_ID = "vault"
 code, body = request(f"{ST}/rest/config/folders", headers=st_headers)
 if code != 200:
@@ -201,10 +184,9 @@ if FOLDER_ID not in folders:
             "label": "vault",
             "path": "/var/syncthing/vault",
             "type": "sendreceive",
-            # No devices yet: peers are added by device ID from both sides —
-            # an operator step by design. BEP's mutual cert auth is what
-            # makes the bare 22000 publish safe; pre-seeding a device here
-            # would undercut that.
+            # No devices: peers are added by device ID from both sides, an
+            # operator step. Pre-seeding one would undercut the mutual cert
+            # auth that makes the bare 22000 publish safe.
             "devices": [],
         },
         headers=st_headers,

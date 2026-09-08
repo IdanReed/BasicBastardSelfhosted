@@ -1,47 +1,29 @@
-# Outline — DB-backed team wiki (Notes/Sync range, port 10203).
-# _overview.md owns the port/auth row.
+# Outline — DB-backed team wiki (10203). Third of three wikis, a deliberate
+# temporary comparison against BookStack (stacks/tracking) and SilverBullet.
 #
-# THIRD OF THREE WIKIS, ON PURPOSE — a deliberate, temporary comparison
-# against BookStack (stacks/tracking) and SilverBullet (stacks/silverbullet).
-# Nothing here is shared with either.
-#
-# AUTHENTICATION IS THE WHOLE DESIGN CONSTRAINT: Outline has NO local
-# accounts — no admin bootstrap, no password form, no CLI user-create. The
-# Authentik OIDC provider is not a hardening step, it IS the login.
-#
-# ⚠ MEASURED against this exact pin: "will not start without a reachable
-# OIDC provider" is FALSE for 1.9.2. With manual endpoints (below) it boots,
-# migrates, serves and reports HEALTHY with an unresolvable issuer. What
-# fails without a working IdP is LOGGING IN, which no healthcheck can see:
-# the offline stack suite needs no stub issuer, and the Gatus path probe is
-# the only automated signal the login flow works (it only proves the
-# redirect happens).
-#
-# 🚨 FIRST LOGIN CREATES THE TEAM AND OWNS IT (the rmfakecloud/Firefly
-# shape). Behind Authentik that means the first Authentik user to visit —
+# 🚨 AUTHENTICATION IS THE DESIGN CONSTRAINT: Outline has NO local accounts — no
+# admin bootstrap, no password form, no CLI user-create. The Authentik OIDC
+# provider IS the login. And the FIRST LOGIN CREATES THE TEAM AND OWNS IT, so
 # visit it yourself once the blueprint is applied.
 #
-# Backup contract: outline_db is dumped by nixos/backup-prepare.sh's
-# pg_dumpall loop (`docker exec <svc>_db pg_dumpall -U <svc>`) — both
-# `container_name: outline_db` and POSTGRES_USER=outline are load-bearing,
-# and `outline` must be in that loop's service list or the database is in NO
-# backup (the plans exclude **/pgdata/**). Attachments under
+# ⚠ Measured against this pin: with manual endpoints (below) it boots, migrates
+# and reports HEALTHY with an unresolvable issuer. What fails without a working
+# IdP is LOGGING IN, which no healthcheck can see.
+#
+# Backup: backup-prepare.sh's pg_dumpall loop derives `<svc>_db` and
+# `pg_dumpall -U <svc>`, so `container_name: outline_db` and
+# POSTGRES_USER=outline are load-bearing — and `outline` must be in that loop's
+# service list, because the plans exclude **/pgdata/**. Attachments under
 # /mnt/fast/outline/data ride the fast-volume plan.
 
 services:
-  # ---------------------------------------------------------------------------
-  # outline — the application (web + websockets + worker in one process).
-  #
-  # Runs as uid 1001 (VERIFIED in the pinned image) and the entrypoint does
-  # NOT chown, so /mnt/fast/outline/data must be pre-owned 1001:1001
-  # (nixos/generate-stack-dirs.py). Root-owned = uploads fail at runtime
-  # with no startup symptom: finding #14 with the crash-loop replaced by
-  # silence.
-  # ---------------------------------------------------------------------------
+  # App
+  # Web, websockets and worker in one process. Runs as uid 1001 and the
+  # entrypoint does NOT chown, so /mnt/fast/outline/data must be pre-owned
+  # 1001:1001 — root-owned means uploads fail at runtime with no startup symptom.
   outline:
-    # Version numbering IS the trap: Outline went 0.82 -> 0.87 -> 1.0, so
-    # "1.9.2" is NEWER than "0.87" while a string sort calls it a downgrade.
-    # Docker Hub only; no ghcr mirror.
+    # Version numbering IS the trap: Outline went 0.82 -> 0.87 -> 1.0, so 1.9.2
+    # is NEWER than 0.87 while a string sort calls it a downgrade.
     image: outlinewiki/outline:1.9.2
     container_name: outline
     depends_on:
@@ -50,80 +32,59 @@ services:
       outline_redis:
         condition: service_healthy
     ports:
-      # Loopback only: Caddy is the sole path in (loopback-binding lint).
       - '127.0.0.1:10203:3000'
     volumes:
-      # Attachments, avatars and imported documents. FILE_STORAGE=local means
-      # this directory IS the object store.
+      # FILE_STORAGE=local means this directory IS the object store.
       - /mnt/fast/outline/data:/var/lib/outline/data
     environment:
       - TZ=America/Chicago
       - NODE_ENV=production
       - PORT=3000
-      # Browser-facing origin. Outline builds its OIDC callbackURL from this
-      # (`${URL}/auth/oidc.callback`), so it must match the blueprint's
-      # redirect_uri byte for byte — the oidc-contract lint ties them.
+      # Outline builds its OIDC callbackURL from this (`${URL}/auth/oidc.callback`),
+      # so it must match the blueprint's redirect_uri byte for byte — the
+      # oidc-contract lint ties them.
       - URL=https://outline.svc.idanreed.com
-      # ---- Storage -------------------------------------------------------
-      # S3 is NOT required (contra an older _todo.md note). The path is the
-      # image's default, set explicitly because it is the bind-mount target.
+      # Storage
       - FILE_STORAGE=local
       - FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
       - FILE_STORAGE_UPLOAD_MAX_SIZE=26214400
-      # ---- Database ------------------------------------------------------
-      # 🚨 MANDATORY: without it Sequelize demands TLS and the container dies
-      # at start with "The server does not support SSL connections"
-      # (measured). Container-to-container on one host — nothing to protect.
+      # Database
+      # 🚨 MANDATORY: without it Sequelize demands TLS and the container dies at
+      # start with "The server does not support SSL connections".
       - PGSSLMODE=disable
-      # DATABASE_URL is BUILT from POSTGRES_PASSWORD, never read as its own
-      # secret: two copies of one password drift, and a drifted copy is a
-      # crash loop (FATAL password authentication failed). `environment:` wins
-      # over env_file, so the .sops.env DATABASE_URL key is inert.
-      # `${VAR:-}` interpolates from the project .env at parse time (the
-      # stacks/books shape); empty on a race with the first decrypt, which
-      # fails auth and restarts rather than aborting the deploy.
+      # DATABASE_URL is BUILT from POSTGRES_PASSWORD (two copies drifted into a
+      # password-auth crash loop); `environment:` wins over env_file, so the
+      # .sops.env key is inert. Empty on a race with the first decrypt: auth
+      # fails and the container restarts rather than aborting the deploy.
       - DATABASE_URL=postgres://outline:${POSTGRES_PASSWORD:-}@outline_db:5432/outline
-      #
-      # ---- Redis ---------------------------------------------------------
+      # Redis
       - REDIS_URL=redis://outline_redis:6379
-      # ---- OIDC (the only way to log in) ---------------------------------
-      # ENDPOINTS SET MANUALLY, not OIDC_ISSUER_URL discovery: keeps the IdP
-      # out of the boot path — the container comes up with Authentik
-      # unreachable (offline suite; a VPS outage cannot crash-loop the wiki).
-      # Authentik's authorize/token/userinfo endpoints are GLOBAL; only
-      # issuer and end-session carry the app slug (`outline`, defined in
-      # headscale-vps/authentik/blueprints/custom/outline-oidc.yaml).
+      # OIDC — the only way to log in
+      # Endpoints set MANUALLY rather than by OIDC_ISSUER_URL discovery, which
+      # keeps the IdP out of the boot path. Authentik's authorize/token/userinfo
+      # endpoints are global; only issuer and end-session carry the app slug.
       - OIDC_CLIENT_ID=outline
       - OIDC_AUTH_URI=https://auth.idanreed.com/application/o/authorize/
       - OIDC_TOKEN_URI=https://auth.idanreed.com/application/o/token/
       - OIDC_USERINFO_URI=https://auth.idanreed.com/application/o/userinfo/
       - OIDC_LOGOUT_URI=https://auth.idanreed.com/application/o/outline/end-session/
       - OIDC_DISPLAY_NAME=Authentik
-      # Authentik's default `profile` scope emits preferred_username; `email`
-      # identifies the account itself.
       - OIDC_USERNAME_CLAIM=preferred_username
       - OIDC_SCOPES=openid profile email
       # OIDC_CLIENT_SECRET, SECRET_KEY and UTILS_SECRET arrive from .env.
       #
-      # ---- Deliberately unset --------------------------------------------
-      # FORCE_HTTPS stays default (true). Measured on this pin: `/` 301s
-      # plain http, but `/_health` answers 200 regardless — healthcheck and
-      # Gatus keep working (the util-stack's https-redirect healthcheck trap,
-      # checked rather than assumed).
-      # SMTP_* unset: no mail server here, and invitations are moot — every
-      # account arrives through Authentik.
-    # Long form with required:false ON PURPOSE (finding #11): a deploy can
-    # race the first host-side decrypt, and the plain form aborts the whole
-    # stack when .env is absent.
+      # FORCE_HTTPS stays default (true): `/` 301s a plain-http request, but
+      # /_health answers 200 regardless, so the healthcheck and Gatus keep
+      # working. SMTP_* unset — every account arrives through Authentik.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # The image ships this same wget with an interval and NOTHING ELSE — no
-      # start_period/retries/timeout (upstream #7547); cold-DB migrations
+      # The image ships this same wget with an interval and NOTHING else — no
+      # start_period/retries/timeout (upstream #7547) — so cold-DB migrations
       # outrun the 0s grace and `up --wait` gives up on a normal first start.
-      # Overridden, never disabled; same endpoint. Proves the process
-      # answers; does NOT prove anyone can log in (only Gatus covers that).
+      # Overridden, never disabled; same endpoint. Does NOT prove anyone can log
+      # in — only Gatus covers that.
       test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/_health | grep -q OK || exit 1']
       interval: 30s
       timeout: 10s
@@ -131,18 +92,11 @@ services:
       start_period: 180s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # outline_db — PostgreSQL.
-  #
-  # container_name and POSTGRES_USER are BOTH load-bearing for
-  # nixos/backup-prepare.sh (`docker exec outline_db pg_dumpall -U outline`).
-  # ---------------------------------------------------------------------------
+  # Database
   outline_db:
-    # Same patch-pinned tag as paperless/firefly/windmill (one entry in
-    # tests/lib/images.nix, one image on the host). Upstream says postgres:18;
-    # stay on 17 — 18-alpine moved PGDATA to /var/lib/postgresql/18/docker,
-    # so following upstream would silently initialise an empty database
-    # beside the real one.
+    # Same patch pin as paperless/firefly/windmill. Upstream says postgres:18;
+    # stay on 17 — 18-alpine moved PGDATA and would silently initialise an empty
+    # database beside the real one.
     image: postgres:17.9-alpine
     container_name: outline_db
     volumes:
@@ -153,14 +107,12 @@ services:
       - POSTGRES_DB=outline
       # POSTGRES_PASSWORD arrives from .env; outline's DATABASE_URL is built
       # from it.
-    # Long form with required:false ON PURPOSE (finding #11): see outline.
     env_file:
       - path: .env
         required: false
     healthcheck:
-      # -U is required: pg_isready defaults to the OS user (root here), which
-      # does not exist as a role, so without it this reports "no response"
-      # against a perfectly healthy server.
+      # -U is required: pg_isready defaults to the OS user (root), which is not
+      # a role.
       test: ['CMD-SHELL', 'pg_isready -U outline -d outline']
       interval: 10s
       timeout: 5s
@@ -168,20 +120,14 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # outline_redis — BullMQ queue + websocket fan-out. NO VOLUME, persistence
-  # off: everything in it is derived from Postgres and re-created on demand
-  # (an empty redis after restart costs at most some in-flight jobs), which
-  # also keeps it out of the backup conversation (the tests/lib/lints.nix
-  # argument).
-  # ---------------------------------------------------------------------------
+  # Queue
+  # BullMQ plus websocket fan-out. No volume and persistence off: everything is
+  # derived from Postgres, which also keeps it out of the backup conversation.
   outline_redis:
-    # The fleet tag (dawarich, paperless, wger): one entry in
-    # tests/lib/images.nix, one image on the host.
     image: redis:7.4-alpine
     container_name: outline_redis
-    # --save "" disables RDB snapshots; otherwise redis writes dump.rdb into
-    # the writable layer on a timer — a slow leak with no reader.
+    # --save "" disables RDB snapshots; otherwise redis writes dump.rdb into the
+    # writable layer on a timer, a slow leak with no reader.
     command: ['redis-server', '--save', '', '--appendonly', 'no', '--loglevel', 'warning']
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']

@@ -1,65 +1,33 @@
-# Owl — retirement planner (Tracking range, port 10307).
+# Owl — retirement planner (10307). EVALUATION stack: one container, no
+# database, no secrets, no volume, no init.
 # Upstream: https://github.com/mdlacasse/Owl
 #
-# ⚠ EVALUATION STACK, the leanest in the fleet: one container, no database,
-# no secrets, no volume, no init.
-#
-# 🚨 NO AUTHENTICATION OF ANY KIND — a Streamlit app with no login, no
-# session isolation, no concept of a user. Forward auth is a HARD
-# PRECONDITION for exposing it: the Caddy vhost imports `protected` and the
-# Authentik blueprint entry (forward-auth.yaml) must exist BEFORE the route,
-# or the outpost matches nothing and every request 404s. The loopback
-# publish is the second half: it stops a tailnet user reaching 10307
-# directly and skipping Caddy.
+# 🚨 NO AUTHENTICATION OF ANY KIND — a Streamlit app with no login and no user
+# concept. Forward auth is a HARD PRECONDITION: the Authentik blueprint entry
+# must exist BEFORE the Caddy route imports `protected`, and the loopback
+# publish is the second half (it stops a tailnet user reaching 10307 directly).
 
 services:
   owl:
-    # ---------------------------------------------------------------------------
-    # 🚨 THE TAG CHOICE IS THE DESIGN DECISION. Upstream publishes two images
-    # with opposite runtime contracts:
-    #   - `latest`/dated (Dockerfile.versioned): clone + uv sync at BUILD
-    #     time; entrypoint makes no network calls. ~251 MB, ~8s to start.
-    #   - `edge` (Dockerfile.edge): `git clone` + `uv sync` on EVERY start,
-    #     under `set -e`. ~38 MB, ~52s to start.
-    # `edge` is disqualified twice over: cannot start in the offline test VM
-    # and is not reproducible even online (the finding-#4 shape). `latest` is
-    # a MOVING alias. So: the dated tag — BARE, no `v` prefix (`v2026.8.29`
-    # does not exist). amd64 only, which this host is.
-    # ---------------------------------------------------------------------------
+    # Dated tag, bare (no `v`). `edge` is disqualified: it git-clones and
+    # `uv sync`s on every start, so it cannot boot offline or reproducibly.
     image: owlplanner/owldocker:2026.8.29
     container_name: owl
     ports:
-      # Loopback only: with no auth in the app, the port IS the
-      # authentication bypass — never 0.0.0.0.
+      # With no auth in the app, the port IS the bypass — never 0.0.0.0.
       - '127.0.0.1:10307:8501'
-    # NO volumes, VERIFIED not assumed: no VOLUME instruction, upstream's
-    # compose declares none. Owl saves/loads through the BROWSER
-    # (download_button / file_uploader); server state is in memory.
-    #
-    # ⚠ RESTARTING THIS CONTAINER LOSES ANY UNSAVED WORK — upstream's design
-    # for a privacy-preserving calculator, not a misconfiguration. Do not
-    # "fix" with a bind mount: nothing for it to hold, and the container
-    # runs as uid 1001 (NOT this fleet's 1000), so a 1000:1000-assumption
-    # mount would fail in a new way.
+    # NO volumes, verified: Owl saves and loads through the browser; server
+    # state is in memory, so restarting loses unsaved work by design.
     environment:
       - TZ=America/Chicago
-      # Suppresses the startup disclaimer modal (ui/Welcome.py). Behind forward
-      # auth the only people who can see it have already agreed to it once.
+      # Suppresses the startup disclaimer modal.
       - OWL_SKIP_DISCLAIMER=1
-    # NO env_file: no secrets, so no .sops.env/.example/fixture — the
-    # env-file-coverage lint only demands them where `env_file:` is declared.
+    # NO env_file: no secrets, so no .sops.env — env-file-coverage only demands
+    # one where `env_file:` is declared.
     healthcheck:
-      # The image ships `wget --spider .../_stcore/health`; overridden, not
-      # trusted:
-      #   1. NO start_period — every probe during Streamlit's slow import
-      #      counts against `retries` (the Outline lesson: override the
-      #      timing, do not disable).
-      #   2. `--spider` issues a HEAD — finding #34 (Homebox 405'd it, 152s
-      #      unhealthy while serving fine). Starlette probably auto-adds
-      #      HEAD, but an unambiguous GET costs three lines. busybox wget IS
-      #      present (alpine base; NOT in ghostfolio's node:22-slim).
-      # /_stcore/health returns 200 only once the runtime accepts
-      # connections; no auth needed (there is none).
+      # Overrides the image's own probe: it has no start_period (every probe
+      # during Streamlit's slow import burns a retry) and uses --spider, i.e. a
+      # HEAD, which a GET-only route answers 405 to.
       test: ['CMD', 'wget', '-q', '-O', '/dev/null', '-T', '5', 'http://127.0.0.1:8501/_stcore/health']
       interval: 30s
       timeout: 10s

@@ -1,19 +1,13 @@
 #!/bin/sh
 # beszel-init — materialise the two artefacts the hub reads exactly once.
-#
-# Runs before the hub every time the stack comes up (redeploys rerun it), so
-# it must be idempotent. House rule: every mutation logs a line starting
-# "beszel-init: CHANGE:", and a second run on an unchanged input must log
-# ZERO of them. The suite asserts that.
+# Runs before the hub on every deploy: every mutation logs "beszel-init: CHANGE:",
+# and a second run on unchanged input must log ZERO of them (the suite asserts it).
 #
 # Busybox sh in alpine:3.21 — no bashisms, no `local`, no arrays.
 set -eu
 
-# 0600 from birth: both tmpfiles below carry secrets (the decoded hub key,
-# TOKEN in config.yml) and land in /mnt/fast/beszel, which is 0755 root:root
-# (nixos/stack-dirs.nix) — under the default umask 022 the content would be
-# world-readable between the write and the later chmod. With 077 the files
-# are created 0600 and the explicit chmods become belt-and-braces.
+# Both tmpfiles below carry secrets and land in a 0755 directory; born 0600
+# rather than chmod'd after the content is already on disk.
 umask 077
 
 log() { echo "beszel-init: $*"; }
@@ -23,19 +17,14 @@ DATA_DIR=/beszel_data
 KEY_PATH="$DATA_DIR/id_ed25519"
 CFG_PATH="$DATA_DIR/config.yml"
 
-# The system's display name in the hub, and the key SyncSystems matches on.
-# Renaming it deletes the old row and its history — see the config.yml comment.
+# The key SyncSystems matches on: renaming it deletes the old row and its history.
 SYSTEM_NAME="${BESZEL_SYSTEM_NAME:-services-vm}"
 
 [ -d "$DATA_DIR" ] || die "$DATA_DIR is not mounted"
 
-# ---------------------------------------------------------------------------
-# Input validation. Both values come from .sops.env via env_file, so a missing
-# one means decrypt-sops-envs has not run or the key is absent from the file —
-# either way the hub must not be allowed to start and generate its own
-# identity, because that identity is unrecoverable afterwards (the hub writes
-# no .pub and keeps the public half in memory only).
-# ---------------------------------------------------------------------------
+# Both values come from .sops.env. A missing one means the decrypt did not run,
+# and the hub must not start and generate its own identity — that identity is
+# unrecoverable afterwards (no .pub is ever written).
 [ -n "${HUB_SSH_KEY_B64:-}" ] || die \
   "HUB_SSH_KEY_B64 is empty. Without it the hub would generate its OWN
   ed25519 key on first start, the agent's KEY would not match it, and the
@@ -46,34 +35,29 @@ SYSTEM_NAME="${BESZEL_SYSTEM_NAME:-services-vm}"
   value SyncSystems upserts into the fingerprints collection; the two must be
   the same string. See .sops.env.example."
 
-# The token is interpolated into YAML below. Constrain it to what a UUID can
-# contain so it cannot inject a key, a newline, or a second document — the
-# same guard notes-sync-init carries, and derived here by TESTING the
-# characters rather than by reading a regex (finding #38: a guard written from
-# a read of the rules silently dropped the hyphen, which is the one character
-# a UUID cannot do without).
+# Both are interpolated into YAML below. Constrain them by TESTING characters
+# rather than by transcribing a regex (a guard written from a read of the rules
+# once dropped the hyphen, the one character a UUID cannot do without).
 case "$TOKEN" in
   *[!0-9a-fA-F-]*) die "TOKEN contains characters outside [0-9a-f-]: refusing
   to write it into config.yml" ;;
 esac
+case "$SYSTEM_NAME" in
+  ""|*[!0-9a-zA-Z._-]*) die "BESZEL_SYSTEM_NAME must be non-empty and contain
+  only [0-9a-zA-Z._-]: refusing to write it into config.yml" ;;
+esac
 
-# ---------------------------------------------------------------------------
-# 1. The hub's ed25519 identity.
-#
-# Base64 because this travels in a dotenv file: an OpenSSH PEM is multi-line,
-# and `env_file` parsing of multi-line values is the kind of thing that works
-# in one Compose version and mangles in the next. Base64 is one line with no
-# `$` in it, which also sidesteps the interpolation hazard finding #30 pinned.
-# ---------------------------------------------------------------------------
+# Hub identity
+# Base64 because dotenv cannot carry a multi-line OpenSSH PEM, and because a
+# base64 string has no `$` for Compose to interpolate.
 tmp_key="$DATA_DIR/.id_ed25519.tmp.$$"
 printf '%s' "$HUB_SSH_KEY_B64" | base64 -d > "$tmp_key" 2>/dev/null || {
   rm -f "$tmp_key"
   die "HUB_SSH_KEY_B64 is not valid base64"
 }
 
-# Reject anything the hub's ssh.ParsePrivateKey would reject, HERE, where the
-# error names the cause — rather than in the hub, where it surfaces as
-# "failed to parse private key" after the container has already restarted.
+# Reject what ssh.ParsePrivateKey would reject, here, where the error names the
+# cause — rather than in the hub after a restart.
 head -n1 "$tmp_key" | grep -q -- "-----BEGIN .*PRIVATE KEY-----" || {
   rm -f "$tmp_key"
   die "HUB_SSH_KEY_B64 decodes to something that is not a PEM private key"
@@ -84,13 +68,10 @@ if [ -f "$KEY_PATH" ] && cmp -s "$tmp_key" "$KEY_PATH"; then
   rm -f "$tmp_key"
   log "hub key already correct"
 else
-  # Overwriting is deliberate even when a key is already present: a hub that
-  # started once without this secret generated its own, and that key is
-  # unrecoverable and does not match the agent's KEY. Replacing it is the
-  # repair. Nothing is lost — the key is an identity, not data.
-  # `if`, not `[ ... ] && log ...`: under `set -e` a failing test makes the
-  # && list return non-zero and aborts the script mid-write — on the very
-  # first run, where the file legitimately does not exist yet.
+  # Overwriting an existing key is the repair for a hub that started once
+  # without this secret: the key is an identity, not data.
+  # `if`, not `[ ... ] && log`: under `set -e` a failing test aborts the script
+  # mid-write on the very first run.
   if [ -f "$KEY_PATH" ]; then
     log "CHANGE: replacing an existing hub key (self-generated, or a rotation)"
   fi
@@ -99,20 +80,10 @@ else
   log "CHANGE: wrote $KEY_PATH"
 fi
 
-# ---------------------------------------------------------------------------
-# 2. The declarative systems list.
-#
-# 🚨 config.SyncSystems runs on EVERY hub start and DELETES every system row
-# not present in this file. For a GitOps fleet that is the point — the systems
-# list becomes declarative and cannot drift — but it also means a truncated or
-# half-written file silently wipes history. Hence tmpfile+rename: the hub
-# never observes a partial config.yml.
-#
-# `host` and `port` are vestigial in this topology. They describe where the
-# hub would DIAL the agent in SSH pull mode, and the agent runs with
-# DISABLE_SSH=true and no listener — the connection is agent -> hub over a
-# websocket to HUB_URL. They are kept because the schema expects them.
-# ---------------------------------------------------------------------------
+# Systems list
+# SyncSystems runs on every hub start and DELETES every system not listed here —
+# wanted, but it means a half-written file silently wipes history, hence
+# tmpfile+rename. `host`/`port` are vestigial with DISABLE_SSH; the schema wants them.
 tmp_cfg="$DATA_DIR/.config.yml.tmp.$$"
 cat > "$tmp_cfg" <<EOF
 # GENERATED by beszel-init from .env — do not edit on the host.
@@ -124,19 +95,11 @@ systems:
     token: $TOKEN
 EOF
 
-# 0600 like the key beside it: config.yml carries TOKEN in cleartext — same
-# class of secret as id_ed25519. What actually prevents a brief
-# world-readable window is the `umask 077` up top (born 0600 before content
-# lands; a post-write chmod would be too late) — this chmod is kept so the
-# mode contract stays visible where the file is handled.
 chmod 600 "$tmp_cfg"
 if [ -f "$CFG_PATH" ] && cmp -s "$tmp_cfg" "$CFG_PATH"; then
   rm -f "$tmp_cfg"
-  # Content-equal is not mode-equal: every config.yml written before this
-  # chmod existed is still 0644 on disk, and it survives a redeploy precisely
-  # because the content matches. Repair it here — and log it, because it IS a
-  # mutation (house rule), which costs one CHANGE line on the first run after
-  # this change and zero on every run after that.
+  # Content-equal is not mode-equal: a config.yml written before the umask
+  # existed is still 0644 and survives redeploys precisely because it matches.
   if [ "$(stat -c %a "$CFG_PATH")" != "600" ]; then
     chmod 600 "$CFG_PATH"
     log "CHANGE: tightened $CFG_PATH to 0600 (it held TOKEN at 0644)"

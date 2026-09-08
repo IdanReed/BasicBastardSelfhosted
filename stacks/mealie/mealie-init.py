@@ -1,30 +1,17 @@
-# Headless first-run for Mealie — retires the boot-time default admin.
+# Headless first-run for Mealie — retires the boot-time default admin
+# (changeme@example.com / MyPassword), which v3 creates on an empty database
+# with no env-var path to change it.
 #
-# WHY (verified in the v3.24.0 source, not the docs): an EMPTY database gets
-# an ADMIN at boot — changeme@example.com / MyPassword, username `admin`
-# (init_users.py). Both are pydantic PRIVATE attrs in settings.py; the v1-era
-# DEFAULT_EMAIL/DEFAULT_PASSWORD env vars are GONE, so every fresh v3 boots
-# with a published admin credential and no env-var path to change it. Same
-# class as wger's admin/adminadmin.
-#
-# WHAT IT DOES, through the app's own REST API (no ORM reach-around):
-#   1. try the REAL admin's login — if it works, this ran before;
-#   2. else log in as the default, create the real admin (password hashed
-#      server-side);
-#   3. log in as the REAL admin — proving the new credential BEFORE the
-#      fallback is destroyed;
-#   4. delete the default user with the real admin's token (also heals a
-#      half-run that died between create and delete);
-#   5. assert the app agrees: startup-info answers isFirstLogin=false only
-#      once no changeme@example.com user exists.
+# Through the app's own REST API, in order: try the real admin's login; else log
+# in as the default and create the real admin; log in as it, proving the new
+# credential BEFORE the fallback is destroyed; delete the default; assert
+# startup-info agrees.
 #
 # Every mutation prints "mealie-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must print ZERO change lines.
 #
-# ⚠ Idempotent repair, not a reset: if the real admin exists but its password
-# no longer matches .env (changed in the UI), step 1 fails, step 2 finds the
-# default already deleted, and this script FAILS LOUDLY rather than guess.
-# Update .env or the UI password — never clobber from here.
+# ⚠ Repair, not reset: if the real admin's password was changed in the UI this
+# FAILS LOUDLY rather than guess. Update .env or the UI password.
 
 import json
 import os
@@ -50,8 +37,8 @@ def fatal(msg):
 def env(name):
     v = os.environ.get(name, "").strip()
     if not v:
-        # Fail loudly: unset means the .env did not decrypt, and an
-        # unprovisioned Mealie keeps serving the published default admin.
+        # Unset means the .env did not decrypt, and an unprovisioned Mealie
+        # keeps serving the published default admin.
         fatal(f"{name} is unset or empty")
     return v
 
@@ -92,8 +79,7 @@ def login(identity, password):
     if code == 401:
         return None
     if code == 423:
-        # SECURITY_MAX_LOGIN_ATTEMPTS=5, then a 24h lockout. Do not retry
-        # into it — every rerun would burn attempts against a locked door.
+        # 5 attempts, then a 24h lockout — never retry into it.
         fatal(f"{identity} is LOCKED OUT (HTTP 423) — unlock via "
               "POST /api/admin/users/unlock or wait out the lockout window")
     fatal(f"unexpected {code} from /api/auth/token for {identity}: {body}")
@@ -110,8 +96,7 @@ if admin_password.startswith("changeme_"):
 if admin_password == DEFAULT_PASSWORD:
     fatal("MEALIE_ADMIN_PASSWORD must not be the published default 'MyPassword'")
 if admin_user == "admin":
-    # `admin` is the boot-time default's username; creating the real account
-    # would 409 on the username while the default still exists.
+    # The default's username: creating the real account would 409 on it.
     fatal("MEALIE_ADMIN_USER must not be 'admin' — that is the default "
           "account this script exists to retire")
 if admin_email == DEFAULT_EMAIL:
@@ -161,10 +146,8 @@ for u in stale:
 if not stale:
     log("default admin already retired")
 
-# The app's own signal must agree. /api/app/about/startup-info reports
-# isFirstLogin=true exactly when a changeme@example.com user EXISTS
-# (verified in routes/app/app_about.py) — the same flag the UI uses to show
-# the first-login banner, so it doubles as the suite's assertion hook.
+# startup-info reports isFirstLogin=true exactly when a changeme@example.com
+# user exists — the app's own signal, and the suite's assertion hook.
 code, body = req("GET", "/api/app/about/startup-info")
 if code != 200 or body.get("isFirstLogin"):
     fatal(f"startup-info still reports the default admin present: {code} {body}")

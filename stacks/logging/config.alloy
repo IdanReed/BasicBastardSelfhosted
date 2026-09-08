@@ -1,60 +1,27 @@
 // Grafana Alloy — the fleet's only log collector.
 //
-// ⚠ NAMING: the `loki.source.journal` and `loki.write` components below are
-// Alloy's names for the loki PUSH PROTOCOL, not for the store. The store is
-// VictoriaLogs, which natively ingests that protocol at
-// /insert/loki/api/v1/push — swapping Loki out changed ONE url in this file
-// (the sink, at the bottom) and nothing else. Every hard-won journald lesson
-// in here predates the swap and still holds.
+// `loki.source.journal` and `loki.write` are Alloy's names for the loki PUSH
+// PROTOCOL, not for the store: the store is VictoriaLogs, which ingests that
+// protocol natively at /insert/loki/api/v1/push.
 //
-// 🚨 IT READS THE HOST JOURNAL. IT DOES NOT GET THE DOCKER SOCKET, AND IT MUST
-// NEVER GET ONE — not directly and not through a socket proxy. Alloy has
-// `discovery.docker` and `loki.source.docker` components that would be the
-// obvious way to collect container logs, and using either means mounting
-// /var/run/docker.sock into a container that also talks to the network. That
-// socket is root-equivalent on this host. Routing container stdout through
-// journald instead — virtualisation.docker.daemon.settings.log-driver in
-// nixos/configuration.nix — gets the same lines with two read-only bind
-// mounts and no privilege at all.
+// 🚨 IT READS THE HOST JOURNAL AND MUST NEVER GET THE DOCKER SOCKET — not
+// directly, not through a proxy. `discovery.docker`/`loki.source.docker`
+// would be the obvious way to collect container logs and both need the
+// root-equivalent socket in a networked container. Docker's journald log
+// driver gets the same lines through two read-only bind mounts instead.
 //
-// 🚨 THE SILENT-ZERO FAILURE, AND WHAT ACTUALLY CAUSES IT. Without `path`,
-// loki.source.journal opens the journal in local-machine mode, which filters
-// on the reader's OWN /etc/machine-id — and inside a container that is a
-// freshly generated id that matches no directory under /var/log/journal. The
-// result is not an error. It is a running, HEALTHY, correctly-parsed Alloy
-// that forwards ZERO entries forever.
+// 🚨 THE SILENT-ZERO FAILURE: without `path`, loki.source.journal filters on
+// the reader's OWN /etc/machine-id, which inside a container matches no
+// directory under /var/log/journal — a healthy, correctly-parsed Alloy
+// forwarding ZERO entries forever, with no error. Measured against v1.19.2,
+// EITHER `path` or the /etc/machine-id mount is sufficient and only losing
+// both fails, so both are configured: `path` is self-documenting and survives
+// a machine-id change (a Proxmox re-image), the mount survives someone
+// "simplifying" `path` away.
 //
-// The received wisdom is "path is mandatory". Measured against v1.19.2 with
-// /var/log/journal mounted in every case, that is half right — it is the
-// COMBINATION that fails, and either half alone is sufficient:
-//
-//   path set   /etc/machine-id mounted   journal lines read in 18 s
-//   --------   -----------------------   --------------------------
-//   yes        yes                       4495
-//   yes        no                        4560
-//   no         yes                       4618
-//   no         no                        0        <- healthy, silent
-//
-// BOTH are configured here anyway, and deliberately: the failure mode is
-// invisible, so two independent reasons for the reader to find the journal is
-// worth one read-only single-file mount. `path` is the self-documenting half
-// and survives a host whose machine-id changes (a Proxmox re-image does
-// exactly that — see the beszel-agent fingerprint note in
-// nixos/generate-stack-dirs.py); the machine-id mount is the half that keeps
-// working if someone "simplifies" `path` away.
-//
-// The bind mounts this file depends on (see compose.yaml, both :ro):
-//   /var/log/journal   the persistent journal. services.journald.storage is
-//                      pinned to "persistent" on the host precisely so this
-//                      is where the entries are.
-//   /etc/machine-id    the host's id, per the matrix above.
-//
-// /run/log/journal is deliberately NOT mounted, and the research that
-// proposed three mounts included it: with Storage=persistent it is only used
-// before /var is mounted and journald removes it after the flush, so mounting
-// it is either a no-op or — worse — makes docker CREATE an empty
-// /run/log/journal on the host, a directory journald's flush logic looks at.
-// Nothing is gained and something is risked.
+// /run/log/journal is deliberately NOT mounted: with Storage=persistent it is
+// used only before /var mounts, and mounting it makes docker create an empty
+// /run/log/journal on the host that journald's flush logic then looks at.
 
 // ---------------------------------------------------------------------------
 // Source: the host journal
@@ -64,46 +31,31 @@ loki.source.journal "host" {
 	relabel_rules = loki.relabel.journal.rules
 	forward_to    = [loki.process.json_host.receiver]
 
-	// How far back to read on a cold start (no positions file yet). Matches
-	// the order of magnitude of the host's journal buffer; longer would mean
-	// a fresh Alloy replays days of history into the store on first deploy.
+	// How far back to read on a cold start; longer means a fresh Alloy
+	// replays days of history into the store on first deploy.
 	max_age = "12h"
 
-	// 🚨 NO `labels` ARGUMENT, AND THAT IS A CORRECTION, NOT AN OMISSION.
-	// `labels = { job = "systemd-journal" }` is the obvious way to write this
-	// and it DOES NOT WORK when relabel_rules are also set: the component's
-	// own default job label wins, and every stream lands with
-	// job="loki.source.journal.host" instead. Measured against v1.19.2 — the
-	// entries arrive, nothing errors, and anyone querying
-	// {job="systemd-journal"} — the name this fleet's Grafana panels, the
-	// victorialogs suite and the gatus ingest probe all use — gets an empty
-	// result from a pipeline that is working perfectly. This is an
-	// ALLOY-side gotcha; changing the store did not touch it. It cost a
-	// debugging round before it was caught, and the only reason it was
-	// caught is that the check was "did this specific line arrive", not "is
-	// the container healthy".
-	//
-	// The `job` label is therefore set by a relabel rule below, which runs
-	// last and wins. Verified after the change: a marker line written by a
-	// container reached {job="systemd-journal"} in 2 s.
+	// 🚨 NO `labels` ARGUMENT. `labels = { job = "systemd-journal" }` does
+	// NOT work when relabel_rules are also set — the component's own
+	// default wins and every stream lands as
+	// job="loki.source.journal.host", with no error, so
+	// {job="systemd-journal"} (what the panels, the suite and the gatus
+	// probe all query) comes back empty from a working pipeline. The
+	// `job` label is set by a relabel rule below, which runs last.
 }
 
 // ---------------------------------------------------------------------------
 // Relabelling: which journal fields become labels on the pushed streams
 // ---------------------------------------------------------------------------
-// 🚨 EVERY LABEL HERE IS A CARDINALITY DECISION, in two stages now. A label
-// promoted here rides the push protocol; the sink URL's `_stream_fields`
-// list (bottom of this file) then decides which of them define a
-// VictoriaLogs STREAM. One stream per unique value combination — so a label
-// with unbounded values (a container ID, a PID, a request id) that also
-// reaches `_stream_fields` is the standard way to make a log store
-// unqueryable. Everything below is bounded by the number of things running
-// on one host. Labels promoted here but NOT listed in `_stream_fields`
-// (only `level` today) are stored as plain per-entry fields: filterable
-// (`level:err`), but not stream-defining — that is the safe default for
-// anything per-entry rather than per-source.
+// 🚨 EVERY LABEL HERE IS A CARDINALITY DECISION, in two stages: a label
+// promoted here rides the push protocol, and the sink's `_stream_fields`
+// then decides which of them define a VictoriaLogs STREAM (one per
+// unique value combination). An unbounded label that reaches
+// `_stream_fields` is the standard way to make a log store unqueryable.
+// Labels promoted but not listed there — only `level` today — are plain
+// per-entry fields: filterable, not stream-defining.
 //
-// Note what is NOT promoted at all: __journal__pid, __journal_container_id
+// Deliberately NOT promoted: __journal__pid, __journal_container_id
 // (changes on every `docker compose up`), and the message itself.
 loki.relabel "journal" {
 	forward_to = []
@@ -116,36 +68,30 @@ loki.relabel "journal" {
 		replacement  = "systemd-journal"
 	}
 
-	// The systemd unit. For container output this is always `docker.service`
-	// — docker's journald driver submits from dockerd, so every container
-	// line shares that unit. `container` below is what distinguishes them.
+	// Always `docker.service` for container output — dockerd submits every
+	// line. `container` below is what distinguishes them.
 	rule {
 		source_labels = ["__journal__systemd_unit"]
 		target_label  = "unit"
 	}
 
-	// The container name. This exists because the docker daemon is configured
-	// with log-opts tag={{.Name}}; with no tag docker would put the truncated
-	// container ID here instead and this label would be a cardinality bomb
-	// that changes on every redeploy. The two settings are one decision.
+	// Depends on the daemon's log-opts tag={{.Name}}: with no tag docker
+	// puts the truncated container ID here and this becomes a cardinality
+	// bomb that changes on every redeploy. The two settings are one
+	// decision.
 	rule {
 		source_labels = ["__journal_container_name"]
 		target_label  = "container"
 	}
 
-	// Syslog priority as a word (err, warning, info, ...). Bounded to eight
-	// values and it is what every "show me the errors" query filters on.
-	// Deliberately NOT in the sink's `_stream_fields`: it is a per-entry
-	// attribute, not a log source, and VictoriaLogs (vmui and the Grafana
-	// plugin both) recognises a plain `level` field for severity colouring.
-	// Measured: it arrives as a regular field and `level:err` filters on it.
+	// Syslog priority as a word. Deliberately NOT in `_stream_fields`: it
+	// is per-entry, not a log source, and VictoriaLogs colours `level`.
 	rule {
 		source_labels = ["__journal_priority_keyword"]
 		target_label  = "level"
 	}
 
-	// The host. One value today; it stays correct if a second collector is
-	// ever pointed at this store.
+	// One value today; stays correct if a second collector is added.
 	rule {
 		source_labels = ["__journal__hostname"]
 		target_label  = "host"
@@ -175,40 +121,25 @@ loki.process "json_host" {
 // ---------------------------------------------------------------------------
 // Sink: VictoriaLogs, over the compose network
 // ---------------------------------------------------------------------------
-// `victorialogs` is the compose service name, resolved on the stack's own
-// bridge network. NOT 127.0.0.1:10456 — a bridged container cannot reach a
-// loopback-bound host publish (the same constraint that forces gatus onto the
-// host network), and NOT a Caddy vhost, because there is none for the store
-// and a forward-auth 302 would silently swallow every push.
+// The compose service name on the stack's own bridge network. NOT
+// 127.0.0.1:10456 — a bridged container cannot reach a loopback-bound
+// host publish — and not a Caddy vhost, whose forward-auth 302 would
+// silently swallow every push.
 loki.write "default" {
 	endpoint {
-		// VictoriaLogs' native endpoint for the loki push protocol.
-		//
-		// 🚨 `_stream_fields` IS LOAD-BEARING. It names which pushed labels
-		// define a VictoriaLogs stream; the rest (only `level` today) are
-		// stored as plain per-entry fields. Left OFF, VictoriaLogs would
-		// default to using ALL pushed labels — which works today, but then
-		// a future relabel rule that promotes an unbounded field would
-		// silently become a stream-cardinality bomb. Pinning the list here
-		// makes stream membership a two-file decision (a rule above AND a
-		// name here) instead of an accident. Verified against the pinned
-		// image: a push lands with _stream={container,host,job,unit} and
-		// `level` alongside as a regular field.
+		// 🚨 `_stream_fields` IS LOAD-BEARING. Left off, VictoriaLogs streams
+		// on ALL pushed labels — fine today, but then a future relabel rule
+		// promoting an unbounded field silently becomes a cardinality bomb.
+		// Pinning it makes stream membership a two-file decision.
 		url = "http://victorialogs:9428/insert/loki/api/v1/push?_stream_fields=job,unit,container,host"
 
-		// Explicit, not defaulted, and kept across the store swap: a 429
-		// from the sink is backpressure — a burst to ride out, not a reason
-		// to throw the lines away. Retrying is the difference between "the
-		// incident's logs are delayed" and "the incident's logs are gone",
-		// which is the only moment this stack is worth anything.
+		// A 429 from the sink is backpressure, not a reason to drop the
+		// lines: delayed incident logs beat missing ones.
 		retry_on_http_429 = true
 	}
 
-	// The write-ahead log. This — not the retry setting above — is what makes
-	// a store restart cost latency rather than data: entries are durable here
-	// until they are acknowledged. Backed by /mnt/fast/alloy; see
-	// nixos/generate-stack-dirs.py for why that directory is root-owned (this
-	// image sets no USER and runs as uid 0).
+	// The WAL is what makes a store restart cost latency rather than data:
+	// entries are durable here until acknowledged. Backed by /mnt/fast/alloy.
 	wal {
 		enabled = true
 	}
@@ -217,10 +148,8 @@ loki.write "default" {
 // ---------------------------------------------------------------------------
 // Alloy's own diagnostics
 // ---------------------------------------------------------------------------
-// Alloy logs to stdout, which the journald driver puts back into the journal,
-// which loki.source.journal above then reads — so Alloy's own logs reach the
-// store by the same path as everything else. No self-scrape component is
-// needed and none is configured.
+// Alloy logs to stdout, which the journald driver returns to the journal
+// that loki.source.journal reads — so its own logs need no self-scrape.
 logging {
 	level  = "info"
 	format = "logfmt"

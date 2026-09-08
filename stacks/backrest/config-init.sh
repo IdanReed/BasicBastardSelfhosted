@@ -1,33 +1,23 @@
 #!/bin/sh
 # Seeds config.json ONCE from config.template.json. Backrest owns the file
 # afterwards, so this must never overwrite it — the template is a bootstrap
-# seed, not a source of truth. To re-seed: delete
+# seed, not a source of truth. To re-seed, delete
 # /mnt/fast/backrest/config/config.json.
 #
-# This lives in a file (mounted read-only next to the template) rather than
-# inline in compose.yaml because it is full of `$`, and compose interpolates
-# every `$` in the YAML unless doubled — a standing trap for future edits.
+# A file rather than inline in compose.yaml because it is full of `$`, which
+# compose interpolates unless doubled.
 set -eu
 
 # 0600 from birth: config.json carries RESTIC_PASSWORD and the admin bcrypt
-# hash, and with the default umask 022 the rendered file would sit
-# world-readable between the write and the chmod below. With 077 every file
-# created here is 0600 from the start.
+# hash, and the default umask would leave it world-readable until the chmod.
 umask 077
 
-# Fail loudly BEFORE Backrest starts if the storage box key is absent OR
-# still the sops changeme_ placeholder — the placeholder is the DEFAULT
-# state of a fresh deploy (sops-nix + the tmpfiles C+ rule always
-# materialise a non-empty file), so an empty-only check would let Backrest
-# start doomed to crash-loop on ssh auth with no alert.
+# Refuse to start if the storage-box key is absent or still the changeme_
+# placeholder — the placeholder is the DEFAULT state of a fresh deploy, so an
+# empty-only check would let Backrest crash-loop on ssh auth with no alert.
 #
-# `! -f` before `! -s` is NOT redundant: the key is mounted as a SINGLE
-# FILE, and a missing host path makes docker manufacture a DIRECTORY at it
-# (verified — same behaviour the compose header documents for /config),
-# which passes `-s` (4096 bytes) while grep exits non-zero — an `-s`-only
-# gate waves the empty case through. Self-healing: the tmpfiles `C+` rule
-# removes whatever is at the path before re-copying on the next boot or
-# switch.
+# `! -f` before `! -s` is NOT redundant: a missing host path for a single-file
+# bind makes docker manufacture a DIRECTORY, which passes `-s`.
 if [ ! -f /keys/storagebox_ed25519 ] || [ ! -s /keys/storagebox_ed25519 ] \
    || grep -q '^changeme_' /keys/storagebox_ed25519; then
   echo "ERROR: /var/lib/backup/storagebox_ed25519 is missing or still the changeme_ placeholder."
@@ -54,31 +44,13 @@ if [ -f /config/config.json ]; then
   exit 0
 fi
 
-# Substitution is busybox awk over ENVIRON, not envsubst: `apk add gettext`
-# put the registry in the boot path (unreachable at boot -> whole backup
-# stack down) and made the stack untestable in the offline VM suite.
-# Everything used below ships in alpine:3.21. Unlike envsubst, an unset or
-# empty variable is a hard error, not a silent "".
+# busybox awk over ENVIRON, not envsubst: `apk add gettext` would put the
+# registry in the boot path and break the offline suite, and unlike envsubst
+# an unset or empty variable is a hard error rather than a silent "".
 #
-# A `changeme` placeholder is treated exactly like empty: it is the DEFAULT
-# state of a fresh deploy, and config.json is seeded EXACTLY ONCE — a
-# placeholder baked in is permanent and nothing downstream ever complains.
-# Per variable:
-#   RESTIC_PASSWORD                 placeholder is a PUBLIC string in this
-#                                   repo — it would encrypt a real repository
-#                                   holding every backup.
-#   BACKREST_ADMIN_PASSWORD_BCRYPT  placeholder is not a valid bcrypt hash;
-#                                   nobody could ever log in.
-#   DEADMAN_URL                     placeholder 404s, and actionHealthchecks
-#                                   is ON_ERROR_IGNORE — yet this is the ONLY
-#                                   external signal in the fleet, the one
-#                                   thing that catches "the timer stopped
-#                                   firing three weeks ago". A dead-man that
-#                                   never pings reads as configured: worse
-#                                   than none.
-#
-# Substring match, not a `changeme_` prefix: DEADMAN_URL's placeholder
-# carries it in the path (changeme-uuid), not at the start.
+# A `changeme` placeholder counts as empty: config.json is seeded EXACTLY
+# ONCE, so one baked in is permanent and nothing downstream complains.
+# Substring match, not a prefix — DEADMAN_URL carries it mid-path.
 fail=0
 for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.json | tr -d '${}' | sort -u); do
   eval "val=\${$v:-}"
@@ -96,11 +68,9 @@ for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.jso
       echo "  (see .sops.env.example for how to generate each one)."
       fail=1
       ;;
-    # Values go into JSON verbatim (the awk below does no escaping): a double
-    # quote breaks the parse, and a backslash parses as a JSON escape — restic
-    # would then encrypt the repo with a password DIFFERENT from the
-    # sops-recorded value, found only at disaster recovery. Same gate
-    # immich-config-init carries for exactly this class.
+    # Values go into JSON verbatim: a quote breaks the parse and a backslash
+    # parses as an escape, so restic would encrypt the repo with a password
+    # different from the sops-recorded one — found only at recovery time.
     *'"'*|*'\'*)
       echo "ERROR: $v contains a double quote or backslash - inserted verbatim"
       echo "  into JSON it would corrupt config.json (or silently change the"
@@ -112,15 +82,11 @@ for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.jso
 done
 [ "$fail" -eq 0 ]
 
-# Left-to-right single pass, no rescan of substituted output — a value that
-# itself contains '${' is inserted literally, matching envsubst.
+# Left-to-right single pass, no rescan of substituted output.
 #
-# Rendered to a tmpfile and renamed into place: the seed-once guard up top
-# trusts any existing config.json forever, so a crash mid-write (ENOSPC,
-# OOM-kill) landing directly on the final path would leave truncated JSON
-# that `-f` then protects until a human deletes it. The chmod is a no-op
-# under the umask above, kept because the 0600 contract (asserted by the
-# suite) deserves to be visible where the file is made.
+# Tmpfile + rename: the seed-once guard trusts any existing config.json
+# forever, so a crash mid-write landing on the final path would leave
+# truncated JSON that `-f` then protects until a human deletes it.
 awk '{
   out = ""
   rest = $0

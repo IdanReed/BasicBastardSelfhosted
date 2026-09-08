@@ -1,21 +1,12 @@
-# Grafana dashboard provisioning — dashboards as files, not as grafana.db rows.
+# Grafana dashboard provisioning — dashboards as files, not grafana.db rows,
+# so they are reviewable, diffable and restored by a redeploy.
 #
-# Mounted at /etc/grafana/provisioning/dashboards/fleet.yaml (read-only), with
-# the JSON it points at mounted read-only under /etc/grafana/dashboards.
-#
-# Same argument as grafana-datasource.yaml: a dashboard built by clicking
-# exists only inside grafana.db, which means it exists only in the nightly
-# sqlite dump, which means the way you find out it was never really backed up
-# is the day you need it. A file in this repo is reviewable, diffable and
-# restored by a redeploy.
-#
-# ⚠ `allowUiUpdates: false` makes these read-only IN THE UI, deliberately. You
-# can still edit a panel and explore, you just cannot Save over the file —
-# Grafana offers "Save JSON to file" instead, which is the change you then
-# commit here. The alternative (true) means the file and the database drift
+# ⚠ `allowUiUpdates: false` makes these read-only IN THE UI deliberately: you
+# can still edit and explore, you just get "Save JSON to file" instead of
+# saving over the file. The alternative lets the database and the file drift,
 # and the file quietly loses.
 #
-# ⚠ `apiVersion: 1` is Grafana's provisioning schema version, not a Grafana
+# ⚠ `apiVersion: 1` is the provisioning schema version, not a Grafana
 # version. Still 1 in 13.x; do not "update" it.
 
 apiVersion: 1
@@ -23,12 +14,9 @@ apiVersion: 1
 providers:
   - name: fleet
     type: file
-    # Dashboards land in the General folder. One dashboard today; give it a
-    # folder when there are enough to need one, not before.
+    # General folder; one dashboard today.
     folder: ""
     allowUiUpdates: false
     options:
       path: /etc/grafana/dashboards
-      # Without this every dashboard is filed under the General folder even if
-      # the mounted tree has subdirectories. Cheap now, correct later.
       foldersFromFilesStructure: false
