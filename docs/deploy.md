@@ -97,13 +97,16 @@ placeholder ~40).
 encrypting (password hashes especially). `docker compose` interpolates `env_file`
 values and `decrypt-sops-envs` sources nothing, so Compose is the only expander.
 
-🚨 **`sopsgen rotate user/idan` rewrites the secrets; it does not change four of
-the six logins.** qBittorrent (`qBittorrent.conf`), Backrest (`config.json`),
-Beszel (`data.db`) and Windmill (the account row) all seed their credential
-**once** and keep the old value. Each needs the seed file or volume reset and the
-stack redeployed — for qBittorrent, stop the container, delete the conf, then
-`./deploy media`. Only `qbit-init` warns about the drift; the other three are
-silent. Authentik and Samba do follow the rotation. Handbook §15 has the table.
+🚨 **`sopsgen rotate user/idan` rewrites the secrets; it does not change five of
+the seven logins.** qBittorrent (`qBittorrent.conf`), Backrest (`config.json`),
+Beszel (`data.db`), Windmill (the account row) and **Jellyfin** all seed their
+credential **once** and keep the old value. Each needs the seed file or volume
+reset and the stack redeployed — for qBittorrent, stop the container, delete the
+conf, then `./deploy media`. Only `qbit-init` warns about the drift; Backrest,
+Beszel and Windmill are silent, and **Jellyfin is worse than silent — the next
+deploy fails**, because `jellyfin-init` authenticates with the rotated value
+against a server that still stores the old one. Reset it in the Jellyfin UI
+first. Authentik and Samba do follow the rotation. Handbook §15 has the table.
 
 ---
 

@@ -407,6 +407,11 @@ secrets:
       - { file: stacks/backrest/.sops.env, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
       - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD }
       - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
+      # Jellyfin's first admin, and the account SEERR authenticates against.
+      # ⚠ Jellyfin has no headless password reset, so a rotation reaches
+      # jellyfin-init's LOGIN, not the stored password: reset it in the UI
+      # first (or wipe /mnt/fast/jellyfin/config) or the next deploy fails.
+      - { file: stacks/media/.sops.env, key: JELLYFIN_ADMIN_PASSWORD }
   - name: user/alondra
     class: generate
     recipe: base64:24
@@ -625,6 +630,14 @@ secrets:
     recipe: base64:24
     targets: [{ file: stacks/docspace/.sops.env, key: DOCSPACE_ADMIN_PASSWORD }]
 
+  - name: firefly/PASSPORT_KEYPAIR
+    class: derived
+    recipe: rsa-4096
+    freeze: true
+    note: "Passport's token-signing keypair, stored as ONE-LINE PEMs with literal \\n (PassportServiceProvider::makeCryptKey un-escapes them). WITHOUT it storage/ is unpersisted and every container recreate mints a new pair, silently invalidating FIREFLY_III_ACCESS_TOKEN."
+    targets:
+      - { file: stacks/firefly/.sops.env, key: PASSPORT_PRIVATE_KEY, part: pem_escaped_private }
+      - { file: stacks/firefly/.sops.env, key: PASSPORT_PUBLIC_KEY, part: pem_escaped_public }
   - name: firefly/APP_KEY
     class: generate
     recipe: base64:24
@@ -676,6 +689,18 @@ secrets:
     class: generate
     recipe: hex:32
     targets: [{ file: stacks/media/.sops.env, key: PROWLARR__AUTH__APIKEY }]
+  - name: media/SEERR_API_KEY
+    class: generate
+    recipe: hex:64
+    note: "delivered TWICE under two names: seerr reads API_KEY (forces main.apiKey on every load), the seerr-init/bootstrap sidecars read SEERR_API_KEY"
+    targets:
+      - { file: stacks/media/.sops.env, key: SEERR_API_KEY }
+      - { file: stacks/media/.sops.env, key: API_KEY }
+  - name: media/BAZARR_API_KEY
+    class: generate
+    recipe: hex:32
+    note: "bazarr's auth.apikey, seeded into config/config.yaml; the default is a random 16 bytes nobody can know"
+    targets: [{ file: stacks/media/.sops.env, key: BAZARR_API_KEY }]
   - name: media/PROFILARR_API_KEY
     class: generate
     recipe: hex:64
@@ -699,6 +724,8 @@ secrets:
     class: config
     targets:
       - { file: stacks/media/.sops.env, key: QBIT_WEBUI_USER }
+      - { file: stacks/media/.sops.env, key: JELLYFIN_ADMIN_USER }
+      - { file: stacks/media/.sops.env, key: SEERR_ADMIN_EMAIL }
       - { file: stacks/media/.sops.env, key: VPN_SERVICE_PROVIDER }
       - { file: stacks/media/.sops.env, key: SERVER_COUNTRIES }
       # wireguard | openvpn — decides which half of the gluetun block above

@@ -159,6 +159,9 @@ services:
   jellyfin:
     image: jellyfin/jellyfin:10.11.11
     container_name: jellyfin
+    depends_on:
+      jellyfin-config-init:
+        condition: service_completed_successfully
     ports:
       - '127.0.0.1:10050:8096'
     volumes:
@@ -181,6 +184,58 @@ services:
       retries: 5
       start_period: 90s
     restart: unless-stopped
+
+  # Seeds config/encoding.xml BEFORE jellyfin's first start: there is no env
+  # var for any EncodingOptions field and the API needs an admin token that
+  # does not exist yet, so a file is the only channel. Seed-if-absent, NOT
+  # merge — jellyfin rewrites it whenever an admin saves the Transcoding page.
+  #
+  # ⚠ Deliberately does NOT seed config/system.xml; see jellyfin-init.sh.
+  jellyfin-config-init:
+    image: alpine:3.21
+    container_name: media_jellyfin_config_init
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        dest=/config/config/encoding.xml
+        if [ -f "$$dest" ]; then
+          echo "jellyfin-config-init: $$dest exists - jellyfin owns it, not touching"
+          exit 0
+        fi
+        mkdir -p /config/config
+        # Tmpfile+rename: the -f guard is touch-once, so a crash mid-write
+        # would leave a partial XML that jellyfin logs and then ignores in
+        # favour of defaults.
+        cp /template/encoding.xml "$$dest.tmp"
+        mv "$$dest.tmp" "$$dest"
+        echo "jellyfin-config-init: CHANGE: seeded $$dest (vaapi)"
+    volumes:
+      - ./jellyfin-encoding.xml:/template/encoding.xml:ro
+      - /mnt/fast/jellyfin/config:/config
+    restart: "no"
+
+  # Drives the startup wizard, the first admin and the two libraries over REST
+  # — anonymous while the wizard is open, token-authed afterwards, so it
+  # reconciles on every redeploy. See jellyfin-init.sh. The admin it creates is
+  # ALSO what Seerr authenticates against.
+  jellyfin-init:
+    image: python:3.13-alpine
+    container_name: media_jellyfin_init
+    entrypoint: ['/bin/sh', '/init/jellyfin-init.sh']
+    depends_on:
+      jellyfin:
+        condition: service_healthy
+      # The library paths must exist before POST /Library/VirtualFolders —
+      # LibraryManager throws otherwise, and media-init creates the skeleton.
+      media-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./jellyfin-init.sh:/init/jellyfin-init.sh:ro
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
 
   # Arrs
   #
@@ -266,19 +321,19 @@ services:
 
   # Requests
   #
-  # Seerr runs as uid 1000 and cannot chown its own config dir, so without
-  # this oneshot it crash-loops on EACCES on any first deploy.
+  # /config ownership (seerr runs as uid 1000 and cannot chown a root-owned
+  # bind source) plus the settings.json seed, both BEFORE seerr starts.
   seerr-init:
-    image: alpine:3.21
+    image: python:3.13-alpine
     container_name: media_seerr_init
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        chown -R 1000:1000 /config
-        echo "seerr-init: /config owned 1000:1000"
+    entrypoint: ['/bin/sh', '/init/seerr-init.sh']
     volumes:
+      - ./seerr-init.sh:/init/seerr-init.sh:ro
+      - ./seerr-settings.json:/template/settings.json:ro
       - /mnt/fast/seerr/config:/config
+    env_file:
+      - path: .env
+        required: false
     restart: "no"
 
   seerr:
@@ -293,6 +348,12 @@ services:
       - /mnt/fast/seerr/config:/app/config
     environment:
       - TZ=America/Chicago
+      # API_KEY forces main.apiKey on EVERY load, so the headless key is a sops
+      # value rather than something scraped out of settings.json. It arrives
+      # from .env, twinned with SEERR_API_KEY (which the sidecars read).
+    env_file:
+      - path: .env
+        required: false
     healthcheck:
       test: ['CMD-SHELL', 'wget -q --spider http://localhost:5055/api/v1/status']
       interval: 30s
@@ -301,13 +362,49 @@ services:
       start_period: 90s
     restart: unless-stopped
 
+  # The three calls settings.json cannot make. Separate from seerr-init because
+  # they sit on opposite sides of seerr's own start: the file must be there
+  # BEFORE seerr reads it, these calls need it RUNNING. See seerr-bootstrap.sh.
+  seerr-bootstrap:
+    image: python:3.13-alpine
+    container_name: media_seerr_bootstrap
+    entrypoint: ['/bin/sh', '/init/seerr-bootstrap.sh']
+    depends_on:
+      seerr:
+        condition: service_healthy
+      # The Jellyfin admin it authenticates as has to exist first.
+      jellyfin-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./seerr-bootstrap.sh:/init/seerr-bootstrap.sh:ro
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
   # Subtitles
   #
-  # Arr connections are still seeded by hand on first login: which of
-  # config.yaml/config.ini Bazarr 1.6 reads is unverified.
+  # Seeds config/config.yaml (note the doubled `config`: that is where Dynaconf
+  # looks) with the Radarr/Sonarr connections and a pinned auth.apikey, before
+  # bazarr's first start.
+  bazarr-config-init:
+    image: python:3.13-alpine
+    container_name: media_bazarr_config_init
+    entrypoint: ['/bin/sh', '/init/bazarr-config-init.sh']
+    volumes:
+      - ./bazarr-config-init.sh:/init/bazarr-config-init.sh:ro
+      - /mnt/fast/bazarr/config:/config
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
   bazarr:
     image: lscr.io/linuxserver/bazarr:1.6.0
     container_name: bazarr
+    depends_on:
+      bazarr-config-init:
+        condition: service_completed_successfully
     ports:
       - '127.0.0.1:10055:6767'
     volumes:

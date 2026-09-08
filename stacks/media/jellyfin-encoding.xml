@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Jellyfin hardware-transcode configuration, seeded into
+  /config/config/encoding.xml BEFORE Jellyfin's first start.
+
+  WHY A FILE: there is no env var for any EncodingOptions field (JELLYFIN_*
+  binding reaches only paths, ffmpeg tuning and the kestrel socket), and
+  POST /System/Configuration/encoding needs an admin token that does not exist
+  yet. A file is the only pre-start channel.
+
+  WHY IT STICKS: named configs (encoding/network/branding/...) are read by
+  BaseConfigurationManager.LoadConfiguration and NEVER rewritten at startup,
+  unlike system.xml. Jellyfin rewrites this only when an admin saves the
+  Transcoding page.
+
+  `vaapi` matches the compose file's /dev/dri bind + `c 226:* rmw` cgroup rule
+  (the Arc A380's render node). It is correct for both the pre-10.10 string
+  schema and the 10.10+ HardwareAccelerationType enum, whose members are
+  deliberately lowercase. With no /dev/dri present (the VM suites) Jellyfin
+  logs a probe failure and falls back to software transcode — the same
+  degradation the bind-mount-instead-of-devices trick buys.
+-->
+<EncodingOptions>
+  <HardwareAccelerationType>vaapi</HardwareAccelerationType>
+  <VaapiDevice>/dev/dri/renderD128</VaapiDevice>
+  <EnableHardwareEncoding>true</EnableHardwareEncoding>
+  <!-- x265 is ENFORCED fleet-wide: the transcoder must be allowed to emit it,
+       or every HEVC source needing a transcode is re-encoded to h264. -->
+  <AllowHevcEncoding>true</AllowHevcEncoding>
+  <AllowAv1Encoding>false</AllowAv1Encoding>
+  <HardwareDecodingCodecs>
+    <string>h264</string>
+    <string>hevc</string>
+    <string>vp9</string>
+    <string>av1</string>
+  </HardwareDecodingCodecs>
+  <EnableDecodingColorDepth10Hevc>true</EnableDecodingColorDepth10Hevc>
+  <EnableDecodingColorDepth10Vp9>true</EnableDecodingColorDepth10Vp9>
+  <PreferSystemNativeHwDecoder>true</PreferSystemNativeHwDecoder>
+  <!-- OFF: the single most expensive VAAPI filter, and nothing here is
+       HDR-only. Flip EnableVppTonemapping (not EnableTonemapping) first if
+       that changes — VPP is the fixed-function path on Intel. -->
+  <EnableTonemapping>false</EnableTonemapping>
+  <EnableVppTonemapping>false</EnableVppTonemapping>
+  <EncoderPreset>veryfast</EncoderPreset>
+  <EnableSubtitleExtraction>true</EnableSubtitleExtraction>
+  <EnableThrottling>false</EnableThrottling>
+</EncodingOptions>

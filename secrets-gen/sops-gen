@@ -208,6 +208,14 @@ draw() { # recipe -> DRAW (+ DRAW_PUB/DRAW_PRIV_B64 for keypairs)
               DRAW_PUB=$(cat "$SCRATCH/draw_key.pub")
               DRAW_PRIV_B64=$(base64 -w0 "$SCRATCH/draw_key")
               shred -u "$SCRATCH/draw_key" "$SCRATCH/draw_key.pub";;
+    rsa-*)    # rsa-<bits>. DRAW/DRAW_PUB stay REAL multi-line PEMs; the
+              # pem_escaped_* parts are what a dotenv can carry.
+              need openssl; scratch
+              openssl genpkey -quiet -algorithm RSA \
+                -pkeyopt "rsa_keygen_bits:${r#rsa-}" -out "$SCRATCH/rsa_key"
+              DRAW=$(cat "$SCRATCH/rsa_key")
+              DRAW_PUB=$(openssl rsa -in "$SCRATCH/rsa_key" -pubout 2>/dev/null)
+              shred -u "$SCRATCH/rsa_key";;
     cmd:*)    DRAW=$(bash -c "${r#cmd:}");;
     *)        die "unknown recipe: $r";;
   esac
@@ -216,6 +224,13 @@ draw() { # recipe -> DRAW (+ DRAW_PUB/DRAW_PRIV_B64 for keypairs)
 
 hex_b64() { printf '%s' "$1" | xxd -r -p | base64 -w0; }
 
+# A PEM is multi-line and a dotenv value is one line. Laravel Passport (and
+# anything else reading a PEM from the environment) undoes exactly this:
+# str_replace('\\n', "\n", $key). Never double-quote the result in the
+# plaintext .sops.env — compose would then expand the escape itself.
+pem_escape()   { sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'; }
+pem_unescape() { sed -e 's/\\n/\n/g'; }
+
 render() { # part template -> transformed DRAW on stdout
   local part=$1 tpl=$2 out
   case $part in
@@ -223,6 +238,8 @@ render() { # part template -> transformed DRAW on stdout
     public)      out=$DRAW_PUB;;
     private)     out=$DRAW;;
     private_b64) out=$DRAW_PRIV_B64;;
+    pem_escaped_private) out=$(printf '%s' "$DRAW" | pem_escape);;
+    pem_escaped_public)  out=$(printf '%s' "$DRAW_PUB" | pem_escape);;
     bcrypt)      need htpasswd
                  out=$(htpasswd -bnBC 10 '' "$DRAW" | tr -d ':\n');;
     bcrypt_b64)  need htpasswd
@@ -249,6 +266,16 @@ pub_from_priv() { # recipe private_value(raw or b64 per part) part_of_stored
   local recipe=$1 val=$2 part=$3
   case $recipe in
     wg)  wg pubkey <<<"$val";;
+    rsa-*)
+         scratch
+         if [[ $part == pem_escaped_private ]]; then
+           printf '%s' "$val" | pem_unescape > "$SCRATCH/re_rsa"
+         else printf '%s\n' "$val" > "$SCRATCH/re_rsa"; fi
+         chmod 600 "$SCRATCH/re_rsa"
+         if [[ $part == pem_escaped_private ]]; then
+           openssl rsa -in "$SCRATCH/re_rsa" -pubout 2>/dev/null | pem_escape
+         else openssl rsa -in "$SCRATCH/re_rsa" -pubout 2>/dev/null; fi
+         shred -u "$SCRATCH/re_rsa";;
     ssh-ed25519)
          scratch
          if [[ $part == private_b64 ]]; then base64 -d <<<"$val" > "$SCRATCH/re_key"

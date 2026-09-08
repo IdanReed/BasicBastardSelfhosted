@@ -1,0 +1,27 @@
+{
+  "main": {
+    "applicationTitle": "Seerr",
+    "applicationUrl": "https://seerr.svc.idanreed.com",
+    "mediaServerType": 4,
+    "discoverRegion": "",
+    "streamingRegion": "US",
+    "locale": "en"
+  },
+  "jellyfin": {
+    "ip": "",
+    "port": 8096,
+    "useSsl": false,
+    "urlBase": "",
+    "apiKey": "",
+    "serverId": "",
+    "name": "",
+    "libraries": []
+  },
+  "public": {
+    "initialized": false
+  },
+  "migrations": [
+    "0007_migrate_arr_tags",
+    "0008_migrate_blacklist_to_blocklist"
+  ]
+}

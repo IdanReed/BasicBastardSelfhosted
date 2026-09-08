@@ -43,20 +43,17 @@ offers no non-browser / non-DB path to it.
 |---|---|---|---|
 | **Beszel** | Set `USER_EMAIL` before the **first** boot | Seeding is declarative, but the PocketBase migration that reads the pair fires only against a virgin `data.db` | Yes — in `data.db` on `/mnt/fast/beszel` |
 | **Beszel** | Log in twice (Authentik forward-auth, then Beszel's own login) | OIDC config lives in `users.oauth2` inside `data.db`; no env vars — browser wizard only | n/a (every login) |
-| **Jellyfin** | First-run setup wizard: create the first admin and add libraries | No env or config file pre-creates the owner; nothing in the repo drives the wizard yet | Yes — `/mnt/fast/jellyfin/config` |
 | **Jellyfin** | (Deferred) install `jellyfin-plugin-sso` for OIDC | No native OIDC; auth plugins are a runtime install | Yes (if ever done) |
-| **Seerr** | First-run UI setup (server URL, Jellyfin link, libraries) | Three of the steps are API-only, and nothing in the repo seeds `settings.json` yet | Yes — `/mnt/fast/seerr/config` |
 | **Profilarr** | Bind Dictionarry profiles to the arr instances (one UI action) | API-key auth is scoped to `/api/` paths and `/api/v1/arr` is GET-only; the binding is a session-cookie form action | Yes — `/mnt/fast/profilarr/config` |
 | **Grafana** | Install `victoriametrics-logs-datasource` by hand on the host | The image that bakes it in is built but never published, so the compose still pins stock Grafana | Yes — `/mnt/fast/grafana/plugins` |
 | **Actual** | `docker exec actual node scripts/enable-openid.js`, then log in immediately | OIDC activation is a DB flip with no env equivalent; first OIDC login = permanent owner | Yes — Actual DB |
 | **Vaultwarden** | Set a master password in the web vault after the first SSO login | Vaults are client-side E2EE — no server-side seed can create the first vault key | Yes — `db.sqlite3` |
 | **Outline** | First login creates and owns the team | No env, no CLI, no seeder in `server/scripts/` | Yes — Outline DB |
 | **Homebox** | Close `HBOX_OPTIONS_ALLOW_REGISTRATION` after the first deploy | The open-registration window *is* the headless bootstrap; closing it is a deliberate second act | Yes — compose edit + redeploy |
-| **Firefly III** | Mint a Personal Access Token in the UI for the importer | The only `createToken` path is a browser session — `laravel/tinker` is not in the image | Re-minted on every container recreate: Passport's signing keys live on an unpersisted path |
+| **Firefly III** | Mint a Personal Access Token in the UI for the importer | The only `createToken` path is a browser session — `laravel/tinker` is not in the image | Yes — the token survives a recreate now that Passport's keys come from sops |
 | **Firefly Importer** | Every import is an operator at the importer UI uploading a config JSON | No scheduled sync exists; `SIMPLEFIN_TOKEN` is a one-shot claim URL | No — redone per import |
 | **Cleanuparr** | Configure the arr connections and the malware blocker in the web UI | v2 keeps all of it in `/config` SQLite; `cleanuparr.json` covers only `PORT`/`BASE_PATH` | Yes — `/mnt/fast/cleanuparr/config` |
 | **qBittorrent** | Rotating the WebUI password needs `qBittorrent.conf` deleted and the stack redeployed | The conf is seed-once: `qbit-init` writes it only when absent, and qbit rewrites it whole on shutdown | Yes — `/mnt/fast/qbittorrent/config` |
-| **Bazarr** | Seed the Radarr/Sonarr connections on first login | No env-var path exists, and nothing in the repo seeds the config file yet | Yes — `/mnt/fast/bazarr/config` |
 | **Proton / hydroxide** | One interactive `docker exec -it hydroxide … auth <account>` | Env credentials are refused by design so the Proton password never reaches sops; the bridge password prints **once** | Yes — `auth.json` on `/mnt/fast/proton`, but the value must be pasted into `.sops.env` |
 | **Syncthing** | Add each peer by device ID, from **both** sides | Deliberate: no device is pre-seeded, so nothing can pair itself | Yes — Syncthing config |
 | **SilverBullet** | Create the private Forgejo mirror repo and a `write:repository` PAT, embed both in `GIT_SYNC_REMOTE` | The stack creates neither, by design | Yes — the `.sops.env` value |
@@ -111,33 +108,25 @@ hub is healthy. What is not declarative is the *timing*.
   host network), so forward auth is purely a browser concern.
 - **(d) Survives recreate:** n/a — it is every login.
 
-### Jellyfin — the setup wizard, and no native OIDC
+### Jellyfin — no native OIDC
 
-- **(b) The step:** on first boot, complete the setup wizard, create the first
-  admin, and point libraries at `/data/media/*`.
-- **(c) Why not declarative:** there is no env var and no config file that
-  pre-creates the owner — only the startup state machine does, and the account it
-  creates is also what **Seerr authenticates against**, so it is load-bearing
-  beyond Jellyfin. The `/Startup/*` and `/Library/VirtualFolders` endpoints *are*
-  anonymous while the wizard is open, so an init container could drive them;
-  nothing in the repo does yet. Separately, **Jellyfin has no native OIDC** — SSO
-  needs `jellyfin-plugin-sso`, a *runtime* plugin install, deliberately parked (a
+The setup wizard, the first admin and the libraries are all driven from the repo
+now: `jellyfin-config-init` seeds `config/encoding.xml` before the first start,
+and `jellyfin-init` calls `/Startup/*` and `/Library/VirtualFolders`, both of
+which are anonymous while the wizard is open. Only the SSO plugin remains.
+
+- **(b) The step:** install `jellyfin-plugin-sso` — deferred, not done.
+- **(c) Why not declarative:** Jellyfin has no native OIDC, and the plugin is a
+  *runtime* install (three DLLs plus a configuration XML). Deliberately parked: a
   runtime download the fleet's no-download rule disallows, and one more moving
-  part on a media server).
-- **(d) Survives recreate:** yes — `/mnt/fast/jellyfin/config`.
+  part on a media server.
+- **(d) Survives recreate:** yes, if ever done — `/mnt/fast/jellyfin/config`.
 
-### Seerr — first-run UI setup
-
-- **(b) The step:** first-run UI flow — server URL, Jellyfin account link,
-  Radarr/Sonarr connections.
-- **(c) Why not declarative:** on the stable tag it authenticates against Jellyfin
-  accounts (OIDC lives only in the unreleased `preview-new-oidc` tag). Part of the
-  first run is seedable through `settings.json`, but three steps are not — creating
-  user 1 (`POST /api/v1/auth/jellyfin`, the only route that does it), the library
-  sync-and-enable pair, and `POST /api/v1/settings/initialize`. Nothing in the repo
-  seeds or calls any of it yet, and the seed's shape is unforgiving: several
-  migrations dereference keys unconditionally and the migrator exits on a throw.
-- **(d) Survives recreate:** yes — `/mnt/fast/seerr/config`.
+⚠ **Do not run `sopsgen rotate user/idan` after Jellyfin's first deploy.**
+`JELLYFIN_ADMIN_PASSWORD` is a twin of idan's password, and Jellyfin has no
+headless password reset — so a rotation changes what `jellyfin-init` logs in
+*with*, not what Jellyfin *stores*, and the next deploy fails loudly. Reset the
+password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
 
 ### Profilarr — the arr binding is not reachable over the API
 
@@ -252,11 +241,13 @@ hub is healthy. What is not declarative is the *timing*.
   `composer.lock` only as a `suggest` string, and `psy/psysh` is absent), so the
   usual `artisan tinker --execute` trick does not exist here. The importer's UI
   loads with the token unset but cannot talk to Firefly until it is set.
-- **(d) Survives recreate:** the token row persists in Firefly's DB, but Passport
-  signs it with an RSA pair under `storage/`, which is **not** a persisted path —
-  so every container recreate mints a new pair and silently invalidates the token,
-  and the importer starts 401ing with nothing said at deploy time. Re-mint and
-  re-paste after a recreate until the keys come from sops.
+- **(d) Survives recreate:** yes, now. Passport signs every token with an RSA
+  pair that it generates under the unpersisted `storage/` path, so a recreate used
+  to mint a new pair and silently invalidate the token — the importer would start
+  401ing with nothing said at deploy time. `PASSPORT_PRIVATE_KEY` /
+  `PASSPORT_PUBLIC_KEY` now come from sops (`freeze: true`, because rotating them
+  invalidates every issued token), so the token outlives a recreate and only a DB
+  rebuild forces a re-mint.
 
 ### Firefly Importer — every import is a human at the UI
 
@@ -298,17 +289,6 @@ hub is healthy. What is not declarative is the *timing*.
   the repair itself is manual.
 - **(d) Survives recreate:** yes — the conf is on `/mnt/fast/qbittorrent/config`,
   which is exactly why the stale value survives too.
-
-### Bazarr — arr connections on first login
-
-- **(b) The step:** on first login, add the Radarr and Sonarr connections
-  (address, port, API key) in Bazarr's settings.
-- **(c) Why not declarative:** Bazarr has no env-var path for provider or arr
-  configuration. The seedable file is `<config>/config/config.yaml` — the doubled
-  `config` is where Dynaconf looks, and a partial file is correct because the
-  validators fill the rest — but nothing in the repo writes it yet, so the values
-  come from the UI on first login.
-- **(d) Survives recreate:** yes — `/mnt/fast/bazarr/config`.
 
 ### Proton / hydroxide — the only interactive login in the fleet
 

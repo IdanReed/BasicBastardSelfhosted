@@ -58,6 +58,19 @@ services:
       # and RemoteUserGuard is not one, so the flow fatals. Personal access
       # tokens only — minting one is an operator step (.sops.env.example).
       #
+      # 🚨 LOAD-BEARING, and a bug fix rather than a nicety. Passport signs
+      # every access token with an RSA pair at storage/oauth-{public,private}
+      # .key, which CreateStuff generates only when ABSENT — and `storage` is
+      # NOT persisted here (only storage/upload is). Without these, every
+      # container recreate mints a NEW pair and silently invalidates the
+      # hand-minted FIREFLY_III_ACCESS_TOKEN: the importer starts 401ing with
+      # nothing said at deploy time. config/passport.php reads them, and
+      # PassportServiceProvider::makeCryptKey does
+      # str_replace('\n', "\n", ...) — which is why the .sops.env value is
+      # ONE LINE with literal \n and must never be double-quoted.
+      - PASSPORT_PRIVATE_KEY=${PASSPORT_PRIVATE_KEY:-}
+      - PASSPORT_PUBLIC_KEY=${PASSPORT_PUBLIC_KEY:-}
+      #
       # Healthcheck
       # The image's own HEALTHCHECK is correct; only its default path is a lie —
       # `/healthcheck` routes to php-fpm's ping, which answers before Laravel is

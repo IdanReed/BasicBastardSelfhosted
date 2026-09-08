@@ -119,7 +119,7 @@ let
     images."ghcr_io_dictionarry-hub_profilarr_2_2_0"
     images."ghcr_io_cleanuparr_cleanuparr_2_10_5"
     images."clamav_clamav_1_5" # clamav + clamav-scanner (same pin)
-    images."python_3_13-alpine" # media-init
+    images."python_3_13-alpine" # media-init + the jellyfin/seerr/bazarr sidecars
   ];
 
   # Seeds /srv the way the real host gets it: stack-git-sync on the live
@@ -320,6 +320,15 @@ pkgs.testers.runNixOSTest {
     PFKEY = "7465737470726f66696c6172726b65793030303030303030303030303030"
     QBIT_USER = "test_qbit_user"
     QBIT_PASS = "test_qbit_password_not_secret"
+    JELLYFIN_USER = "idan"
+    JELLYFIN_PASS = "test_jellyfin_password_not_secret"
+    SEERR_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    BAZARR_KEY = "fedcba9876543210fedcba9876543210"
+
+    # Jellyfin refuses any authenticated call without this header shape; the
+    # token is appended once there is one.
+    JF_AUTH = ('MediaBrowser Client="suite", Device="suite", '
+               'DeviceId="media-suite", Version="1.0.0"')
 
     ARRS = {
         "radarr": (10051, "v3", RKEY),
@@ -499,6 +508,34 @@ pkgs.testers.runNixOSTest {
             diag("media-init run")
             raise
 
+    with subtest("jellyfin-init drives the wizard and exits 0"):
+        # Same shape as media-init: no dependent consumes it, so `--wait`
+        # would report a successful exit as a failure. It is ordered AFTER
+        # media-init because POST /Library/VirtualFolders throws on a path
+        # that does not exist and media-init creates the skeleton.
+        try:
+            services_vm.succeed(MEDIA + " up -d jellyfin-init")
+            services_vm.wait_until_succeeds(
+                "docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                "media_jellyfin_init | grep -qx exited/0",
+                timeout=900,
+            )
+        except Exception:
+            diag("jellyfin-init run")
+            raise
+
+    with subtest("seerr-bootstrap makes the three calls and exits 0"):
+        try:
+            services_vm.succeed(MEDIA + " up -d seerr-bootstrap")
+            services_vm.wait_until_succeeds(
+                "docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                "media_seerr_bootstrap | grep -qx exited/0",
+                timeout=900,
+            )
+        except Exception:
+            diag("seerr-bootstrap run")
+            raise
+
     with subtest("every container is in its contract state"):
         # Healthchecked services must be healthy; the two init oneshots must
         # have exited 0; gluetun must be running AND unhealthy — offline, a
@@ -511,7 +548,9 @@ pkgs.testers.runNixOSTest {
                 f"docker inspect -f '{{{{.State.Health.Status}}}}' {name}"
             ).strip()
             assert h == "healthy", f"{name} is {h!r}, expected healthy"
-        for name in ["media_qbit_init", "media_seerr_init", "media_init"]:
+        for name in ["media_qbit_init", "media_seerr_init", "media_init",
+                     "media_jellyfin_config_init", "media_jellyfin_init",
+                     "media_bazarr_config_init", "media_seerr_bootstrap"]:
             code = services_vm.succeed(
                 f"docker inspect -f '{{{{.State.ExitCode}}}}' {name}"
             ).strip()
@@ -1159,6 +1198,136 @@ pkgs.testers.runNixOSTest {
         # And the guard works: no GPU in this VM, container runs anyway with
         # the bind-mounted (possibly empty) /dev/dri present.
         services_vm.succeed("docker exec jellyfin test -d /dev/dri")
+        # The half that IS declarative: encoding.xml is seeded before the
+        # first start and jellyfin keeps it (named configs are read but never
+        # rewritten at startup). Without it nothing in the repo turns VAAPI
+        # on, and a from-repo fleet transcodes in software on an Arc A380.
+        enc = services_vm.succeed(
+            "cat /mnt/fast/jellyfin/config/config/encoding.xml"
+        )
+        assert "<HardwareAccelerationType>vaapi</HardwareAccelerationType>" in enc, (
+            f"encoding.xml lost its vaapi setting:\n{enc[:600]}"
+        )
+        assert "<AllowHevcEncoding>true</AllowHevcEncoding>" in enc, (
+            "encoding.xml forbids HEVC output — x265 is enforced fleet-wide, "
+            "so every HEVC source needing a transcode would become h264"
+        )
+
+    with subtest("the startup wizard is CLOSED and the seeded admin owns it"):
+        # The whole point of jellyfin-init: no browser ever touched this
+        # server. StartupWizardCompleted flips only through POST
+        # /Startup/Complete, which is reachable only while it is still open.
+        info = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 http://127.0.0.1:10050/System/Info/Public"
+        ))
+        assert info.get("StartupWizardCompleted") is True, (
+            f"jellyfin still has its setup wizard open: {info!r}"
+        )
+        # The admin is the .env one, proven by authenticating as it.
+        body = json.dumps({"Username": JELLYFIN_USER, "Pw": JELLYFIN_PASS})
+        auth = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 -X POST "
+            "-H 'Content-Type: application/json' "
+            + "-H " + shlex.quote("Authorization: " + JF_AUTH) + " "
+            + "-d " + shlex.quote(body) + " "
+            "http://127.0.0.1:10050/Users/AuthenticateByName"
+        ))
+        token = auth.get("AccessToken")
+        assert token, f"AuthenticateByName returned no token: {auth!r}"
+        policy = (auth.get("User") or {}).get("Policy") or {}
+        assert policy.get("IsAdministrator") is True, (
+            f"the seeded jellyfin user is not an administrator: {auth!r}"
+        )
+        # ... and the two libraries exist, on the read-only bind.
+        folders = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote(
+                'Authorization: ' + JF_AUTH + ', Token="' + token + '"') + " "
+            "http://127.0.0.1:10050/Library/VirtualFolders"
+        ))
+        by_name = {f["Name"]: f for f in folders}
+        assert set(by_name) >= {"Movies", "TV"}, (
+            f"jellyfin libraries are {sorted(by_name)!r}"
+        )
+        for name, path in [("Movies", "/data/media/movies"),
+                           ("TV", "/data/media/tv")]:
+            assert path in by_name[name]["Locations"], (
+                f"library {name!r} points at {by_name[name]['Locations']!r}"
+            )
+        # A second run is a no-op — the CHANGE: contract every redeploy needs.
+        out = services_vm.succeed(
+            MEDIA + " run --rm --no-deps jellyfin-init 2>&1"
+        )
+        assert "CHANGE:" not in out, (
+            f"a jellyfin-init run against a seeded server was not a no-op:\n{out}"
+        )
+
+    with subtest("seerr is initialised, with the arrs and jellyfin linked"):
+        # public.initialized is the first-run flag; /setup is the browser step
+        # this replaces.
+        pub = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            "http://127.0.0.1:10054/api/v1/settings/public"
+        ))
+        assert pub.get("initialized") is True, (
+            f"seerr still reports first-run: {pub!r}"
+        )
+        # The seeded settings.json reached seerr rather than being ignored:
+        # radarr came from the file, the jellyfin block from the auth call.
+        # The API key resolving at all also proves seerr read API_KEY from
+        # .env (it forces main.apiKey on every load).
+        radarr = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
+            "http://127.0.0.1:10054/api/v1/settings/radarr"
+        ))
+        assert any(r.get("hostname") == "radarr" for r in radarr), (
+            f"seerr has no radarr connection: {radarr!r}"
+        )
+        jf = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
+            "http://127.0.0.1:10054/api/v1/settings/jellyfin"
+        ))
+        assert jf.get("ip") == "jellyfin", f"seerr jellyfin block: {jf!r}"
+        # A second run is a no-op, guarded on public.initialized.
+        out = services_vm.succeed(
+            MEDIA + " run --rm --no-deps seerr-bootstrap 2>&1"
+        )
+        assert "CHANGE:" not in out, (
+            f"a seerr-bootstrap run against an initialised seerr changed "
+            f"something:\n{out}"
+        )
+
+    with subtest("bazarr loaded its seeded arr connections"):
+        # Settles the annex §6 question: <config_dir>/config/config.yaml, with
+        # the doubled `config`. Asserted through the API, so this proves
+        # bazarr LOADED the file rather than that the file exists — and the
+        # pinned auth.apikey working is the other half (the default is a
+        # random 16 bytes nobody could know).
+        cfg = services_vm.succeed(
+            "cat /mnt/fast/bazarr/config/config/config.yaml"
+        )
+        assert "use_radarr: true" in cfg and "use_sonarr: true" in cfg, cfg
+        data = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-API-KEY: " + BAZARR_KEY) + " "
+            "http://127.0.0.1:10055/api/system/settings"
+        ))
+        for section, host in [("radarr", "radarr"), ("sonarr", "sonarr")]:
+            # Dynaconf's as_dict() case is not contractual; the values are.
+            block = {k.lower(): v for k, v in (data.get(section) or {}).items()}
+            assert block.get("ip") == host, (
+                f"bazarr {section} block is {block!r}"
+            )
+        # Negative control: without the pinned key the API refuses, so the
+        # positive above is about auth.apikey and not an open endpoint.
+        code = services_vm.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' --max-time 30 "
+            "-H 'X-API-KEY: definitely-not-the-key' "
+            "http://127.0.0.1:10055/api/system/settings"
+        ).strip()
+        assert code == "401", f"bazarr accepted a wrong API key (HTTP {code})"
 
     # -----------------------------------------------------------------------
     # (g) loopback-only publishing, from the VLAN
