@@ -2,7 +2,6 @@
   config,
   pkgs,
   lib,
-  inputs,
   ...
 }:
 
@@ -14,9 +13,8 @@
 
     sessionVariables = {
       TERMINAL = "foot";
-      # Deliberately no SOPS_AGE_KEY_FILE: the only copy of the age key on this
-      # box is /var/lib/sops-nix/sops_age_key.txt, 0700 root, and it stays that
-      # way — reading it should cost a sudo. `sopsedit` (below) is the way in.
+      # Deliberately no SOPS_AGE_KEY_FILE: reading the age key should cost a
+      # sudo. `sopsedit` (below) is the way in.
     };
 
     enableNixpkgsReleaseCheck = false;
@@ -25,8 +23,6 @@
   stylix.enableReleaseChecks = false;
 
   programs.home-manager.enable = true;
-
-  wayland.windowManager.hyprland.configType = "hyprlang";
 
   xdg = {
     enable = true;
@@ -77,19 +73,14 @@
           zed = "zeditor";
           nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
           nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
-          # VPS analog of nrs: build locally, deploy over the tailnet
-          # (target-host = the `vps` ssh alias), activate with remote sudo.
-          # No local `sudo` — the build is user-side, privilege is remote.
+          # No local sudo: the build is user-side, privilege is remote.
           "nrs-vps" = "nixos-rebuild switch --flake ${vpsDir}#headscale-vps --target-host idan@vps --use-remote-sudo";
           "nrb-vps" = "nixos-rebuild build --flake ${vpsDir}#headscale-vps";
-          # deploy [stack…] — one command from committed change to RUNNING:
-          # gate-on-uncommitted -> push forgejo -> nrs-vps if headscale-vps
-          # changed -> force stack-git-sync+decrypt -> redeploy changed stacks ->
-          # verify. Kills the "no login button / stale config / forgot to push"
-          # class of failure. See the script header. Superset of `redeploy`.
+          # deploy [stack…] — gate -> push -> nrs-vps -> sync+decrypt ->
+          # redeploy -> verify. Superset of `redeploy`; see the script header.
           deploy = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/deploy";
-          # Trailing `source` + `rehash` run in the invoking shell (aliases expand
-          # in place), so new aliases/commands are usable without a new shell.
+          # The trailing source+rehash run in the invoking shell (aliases expand
+          # in place), so new aliases are usable without a new shell.
           hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
           hmb = "home-manager build --flake ${flakeDir}#idan";
           nfu = "nix flake update";
@@ -107,36 +98,23 @@
       // {
         aliases = "echo ${lib.escapeShellArg aliasHelp}";
       };
-    # Note: greetd handles session startup, no TTY auto-login needed
 
-    # `z` is taken by zoxide, so the detached-viewer helper is `pdf`.
-    # QT_QPA_PLATFORM=xcb: sioyek's Qt-Wayland window never maps on niri;
-    # running it through xwayland-satellite works.
+    # `z` is taken by zoxide, so the detached PDF viewer is `pdf`.
+    # QT_QPA_PLATFORM=xcb: sioyek's Qt-Wayland window never maps on niri.
     initContent = ''
       pdf() { QT_QPA_PLATFORM=xcb setsid -f sioyek "$@" >/dev/null 2>&1 }
 
-      # sopsedit <file> — edit a sops file in Zed (sopseditnvim: in nvim).
+      # sopsedit <file> — sops decrypts to a tmpfile, opens the editor,
+      # re-encrypts on exit. Plaintext never lands in the repo.
       #
-      # Zed has no SOPS extension: zed-industries/extensions#3004 is blocked on
-      # the extension API having no buffer open/save hook, so transparent
-      # decrypt-on-open is not buildable. Go the other way instead — sops
-      # decrypts to a tmpfile, spawns Zed on it, re-encrypts when Zed exits.
-      # Plaintext never lands in the repo.
+      # The key reaches sops through SOPS_AGE_KEY, not `sudo -E sops edit`,
+      # so sops and the editor still run as idan (root would leave root-owned
+      # droppings in ~/.config/zed). Cost: the key sits in sops' environment
+      # (/proc, idan+root only) for the life of the edit.
       #
-      # The age key is root-only (/var/lib/sops-nix, 0700), which is the point:
-      # each edit costs a sudo. `sudo cat` reads it, and it reaches sops through
-      # SOPS_AGE_KEY so that sops and Zed still run as idan — `sudo -E sops
-      # edit` would spawn the editor as root and leave root-owned droppings in
-      # ~/.config/zed. Cost of that choice: the key sits in sops' environment
-      # (readable via /proc by idan and root only) for the life of the edit.
-      #
-      # If `--wait` ever returns instantly against an already-running Zed
-      # (zed-industries/zed#54203), sops re-encrypts the *unedited* tmpfile and
-      # the edit is silently lost — `git diff` after saving is the check.
-      # `sopseditnvim` is the same flow with nvim as the editor: a terminal
-      # editor blocks until it exits by construction, so it needs no `--wait`
-      # and cannot hit the zed#54203 lost-edit race. Prefer it when the edit
-      # matters (or when there is no Wayland session to spawn Zed into).
+      # PREFER sopseditnvim when the edit matters: if Zed's `--wait` returns
+      # instantly against a running instance (zed#54203), sops re-encrypts the
+      # UNEDITED tmpfile and the edit is silently lost. `git diff` is the check.
       _sopsedit() {
         local editor=$1
         shift
@@ -152,11 +130,8 @@
       sopseditnvim() { _sopsedit nvim "$@" }
 
       # sopsgen <apply|rotate|list|view|search> [args…] — secrets-gen/sops-gen
-      # from anywhere, inside its nix-shell, same sudo-cat key dance as
-      # sopsedit. A `--dry-run` anywhere in the args skips the sudo — that
-      # pass is read-only and keyless by design (`list`/`search --keys` are
-      # keyless too, but they still cost a sudo here rather than teach this
-      # wrapper sops-gen's key matrix).
+      # from anywhere, inside its nix-shell. `--dry-run` anywhere in the args
+      # skips the sudo; that pass is read-only and keyless by design.
       sopsgen() {
         local repo=${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted
         local key=
@@ -170,20 +145,12 @@
           --run "cd $repo && secrets-gen/sops-gen ''${(j: :)''${(q)@}}"
       }
 
-      # redeploy [stack…] — STOP-GAP for Komodo issue #1120 (deploy-on-sync is
-      # broken): after `git push forgejo main`, stack-git-sync pulls the new
-      # compose to /srv/stacks but Komodo does NOT recreate the containers, so
-      # compose / OIDC / image changes sit un-applied (this is why the OIDC
-      # rollout showed no login button until a manual recreate). Runs
-      # `docker compose up -d` on the services VM for each named stack (all of
-      # /srv/stacks/* with a compose.yaml if none given). `up -d` recreates
-      # ONLY containers whose compose/env/image config-hash CHANGED, so a
-      # no-arg run deploys exactly the changed stacks — the Komodo-equivalent.
-      # idan is in the VM's docker group, so no sudo. Delete once Komodo
-      # deploys on sync.
+      # redeploy [stack…] — STOP-GAP for Komodo #1120: stack-git-sync pulls new
+      # compose to /srv/stacks but Komodo does not recreate containers. Runs
+      # `docker compose up -d` per stack (all of /srv/stacks/* if none named),
+      # which recreates only what actually changed. Delete once #1120 is fixed.
       # ⚠ Converges each stack to the REPO state: a stack hand-patched live on
-      # the host (e.g. outline's DATABASE_URL, ledger #26) reverts to its
-      # .sops.env value — name stacks explicitly to avoid touching those.
+      # the host reverts to its .sops.env value — name stacks explicitly.
       redeploy() {
         local script='
       [ "$#" -gt 0 ] || set -- /srv/stacks/*/
@@ -196,14 +163,10 @@
         print -r -- "$script" | ssh idan@10.0.0.3 bash -s -- "$@"
       }
 
-      # md2pdf <file.md> [out.pdf] — plain PDF from a markdown file.
-      # typst, not LaTeX, as the pdf-engine: ~90MB of closure instead of
-      # texlive's several GB, and its stock look is already the "text on a
-      # page" one we want here. No template, no -V knobs beyond the font.
-      # mainfont is NOT optional: pandoc's typst template hands the engine an
-      # empty font list when it's unset and typst hard-errors ("font fallback
-      # list must not be empty"). Libertinus Serif ships inside the typst
-      # binary, so this stays independent of what fontconfig has locally.
+      # md2pdf <file.md> [out.pdf] — typst, not LaTeX: ~90MB of closure instead
+      # of texlive's several GB. mainfont is NOT optional — pandoc hands typst
+      # an empty font list without it and typst hard-errors. Libertinus Serif
+      # ships inside the typst binary, so this ignores local fontconfig.
       md2pdf() {
         local in=$1
         if [[ -z $in ]]; then
@@ -215,10 +178,9 @@
           pandoc "$in" -o "$out" --pdf-engine=typst -V mainfont="Libertinus Serif"
       }
 
-      # vidtrim <video> [speed] [threshold] [margin]
-      # auto-editor cuts the silence, ffmpeg speeds up what's left.
-      # Leaves <name>_trimmed.mp4 next to <name>_x<speed>.mp4 so you can
-      # re-speed without re-running the (slow) silence pass.
+      # vidtrim <video> [speed] [threshold] [margin] — auto-editor cuts the
+      # silence, ffmpeg speeds up the rest. Keeps <name>_trimmed.mp4 so a
+      # re-speed skips the slow silence pass.
       vidtrim() {
         local in=$1 speed=''${2:-1.5} threshold=''${3:-8%} margin=''${4:-0.06s}
         if [[ -z $in ]]; then
@@ -290,16 +252,16 @@
     fzf
     zoxide
     lazygit
-    gh # GitHub CLI — PRs, Actions runs, releases
+    gh
     playwright-mcp # Claude Code's browser for fleet UI setup; bundles its own Chromium
     sops
     age
-    openssl # `openssl rand -base64 N` for secret material; installs the bin output
+    openssl # the bin output, for `openssl rand -base64 N`
     tree
     mpv
     vlc
     losslesscut-bin
-    gifski  # video -> gif, e.g. gifski -o out.gif --fps 15 --width 800 in.mp4
+    gifski
     imv
     nautilus
     brightnessctl
@@ -309,11 +271,10 @@
     freerdp
     spotify
     sioyek
-    mpris-timer  # focus/countdown timer (Hourglass-like), integrates with MPRIS widgets
-    #networkmanagerapplet  # provides nm-connection-editor for VPN setup
+    mpris-timer
   ];
 
-  # nixpkgs' mpris-timer desktop entry Execs "play-timer", a binary the package doesn't ship
+  # nixpkgs' mpris-timer desktop entry Execs "play-timer", which it does not ship
   xdg.desktopEntries."io.github.efogdev.mpris-timer" = {
     name = "Play Timer";
     exec = "mpris-timer";

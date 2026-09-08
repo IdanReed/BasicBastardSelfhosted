@@ -28,18 +28,7 @@
         };
       };
 
-      # Monitor configuration - uncomment and adjust after finding names with:
-      #   niri msg outputs
-      # outputs = {
-      #   "DP-1" = {
-      #     scale = 1.5;  # 4K monitor
-      #     position = { x = 0; y = 0; };
-      #   };
-      #   "DP-2" = {
-      #     scale = 1.0;  # 1080p monitor
-      #     position = { x = 2560; y = 0; };
-      #   };
-      # };
+      # No outputs pinned; `niri msg outputs` lists the names.
 
       layout = {
         gaps = 8;
@@ -59,7 +48,6 @@
         border.enable = false;
       };
 
-      # Use default animations (niri flake simplified animation options)
       animations = { slowdown = 1.0; };
 
       xwayland-satellite = {
@@ -149,7 +137,7 @@
         "Mod+Comma"        = { action = consume-window-into-column; hotkey-overlay.title = "Consume window into column"; };
         "Mod+Period"       = { action = expel-window-from-column; hotkey-overlay.title = "Expel window from column"; };
 
-        # Column width — Minus/Equal step through preset marks (25/50/75)
+        # Column width
         "Mod+Minus"   = { action = switch-preset-column-width-back; hotkey-overlay.title = "Column width: prev preset (25/50/75)"; };
         "Mod+Equal"   = { action = switch-preset-column-width;      hotkey-overlay.title = "Column width: next preset (25/50/75)"; };
         "Mod+Ctrl+1"  = { action = set-column-width "25%";  hotkey-overlay.title = "Column width 25%"; };

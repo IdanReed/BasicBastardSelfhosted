@@ -1,28 +1,17 @@
-# Mounts the services-vm Samba shares over the tailnet.
+# services-vm Samba shares over the tailnet.
 #
-# WHY on-demand automount (noauto + x-systemd.automount): a hard cifs entry
-# would block boot whenever the VM is down or tailscaled has not come up yet.
-# With automount the mount is attempted only on first access to the path and
-# unmounts itself after idle, so a missing server is a slow `ls`, never a failed
-# boot.
-#
-# Auth: idan's ONE password — the SAMBA_IDAN_PASSWORD twin that secrets-gen
-# (manifest user/idan) also writes here. Rendered into a root-only credentials
-# file via sops-nix so the password never lands in the mount options / process
-# args. `seal` is MANDATORY: the server sets `smb encrypt = required`
-# (stacks/samba/config.yml) and refuses an unencrypted session.
-#
-# Host: the server binds tailscale0 and allows 100.64.0.0/10, so `services-vm`
-# resolves via headscale MagicDNS once tailscaled is up. If MagicDNS is off,
-# swap the device host for the tailnet IP.
+# noauto + x-systemd.automount: a hard cifs entry would block boot whenever the
+# VM or tailscaled is down. `seal` is MANDATORY — the server sets
+# `smb encrypt = required` (stacks/samba/config.yml).
+# `services-vm` resolves via headscale MagicDNS; swap for the tailnet IP if off.
 { config, pkgs, ... }:
 let
   common = [
     "credentials=${config.sops.templates."smb-idan.cred".path}"
-    "seal" # server: smb encrypt = required
+    "seal"
     "vers=3.1.1"
-    "uid=1000" # idan on the desktop (isNormalUser → first uid)
-    "gid=100" # users
+    "uid=1000"
+    "gid=100"
     "file_mode=0644"
     "dir_mode=0755"
     "iocharset=utf8"
@@ -36,7 +25,8 @@ in
 {
   environment.systemPackages = [ pkgs.cifs-utils ];
 
-  # Root-only; only the credentials template below dereferences it.
+  # Root-only; only the credentials template below dereferences it. Keeping the
+  # password in a file rather than mount options keeps it off the process args.
   sops.secrets."SAMBA_IDAN_PASSWORD" = { };
 
   sops.templates."smb-idan.cred".content = ''
@@ -50,8 +40,7 @@ in
     options = common;
   };
 
-  # idan's private tree; the server's `valid users = idan` + 0700 dir keep others
-  # out (verified: another user gets NT_STATUS_ACCESS_DENIED).
+  # Server-side `valid users = idan` + 0700 dir keep others out.
   fileSystems."/mnt/samba/idan" = {
     device = "//services-vm/idan";
     fsType = "cifs";

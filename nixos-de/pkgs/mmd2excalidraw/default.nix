@@ -1,15 +1,10 @@
-# mmd2excalidraw — convert Mermaid (.mmd) to Excalidraw (.excalidraw).
+# mmd2excalidraw — Mermaid (.mmd) to Excalidraw, with layout from mermaid's own
+# dagre pass instead of hand-written coordinates.
 #
-# Layout comes from mermaid's own dagre pass rather than from whoever is writing
-# the diagram, which is the entire point: hand-authored Excalidraw JSON carries
-# absolute coordinates and arrow bindings that are easy to get subtly wrong.
-#
-# Mermaid parses against a real DOM, so this genuinely needs headless Chromium.
-# We use the browser bundle from nixpkgs' playwright-driver instead of letting
-# playwright fetch its own (the downloaded build is not patchelf'd and will not
-# run on NixOS). Playwright refuses any bundle whose revision does not match the
-# client library, so the lockfile below pins playwright to exactly the version
-# playwright-driver ships — bump both together or the browser will not launch.
+# Mermaid parses against a real DOM, hence headless Chromium — from nixpkgs'
+# playwright-driver, because playwright's own download is not patchelf'd.
+# Playwright refuses a bundle whose revision does not match the client library,
+# so the lockfile pins playwright to playwright-driver's version: bump together.
 {
   lib,
   buildNpmPackage,

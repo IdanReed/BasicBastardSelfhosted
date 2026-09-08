@@ -1,15 +1,13 @@
-{ config, pkgs, lib, ... }:
+{ pkgs, lib, ... }:
 
 # Ctrl+Shift+Space speaks the highlighted text (primary selection) through
 # Piper TTS; pressing it again while speaking stops playback. The counterpart
 # to Handy's Ctrl+Space speech-to-text (modules/home/handy.nix).
 
 let
-  # Voice is swappable: browse samples at https://rhasspy.github.io/piper-samples/
-  # then update the four fields below (nix-prefetch-url both files for the
+  # Swap via https://rhasspy.github.io/piper-samples/ (nix-prefetch-url for the
   # hashes). `sampleRate` must match "sample_rate" in the voice's .onnx.json —
-  # medium/high voices are 22050, low voices 16000; a mismatch plays audio
-  # pitched/sped wrong, it does not error.
+  # a mismatch plays wrong-pitch audio rather than erroring.
   voice = {
     name = "en_US-lessac-medium";
     urlBase = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium";

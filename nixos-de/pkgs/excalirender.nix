@@ -1,10 +1,6 @@
-# excalirender — render .excalidraw files to PNG/SVG/PDF from the command line.
-#
-# Not in nixpkgs, and upstream publishes no buildable source release: the only
-# Linux artifact is a Bun-compiled binary. That tarball vendors every non-glibc
-# shared object it needs under lib/, so the whole job here is repointing the ELF
-# interpreter and RUNPATHs at the store. autoPatchelfHook discovers the vendored
-# libs from the output itself, so nothing beyond glibc/libstdc++ is needed.
+# excalirender — render .excalidraw to PNG/SVG/PDF. Not in nixpkgs and upstream
+# ships no buildable source, only a Bun-compiled binary that vendors its own
+# libs, so this is purely an ELF interpreter/RUNPATH repoint.
 {
   lib,
   stdenv,
@@ -26,15 +22,13 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ autoPatchelfHook ];
   buildInputs = [ stdenv.cc.cc.lib ];
 
-  # bin/excalirender.bin is a Bun single-file executable: the JavaScript payload
-  # is appended after the ELF image and located at runtime by scanning back from
-  # end-of-file for a "---- Bun! ----" trailer. Stripping discards everything
-  # past the last section, so the default strip silently turns this into a plain
-  # Bun runtime that tries to *execute* the .excalidraw file it was handed.
+  # Bun single-file executable: the JS payload lives past the last ELF section,
+  # so stripping silently leaves a bare Bun runtime that tries to *execute* the
+  # .excalidraw file it was handed.
   dontStrip = true;
 
-  # The upstream bin/excalirender wrapper resolves its own location with
-  # `readlink -f`, so it still finds lib/ and etc/fonts through the symlink.
+  # Upstream's wrapper resolves itself with `readlink -f`, so lib/ and etc/fonts
+  # are still found through the symlink.
   installPhase = ''
     runHook preInstall
 

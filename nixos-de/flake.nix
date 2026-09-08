@@ -29,8 +29,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Boot-time greeter matching noctalia's look. Separate repo from the shell:
-    # it ships its own wlroots compositor so greetd can draw a GUI before login.
+    # Separate repo from the shell: it ships its own wlroots compositor so
+    # greetd can draw a GUI before login.
     noctalia-greeter = {
       url = "github:noctalia-dev/noctalia-greeter";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -41,9 +41,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Offline speech-to-text. Deliberately does NOT follow our nixpkgs: the
-    # Tauri build is pinned against upstream's own nixpkgs + bun2nix pair, and
-    # `handy` is not in our nixpkgs lock yet anyway.
+    # Deliberately does NOT follow our nixpkgs: the Tauri build is pinned
+    # against upstream's own nixpkgs + bun2nix pair.
     handy.url = "github:cjpais/Handy";
 
     disko = {
@@ -64,7 +63,7 @@
         inherit system;
         config.allowUnfree = true;
       };
-      specialArgs = { inherit inputs system; };
+      specialArgs = { inherit inputs; };
     in
     {
       nixosConfigurations.desktop = nixpkgs.lib.nixosSystem {

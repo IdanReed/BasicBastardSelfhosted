@@ -1,16 +1,9 @@
-# Excalidraw diagram toolchain, available on PATH everywhere — the point is for
-# coding agents to have it in any repo, not just this one.
-#
-# The intended loop is two-step, because writing Excalidraw JSON by hand gets
-# layout wrong far more often than it gets syntax wrong:
+# Excalidraw toolchain on PATH everywhere, so coding agents have it in any repo.
 #
 #   mmd2excalidraw docs/arch.mmd -o docs/arch.excalidraw   # mermaid is the source
-#   excalirender docs/arch.excalidraw -o /tmp/arch.png     # then look at it
+#   excalirender docs/arch.excalidraw -o /tmp/arch.png     # rendering validates it
 #
-# Keep the .mmd as the editable source and treat the .excalidraw as generated.
-# Rendering doubles as the validator: a scene that renders is a scene that
-# parses, and the PNG is the only way to catch overlapping shapes or an arrow
-# bound to nothing.
+# Keep the .mmd editable and treat the .excalidraw as generated.
 { pkgs, ... }:
 
 {

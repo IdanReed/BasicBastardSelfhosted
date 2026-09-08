@@ -40,35 +40,27 @@
     };
     kernelPackages = pkgs.linuxPackages_latest;
 
-    # === CachyOS Performance: Kernel Parameters ===
+    # CachyOS tuning
     kernelParams = [
-      "amd_pstate=active" # AMD P-State EPP driver for Zen 4
-      "zswap.enabled=0" # Disable zswap (conflicts with ZRAM)
+      "amd_pstate=active"
+      "zswap.enabled=0" # conflicts with ZRAM
     ];
 
-    # === CachyOS Performance: Sysctl Tuning ===
+    # CachyOS tuning
     kernel.sysctl = {
-      # Virtual memory - optimized for ZRAM
-      "vm.swappiness" = 150; # Prefer ZRAM over cache eviction
-      "vm.vfs_cache_pressure" = 50; # Retain dentries/inodes longer
-      "vm.dirty_bytes" = 268435456; # 256MB - start writeback sooner
-      "vm.dirty_background_bytes" = 67108864; # 64MB - background writeback threshold
+      "vm.swappiness" = 150; # ZRAM is cheaper than cache eviction
+      "vm.vfs_cache_pressure" = 50;
+      "vm.dirty_bytes" = 268435456;
+      "vm.dirty_background_bytes" = 67108864;
       "vm.dirty_writeback_centisecs" = 1500;
-      "vm.page-cluster" = 0; # No swap readahead (ZRAM)
-
-      # Stability
-      "kernel.nmi_watchdog" = 0; # Disable - saves perf counter
-      "kernel.printk" = "3 3 3 3"; # Suppress kernel console messages
-
-      # File descriptors
+      "vm.page-cluster" = 0; # no swap readahead on ZRAM
+      "kernel.nmi_watchdog" = 0;
+      "kernel.printk" = "3 3 3 3";
       "fs.file-max" = 2097152;
-
-      # Network
       "net.core.netdev_max_backlog" = 16384;
     };
   };
 
-  # === CachyOS Performance: ZRAM Swap ===
   zramSwap = {
     enable = true;
     algorithm = "zstd";
@@ -76,19 +68,9 @@
 
   networking = {
     hostName = "nixos-desktop";
-    # Reach Authentik's admin UI over the tailnet. Its /if/admin* + /api/v3/*
-    # are restricted to tailnet/loopback (headscale-vps modules/caddy.nix,
-    # security-review item 5), so from a public IP the web UI login-LOOPS: the
-    # login flow runs, but the interface's /api/v3 calls 403 and the SPA bounces
-    # back to login. Map auth.idanreed.com to the VPS tailnet IP so the desktop
-    # hits it over the tailnet (remote_ip 100.64.x -> not restricted, cookie
-    # domain + cert still match). The intended fleet-wide fix (headscale
-    # extra_record) needs split-DNS; this host override is the reliable path.
+    # Authentik restricts /if/admin* + /api/v3/* to tailnet/loopback, so
+    # reaching auth.idanreed.com over the public IP login-loops.
     extraHosts = "100.64.0.1 auth.idanreed.com";
-    #networkmanager = {
-    #  enable = true;
-    #  plugins = [ pkgs.networkmanager-openconnect ];
-    #};
     firewall.enable = true;
   };
 
@@ -106,7 +88,7 @@
       "wheel"
       "video"
       "audio"
-    ]; # networkmanager
+    ];
     shell = pkgs.zsh;
   };
 
@@ -129,15 +111,13 @@
     ];
   };
 
-  # OBS virtual camera (for Zoom/Meet "use OBS output as webcam")
+  # OBS virtual camera
   boot.kernelModules = [ "v4l2loopback" ];
   boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
 
-  # Graphical boot login. The module enables greetd itself and points
-  # default_session at noctalia-greeter-session, so don't set services.greetd
-  # here — it would fight the module. (Was tuigreet, a text-mode greeter.)
-  # Palette/wallpaper are picked in the greeter UI and land in sync.toml;
-  # anything set below in `settings` writes greeter.toml, which wins.
+  # The module owns services.greetd (default_session = noctalia-greeter-session);
+  # setting greetd here would fight it. `settings` writes greeter.toml, which
+  # wins over the palette/wallpaper picked in the greeter UI (sync.toml).
   programs.noctalia-greeter = {
     enable = true;
     settings = {
@@ -151,13 +131,11 @@
     };
   };
 
-  # The greeter reads sessions from /run/current-system/sw/share/wayland-sessions,
-  # which nothing links without a display manager — tuigreet ran `niri-session`
-  # directly and never needed it. Without this the session list comes up empty.
+  # Nothing links this without a display manager, and the greeter's session
+  # list comes up empty without it.
   environment.pathsToLink = [ "/share/wayland-sessions" ];
 
-  # Unlock gnome-keyring with the password entered at the greeter,
-  # so apps like Zed don't prompt again after login
+  # Unlock the keyring with the greeter password, so Zed & co. don't re-prompt.
   services.gnome.gnome-keyring.enable = true;
   security.pam.services.greetd.enableGnomeKeyring = true;
 
@@ -170,29 +148,11 @@
     pulse.enable = true;
     wireplumber.enable = true;
 
-    # Expose EVERY HDMI/DP output as its own sink, each named after whatever
-    # display is actually plugged into it — nothing about specific monitors is
-    # written down here, so the sink list follows the hardware at boot.
-    #
-    # The ALSA Card Profile layer models a GPU audio codec as a set of mutually
-    # exclusive profiles ("Digital Stereo (HDMI)", "... (HDMI 2)", ...). There is
-    # no combined variant — verified by enumerating EnumProfile on this card —
-    # so under ACP at most one display is a sink at a time, and it is named
-    # after the port rather than the display. Turning ACP off puts the card in
-    # raw mode: every HDMI/DP PCM becomes its own sink, and each is named from
-    # the ELD the attached display reports ("LG ULTRAGEAR+", "BenQ GL2760");
-    # ports with nothing plugged in fall back to "HDMI 2", "HDMI 3".
-    #
-    # Matched by GPU-audio vendor, so moving a display to another card still
-    # gets the same treatment. matches[] is an OR:
-    #   0x10de  NVIDIA
-    #   0x1002  AMD/ATI — the Radeon HDMI audio function, not the analog codec
-    #
-    # Intel (0x8086) is deliberately NOT listed: Intel uses that same vendor id
-    # for analog HDA controllers, so matching it would strip ACP from a
-    # motherboard codec and break its jack/mixer handling. Same reason the
-    # analog AMD codec (0x1022) and USB audio are left alone — they need
-    # ACP/UCM. Add a vendor here only if it is a display-audio function.
+    # ACP models a GPU audio codec as mutually exclusive profiles, so at most
+    # one display is a sink at a time. Raw mode makes every HDMI/DP PCM its own
+    # sink, named from the display's ELD. Match display-audio vendors ONLY
+    # (0x10de NVIDIA, 0x1002 AMD HDMI) — Intel/AMD analog codecs and USB audio
+    # reuse those ids for HDA and still need ACP/UCM for jack + mixer handling.
     wireplumber.extraConfig."51-hdmi-all-outputs" = {
       "monitor.alsa.rules" = [
         {
@@ -206,23 +166,16 @@
     };
   };
 
-  # Turning ACP off above has one consequence that is invisible until you try to
-  # play something: nothing enables the codec's "IEC958 Playback Switch" any
-  # more. Activating an ACP HDMI profile used to flip it; raw mode has no
-  # equivalent step, and the control defaults to off. With it off, the Digital
-  # Enable bit on the display-audio converter stays clear, so the converter
-  # accepts a stream and emits nothing — PipeWire links, ALSA reports RUNNING,
-  # hw_ptr advances, ELD is valid, the pin is OUT, and the display is silent.
-  # Every layer reads healthy, which makes this expensive to diagnose twice.
-  #
-  # Scoped by the presence of eld# nodes in procfs rather than by vendor id:
-  # only display-audio codecs expose those, so this follows the hardware for the
-  # same reason the rule above does, and it cannot touch the analog codecs or
-  # USB audio. Indices are enumerated from the control list because a card
-  # carries one switch per HDMI/DP port and numids are not stable across cards.
+  # Raw mode (ACP off, above) never flips "IEC958 Playback Switch", which
+  # defaults to off — every layer then reads healthy (PipeWire links, ALSA
+  # RUNNING, valid ELD) and the display is silent. Scoped by eld# nodes in
+  # procfs: only display-audio codecs expose those. numids are enumerated, not
+  # hardcoded — they are not stable across cards.
   systemd.services.hdmi-iec958-enable = {
     description = "Enable IEC958 playback on display-audio codecs (ACP is off)";
-    after = [ "sound.target" ];
+    # After=sleep.target is what makes the sleep.target wantedBy a RESUME hook;
+    # without it the unit is unordered against suspend and can run before it.
+    after = [ "sound.target" "sleep.target" ];
     wantedBy = [ "multi-user.target" "sleep.target" ];
     serviceConfig = {
       Type = "oneshot";
@@ -276,7 +229,7 @@
   security.polkit.enable = true;
   nixpkgs.config.allowUnfree = true;
 
-  # === CachyOS Performance: I/O Schedulers ===
+  # CachyOS tuning
   services.udev.extraRules = ''
     # HDD - use BFQ for fair queuing
     ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
@@ -293,14 +246,14 @@
     ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="hdmi-iec958-enable.service"
   '';
 
-  # === CachyOS Performance: Process Prioritization ===
+  # CachyOS tuning
   services.ananicy = {
     enable = true;
     package = pkgs.ananicy-cpp;
     rulesProvider = pkgs.ananicy-rules-cachyos;
   };
 
-  # === CachyOS Performance: Systemd Tuning ===
+  # CachyOS tuning
   systemd.settings.Manager = {
     DefaultTimeoutStartSec = "15s";
     DefaultTimeoutStopSec = "1s";
@@ -317,7 +270,6 @@
     SystemMaxUse=50M
   '';
 
-  # === CachyOS Performance: NTP Servers ===
   services.timesyncd = {
     enable = true;
     servers = [

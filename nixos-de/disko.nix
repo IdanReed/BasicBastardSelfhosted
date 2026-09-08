@@ -1,34 +1,16 @@
-# Declarative disk partitioning for NixOS
+# Declarative disk partitioning. `targetDisk` matters only when disko RUNS —
+# the generated fileSystems mount by partlabel — but a wrong value there wipes
+# the wrong disk, so find the stable path first:
 #
-# IMPORTANT: Before running disko, identify the correct drive:
-#
-#   # List drives with sizes and models
-#   lsblk -d -o NAME,SIZE,MODEL
-#
-#   # Get stable by-id paths (includes model + serial)
 #   ls -la /dev/disk/by-id/ | grep -v part
-#
-#   # Example output:
-#   # nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456 -> ../../nvme0n1
-#   # ata-WDC_WD2003FZEX-00SRLA0_WD-123456789    -> ../../sda
-#
-# Then update the 'device' field below with YOUR drive's by-id path.
-#
-# To preview without making changes:
-#   sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko --dry-run ./disko.nix
-#
-# To actually partition (DESTRUCTIVE - will wipe the specified drive):
-#   sudo nix --experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko ./disko.nix
-
-{ lib, ... }:
+#   sudo nix run github:nix-community/disko -- --mode disko --dry-run ./disko.nix
+#   sudo nix run github:nix-community/disko -- --mode disko ./disko.nix   # DESTRUCTIVE
+{ ... }:
 
 let
-  # ============================================================================
-  # CHANGE THIS to your target drive's /dev/disk/by-id/ path
-  # ============================================================================
+  # CHANGE THIS to the target drive's /dev/disk/by-id/ path, e.g.
+  # "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456"
   targetDisk = "/dev/disk/by-id/CHANGE_ME_TO_YOUR_DRIVE_ID";
-  # Example: "/dev/disk/by-id/nvme-Samsung_SSD_990_PRO_2TB_S6Z2NF0W123456"
-  # ============================================================================
 in
 {
   disko.devices = {
@@ -43,7 +25,7 @@ in
               priority = 1;
               name = "ESP";
               size = "512M";
-              type = "EF00";  # EFI System Partition
+              type = "EF00";
               content = {
                 type = "filesystem";
                 format = "vfat";
@@ -52,7 +34,7 @@ in
               };
             };
             root = {
-              size = "100%";  # Use remaining space
+              size = "100%";
               content = {
                 type = "filesystem";
                 format = "ext4";

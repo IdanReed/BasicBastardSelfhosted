@@ -6,14 +6,13 @@
   hardware.nvidia = {
     modesetting.enable = true;
     powerManagement.enable = true;  # Preserve VRAM across suspend/resume
-    open = true;                    # Open kernel modules (recommended for Turing+/RTX 4090)
+    open = true; # open kernel modules — recommended for Turing+
     package = config.boot.kernelPackages.nvidiaPackages.production;
   };
 
   hardware.graphics = {
     enable = true;
     enable32Bit = true;
-    # === CachyOS Performance: Hardware Video Decode ===
     extraPackages = [ pkgs.nvidia-vaapi-driver ];
   };
 
@@ -31,7 +30,7 @@
     "nvidia-drm.fbdev=1"
   ];
 
-  # === CachyOS Performance: NVIDIA & Audio Modprobe Options ===
+  # CachyOS tuning
   boot.extraModprobeConfig = ''
     # Audio - disable power saving to prevent crackling on desktop
     options snd-hda-intel power_save=0

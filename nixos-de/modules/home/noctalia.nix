@@ -1,24 +1,20 @@
-{ config, pkgs, lib, ... }:
+{ ... }:
 
 {
-  # Noctalia ships defaults that work out-of-the-box. The settings.json schema
-  # is free-form upstream — tune via the in-app settings panel after first
-  # login, then mirror the resulting ~/.config/noctalia/settings.json here.
-  # Autostart is via niri's spawn-at-startup (see modules/home/niri.nix);
-  # upstream deprecated systemd startup due to IPC reliability issues.
+  # settings.json is free-form upstream — tune in the app, then mirror
+  # ~/.config/noctalia/settings.json here. Autostart is niri spawn-at-startup
+  # (modules/home/niri.nix); upstream deprecated the systemd path.
   programs.noctalia-shell = {
     enable = true;
     settings = {
-      # Terminal wrapper for desktop entries with Terminal=true (yazi, htop, btop…).
-      # Without this, noctalia's launcher spawns the bare Exec line with no tty
-      # and the TUI dies on start.
+      # Without this the launcher spawns Terminal=true entries with no tty and
+      # the TUI dies on start.
       appLauncher.terminalCommand = "foot -e";
 
       bar.outerCorners = false;
       general.enableShadows = false;
 
-      # Clock lives in bar.widgets.left as an atomic list, so restate the
-      # whole left section to override just the Clock's time format.
+      # Atomic list, so the whole left section is restated to change the Clock.
       # Qt QLocale format: `h` is 12-hour when `ap`/`AP` is present.
       bar.widgets.left = [
         { id = "Launcher"; }

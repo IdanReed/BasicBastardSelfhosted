@@ -1,8 +1,8 @@
 # Desktop client SSH identities — plain data, the single source of truth.
-# modules/nixos/ssh-identities.nix derives sops.secrets."ssh/<name>" from it
-# and modules/home/ssh-identities.nix derives programs.ssh.matchBlocks from
-# it, so adding identity = one entry here + one key in secrets.sops.yaml
-# (+ its pubkey in ssh-pubkeys.nix, all three copies).
+# modules/nixos/ssh-identities.nix derives sops.secrets."ssh/<name>" from it and
+# modules/home/ssh-identities.nix derives the programs.ssh Host blocks, so
+# adding an identity = one entry here + one key in secrets.sops.yaml (+ its
+# pubkey in ssh-pubkeys.nix, all three copies).
 #
 # Shape: <name> = { host, user, port ? null, aliases ? [], extraOptions ? {} },
 # where aliases are extra names added to the Host pattern (they still connect
@@ -10,9 +10,7 @@
 # extraOptions are raw ssh_config directives by their upstream names
 # (e.g. { ProxyJump = "vps"; }) merged into the generated Host block.
 {
-  # ---
   # Git
-  # ---
   github = {
     host = "github.com";
     user = "git";
@@ -21,18 +19,16 @@
     host = "github.gatech.edu";
     user = "git";
   };
-  # Forgejo on the services VM, whose sshd is published LOOPBACK-ONLY
-  # (127.0.0.1:10551) — so the desktop hops through the VM's own sshd via
-  # ProxyJump (Caddy can't proxy SSH). Clone remote: forgejo:idan/<repo>.git.
+  # Forgejo's sshd is published loopback-only on the services VM, so hop through
+  # the VM's own sshd. Clone remote: forgejo:idan/<repo>.git.
   #
-  # 🚨 CRITICAL: `host` MUST stay the alias "forgejo", NOT 127.0.0.1. The
-  # generated Host pattern is "<name> <host>" (modules/home/ssh-identities.nix),
-  # so a literal 127.0.0.1 here would hijack EVERY plain `ssh 127.0.0.1` with
-  # User git / Port 10551 / the jump. extraOptions merges last, so its
-  # HostName=127.0.0.1 override wins over the alias-derived HostName.
+  # 🚨 `host` MUST stay the alias "forgejo", NOT 127.0.0.1: the generated Host
+  # pattern is "<name> <host>", so a literal IP here would hijack EVERY plain
+  # `ssh 127.0.0.1` with User git / Port 10551 / the jump. extraOptions merges
+  # last, so its HostName wins over the alias-derived one.
   #
-  # No ssh-pubkeys.nix entry: this is a Forgejo user SSH key, not a host
-  # authorizedKey (precedent: the gatech identity).
+  # No ssh-pubkeys.nix entry: this is a Forgejo user key, not a host
+  # authorizedKey (precedent: gatech).
   forgejo = {
     host = "forgejo";
     user = "git";
@@ -42,9 +38,8 @@
       ProxyJump = "arcane-vm";
     };
   };
-  # ---
+
   # Server
-  # ---
   proxmox = {
     host = "10.0.0.2";
     user = "root";
@@ -66,11 +61,10 @@
     user = "idan";
   };
   storagebox = {
-    # Hetzner Storage Box sub-account (provisioned 2026-09-03). `user` is the
-    # sub-account (base dir presented as /home, restic repo at /home/restic —
-    # verified writable); HostName is the main box. Password auth cannot be
-    # disabled on Hetzner boxes, so the account password stays valid — it is a
-    # strong random value in the offline recovery artifact; SMB/WebDAV off.
+    # Hetzner Storage Box sub-account: `user` is the sub-account (base dir
+    # presented as /home, restic repo at /home/restic); HostName is the main
+    # box. Password auth cannot be disabled on Hetzner boxes, so the account
+    # password stays valid — it lives in the offline recovery artifact.
     host = "u662946.your-storagebox.de";
     user = "u662946-sub1";
     port = 23; # Hetzner Storage Box SSH lives on 23, not 22

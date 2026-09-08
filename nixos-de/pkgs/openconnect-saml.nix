@@ -1,32 +1,15 @@
-# openconnect-saml — drives the Cisco SAML/SSO login that the openconnect CLI
-# structurally cannot do itself, and prints the resulting session cookie.
+# openconnect-saml — drives the Cisco SAML/SSO login the openconnect CLI
+# structurally cannot do (its only SSO arm needs <sso-v2-browser-mode> external,
+# which this gateway does not send) and prints the session cookie.
 #
-# WHY THIS EXISTS AT ALL. openconnect's SSO dispatch (library.c) has exactly
-# three arms: external-browser mode, a webview callback, or the error "No SSO
-# handler". The CLI never registers a webview callback — only GUI frontends
-# like NetworkManager's do — so its ONLY SSO path is external-browser mode,
-# and that arm fires solely when the gateway sends <sso-v2-browser-mode>
-# external. Epic's gateway does not send that element, so `openconnect` alone
-# can never authenticate against it, with or without --external-browser. This
-# is a missing capability, not a misconfiguration.
+# This fork, not vlaci/openconnect-sso: that one is unmaintained since 2023 and
+# its flake pins a 2021 nixpkgs that no longer evaluates. Critically it keeps
+# --auth-only, which prints HOST/COOKIE/FINGERPRINT and exits instead of finding
+# sudo and running openconnect itself — the default would create a tun device
+# and destroy the ocproxy design in modules/home/work-vpn.nix.
 #
-# WHY THIS PACKAGE and not vlaci/openconnect-sso, the better-known wrapper:
-# that project's last commit was 2023-08 and its last release 2021-12, and its
-# flake pins a 2021 nixpkgs that now fails to evaluate (infinite recursion).
-# This is the maintained fork; it keeps the `--auth-only` mode that makes the
-# tool usable as a pure credential source.
-#
-# WHY --auth-only MATTERS SO MUCH: the tool's default behaviour is to find
-# sudo/doas and run openconnect ITSELF, which would create a tun device and
-# rewrite the routing table — destroying the entire point of the ocproxy
-# design in modules/home/work-vpn.nix. --auth-only makes it authenticate,
-# print HOST/COOKIE/FINGERPRINT, and exit, so the unprivileged --script-tun
-# tunnel stays exactly as it was and only the auth step changes.
-#
-# Only the `gui` extra is wired up: the Qt6 WebEngine backend. The `chrome`
-# extra would pull Playwright and its own downloaded Chromium (which does not
-# work under Nix without extra plumbing), and headless mode cannot survive an
-# interactive MFA prompt.
+# Only the `gui` extra: `chrome` pulls its own Chromium (broken under Nix), and
+# headless cannot survive an interactive MFA prompt.
 {
   lib,
   python3Packages,

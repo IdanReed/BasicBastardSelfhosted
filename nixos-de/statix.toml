@@ -1,0 +1,5 @@
+# repeated_keys (W20): module files assign flat dotted paths on purpose;
+# nesting them reads worse and merges identically.
+# empty_pattern (W10): `{ ... }:` is the idiomatic module signature even when
+# no argument is used — statix suggests `_:`, which hides that it is a module.
+disabled = ["repeated_keys", "empty_pattern"]
