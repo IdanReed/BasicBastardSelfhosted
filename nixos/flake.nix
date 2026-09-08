@@ -19,8 +19,8 @@
     let
       system = "x86_64-linux";
 
-      # Shared module used by both the live system and the image
-      baseModule = { config, pkgs, lib, ... }: {
+      # Shared by the live system and the image.
+      baseModule = _: {
         imports = [
           sops-nix.nixosModules.sops
           ./configuration.nix
@@ -28,7 +28,6 @@
       };
     in
     {
-      # NixOS configuration for nixos-rebuild switch
       nixosConfigurations.services-vm = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
@@ -37,36 +36,28 @@
         ];
       };
 
-      # Proxmox VMA image for initial provisioning.
-      #
-      # ⚠ Both attributes must live in ONE `packages.${system}` set: Nix does
-      # not merge sibling dynamic-attribute paths sharing a key
-      # (error: dynamic attribute 'x86_64-linux' already defined).
+      # Both attributes must live in ONE `packages.${system}` set: Nix does not
+      # merge sibling dynamic-attribute paths sharing a key.
       packages.${system} = rec {
+        # Proxmox VMA image for initial provisioning.
         proxmox-image = nixos-generators.nixosGenerate {
           inherit system;
           modules = [
             baseModule
-            # Minimal hardware config for the image; the real mounts come from
-            # hardware-configuration.nix at runtime.
-            ({ config, pkgs, lib, ... }: {
-              # Cloud-init for first boot (age key injection)
+            (_: {
+              # Age key injection on first boot.
               services.cloud-init = {
                 enable = true;
                 network.enable = true;
               };
 
-              # Proxmox guest agent
               services.qemuGuest.enable = true;
-
-              # Growpart for disk expansion
               boot.growPartition = true;
 
-              # Baked-in VM config — qmrestore resets the VM to these on every
-              # re-image, so hand-run `qm set` fixes do not survive. Defaults
-              # were 1 core / 1G / an all-zeros MAC / empty boot order (hit
-              # live 2026-09-03). MAC is a fixed value from the Proxmox OUI so
-              # the VM keeps one L2 identity across re-images.
+              # qmrestore resets the VM to these on every re-image, so hand-run
+              # `qm set` fixes do not survive. The MAC is a fixed value from the
+              # Proxmox OUI so the VM keeps one L2 identity across re-images —
+              # keep it in sync with the .link match in modules/network.nix.
               proxmox.qemuConf = {
                 cores = 4;
                 memory = 8192;
@@ -74,7 +65,7 @@
                 net0 = "virtio=BC:24:11:5E:11:03,bridge=vmbr0,firewall=1";
               };
 
-              # Filesystem for image (replaced/extended by the real disks)
+              # The real mounts come from hardware-configuration.nix at runtime.
               fileSystems."/" = {
                 device = "/dev/disk/by-label/nixos";
                 fsType = "ext4";
@@ -85,7 +76,6 @@
           format = "proxmox";
         };
 
-        # Convenience alias
         default = proxmox-image;
       };
     };

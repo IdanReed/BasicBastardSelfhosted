@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """Generate nixos/stack-dirs.nix from the compose files.
 
-WHY: docker creates a missing bind-mount source ROOT-OWNED at container start
-— the default behind seerr's EACCES crash-loop, MySQL's `--initialize`
-refusing its datadir, and syncthing reporting HEALTHY with an errored folder.
-So every /mnt bind source named by a compose file gets a `systemd.tmpfiles`
-'d' rule with a deliberate owner. (The hand-maintained list this replaced
-named 17 of 22 stacks; 13 bind sources had no rule and nothing noticed.)
+Docker creates a missing bind-mount source ROOT-OWNED at container start, so
+every /mnt bind source named by a compose file gets a `systemd.tmpfiles` 'd'
+rule with a deliberate owner (finding #14).
 
-WHY GENERATED AND CHECKED IN: `nixos/` is its own flake root and cannot read
-../stacks/ at eval time (the constraint that triplicates ssh-pubkeys.nix), so
-this script writes a CHECKED-IN stack-dirs.nix and the `stack-dirs-generated`
-lint re-runs it and byte-compares — drift is a build failure.
+nixos/ is its own flake root and cannot read ../stacks/ at eval time, so the
+output is CHECKED IN and the `stack-dirs-generated` lint re-runs this and
+byte-compares.
 
 USAGE
 -----
@@ -22,7 +18,7 @@ USAGE
     python3 generate-stack-dirs.py --manifest m.json --json      # for the lints
 
 `--manifest` takes [{"stack": ..., "path": ...}, ...] so the lints can feed
-their own compose discovery (a Nix-side readDir) through this same code path.
+their own compose discovery through this same code path.
 """
 
 from __future__ import annotations
@@ -36,19 +32,13 @@ import sys
 
 import yaml
 
-# ---------------------------------------------------------------------------
-# What counts as a stack-derived directory
-# ---------------------------------------------------------------------------
-# Whole-tier mounts are NOT directories to create: /mnt/fast and /mnt/slow are
-# real filesystems declared in hardware-configuration.nix's `fileSystems`, and
-# stacks/backrest mounts both wholesale (:ro) so it can snapshot everything. A
-# tmpfiles rule for them would fight the mount unit for ownership of a
-# mountpoint.
+# Whole-tier mounts are real filesystems declared in hardware-configuration.nix
+# and stacks/backrest mounts both wholesale (:ro); a tmpfiles rule for them
+# would fight the mount unit for ownership of a mountpoint.
 TIER_MOUNTS = {"/mnt", "/mnt/fast", "/mnt/slow"}
 
-# Only /mnt/{fast,slow} sources are ours. Anything else a compose file binds
-# (/var/run/docker.sock, /var/lib/backup/..., ./relative files) is either
-# system state or repo content and is owned elsewhere.
+# Only /mnt/{fast,slow} sources are ours; anything else a compose file binds is
+# system state or repo content, owned elsewhere.
 SOURCE_RE = re.compile(r"^/mnt/(fast|slow)/")
 
 DEFAULT_MODE = "0755"
@@ -56,405 +46,240 @@ DEFAULT_OWNER = ("root", "root")
 
 
 # ---------------------------------------------------------------------------
-# Per-stack prose — the reason an ownership is what it is lives here, where
-# the value is decided.
+# Per-stack prose
 # ---------------------------------------------------------------------------
-# A stack that gains /mnt bind mounts with no entry here makes this script
-# EXIT NONZERO (_check_tables), failing the stack-dirs-generated lint:
-# root:root is also docker's default, so inheriting it silently is
-# indistinguishable from choosing it. An empty string is a legitimate entry —
-# "every directory here is root:root and the image runs as root".
+# A stack that gains /mnt bind mounts with no entry here makes this script exit
+# nonzero (_check_tables): root:root is also docker's default, so inheriting it
+# silently is indistinguishable from choosing it. An empty string is a valid
+# entry. A stale entry is an error too.
 #
-# ⚠ KOMODO: komodo/compose.yaml is scanned even though it lives outside
-# stacks/, because the deploy plane is bootstrapped onto the same host. It
-# contributes only /mnt/fast/komodo/pgdata (the FerretDB backend), the ONLY
-# stateful part of the Komodo stack.
-#
-# Both directions trip: a table entry for a path no compose file mounts exits
-# nonzero, and a mounted path with no entry is the case the table exists to
-# catch.
+# komodo/compose.yaml is scanned despite living outside stacks/, because the
+# deploy plane is bootstrapped onto the same host.
 STACK_NOTES = {
     "actual": """\
-1001:1001 — the uid the compose file PINS with `user: "1001:1001"`. The
-image creates `actual` uid 1001 for exactly this purpose and then ships
-with no USER instruction (measured: `"User": null` in the published
-26.9.0 config; the suite's first run wrote account.sqlite as 0:0), so
-without the compose pin the server runs as root. Nothing in the
-container chowns, and the create-folders migration mkdirs server-files/
-and user-files/ under /data before the server ever binds — so a
-root-owned bind mount plus the pinned uid is a container that exits at
-start (the seerr crash-loop class, finding #14).""",
+1001:1001 — the uid the compose PINS with `user: "1001:1001"`. The image
+ships no USER and nothing in it chowns, and the create-folders migration
+mkdirs under /data before the server binds, so a root-owned source is a
+container that exits at start (finding #14).""",
     "automation": """\
-Ownership, VERIFIED per image (annex §2.3):
-  - home assistant runs as ROOT and has no PUID/PGID mechanism at all.
-    Its /config must also be WRITABLE: .HA_VERSION is rewritten on every
-    version change and that write is not wrapped in a try/except, so a
-    read-only config dir kills startup.
-  - mosquitto starts as root and DROPS to uid 1883, and its 2.x
-    entrypoint chowns only some of its tree (2.1 narrowed it to
-    /mosquitto/data alone) — so both directories are declared 1883
-    rather than relying on the image to heal them. This is the seerr
-    crash-loop class (finding #14) and the one place in this stack it
-    could still bite.
-  - frigate runs as root.""",
+home assistant runs as ROOT with no PUID/PGID, and its /config must stay
+WRITABLE: .HA_VERSION is rewritten on every version change, unguarded.
+mosquitto starts as root and drops to uid 1883, but its 2.x entrypoint
+chowns only /mosquitto/data — so both directories are declared 1883
+rather than relying on the image to heal them (finding #14).
+frigate runs as root.""",
     "backrest": """\
-All root:root. The backrest image declares no USER and its compose sets
-none — it must run as root to read every service's data through the
-/mnt/{fast,slow}:ro mounts — and config-init is plain alpine, also root.
-config/ must stay WRITABLE (:ro breaks it): Backrest rewrites config.json
-whenever anything changes in the UI. tests/suites/backrest.nix runs green
-against exactly this ownership.""",
+All root:root. Backrest must run as root to read every service's data
+through the /mnt/{fast,slow}:ro mounts, and config-init is plain alpine.
+config/ must stay WRITABLE: Backrest rewrites config.json on every UI
+change.""",
     "beszel": "",
     "books": """\
-Ownership, VERIFIED per image (annex §2.2):
-  - kavita runs as ROOT: its entrypoint's PUID/PGID block is commented
-    out upstream ("causing issues for Synology users") and the image sets
-    no USER. It also hard-exits if it cannot write /kavita/config, and
-    that directory must stay WRITABLE — Kavita rewrites appsettings.json
-    and swallows the failure, so a read-only config dir silently leaves
-    the published placeholder JWT key in play (annex §0.5).
-  - audiobookshelf runs as ROOT too ("User": null in the image config;
-    it has no PUID/PGID mechanism at all) — the immich call, for the same
-    reasons: tailnet-only, loopback-bound, socketless.
-  - shelfmark starts as root, then drops to PUID/PGID (1000 here). Its
-    entrypoint recursively chowns /config and repairs /tmp/shelfmark, so
-    these would self-heal — declaring them 1000:1000 anyway just means it
-    has nothing to do.
-  - The /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes the
-    ebook tree, and the audiobook tree and the drop dir keep the same
-    ownership for whatever ends up filling them (shelfmark's Direct
-    Download source is ebook-only, so audiobooks arrive from the MEDIA
-    stack — see the /mnt/slow/books/drop note; it is the one directory
-    here a container in another stack writes). Kavita and audiobookshelf
-    mount their trees :ro as root and only read.""",
+kavita runs as ROOT (its PUID/PGID block is commented out upstream) and
+hard-exits if it cannot write /kavita/config; that directory must stay
+WRITABLE or the published placeholder JWT key silently stays in play.
+audiobookshelf runs as ROOT too, with no PUID/PGID mechanism.
+shelfmark drops to PUID/PGID (1000) and chowns /config itself, so
+1000:1000 just leaves it nothing to do.
+The /mnt/slow trees are 1000:1000: shelfmark (uid 1000) writes the ebook
+tree, and audiobooks arrive from the MEDIA stack via
+/mnt/slow/books/drop. Kavita and audiobookshelf mount theirs :ro.""",
     "caddy": """\
-root:root. The official caddy image runs as root (it binds 80/443 and here
-network_mode: host), so the ACME account key and the issued certificates
-under data/ are written as root. Nothing else on the host reads them.
-tests/suites/services-vm.nix and tailnet.nix pre-create /mnt/fast/caddy
-root-owned and run green.""",
+root:root. The image runs as root — it binds 80/443 under
+network_mode: host — so the ACME account key and the issued certificates
+under data/ are written as root.""",
     "dawarich": """\
-Both of its entrypoints gosu-drop to PUID/PGID *only if* they start as uid
-0, chowning first — which is why its compose sets no `user:` and these are
-1000:1000 to match what the entrypoint will enforce. Setting `user:` there
-instead would skip the chown branch entirely and crash-loop on a root-owned
-mount; upstream warns about it inline, twice.""",
+Both entrypoints gosu-drop to PUID/PGID *only if* they start as uid 0,
+chowning first, which is why the compose sets no `user:` and these are
+1000:1000. Setting `user:` there skips the chown branch and crash-loops
+on a root-owned mount; upstream warns about it inline, twice.""",
     "docspace": """\
-THREE containers, THREE DIFFERENT NON-ROOT UIDs, and getting any of them
-wrong produces `dependency failed to start` naming a container that is fine:
-  docspace       uid 104 gid 107 (USER onlyoffice, starts pre-dropped)
-  docspace_db    uid 999 gid 999 (mysql drops before --initialize)
-  docspace_ds    root            (documentserver chowns from its entry)
-Three different conventions in three containers; do not normalise them.
-  - Document Server runs as ROOT and chowns its own mounts to ds:ds on
-    every start, so root-owned is correct and self-healing. Never set
-    `user:` on it — that skips the chown branch.
-  - The monolith runs `user: root` following upstream, because its
-    entrypoint edits /etc/nginx and its config files before dropping into
-    supervisord. The ExcaliDash lesson applies: an image that stays root
-    deliberately in order to fix permissions crash-loops when you take
-    that away.
-  - MySQL chowns its own datadir at first init.
-
-⚠ Note the DS and monolith trees are SEPARATE here. Upstream's community
-compose mounts the same volume into both (/app/onlyoffice/data and
-/var/www/onlyoffice/Data) — two different applications' state sharing one
-namespace. Separating them is what makes the Backrest exclude list for
-the document cache expressible at all.""",
+Three containers, three non-root uids, and getting one wrong shows up as
+`dependency failed to start` naming a container that is fine:
+  docspace       uid 104 gid 107 (USER onlyoffice) — but the compose runs
+                 `user: root` following upstream, because the entrypoint
+                 edits /etc/nginx before dropping into supervisord.
+  docspace_db    uid 999 (mysql drops before --initialize)
+  docspace_ds    root — chowns its own mounts every start; never set
+                 `user:` on it, that skips the chown branch.
+The DS and monolith trees are SEPARATE here, unlike upstream's shared
+volume — which is what makes the Backrest exclude for the document cache
+expressible at all.""",
     "excalidraw": """\
-Only the pgdata root. The three app containers are stateless by design —
-scene blobs live in Postgres (STORAGE_BACKEND=keyv, a second database in
-the same cluster; see stacks/excalidraw/keyv-init.sql) precisely so this
-stack has ONE stateful directory. Postgres starts as root and chowns its
-own datadir, as everywhere else here.""",
+Only the pgdata root: the three app containers are stateless by design,
+scene blobs live in a second database in the same cluster
+(stacks/excalidraw/keyv-init.sql). Postgres chowns its own datadir.""",
     "firefly": """\
-A convention of its own: the image ends on `USER www-data` at BUILD time and
-never invokes an id-remap entrypoint, so PUID/PGID are inert and the upload
-directory must be pre-owned 33:33 or attachment upload fails at runtime with
-a permission error and no startup symptom at all. Its Postgres starts as
-root and chowns its own datadir, as everywhere else here.""",
+The image ends on `USER www-data` at BUILD time and never remaps ids, so
+PUID/PGID are inert and the upload directory must be pre-owned 33:33 or
+attachment upload fails at runtime with no startup symptom at all. Its
+Postgres chowns its own datadir.""",
     "forgejo": """\
-1000:1000, matching the USER_UID/USER_GID the compose file sets: the classic
-(root-entrypoint) image runs its `git` user at that uid, so everything under
-/data is written as 1000 and the fast-volume backup reads it without
-surprises. tests/suites/forgejo.nix pre-creates the volume root at exactly
-this ownership and pushes/clones against it.
-
-/data holds app.ini — which carries the SECRET_KEY, INTERNAL_TOKEN and JWT
-secrets Forgejo self-generates on first start — plus gitea.db and every
-repository, including the compose repo the deploy plane (Komodo, via the
-host stack-git-sync unit) pulls from. There is no .sops.env for this stack
-precisely because that material lives here instead, which makes this
-directory the whole of Forgejo's identity and state.""",
+1000:1000, matching the USER_UID/USER_GID the compose sets. /data holds
+app.ini — the SECRET_KEY, INTERNAL_TOKEN and JWT secrets Forgejo
+self-generates on first start — plus gitea.db and every repository,
+including the compose repo stack-git-sync pulls from. There is no
+.sops.env for this stack precisely because that material lives here.""",
     "gatus": "",
     "ghostfolio": """\
-One directory, root:root, and that is VERIFIED rather than inherited: the
-only /mnt mount in this stack is the Postgres datadir, and the
-postgres:17.9-alpine image starts as root and chowns /var/lib/postgresql/data
-to uid 999 itself before `initdb` drops privileges — the same reasoning that
-makes paperless, wger, windmill, tandoor and firefly's pgdata roots
-root:root here.
-
-The app container has NO /mnt mount at all (all its state is in Postgres),
-and its Redis deliberately has no volume either — it is a cache plus a
-re-enqueueable Bull job queue, following the wger_cache precedent. So this
-stack contributes exactly one leaf directory plus its parent, and the whole
-of its backup story is the pg_dumpall of ghostfolio_db.""",
+One directory, root:root: the only /mnt mount is the Postgres datadir,
+and the image chowns it to uid 999 before initdb drops privileges. The
+app container has no /mnt mount at all and its Redis deliberately has no
+volume, so the whole backup story is the pg_dumpall of ghostfolio_db.""",
     "logging": """\
-THREE CONTAINERS, THREE DIFFERENT ANSWERS, and each one was read out of the
-pinned image rather than assumed (`docker inspect --format '{{.Config.User}}'`
-on the exact tags in stacks/logging/compose.yaml):
-
-  victorialogs  ROOT  the image sets User "0" — NOT the old loki's 10001.
-                      /mnt/slow/victorialogs is its whole world: per-day
-                      partitions written continuously, trimmed by the
-                      native 100GiB cap. root:root is both correct and
-                      docker's create-on-mount default, so the finding #14
-                      restart-loop class does not apply here — the rule
-                      documents rather than fixes.
-  grafana  uid 472    the image sets USER 472, with gid 0 — the OpenShift
-                      convention. 472:472 is right anyway: owner-write is what
-                      /var/lib/grafana needs, and grafana.db is created there
-                      on first start. A root-owned directory here means an
-                      unhealthy container rather than a silent one, because
-                      /api/health reports the database. The plugins/
-                      subdirectory is where the one-time datasource-plugin
-                      install lands; it rides this same rule.
-  alloy    ROOT       and that is not a default anyone declined to change: the
-                      grafana/alloy image sets NO USER, and root is exactly
-                      what lets it read the journal. Journal files are
-                      root:systemd-journal 0640 under 2755 directories, so a
-                      reader is either uid 0 (owner-read) or in gid 62.
-                      /mnt/fast/alloy holds only the positions file and the
-                      write-ahead log, so root:root is both correct and the
-                      default — but adding a `user:` to that container without
-                      also granting gid 62 would turn it into a healthy
-                      process that collects nothing, which is why this is
-                      written down here rather than left implicit.
-
-The read-only journal mounts (/var/log/journal, /etc/machine-id) are NOT in
-this table and must never be: they are system paths owned by systemd, not
-per-stack bind sources, and a `d` rule over /var/log/journal would fight
-journald for its own directory.""",
+Three containers, three answers, each read out of the pinned image:
+  victorialogs  ROOT — the image sets User "0", NOT the old loki's 10001.
+  grafana       uid 472 — the image sets USER 472; owner-write is what
+                /var/lib/grafana needs, and grafana.db is created there.
+  alloy         ROOT — the image sets no USER, and uid 0 is what lets it
+                read the journal (root:systemd-journal 0640 under 2755
+                directories). A `user:` without gid 62 would give a
+                healthy process that collects nothing.
+The read-only journal mounts (/var/log/journal, /etc/machine-id) are
+system paths, not per-stack bind sources, and must never enter this
+table.""",
     "immich": """\
-root:root everywhere ON PURPOSE: the immich images have no PUID/PGID
-mechanism and run as root by default (the FAQ's non-root mode is deliberately
-not used — annex §2/§7.5: tailnet-only, loopback-bound, socketless), so the
-server/ML write /data and /cache as root; the postgres image chowns pgdata
-itself from its root entrypoint; and immich-config-init (alpine, root) writes
-the 0600 immich.json into the config dir. The seerr uid-1000 crash-loop class
-(finding #14) therefore does not apply, but the 'd' rules still must exist:
-docker creates missing bind sources at container start with no say over the
-parent /mnt/fast/immich.""",
+root:root everywhere on purpose: the immich images have no PUID/PGID and
+run as root, the postgres image chowns pgdata itself, and
+immich-config-init (alpine, root) writes the 0600 immich.json. Finding
+#14 does not apply, but the rules still must exist — docker creates a
+missing bind source with no say over the parent /mnt/fast/immich.""",
     "komodo": """\
-All root:root. Komodo is the deploy-plane manager that replaced Arcane and
-splits across four containers, none needing a non-root /mnt owner:
-  - Core holds ALL its state in the Mongo-wire DB and touches no /mnt — it
-    has no bind source here at all.
-  - Periphery mounts /var/run/docker.sock and /srv/stacks (neither a /mnt
-    source) and runs as root, so it reads the 0600 decrypted .env files.
-  - FerretDB is stateless — every document lives in its Postgres.
-  - Postgres is the only stateful component; /mnt/fast/komodo/pgdata is the
-    whole backup payload, and the postgres image chowns its own datadir to
-    uid 999 from a root entrypoint (the ghostfolio/outline/paperless pgdata
-    precedent) — so root:root is correct and self-healing.
-The age key never enters any of them: decrypt-sops-envs (host) writes .env
-and stack-git-sync (host) delivers the files; Periphery only runs compose.""",
+All root:root. Core keeps all its state in the Mongo-wire DB and has no
+/mnt source; Periphery mounts the docker socket and /srv/stacks (neither
+a /mnt source) and runs as root, so it reads the 0600 .env files;
+FerretDB is stateless; Postgres is the only stateful component and
+chowns its own datadir to uid 999 from a root entrypoint. The age key
+never enters any of them — decrypt-sops-envs and stack-git-sync are host
+units.""",
     "mealie": """\
-root:root is fine and ANY hand-fix is futile: the image's entry.sh starts
-as root, runs `chown -R $PUID:$PGID /app` — which INCLUDES the bind-mounted
-/app/data — on EVERY start, then gosu-drops to 911:911 (PUID/PGID defaults,
-deliberately unset in the compose). So /mnt/fast/mealie ends up 911:911
-within seconds of first `up` regardless of this rule. backup-prepare.sh
-reads mealie.db from here as root, so nothing else cares who owns it.""",
+root:root is fine and any hand-fix is futile: entry.sh runs
+`chown -R $PUID:$PGID /app` — which includes the bind-mounted /app/data —
+on EVERY start, then gosu-drops to 911:911. This ends up 911:911 within
+seconds of first `up` regardless of the rule.""",
     "media": """\
-Declared here rather than left to docker's create-on-mount because docker
-always creates missing bind sources root-owned at container start — exactly
-the class of bug that made seerr crash-loop on first deploy (EACCES mkdir;
-its image runs as uid 1000 and cannot chown, now worked around by the
-seerr-init oneshot) — and because nothing else would create /mnt/slow/data
-with the uid the hardlink layout needs. The media suite mirrors this exact
-set in its tmpfiles block; keep the two in sync.
+Declared here rather than left to docker's create-on-mount, which is what
+made seerr crash-loop on first deploy (finding #14), and because nothing
+else would create /mnt/slow/data with the uid the hardlink layout needs.
+The media suite mirrors this exact set; keep the two in sync.
 
-Ownership: root:root is correct for the config roots — the LSIO images
-(radarr/sonarr/prowlarr/bazarr/qbittorrent) chown per PUID/PGID from a
-root entrypoint, jellyfin and gluetun run as root, cleanuparr's
-entrypoint honors PUID/PGID, profilarr runs as root, seerr-init chowns
-/mnt/fast/seerr/config, and clamav 1.5's /init (VERIFIED by reading
-the pinned image's entrypoint script) runs as root and does
-`chown -R clamav:clamav /var/lib/clamav` unconditionally before
-starting clamd. /mnt/slow/data is 1000:1000: every media container
-works there as uid 1000 and media-init creates the skeleton with that
-owner.
+root:root is correct for the config roots: the LSIO images chown per
+PUID/PGID from a root entrypoint, jellyfin/gluetun/profilarr run as root,
+seerr-init chowns seerr's config, and clamav 1.5's /init chowns
+/var/lib/clamav unconditionally before starting clamd. /mnt/slow/data is
+1000:1000 — every media container works there as uid 1000.
 
-This stack also bind-mounts /mnt/slow/books/drop, which BELONGS TO THE
-BOOKS STACK (its rule and its reasoning are under books, where the
-directory lives). That is the entire audiobook hand-off: clamav-scanner
-moves a clean `audiobooks` download into it and audiobookshelf reads it
-:ro. Nothing else crosses.""",
+This stack also binds /mnt/slow/books/drop, which BELONGS TO THE BOOKS
+STACK: clamav-scanner moves a clean audiobook download in and
+audiobookshelf reads it :ro. Nothing else crosses.""",
     "notes-sync": """\
-ALL 1000:1000, and for two different reasons:
+All 1000:1000, for two different reasons:
   - rmfakecloud is FROM scratch with no entrypoint and no PUID/PGID, so
-    it cannot fix anything itself. Its compose sets `user: "1000:1000"`
-    deliberately (Windmill later mounts this tree read-only as uid 1000
-    to scan .rm files, and a root-owned tree would make that scan
-    silently see nothing), which means the ownership MUST come from here.
-  - syncthing's entrypoint chown is `chown PUID:PGID $HOME || true` —
-    NON-RECURSIVE, with an upstream comment saying "maybe it'll work
-    anyway, so we let the error slide". It fixes /var/syncthing and
-    nothing beneath it, so config/ and every synced tree must be
-    pre-owned. Getting this wrong yields a HEALTHY container with an
-    errored folder: finding #14 with the crash-loop replaced by silence.""",
+    it cannot fix anything itself. Its compose pins `user: "1000:1000"`
+    (Windmill later reads this tree as uid 1000), so the ownership MUST
+    come from here.
+  - syncthing's entrypoint chown is non-recursive: it fixes
+    /var/syncthing and nothing beneath it, so config/ and every synced
+    tree must be pre-owned. Getting it wrong yields a HEALTHY container
+    with an errored folder.""",
     "ntfy": """\
-root:root. The ntfy image declares no USER and the compose sets none, so
-`ntfy serve` runs as root and owns both trees. lib/ holds the auth database
-(user.db) and the attachment store; cache/ holds cache.db, the recent-message
-buffer, deliberately transient — see the backup-coverage allowlist.
-
-The single place every failure in the fleet gets reported: silently failing
-to start would take the alert path with it. tests/suites/backrest.nix and
-services-vm.nix pre-create these root-owned and run green.""",
+root:root — the image declares no USER and the compose sets none. lib/
+holds the auth database and the attachment store; cache/ holds the
+transient recent-message buffer. This is the path every failure in the
+fleet is reported through, so a silent failure to start takes the alert
+path with it.""",
     "outline": """\
-1001:1001 for the app's data directory, and that is VERIFIED rather than
-assumed: the image ends on `USER nodejs` and `id` inside the pinned
-outlinewiki/outline:1.9.2 reports uid=1001(nodejs) gid=1001(nodejs). Its
-entrypoint is the stock node one — it execs the server and chowns NOTHING —
-so a root-owned bind source is never repaired. The symptom is not a
-crash-loop: Outline starts, serves, and fails the first time someone
-attaches a file, because FILE_STORAGE=local makes that directory the whole
-object store (finding #14 with the crash-loop replaced by silence).
-
-Its Postgres starts as root and chowns its own datadir, as everywhere else
-here, so /mnt/fast/outline/pgdata is root:root. There is deliberately no
-directory for redis: that container has no volume at all (its queue is
-reconstructible — see the compose file).""",
+1001:1001 for the app's data directory: the image ends on `USER nodejs`
+(uid 1001) and its entrypoint chowns nothing. Its Postgres chowns its own
+datadir, and redis deliberately has no volume at all.""",
     "paperless": """\
-root:root for all five, and that is VERIFIED rather than assumed: the
-paperless entrypoint runs as root, maps its `paperless` user onto
-USERMAP_UID/USERMAP_GID (1000 here) and chowns data/media/consume/export
-before dropping privileges, and the postgres image chowns pgdata itself from
-its root entrypoint. tests/suites/paperless.nix creates exactly these six
-directories root-owned and runs the whole document pipeline against them.
-
-Missing from the tmpfiles-ownership lint's COMPOSE_FILES list until the
-generator landed — five bind sources with no rule.""",
+root:root for all five: the entrypoint runs as root, maps its
+`paperless` user onto USERMAP_UID/USERMAP_GID (1000 here) and chowns
+data/media/consume/export before dropping privileges, and the postgres
+image chowns pgdata itself.""",
     "proton": """\
-Two containers, two answers, both read out of the images rather than assumed:
-  - hydroxide runs as USER hydroxide — alpine `adduser -D`, first uid, 1000 —
-    with no chown-on-start (its entrypoint is overridden to the bare binary),
-    so /mnt/fast/proton/hydroxide must be pre-owned 1000:1000 or the one-time
-    `auth` can never write auth.json. Finding #14's class with the crash-loop
-    replaced by silence: serve stays green, every login fails.
-  - the isync image (proton-export) sets no USER and runs as root, so the
-    maildir archive stays root:root — docker's default, chosen deliberately.
-    No database anywhere; backup is the slow-volume-selective plan, not a
-    dump.""",
+hydroxide runs as USER hydroxide (uid 1000) with no chown-on-start, so
+its directory must be pre-owned or the one-time `auth` can never write
+auth.json — serve stays green and every login fails.
+The isync image (proton-export) sets no USER and runs as root, so the
+maildir archive stays root:root. No database anywhere; backup is the
+slow-volume-selective plan, not a dump.""",
     "samba": """\
-smbd runs as ROOT and must — it needs to setuid per connection — so /data is
+smbd runs as ROOT and must — it setuids per connection — so /data is
 root-owned.""",
     "silverbullet": """\
-1000:1000, and here the ownership is not just about write access — it
-DECIDES THE UID THE SERVER RUNS AS. The image's entrypoint reads the owner
-of $SB_FOLDER and re-execs `su silverbullet` at that uid unless PUID is set
-("Will run SilverBullet with UID 1000, inferred from the owner of /space" —
-measured against the pinned 2.9.0). Leave the space root-owned and the wiki
-runs as root instead, writing root-owned pages that the git-sync sidecar
-(uid 1000, and it must be 1000 to match) then cannot commit. Nothing
-crashes; the mirror just stops working.
-
-1000 is also the fleet's "content" uid — the same one /srv/stacks and
-Forgejo's /data use (finding #10) — so the space, the repo it is pushed to
-and the backup all agree on who owns the files.""",
+1000:1000, and here the ownership DECIDES THE UID THE SERVER RUNS AS: the
+entrypoint reads the owner of $SB_FOLDER and re-execs at that uid unless
+PUID is set. Leave the space root-owned and the wiki runs as root,
+writing pages the git-sync sidecar (uid 1000) cannot commit — nothing
+crashes, the mirror just stops. 1000 is also the fleet's content uid
+(finding #10).""",
     "tandoor": """\
-Food domain — TWO stacks (stacks/tandoor, stacks/wger), one per app, because
-both are Django and both read the BARE name SECRET_KEY out of their
-environment.
-
-Tandoor runs as ROOT (its Dockerfile has no USER instruction; nginx and
-gunicorn both run as root, and boot.sh chmods the media root on every
-start), so root:root is what it will write as.""",
+Runs as ROOT: no USER instruction, nginx and gunicorn both root, and
+boot.sh chmods the media root on every start.""",
     "tracking": """\
-This stack alone carries THREE different ownership conventions, and
-normalising any of them breaks it (annex §8):
-  - bookstack is an LSIO image: it drops to PUID/PGID and runs
-    `lsiown -R abc:abc /config` at every start, so 1000:1000 matches
-    what it will enforce anyway.
-  - its MariaDB starts as root and chowns its own datadir before
-    dropping to mysql, so root:root is correct there.
-  - homebox (default variant) runs as ROOT with no PUID/PGID and no
-    chown-on-start.
+Three ownership conventions in one stack; normalising any breaks it:
+  - bookstack is LSIO: it drops to PUID/PGID and runs
+    `lsiown -R abc:abc /config`, so 1000:1000 matches what it enforces.
+  - its MariaDB chowns its own datadir before dropping to mysql.
+  - homebox runs as ROOT with no PUID/PGID and no chown-on-start.
   - karakeep MUST be root-owned: a non-root uid dies with EACCES on
-    /app/apps/web/.next/cache, which is INSIDE the image, so chowning
-    the host mount cannot fix it (upstream #1324, closed unfixed). This
-    is the inverse of the /srv/stacks convention — do not "fix" it.""",
+    /app/apps/web/.next/cache, which is INSIDE the image, so chowning the
+    host mount cannot fix it (upstream #1324, closed unfixed).""",
     "vaultwarden": """\
-Runs as ROOT: the debian image declares no USER and start.sh execs the binary
-directly, so root:root is what it will write as. That also matches
-backup-prepare.sh, which reads db.sqlite3 from here as root.
-
-The path is load-bearing beyond ownership: backup-prepare.sh hardcodes
-/mnt/fast/vaultwarden/db.sqlite3, and sqlite_backup returns 0 for a MISSING
-source — so moving this mount would turn the vault's only dump into a
-permanent silent no-op rather than an error.""",
+Runs as ROOT: the debian image declares no USER and start.sh execs the
+binary directly. The path is load-bearing beyond ownership —
+backup-prepare.sh hardcodes /mnt/fast/vaultwarden/db.sqlite3 and
+sqlite_backup returns 0 for a MISSING source, so moving this mount turns
+the vault's only dump into a permanent silent no-op.""",
     "wealthfolio": """\
 1000:1000, and the image will NOT heal a wrong owner: the Dockerfile ends
-on USER 1000:1000 with no root entrypoint and no chown — the first write
-to a root-owned /data fails and the container exits (upstream's own
-upgrade doc is a manual chown -R 1000:1000). One directory carries the
-whole stack: wealthfolio.db (SQLite, WAL) plus secrets.json (provider
-API keys, encrypted with WF_SECRET_KEY).""",
+on USER 1000:1000 with no root entrypoint and no chown, so the first
+write to a root-owned /data exits the container. One directory carries
+wealthfolio.db (SQLite, WAL) and secrets.json.""",
     "wger": """\
-🚨 Wger's media directory must be 1000:1000. Its base image does
-`deluser ubuntu` then `adduser wger --uid 1000` and the production image
-ends on `USER wger` — there is NO PUID/PGID, no id-remap entrypoint and
-no chown-on-start, so a root-owned bind source makes collectstatic fail
-on the very first boot. Finding #14's crash-loop pattern.""",
+1000:1000. The base image does `deluser ubuntu` then
+`adduser wger --uid 1000` and the production image ends on `USER wger` —
+no PUID/PGID, no id-remap entrypoint, no chown-on-start — so a root-owned
+bind source fails collectstatic on the very first boot (finding #14).""",
     "windmill": """\
-Only the pgdata root — the DEPENDENCY CACHE is deliberately a named docker
-volume and must never get a rule here: the image bakes CPython 3.11 and 3.12
-into /tmp/windmill/cache at build time, a named volume is seeded from the
-image on first use, and a bind mount is never seeded. Pointing it at
-/mnt/fast would delete both interpreters, and UV_PYTHON_PREFERENCE=
-only-managed forbids a system fallback, so the first Python job would try to
-download one and hang offline.""",
+Only the pgdata root. The dependency cache is deliberately a named docker
+volume and must never get a rule here: the image bakes CPython 3.11 and
+3.12 into /tmp/windmill/cache at build time, a named volume is seeded
+from the image and a bind mount is not, and
+UV_PYTHON_PREFERENCE=only-managed forbids a system fallback.""",
 }
 
+
 # ---------------------------------------------------------------------------
-# Per-directory overrides. Anything absent from this table is
-# `0755 root root` — docker's own default, chosen deliberately here rather
-# than inherited by accident.
+# Per-directory overrides
 # ---------------------------------------------------------------------------
-# Every key must correspond to a directory the compose files actually imply;
-# a stale key is an error, not a no-op, so this table cannot rot into a list
-# of ownerships for paths nothing mounts any more.
+# Anything absent is `0755 root root` — docker's own default, chosen here
+# rather than inherited. A key for a path no compose file implies is an error.
 DIR_NOTES: dict[str, dict] = {
     # --- actual --------------------------------------------------------
     "/mnt/fast/actual": {
         "owner": ("1001", "1001"),
         "note": """\
-account.sqlite (server password, sessions, file index — and the
-SimpleFIN credential once bank sync is set up) plus every budget file.
-This IS the backup payload; no backup-prepare.sh line yet (evaluation
-stack) — raw fast-volume include set only.""",
+account.sqlite (server password, sessions, file index, the SimpleFIN
+credential) plus every budget file — the whole backup payload. No
+backup-prepare.sh line yet: raw fast-volume include set only.""",
     },
     # --- excalidraw ----------------------------------------------------
     "/mnt/fast/excalidraw/pgdata": {
         "note": """\
-Both AstraDraw databases: `excalidraw` (Prisma — users, workspaces, scene
-metadata) and `excalidraw_storage` (keyv — the scene payloads themselves).
-The whole backup payload, captured by the pg_dumpall loop in
-backup-prepare.sh. root:root because the postgres image chowns its own
-datadir before initdb drops privileges, the same reasoning as the
-komodo/ghostfolio/outline pgdata roots.""",
+Both AstraDraw databases (`excalidraw` for metadata, `excalidraw_storage`
+for the scene payloads) — the whole backup payload, captured by the
+pg_dumpall loop. root:root because the postgres image chowns its own
+datadir before initdb drops privileges.""",
     },
     # --- komodo --------------------------------------------------------
     "/mnt/fast/komodo/pgdata": {
         "note": """\
-The FerretDB backend datastore — Komodo's ENTIRE state as JSONB, so the
-whole backup payload (captured by the pg_dumpall loop in backup-prepare.sh,
-not a new mongodump path). root:root because the postgres image chowns its
-own datadir to uid 999 before initdb drops privileges, the same reasoning
-that makes the ghostfolio/outline/paperless pgdata roots root:root.""",
+The FerretDB backend — Komodo's entire state as JSONB, captured by the
+pg_dumpall loop rather than a mongodump path. root:root because the
+postgres image chowns its own datadir to uid 999 before initdb drops
+privileges.""",
     },
     # --- media ---------------------------------------------------------
     "/mnt/slow/data": {"owner": ("1000", "1000")},
@@ -462,16 +287,13 @@ that makes the ghostfolio/outline/paperless pgdata roots root:root.""",
         "owner": ("1000", "1000"),
         "note": """\
 Also bind sources in their own right (qbittorrent/scanner mount them
-directly), so without rules docker would create them root-owned during
-`up` — media-init heals ownership later, but only because it happens to
-run as root; don't depend on that.""",
+directly), so without rules docker creates them root-owned during `up`.
+media-init heals them later only because it happens to run as root.""",
     },
     "/mnt/slow/data/media": {"owner": ("1000", "1000")},
     # --- immich --------------------------------------------------------
     "/mnt/slow/photos": {
-        "note": """\
-The photo originals tree (UPLOAD_LOCATION). Slow tier per the overview's
-volume column: bulk, sequential.""",
+        "note": "The photo originals tree (UPLOAD_LOCATION). Slow tier: bulk, sequential.",
     },
     # --- books ---------------------------------------------------------
     "/mnt/fast/shelfmark/config": {"owner": ("1000", "1000")},
@@ -480,32 +302,19 @@ volume column: bulk, sequential.""",
         "owner": ("1000", "1000"),
         "note": """\
 Both library trees live under /mnt/slow/books deliberately: backrest's
-slow-volume-selective plan already includes that path, so they are backed
-up without touching its config.""",
+slow-volume-selective plan already includes that path.""",
     },
     "/mnt/slow/books/audiobooks": {"owner": ("1000", "1000")},
     "/mnt/slow/books/drop": {
         "owner": ("1000", "1000"),
         "note": """\
-🚨 The one directory TWO stacks share, and the whole of the coupling
-between them (ServerNotes/designs/audiobook-acquisition.md, Option C).
-
-WRITER: stacks/media's clamav-scanner, which runs as ROOT (the pinned
-clamav image sets no USER and this service overrides the entrypoint), so
-the ownership here does not constrain it. It moves a completed
-`audiobooks` download in — a rename within /mnt/slow, so the entry keeps
-the ownership qBittorrent gave it, which is 1000:1000 — and only after a
-clean ClamAV verdict on every file in it.
-
-READER: stacks/books' audiobookshelf, which mounts it :ro as a second
-folder of its Audiobooks library. It runs as root and only reads, so the
-1000:1000 here is for the third party: a human (or shelfmark, uid 1000)
-reorganising a promoted book into /mnt/slow/books/audiobooks, which a
-root-owned drop dir would make a sudo job.
-
-Under /mnt/slow/books deliberately, like the two library trees: backrest's
-slow-volume-selective plan includes that path, so a promoted audiobook is
-backed up from the moment it lands and needs no backrest change.""",
+The one directory TWO stacks share
+(ServerNotes/designs/audiobook-acquisition.md, Option C). stacks/media's
+clamav-scanner (root) moves a completed `audiobooks` download in after a
+clean verdict; stacks/books' audiobookshelf mounts it :ro. The 1000:1000
+is for the third party: a human or shelfmark reorganising a promoted book
+into /mnt/slow/books/audiobooks, which a root-owned drop dir would make a
+sudo job.""",
     },
     "/mnt/slow/books/library": {"owner": ("1000", "1000")},
     # --- automation ----------------------------------------------------
@@ -513,10 +322,9 @@ backed up from the moment it lands and needs no backrest change.""",
     "/mnt/fast/mosquitto/data": {"owner": ("1883", "1883")},
     "/mnt/slow/frigate": {
         "note": """\
-Recordings, clips and exports. Deliberately NOT in backrest's
-slow-volume include list — it is an explicit allowlist and this path is
-not on it, which is how many GB of re-recordable video stays out of the
-backups. Do not add it.""",
+Recordings, clips and exports. Deliberately NOT in backrest's slow-volume
+include list — that is how many GB of re-recordable video stays out of
+the backups. Do not add it.""",
     },
     # --- tracking ------------------------------------------------------
     "/mnt/fast/bookstack/config": {"owner": ("1000", "1000")},
@@ -530,19 +338,17 @@ backups. Do not add it.""",
         "owner": ("999", "999"),
         "note": """\
 The redis image runs as uid 999 and does NOT chown its data directory.
-This holds the sidekiq queue: losing it drops in-flight import and
-statistics jobs, which is survivable, but a wrong owner makes redis
-exit at start and takes sidekiq with it.""",
+This holds the sidekiq queue: a wrong owner makes redis exit at start and
+takes sidekiq with it.""",
     },
     # --- outline -------------------------------------------------------
     "/mnt/fast/outline/data": {
         "owner": ("1001", "1001"),
         "note": """\
-🚨 1001:1001 — the `nodejs` user the image runs as, NOT 1000. Outline is
-the only thing in this fleet on that uid, and nothing in the container
-repairs it. FILE_STORAGE=local makes this directory the object store for
-every attachment and avatar, so a root-owned copy is a wiki that works
-until the first upload.""",
+1001:1001 — the `nodejs` user the image runs as, NOT 1000, and nothing in
+the container repairs it. FILE_STORAGE=local makes this the object store
+for every attachment, so a root-owned copy is a wiki that works until the
+first upload.""",
     },
     # --- notes-sync ----------------------------------------------------
     "/mnt/fast/rmfakecloud": {"owner": ("1000", "1000")},
@@ -551,20 +357,16 @@ until the first upload.""",
     "/mnt/fast/syncthing/config": {"owner": ("1000", "1000")},
     "/mnt/fast/vault": {"owner": ("1000", "1000")},
     # --- silverbullet --------------------------------------------------
-    # Parent declared 1000:1000 too, matching forgejo's pattern: everything
-    # under it belongs to the same content uid, and a root-owned parent with
-    # a 1000-owned child invites exactly the "why can it not write here"
-    # confusion these rules exist to end.
+    # Parent is 1000:1000 too, matching forgejo: everything under it belongs
+    # to the same content uid.
     "/mnt/fast/silverbullet": {"owner": ("1000", "1000")},
     "/mnt/fast/silverbullet/space": {
         "owner": ("1000", "1000"),
         "note": """\
-🚨 This ownership IS the uid SilverBullet runs as — its entrypoint infers
-PUID from the owner of the space (see the stack note above), so changing
-this line changes the process, not just the file modes. It is also the git
-working tree the sync sidecar (uid 1000) commits from and, being plain
-markdown, the one thing in this stack that backrest's fast-volume plan
-actually needs to capture.""",
+This ownership IS the uid SilverBullet runs as — its entrypoint infers
+PUID from the owner of the space — so changing this line changes the
+process, not just the file modes. It is also the git working tree the
+sync sidecar (uid 1000) commits from.""",
     },
     # --- forgejo -------------------------------------------------------
     "/mnt/fast/forgejo": {"owner": ("1000", "1000")},
@@ -575,119 +377,90 @@ actually needs to capture.""",
     "/mnt/fast/docspace/app": {
         "owner": ("104", "107"),
         "note": """\
-104:107 = the image's `USER onlyoffice`. NOT load-bearing: the compose
-file sets `user: root` following upstream, because the entrypoint edits
-/etc/nginx and /app/onlyoffice/config before dropping into supervisord.
-Declared anyway so that dropping `user: root` later degrades rather than
-breaking. (The first suite run broke on mysqldata below, not on this.)""",
+104:107 = the image's `USER onlyoffice`. Not load-bearing today — the
+compose sets `user: root` following upstream — but declared so that
+dropping `user: root` later degrades rather than breaks.""",
     },
     "/mnt/fast/docspace/logs": {"owner": ("104", "107")},
     "/mnt/fast/docspace/mysqldata": {
         "owner": ("999", "999"),
         "note": """\
-🚨 999:999, NOT root. The official mysql image drops to uid 999
-(`mysql`) and `--initialize` refuses a data directory it cannot write:
-"the designated data directory /var/lib/mysql/ is unusable". The
-container then restart-loops while every other container in the project
-comes up fine, so the visible symptom is `dependency failed to start`
-on a service that has nothing wrong with it. This is finding #14
-(seerr) in a second image — root-owned bind mounts are the default
-docker would have chosen, which is exactly why these rules exist.""",
+999:999, NOT root. The mysql image drops to uid 999 and `--initialize`
+refuses a data directory it cannot write, then restart-loops while every
+other container comes up fine — so the visible symptom is `dependency
+failed to start` on a service that has nothing wrong with it.""",
     },
     # --- gatus ---------------------------------------------------------
     "/mnt/fast/gatus": {
         "note": """\
-Its SQLite history lives here; the container is on the HOST network and has
-no ports: entry, which is why it needs a host-network-declared entry in
+Its SQLite history. The container is on the HOST network with no `ports:`
+entry, which is why it needs a host-network-declared entry in
 tests/lib/lints.nix.""",
     },
     # --- beszel --------------------------------------------------------
     "/mnt/fast/beszel": {
         "note": """\
-The hub's directory holds data.db, the generated config.yml, and
-id_ed25519 at 0600 — beszel-init writes the key mode itself, so this rule
-only needs to own the parent.""",
+Holds data.db, the generated config.yml and id_ed25519 at 0600 —
+beszel-init writes the key mode itself, so this rule only owns the
+parent.""",
     },
     "/mnt/fast/beszel-agent": {
         "note": """\
-The agent's fingerprint file. It lives on the DATA disk on purpose:
-./rebuild_os_proxmox.sh --build re-images the OS disk, and the fingerprint
-is sha256 of the machine-id — a hub that has pinned the old one rejects
-the agent outright after a routine re-image, visible only in hub logs.""",
+The agent's fingerprint file, on the DATA disk on purpose:
+rebuild_os_proxmox.sh --build re-images the OS disk, and the fingerprint
+is sha256 of the machine-id — a hub that pinned the old one rejects the
+agent after a routine re-image, visible only in hub logs.""",
     },
     "/mnt/fast/beszel-agent/fsprobe": {
         "note": """\
 Two EMPTY marker directories, one per storage tier, bound read-only into
-the agent at /extra-filesystems/*. Beszel reports filesystem usage via
-statfs, which answers for the whole containing filesystem regardless of
-which path on it is asked — verified against v0.18.8, where an empty
-directory yielded `d: 3665.96, du: 114.19` for its device. So these give
-the same numbers a wholesale /mnt/fast:ro bind would, without handing a
+the agent. Beszel reports usage via statfs, which answers for the whole
+containing filesystem regardless of the path asked — so these give the
+same numbers a wholesale /mnt/fast:ro bind would, without handing a
 monitoring container a readable copy of every service's data.""",
     },
     # --- logging -------------------------------------------------------
     "/mnt/slow/victorialogs": {
         "note": """\
-root:root, matching the image: victoriametrics/victoria-logs:v1.52.0 runs
-as User "0" (read from the pinned image config — NOT the old loki's
-10001, and worth re-reading on every upgrade: the two vendors chose
-opposite conventions). This one directory is the whole store: per-day
-partitions carrying their own indexes appear under partitions/ on first
-start, and the native cap (-retention.maxDiskSpaceUsageBytes=100GiB in
-stacks/logging/compose.yaml) trims the oldest when the total exceeds it.
-
-On /mnt/slow rather than /mnt/fast because log data is append-mostly
-and query-rarely, which is what _overview.md's hardware section says
-belongs on the 80 TB tier. It is also the reason this path needs a
-NOT_BACKED_UP entry in tests/lib/lints.nix: the slow-volume plan is an
-explicit include list and this is deliberately not on it. The old
-/mnt/slow/loki store is abandoned — no rule, no migration, delete at
-will.""",
+root:root, matching the image: victoria-logs runs as User "0", NOT the
+old loki's 10001 — worth re-reading on every upgrade. This one directory
+is the whole store, trimmed by -retention.maxDiskSpaceUsageBytes in
+stacks/logging/compose.yaml. On /mnt/slow because log data is
+append-mostly, and deliberately off the slow-volume plan — hence its
+NOT_BACKED_UP entry in tests/lib/lints.nix.""",
     },
     "/mnt/fast/alloy": {
         "note": """\
-root:root, and DELIBERATELY so rather than by default. grafana/alloy
-sets no USER, so the collector runs as uid 0 — which is the mechanism
-that lets it read the host journal at all (root:systemd-journal 0640).
-This directory holds only the journal positions file and the write-ahead
-log that buffers pushes across a store restart; both are regenerable, and
-both are written as root.
-
-⚠ If anyone ever adds `user:` to the alloy service, this rule and the
-journal mounts both stop working, silently — the container stays healthy
-and forwards nothing. Change the container and this note together.""",
+root:root deliberately: grafana/alloy sets no USER, and uid 0 is the
+mechanism that lets it read the host journal (root:systemd-journal 0640).
+Adding `user:` to that service silently breaks collection — the container
+stays healthy and forwards nothing. Holds only the positions file and the
+write-ahead log, both regenerable.""",
     },
     "/mnt/fast/grafana": {
         "owner": ("472", "472"),
         "note": """\
-🚨 472:472, NOT root — grafana/grafana:13.2.0 sets USER 472 (gid 0, the
-OpenShift convention; owner-write is what matters here). grafana.db is
-created in this directory on first start and is the only per-install
-state the stack has: the datasource is provisioned from a read-only file
-and the admin credential comes from .sops.env, so what is genuinely only
-here is dashboards, users and history. It is dumped by
-nixos/backup-prepare.sh with `sqlite3 .backup` because it is WAL-mode.
-
-Root-owned this fails visibly rather than silently, unusually for this
-table: Grafana's /api/health reports {"database":"ok"} from a real query,
-so an unwritable directory shows up as an unhealthy container.""",
+472:472, NOT root — the image sets USER 472. grafana.db is created here
+on first start and is the only per-install state (the datasource is
+provisioned read-only and the admin credential comes from .sops.env);
+backup-prepare.sh dumps it with `sqlite3 .backup` because it is WAL-mode.
+Root-owned this fails visibly for once: /api/health reports the
+database.""",
     },
     # --- proton --------------------------------------------------------
     "/mnt/fast/proton/hydroxide": {
         "owner": ("1000", "1000"),
         "note": """\
-auth.json — the Proton refresh token and passwords, ENCRYPTED with a key
-derived from the bridge password (which lives in .sops.env, not here):
-neither half is useful alone. Written by the one-time interactive
-`hydroxide auth` as uid 1000; nothing in-container repairs a wrong owner.""",
+auth.json — the Proton refresh token and passwords, encrypted with a key
+derived from the bridge password in .sops.env; neither half is useful
+alone. Written by the one-time `hydroxide auth` as uid 1000; nothing
+in-container repairs a wrong owner.""",
     },
     "/mnt/slow/proton-mail-archive": {
         "note": """\
-The automated mail export — a full-mailbox maildir, append-only by
-construction (mbsyncrc: Sync Pull + Expunge None). Slow tier: bulk,
-append-mostly, read-rarely — the old Loki-chunk reasoning, except unlike
-the log store it IS backed up (slow-volume-selective names it): the
-archive is the entire point of the export sidecar.""",
+The mail export — a full-mailbox maildir, append-only by construction
+(mbsyncrc: Sync Pull + Expunge None). Slow tier, and unlike the log store
+it IS backed up: slow-volume-selective names it.""",
     },
     # --- wealthfolio ---------------------------------------------------
     "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},
@@ -696,29 +469,21 @@ archive is the entire point of the export sidecar.""",
         "mode": "0775",
         "owner": ("1000", "1000"),
         "note": """\
-🚨 The share tree is 1000:1000, and that is a CONTRACT with
-stacks/samba/config.yml's `auth:` entry, which creates the SMB user with
-uid 1000 gid 1000 INSIDE the container via `adduser -u`. Nothing
-connects the two but these two files agreeing. A mismatch is not a crash
-— it is files nothing else in the fleet can read, found much later.
-samba-init refuses to start on a mismatch and the suite measures it
-(write over SMB, stat on the host).
-
-0775 rather than 0755: the group bit is what lets the other SMB users (all
-gid 1000) share the tree without each file being private to whoever wrote it.""",
+1000:1000 is a CONTRACT with stacks/samba/config.yml's `auth:` entry,
+which creates the SMB user with uid 1000 gid 1000 inside the container.
+Nothing connects the two but these two files agreeing; samba-init refuses
+to start on a mismatch. 0775 rather than 0755 so the other SMB users (all
+gid 1000) can share the tree.""",
     },
-    # Per-user private trees (multi-user rollout 2026-09-05). ONE shared gid
-    # (1000) so everyone can use `shared`; DISTINCT uids so each personal dir is
-    # private. 0700 <uid>:1000 → only the owner enters (the shared group can't),
-    # backing config.yml's per-share `validusers`. Each uid MUST match
-    # config.yml's `auth:` and samba-init refuses to start on a mismatch.
+    # Per-user private trees: ONE shared gid (1000) so everyone can use
+    # `shared`, DISTINCT uids so each personal dir is private. Each uid must
+    # match config.yml's `auth:`; samba-init refuses to start on a mismatch.
     "/mnt/slow/samba/personal": {
         "mode": "0755",
         "owner": ("root", "root"),
         "note": """\
-Parent of the per-user private trees. root:root 0755 — nobody writes here;
-o+x lets each SMB user traverse into their own subdir, which is 0700 and so
-leaks nothing.""",
+Parent of the per-user private trees. Nobody writes here; o+x lets each
+SMB user traverse into their own 0700 subdir.""",
     },
     "/mnt/slow/samba/personal/idan": {"mode": "0700", "owner": ("1000", "1000")},
     "/mnt/slow/samba/personal/alondra": {"mode": "0700", "owner": ("1001", "1000")},
@@ -731,17 +496,14 @@ leaks nothing.""",
 
 
 # ---------------------------------------------------------------------------
-# The shared logic. Everything below is used identically by the generator CLI
-# and by the lints (tests/lib/lints.nix) — that is the point of the file.
+# Shared logic — used identically by the generator CLI and by the lints
 # ---------------------------------------------------------------------------
 def discover(repo: str) -> list[dict]:
     """Every compose file whose bind mounts land on the services VM.
 
-    Globbed, never listed: a new stack directory is covered the moment it
-    exists. komodo/ rides along because it is bootstrapped outside stacks/ but
-    onto the same host (the deploy-plane manager, as arcane/ was before it).
-    headscale-vps/authentik/ deliberately does NOT — it is a different machine
-    with different filesystems.
+    Globbed, never listed. komodo/ rides along because it is bootstrapped
+    outside stacks/ but onto the same host; headscale-vps/authentik/ does not,
+    being a different machine with different filesystems.
     """
     entries = [
         {"stack": os.path.basename(os.path.dirname(p)), "path": p}
@@ -772,9 +534,8 @@ def bind_sources(entries: list[dict]) -> dict[str, list[str]]:
 def directories(sources: dict[str, list[str]]) -> dict[str, list[str]]:
     """Bind sources plus their parents down to /mnt/<tier>/<name>.
 
-    A parent needs a rule of its own: tmpfiles creates missing parents with
-    the DEFAULT ownership, not the rule's, so declaring only /mnt/fast/x/y
-    leaves /mnt/fast/x root-owned by accident rather than by decision.
+    A parent needs a rule of its own: tmpfiles creates missing parents with the
+    DEFAULT ownership, not the rule's.
     """
     dirs: dict[str, set[str]] = {}
     for path, stacks in sources.items():
@@ -825,9 +586,7 @@ def render(entries: list[dict]) -> str:
     stacks = {s for ss in dirs.values() for s in ss}
     _check_tables(dirs, stacks)
 
-    # A directory belongs to the alphabetically first stack that mounts it (or
-    # mounts something under it). Deterministic, and today no /mnt directory is
-    # shared between stacks anyway.
+    # A directory belongs to the alphabetically first stack that mounts it.
     by_stack: dict[str, list[str]] = {}
     for path, ss in dirs.items():
         by_stack.setdefault(ss[0], []).append(path)
@@ -863,20 +622,13 @@ HEADER = """\
 #   Generator:   nixos/generate-stack-dirs.py (ownership table + prose live there)
 #
 # One `d` rule per /mnt bind-mount source named by a compose file, plus its
-# parent directories. They exist because docker creates a missing bind source
-# ROOT-OWNED at container start, which is the failure this fleet keeps hitting
-# (finding #14: seerr's EACCES crash-loop, mysql refusing its datadir,
-# syncthing reporting healthy with an errored folder).
-#
-# nixos/ is its own flake root and cannot read ../stacks/ at eval time, so this
-# file is generated and CHECKED IN. The `stack-dirs-generated` lint re-runs the
-# generator and byte-compares — drift is a build failure, exactly like
-# ssh-pubkey-parity. Editing this file by hand is therefore not a shortcut; it
-# is a lint failure. Change nixos/generate-stack-dirs.py instead.
+# parents, because docker creates a missing bind source ROOT-OWNED at container
+# start (finding #14). The `stack-dirs-generated` lint re-runs the generator and
+# byte-compares, so editing this file by hand is a lint failure.
 #
 # Rules that are NOT stack-derived (/srv, /var/lib/sops-nix, /mnt/fast/docker,
-# the /srv/stacks 'Z' migration rule) stay hand-written in
-# hardware-configuration.nix, which imports this file.
+# the /srv/stacks 'Z' rule) stay hand-written in hardware-configuration.nix,
+# which imports this file.
 """
 
 
@@ -889,7 +641,8 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.manifest:
-        entries = json.load(open(args.manifest))
+        with open(args.manifest) as f:
+            entries = json.load(f)
     elif args.repo:
         entries = discover(args.repo)
     else:

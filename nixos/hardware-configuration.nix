@@ -3,61 +3,58 @@
 {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
-    # Per-stack `d /mnt/...` tmpfiles rules, GENERATED from the compose files
-    # — see nixos/generate-stack-dirs.py for the why. Do not hand-edit; the
-    # stack-dirs-generated lint regenerates and byte-compares.
+    # GENERATED per-stack `d /mnt/...` rules — edit nixos/generate-stack-dirs.py
+    # and regenerate; the stack-dirs-generated lint byte-compares.
     #
-    # 🚨 Flakes only see git-tracked files — `git add` nixos/stack-dirs.nix
-    # before any `nixos-rebuild --flake` or the import resolves to nothing.
+    # Flakes only see git-tracked files: `git add nixos/stack-dirs.nix` before
+    # any `nixos-rebuild --flake` or this import resolves to nothing.
     ./stack-dirs.nix
   ];
 
-  # Boot configuration
-  # virtio_blk is load-bearing: the OS disk is virtio0 (/dev/vda) — without
-  # it the stage-1 initrd cannot see the root disk (same failure class as the
-  # VPS 2026-09-03). The scsi modules cover the sda/sdb/sdc data disks.
+  # Boot
+  # virtio_blk is load-bearing: the OS disk is virtio0 (/dev/vda) and without
+  # it stage-1 cannot see root. The scsi modules cover the sda/sdb/sdc data
+  # disks. kvm-intel is for nested virt, which the Forgejo runner's VM suites
+  # need.
   boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "virtio_pci" "virtio_blk" "virtio_scsi" "sd_mod" "sr_mod" ];
   boot.initrd.kernelModules = [ ];
   boot.kernelModules = [ "kvm-intel" ];
   boot.extraModulePackages = [ ];
 
-  # Bootloader
   boot.loader.grub = {
     enable = true;
-    # The OS disk: virtio0 = /dev/vda. /dev/sda is the scsi1 STATE disk —
-    # grub-install on it fails (no BIOS-boot partition), which is the guard
-    # that caught this when it was wrong.
+    # virtio0 = /dev/vda. /dev/sda is the scsi1 STATE disk; grub-install on it
+    # fails for want of a BIOS-boot partition.
     device = "/dev/vda";
   };
 
-  # Root filesystem (OS disk - will be the Proxmox image disk)
+  # Filesystems
   fileSystems."/" = {
     device = "/dev/disk/by-label/nixos";
     fsType = "ext4";
   };
 
-  # Persistent state storage
+  # Persistent state (compose files, komodo state)
   fileSystems."/srv" = {
     device = "/dev/disk/by-partlabel/state";
     fsType = "ext4";
     options = [ "defaults" ];
   };
 
-  # Fast storage (SSD) - Docker images/volumes
+  # SSD: configs and databases
   fileSystems."/mnt/fast" = {
     device = "/dev/disk/by-partlabel/fast";
     fsType = "ext4";
     options = [ "defaults" ];
   };
 
-  # Slow storage (HDD) - Media/bulk data
+  # HDD: bulk media
   fileSystems."/mnt/slow" = {
     device = "/dev/disk/by-partlabel/slow";
     fsType = "ext4";
     options = [ "defaults" ];
   };
 
-  # Bind mount Docker data directory to fast storage
   fileSystems."/var/lib/docker" = {
     device = "/mnt/fast/docker";
     fsType = "none";
@@ -65,35 +62,27 @@
     depends = [ "/mnt/fast" ];
   };
 
-  # ONLY rules NOT derived from a compose file live here; per-stack /mnt bind
-  # sources are generated into ./stack-dirs.nix (import above). A rule added
-  # here for a compose-mounted path would be invisible to the generator and
-  # drift when the stack moves.
+  # Tmpfiles
+  # ONLY rules NOT derived from a compose file belong here; per-stack /mnt bind
+  # sources are generated into ./stack-dirs.nix above.
   systemd.tmpfiles.rules = [
-    # The Komodo deploy plane's compose dir (Core/Periphery/FerretDB/Postgres).
-    # root:root — it holds compose + the decrypted .env, no non-root owner.
+    # Holds the komodo compose and its decrypted .env — no non-root owner.
     "d /srv/komodo 0755 root root -"
-    # 1000:1000: stack-git-sync (host) writes project directories here as
-    # 1000, decrypt-sops-envs chowns the .env to 1000. Root-owned, the sync
-    # could never create a directory — GitOps delivery silently dead (caught
-    # by tests/suites/gitops.nix).
+    # 1000:1000 (finding #10): stack-git-sync writes project directories here
+    # as 1000 and decrypt-sops-envs chowns each .env to it. Root-owned, GitOps
+    # delivery is silently dead.
     "d /srv/stacks 0755 1000 1000 -"
-    # Live-host migration: 'd' only applies its owner when it CREATES the
-    # directory, and on the real VM /srv/stacks pre-existed root-owned. 'Z'
-    # recursively re-owns on each boot; mode left '-' on purpose so per-file
-    # modes (0600 .env vs 0644 compose) stay untouched.
+    # 'd' applies its owner only when it CREATES the directory, and on the live
+    # VM /srv/stacks pre-existed root-owned. Mode left '-' so per-file modes
+    # (0600 .env vs 0644 compose) stay untouched.
     "Z /srv/stacks - 1000 1000 -"
-    # NOT stack-derived: this is the bind SOURCE for the /var/lib/docker mount
-    # declared above, i.e. the docker daemon's own storage, not a service's
-    # data. 0711 rather than 0755 deliberately — the daemon needs traverse,
-    # nothing else needs to list it.
+    # Bind SOURCE for the /var/lib/docker mount above — the daemon's own
+    # storage. 0711: it needs traverse, nothing else needs to list it.
     "d /mnt/fast/docker 0711 root root -"
     "d /var/lib/sops-nix 0700 root root -"
   ];
 
-  # Swap (optional - can be added if needed)
   swapDevices = [ ];
 
-  # Hardware
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
 }
