@@ -1,8 +1,10 @@
 # secrets-gen
 
 `sops-gen` + `manifest.yaml`: generate-if-absent secret management over sops.
-Fills the generate-class inventory (SOPS-KEYGEN-PLAN.md §3), refuses the
-pull-class one (§7), and never overwrites real committed key material.
+Fills every `generate`- and `derived`-class entry in `manifest.yaml`, refuses the
+`pull`-class ones (they are minted elsewhere), and never overwrites real
+committed key material. The inventory grouped by bring-up step is
+`ServerNotes/designs/deploy-handbook.md` §4.
 
 ```bash
 nix-shell secrets-gen/shell.nix          # sops, age, openssl, yq, wg, htpasswd, argon2, xxd
@@ -17,6 +19,7 @@ SOPS_AGE_KEY="$(sudo cat /var/lib/sops-nix/sops_age_key.txt)" secrets-gen/sops-g
 | `apply --dry-run` | no | plan only — no writes, no decryption |
 | `apply` | for full run | fill absent/`^changeme` values; create missing `.sops.env` from `.sops.env.example` (pubkey-only) |
 | `rotate NAME [--force]` | yes | force-regenerate one entry (`--force` for frozen) |
+| `sort [--dry-run] [FILE]` | yes | reorder keys to the `.example`'s order, in place |
 | `list` | no | every entry: class, recipe, flags, present/missing per target |
 | `view FILE` | for values | one file's keys + classes; values decrypted when possible |
 | `search --keys PAT` | no | grep key names across all managed files |
@@ -40,6 +43,27 @@ SOPS_AGE_KEY="$(sudo cat /var/lib/sops-nix/sops_age_key.txt)" secrets-gen/sops-g
 - All writes go through `sops set --value-stdin` / `sops encrypt` — recipient
   from `.sops.yaml`, plaintext never on argv, scratch in tmpfs and shredded.
   Dotenv values containing `$` are single-quoted automatically (ledger #30).
+
+## sort
+
+The `.example` carries the grouping (`# Postgres`, `# OIDC`, …); its encrypted
+twin cannot be reordered without the age key, so `sort` is the operator step
+that lands it. Decrypt → reorder → re-encrypt (tmpfile+rename), printing a
+key-order diff. Only ORDER changes: every line is copied verbatim (values,
+single-quoting, YAML block scalars), each key's leading comments travel with
+it, keys absent from the example are pushed to the end, and a reorder that
+would alter content is refused before anything is written. Nested YAML keys
+(`ssh/*`) stay inside their parent, and everything above the first key stays on
+top as the file header (sops drops blank lines in both stores, so a comment
+written for the first key is indistinguishable from a header and stays put).
+`--dry-run` decrypts and reports only;
+`--example FILE` orders against a different template (how the test fixtures
+are kept in step with their stack's example).
+
+```bash
+sopsgen sort --dry-run                       # every managed file: what would move
+sopsgen sort stacks/media/.sops.env          # one file
+```
 
 ## Hash-derived credentials
 
@@ -92,8 +116,12 @@ Target `part`: `plain` (default), `bcrypt`, `bcrypt_b64`, `argon2`,
 `pbkdf2_qbit`, `htpasswd:USER`, and for keypair recipes `private`,
 `private_b64`, `public`. yaml keys nest with `/` (`ssh/github`).
 
-Missing-file creation copies the `.sops.env.example` verbatim (comments and
-key order included, so `stack-env-drift` parity holds), substituting only the
-generate-class values; pull/config keys keep their `changeme` placeholders.
+Missing-file creation copies the `.sops.env.example` verbatim — comments and
+key order included, so a fresh file starts already `sort`ed — substituting only
+the generate-class values; pull/config keys keep their `changeme` placeholders.
+(`stack-env-drift` itself compares key SETS, not order.)
+
+`recovery_file:` is separate from `files:`, so the recovery escrow is written
+and read but never listed by `list` / `view` / `search`.
 
 After any run: `git diff`, `./tests/run.sh`, commit atomically.

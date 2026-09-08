@@ -13,6 +13,7 @@ MANIFEST=$SELF_DIR/manifest.yaml
 ROOT=""
 FORCE=0
 DRY=0
+SORT_EXAMPLE=""   # `sort --example FILE`: order against this instead of the manifest's
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,8 @@ usage: sops-gen [--manifest FILE] [--root DIR] COMMAND [args]
   apply [--dry-run]        fill missing/changeme generate-class values
                            (--dry-run: read-only plan, no decryption)
   rotate NAME [--force]    force-regenerate one entry (--force for frozen)
+  sort [--dry-run] [FILE]  reorder keys to match the .example (values verbatim;
+                           --example FILE overrides which .example to follow)
   list                     every managed entry: class, recipe, present/missing
   view FILE                one file's keys (values shown when key available)
   search --keys PATTERN    grep key NAMES across managed files (no key needed)
@@ -167,16 +170,12 @@ json_str() {
   printf '"%s"' "$s"
 }
 
-quote_for() { # dotenv values containing $ must be single-quoted (ledger #30)
-  local fmt=$1 v=$2
-  if [[ $fmt == dotenv && $v == *'$'* ]]; then printf "'%s'" "$v"; else printf '%s' "$v"; fi
-}
-
 sops_set() { # file key value
+  # Dotenv values containing $ are single-quoted (ledger #30), inline and
+  # WITHOUT a command substitution: $(helper ...) strips a trailing newline,
+  # re-breaking ssh private keys (hit live 2026-09-03, one layer below the
+  # render-side fix for the same thing).
   local fmt=${FMT_OF[$1]} v=$3
-  # quote_for is inlined WITHOUT command substitution: $(quote_for ...) strips
-  # a trailing newline, re-breaking ssh private keys (hit live 2026-09-03,
-  # one layer below the render-side fix for the same thing).
   if [[ $fmt == dotenv && $v == *'$'* ]]; then v="'$v'"; fi
   json_str "$v" \
     | (cd "$ROOT" && sops set --idempotent --value-stdin "$1" "$(keypath "$2")")
@@ -424,7 +423,7 @@ apply_gen_entry() { # i — the real machine: fire on absent/^changeme only
         rendered=$(render "$T_PART" "$T_TPL")
         [[ $T_PART == private ]] && rendered+=$'\n'  # $() strips the trailing newline OpenSSH requires
         [[ ${FMT_OF[$T_FILE]} == dotenv && $rendered == *'$'* ]] && rendered="'$rendered'"
-        FILLS["$T_FILE|$T_KEY"]=$rendered  # plain assignment — $(quote_for) would strip a trailing newline
+        FILLS["$T_FILE|$T_KEY"]=$rendered  # plain assignment — a $(...) hop would strip a trailing newline
         NEWFILE[$T_FILE]=1; wrote=1;;
       absent|fire)
         rendered=$(render "$T_PART" "$T_TPL")
@@ -634,6 +633,124 @@ cmd_search_values() { # decrypt-and-grep: NEEDS the age key, by design
 }
 
 # ---------------------------------------------------------------------------
+# sort
+# ---------------------------------------------------------------------------
+# The .example carries the grouping; the encrypted twin cannot be reordered
+# without the age key, so this is the operator step that lands it. Only key
+# ORDER changes — every line is copied verbatim (values, single-quoting, YAML
+# block scalars) and each key's leading comment/blank lines travel with it.
+#
+# Line-oriented on purpose, for both formats: a record starts at a column-0
+# `KEY=` / `KEY:` line and swallows every indented or blank continuation after
+# it, so a block scalar and a nested map stay intact and nested keys are never
+# reordered among themselves.
+#
+# Everything before the FIRST key is the file header and stays on top. That is
+# a choice, not a guess: sops DROPS blank lines in both stores, so nothing in a
+# decrypted file distinguishes "header" from "comment on the first key" — and
+# keeping the header on top is the more useful of the two readings.
+REORDER_AWK='
+BEGIN { nk = split(order, ordk, " "); nrec = 0; npend = 0; header = ""; started = 0 }
+function take(   i) {
+  for (i = 1; i <= npend; i++) body[nrec] = body[nrec] pend[i] "\n"
+  npend = 0
+  body[nrec] = body[nrec] $0 "\n"
+}
+match($0, /^[A-Za-z_][A-Za-z0-9_.-]*[:=]/) {
+  nrec++; keyof[nrec] = substr($0, 1, RLENGTH - 1); body[nrec] = ""
+  started = 1
+  take()
+  next
+}
+/^[ \t]*#/ || /^[ \t]*$/ {
+  if (started) pend[++npend] = $0; else header = header $0 "\n"
+  next
+}
+{
+  if (!started) { header = header $0 "\n"; next }
+  take()
+}
+END {
+  printf "%s", header
+  for (i = 1; i <= nk; i++)
+    for (j = 1; j <= nrec; j++)
+      if (keyof[j] == ordk[i] && !done[j]) { printf "%s", body[j]; done[j] = 1 }
+  for (j = 1; j <= nrec; j++) if (!done[j]) printf "%s", body[j]
+  for (i = 1; i <= npend; i++) print pend[i]
+}
+'
+
+top_keys() { # file -> column-0 key names, in file order (works on plaintext)
+  awk 'match($0, /^[A-Za-z_][A-Za-z0-9_.-]*[:=]/) { print substr($0, 1, RLENGTH - 1) }' "$1"
+}
+
+example_of() { # relpath -> the .example that defines its key order ("" if none)
+  [[ -n $SORT_EXAMPLE ]] && { printf '%s' "$SORT_EXAMPLE"; return; }
+  local ex=${EX_OF[$1]:-}
+  [[ -z $ex && -f $ROOT/$1.example ]] && ex=$1.example
+  printf '%s' "$ex"
+}
+
+sort_one() { # relpath -> 0 sorted/ok, 1 problem (reported, never fatal)
+  local rel=$1 ex want have
+  ex=$(example_of "$rel")
+  [[ -n $ex ]]           || { echo "  skip      $rel — no .example to order against"; return 0; }
+  [[ -f $ROOT/$ex ]]     || { warn "$rel: example $ex does not exist"; return 1; }
+  [[ -f $ROOT/$rel ]]    || { echo "  skip      $rel — file does not exist"; return 0; }
+
+  scratch   # tmpfs, shredded by the EXIT trap; these two hold plaintext
+  local plain=$SCRATCH/sort.plain new=$SCRATCH/sort.new
+  (cd "$ROOT" && sops -d "$rel") > "$plain" 2>/dev/null \
+    || { warn "$rel: cannot decrypt (wrong or missing age key)"; return 1; }
+
+  top_keys "$plain" > "$SCRATCH/have.keys"
+  top_keys "$ROOT/$ex" > "$SCRATCH/want.keys"
+  have=$(tr '\n' ' ' < "$SCRATCH/have.keys")
+  # Desired order: the example's keys this file actually has, then the rest in
+  # their current order — an unknown key is never dropped, only pushed to the end.
+  want=$(
+    {
+      awk 'NR == FNR { h[$0] = 1; next } h[$0] && !s[$0]++' "$SCRATCH/have.keys" "$SCRATCH/want.keys"
+      awk 'NR == FNR { e[$0] = 1; next } !e[$0] && !s[$0]++' "$SCRATCH/want.keys" "$SCRATCH/have.keys"
+    } | tr '\n' ' '
+  )
+
+  if [[ $have == "$want" ]]; then echo "  ok        $rel"; return 0; fi
+
+  awk -v order="$want" "$REORDER_AWK" "$plain" > "$new"
+  # Verification: reordering must be a permutation of whole lines. Anything
+  # else (a lost value, a mangled block scalar) fails here, before any write.
+  if ! diff -q <(LC_ALL=C sort "$plain") <(LC_ALL=C sort "$new") >/dev/null; then
+    warn "$rel: reorder would change content, not just order — refusing"
+    return 1
+  fi
+
+  echo "  reorder   $rel"
+  echo "      was: $have"
+  echo "      now: $want"
+  [[ $DRY == 1 ]] && return 0
+
+  sops_encrypt_new "$rel" "$new"
+  # -B: sops re-emits YAML and drops blank lines between entries. Everything
+  # that is not whitespace must still come back byte-identical.
+  if ! diff -qB <((cd "$ROOT" && sops -d "$rel")) "$new" >/dev/null; then
+    warn "$rel: re-encrypted file does not decrypt to what was written"
+    return 1
+  fi
+  return 0
+}
+
+cmd_sort() { # [relpath...] — default: every managed file with an example
+  local rc=0 rel
+  local -a targets=("$@")
+  [[ ${#targets[@]} -eq 0 ]] && targets=("${F_PATH[@]}")
+  [[ $DRY == 1 ]] && echo "sort (dry-run; decrypts, writes nothing):" || echo "sort:"
+  for rel in "${targets[@]}"; do sort_one "$rel" || rc=1; done
+  [[ $DRY == 1 ]] || echo "done. Next: git diff, ./tests/run.sh, commit."
+  return $rc
+}
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 main() {
@@ -643,6 +760,7 @@ main() {
     case $1 in
       --manifest) MANIFEST=$2; shift 2;;
       --root)     ROOT=$2; shift 2;;
+      --example)  SORT_EXAMPLE=$2; shift 2;;
       --dry-run)  DRY=1; shift;;
       --force)    FORCE=1; shift;;
       -h|--help)  usage;;
@@ -654,6 +772,7 @@ main() {
   case ${1:-} in
     apply)  cmd_apply;;
     rotate) [[ -n ${2:-} ]] || die "rotate needs an entry name"; cmd_rotate "$2";;
+    sort)   shift; cmd_sort "$@";;
     list)   cmd_list;;
     view)   [[ -n ${2:-} ]] || die "view needs a file"; cmd_view "$2";;
     search)

@@ -1,5 +1,5 @@
 # sops-gen manifest — every managed secret across all sops files.
-# Schema: README.md. Inventory source: SOPS-KEYGEN-PLAN.md §3/§7.
+# Schema: README.md. Inventory source: ServerNotes/designs/sops-keygen.md.
 #
 # Recipe units: hex:N = N hex CHARS (openssl rand -hex N/2);
 #               base64:N = N random BYTES, base64-encoded.
@@ -569,6 +569,10 @@ secrets:
     class: pull
     note: "external"
     targets: [{ file: stacks/books/.sops.env, key: AA_DONATOR_KEY }]
+  - name: books/AA_MIRROR_URLS
+    class: config
+    note: "comma-separated, no trailing slash; EMPTY is a complete state (shelfmark's direct-download source simply does not work)"
+    targets: [{ file: stacks/books/.sops.env, key: AA_MIRROR_URLS }]
 
   - name: dawarich/SECRET_KEY_BASE
     class: generate
@@ -697,6 +701,12 @@ secrets:
       - { file: stacks/media/.sops.env, key: QBIT_WEBUI_USER }
       - { file: stacks/media/.sops.env, key: VPN_SERVICE_PROVIDER }
       - { file: stacks/media/.sops.env, key: SERVER_COUNTRIES }
+      # wireguard | openvpn — decides which half of the gluetun block above
+      # the provider actually reads.
+      - { file: stacks/media/.sops.env, key: VPN_TYPE }
+      # on | off, and only on for a provider that supports it: when on,
+      # gluetun's UP_COMMAND pushes the forwarded port into qBittorrent.
+      - { file: stacks/media/.sops.env, key: VPN_PORT_FORWARDING }
 
   - name: notes-sync/JWT_SECRET_KEY
     class: generate
