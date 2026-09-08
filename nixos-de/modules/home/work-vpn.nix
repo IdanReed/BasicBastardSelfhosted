@@ -242,10 +242,18 @@ let
       # at FreeRDP intact and gets remapped to LeftWin+D (0x015b) on the way
       # out. Same trick, different local key, via WORK_RDP_WINKEY:
       #   menu (default) | ralt | none
+      #
+      # The scancodes are written in DECIMAL, not hex, and that is forced:
+      # xfreerdp's command-line check rejects any remap token longer than 10
+      # characters ("maximum is 999=999" in cmdline.c), so the hex spelling
+      # of an extended scancode, 0x015d=0x015b, fails to parse and the client
+      # never starts. The value parser itself is strtoul base 0, so decimal
+      # reaches the same 0x10000-entry remap table. 349=0x015d, 347=0x015b,
+      # 312=0x0138 (`xfreerdp /list:kbd-scancode` prints the table).
       winkey="''${WORK_RDP_WINKEY:-menu}"
       case "$winkey" in
-        menu) args+=( /kbd:remap:0x015d=0x015b ) ;; # Menu    -> LeftWin
-        ralt) args+=( /kbd:remap:0x0138=0x015b ) ;; # Right Alt -> LeftWin
+        menu) args+=( /kbd:remap:349=347 ) ;; # Menu (0x015d)      -> LeftWin (0x015b)
+        ralt) args+=( /kbd:remap:312=347 ) ;; # Right Alt (0x0138) -> LeftWin (0x015b)
         none) ;;
         *)
           echo "workrdp: WORK_RDP_WINKEY must be menu, ralt or none (got '$winkey')" >&2
