@@ -201,15 +201,48 @@ services:
         dest=/config/config/encoding.xml
         if [ -f "$$dest" ]; then
           echo "jellyfin-config-init: $$dest exists - jellyfin owns it, not touching"
-          exit 0
+        else
+          mkdir -p /config/config
+          # Tmpfile+rename: the -f guard is touch-once, so a crash mid-write
+          # would leave a partial XML that jellyfin logs and then ignores in
+          # favour of defaults.
+          cp /template/encoding.xml "$$dest.tmp"
+          mv "$$dest.tmp" "$$dest"
+          echo "jellyfin-config-init: CHANGE: seeded $$dest (vaapi)"
         fi
-        mkdir -p /config/config
-        # Tmpfile+rename: the -f guard is touch-once, so a crash mid-write
-        # would leave a partial XML that jellyfin logs and then ignores in
-        # favour of defaults.
-        cp /template/encoding.xml "$$dest.tmp"
-        mv "$$dest.tmp" "$$dest"
-        echo "jellyfin-config-init: CHANGE: seeded $$dest (vaapi)"
+
+        # SSO-Auth plugin, pinned by version AND sha256. Installed here,
+        # before jellyfin starts, because plugins load only at startup.
+        # Downloaded once (the dir persists in the config volume); a failed
+        # fetch or checksum is a WARN, never fatal — jellyfin must not depend
+        # on GitHub to start, it just comes up without the SSO button.
+        plugin="/config/plugins/SSO-Auth_$$SSO_VERSION"
+        if [ -f "$$plugin/SSO-Auth.dll" ]; then
+          echo "jellyfin-config-init: SSO-Auth $$SSO_VERSION already installed - no change"
+        else
+          tmp=$$(mktemp -d)
+          url="https://github.com/9p4/jellyfin-plugin-sso/releases/download/v$$SSO_VERSION/sso-authentication_$$SSO_VERSION.zip"
+          if wget -q -T 60 -O "$$tmp/sso.zip" "$$url" \
+             && echo "$$SSO_SHA256  $$tmp/sso.zip" | sha256sum -c -s - \
+             && mkdir "$$tmp/x" && unzip -q "$$tmp/sso.zip" -d "$$tmp/x"; then
+            mkdir -p /config/plugins
+            # A version bump leaves the old dir behind; jellyfin would load both.
+            rm -rf /config/plugins/SSO-Auth_*
+            mv "$$tmp/x" "$$plugin"
+            echo "jellyfin-config-init: CHANGE: installed SSO-Auth $$SSO_VERSION"
+          else
+            echo "jellyfin-config-init: WARN: SSO-Auth $$SSO_VERSION not installed (download or sha256 failed: $$url) - jellyfin starts without SSO"
+          fi
+          rm -rf "$$tmp"
+        fi
+        # Jellyfin rewrites meta.json in place; a store-copied (0444) seed
+        # would refuse that.
+        [ -d "$$plugin" ] && chmod -R u+w "$$plugin" || true
+    environment:
+      # Bump both together; the sha256 is the release's published checksum.
+      # 4.0.0.x targets Jellyfin 10.11 (meta.json targetAbi).
+      - SSO_VERSION=4.0.0.4
+      - SSO_SHA256=c09f16ba31059a434ddd7f811e4f9608d4b4c4514cc80a5bf1ca33bee61e1107
     volumes:
       - ./jellyfin-encoding.xml:/template/encoding.xml:ro
       - /mnt/fast/jellyfin/config:/config
@@ -223,6 +256,14 @@ services:
     image: python:3.13-alpine
     container_name: media_jellyfin_init
     entrypoint: ['/bin/sh', '/init/jellyfin-init.sh']
+    environment:
+      # SSO-Auth plugin provider, contract-checked against
+      # headscale-vps/authentik/blueprints/custom/jellyfin-oidc.yaml. The
+      # callback is <PUBLIC_URL>/sso/OID/redirect/<PROVIDER>.
+      - JELLYFIN_SSO_PROVIDER=authentik
+      - JELLYFIN_OIDC_ENDPOINT=https://auth.idanreed.com/application/o/jellyfin/
+      - JELLYFIN_OIDC_CLIENT_ID=jellyfin
+      - JELLYFIN_PUBLIC_URL=https://jellyfin.svc.idanreed.com
     depends_on:
       jellyfin:
         condition: service_healthy

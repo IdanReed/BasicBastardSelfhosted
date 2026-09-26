@@ -196,5 +196,104 @@ if not completed:
 else:
     log("startup wizard already completed - no change")
 
+# SSO-Auth plugin (installed by jellyfin-config-init) — the "authentik"
+# provider plus the login-page button. Best-effort like the install: a missing
+# plugin or an empty secret leaves jellyfin on local logins, never fails the
+# init (seerr-bootstrap gates on this exiting 0).
+PROVIDER = os.environ.get("JELLYFIN_SSO_PROVIDER", "authentik")
+OIDC_SECRET = os.environ.get("JELLYFIN_OIDC_CLIENT_SECRET", "")
+PUBLIC_URL = os.environ.get("JELLYFIN_PUBLIC_URL", "").rstrip("/")
+
+# Managed keys only; anything else in the stored config (CanonicalLinks — the
+# SSO-name -> user-id map) is carried over, because OID/Add REPLACES the whole
+# provider entry.
+SSO_CONFIG = {
+    "OidEndpoint": os.environ.get("JELLYFIN_OIDC_ENDPOINT", ""),
+    "OidClientId": os.environ.get("JELLYFIN_OIDC_CLIENT_ID", ""),
+    "OidSecret": OIDC_SECRET,
+    "Enabled": True,
+    # preferred_username is the Authentik username, so the `idan` login lands
+    # on the admin this script created (the plugin matches existing users by
+    # name). Changing it orphans every linked account.
+    "DefaultUsernameClaim": "preferred_username",
+    # Recomputed on every SSO login from the `groups` claim (profile scope):
+    # members of Admin are admins, headscale-users may log in at all.
+    "EnableAuthorization": True,
+    "RoleClaim": "groups",
+    "AdminRoles": ["Admin"],
+    "Roles": ["headscale-users"],
+    "EnableAllFolders": True,
+    "EnabledFolders": [],
+    "EnableFolderRoles": False,
+    "EnableLiveTv": False,
+    "EnableLiveTvManagement": False,
+    # The plugin prepends "openid profile"; null here renders empty scopes.
+    "OidScopes": ["email"],
+    # Behind Caddy jellyfin sees http; the callback must be https to match the
+    # blueprint's strict redirect_uri.
+    "SchemeOverride": "https",
+    # EMPTY on purpose: a DefaultProvider switches each SSO user's password
+    # provider, which would lock this script and seerr-bootstrap out of the
+    # admin's password login.
+    "DefaultProvider": "",
+}
+
+BUTTON = (
+    f'<form action="{PUBLIC_URL}/sso/OID/start/{PROVIDER}">'
+    '<button class="raised block emby-button button-submit">'
+    "Sign in with Authentik</button></form>"
+)
+BUTTON_CSS = (
+    "a.raised.emby-button { padding: 0.9em 1em; color: inherit !important; }\n"
+    ".disclaimerContainer { display: block; }"
+)
+
+
+def lower_keys(d):
+    return {str(k).lower(): v for k, v in (d or {}).items()}
+
+
+def same(a, b):
+    # The plugin round-trips "" and [] as null; treat all three as unset.
+    return (a if a not in ("", []) else None) == (b if b not in ("", []) else None)
+
+
+_, plugins = call("/Plugins", token=token)
+sso = next((p for p in (plugins or []) if p.get("Name") == "SSO Authentication"),
+           None)
+if not OIDC_SECRET:
+    log("JELLYFIN_OIDC_CLIENT_SECRET empty - leaving SSO unconfigured")
+elif sso is None or sso.get("Status") != "Active":
+    log(f"WARN: SSO-Auth plugin not active ({sso and sso.get('Status')!r}) - "
+        f"see jellyfin-config-init; leaving SSO unconfigured")
+else:
+    _, stored = call("/sso/OID/Get", token=token)
+    current = lower_keys((stored or {}).get(PROVIDER))
+    want = lower_keys(SSO_CONFIG)
+    if all(same(current.get(k), v) for k, v in want.items()):
+        log(f"SSO provider {PROVIDER!r} already configured - no change")
+    else:
+        body = dict(SSO_CONFIG)
+        if current.get("canonicallinks"):
+            body["CanonicalLinks"] = current["canonicallinks"]
+        try:
+            call(f"/sso/OID/Add/{PROVIDER}", "POST", body, token=token)
+        except urllib.error.HTTPError as e:
+            sys.exit(f"jellyfin-init: FATAL: SSO OID/Add HTTP {e.code}: "
+                     f"{detail(e)}")
+        change(f"SSO provider {PROVIDER!r} configured "
+               f"({SSO_CONFIG['OidEndpoint']})")
+
+    _, branding = call("/System/Configuration/branding", token=token)
+    branding = branding or {}
+    if (branding.get("LoginDisclaimer") == BUTTON
+            and branding.get("CustomCss") == BUTTON_CSS):
+        log("login button already set - no change")
+    else:
+        branding["LoginDisclaimer"] = BUTTON
+        branding["CustomCss"] = BUTTON_CSS
+        call("/System/Configuration/branding", "POST", branding, token=token)
+        change("login page: Sign in with Authentik button")
+
 log(f"done ({CHANGES} change(s))")
 PY

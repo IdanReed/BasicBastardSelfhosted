@@ -102,6 +102,7 @@ services:
       HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET:?oidc client secret required}
       IMMICH_OIDC_CLIENT_SECRET: ${IMMICH_OIDC_CLIENT_SECRET:?immich oidc client secret required}
       OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}
+      JELLYFIN_OIDC_CLIENT_SECRET: ${JELLYFIN_OIDC_CLIENT_SECRET:?jellyfin oidc client secret required}
       KAVITA_OIDC_CLIENT_SECRET: ${KAVITA_OIDC_CLIENT_SECRET:?kavita oidc client secret required}
       ABS_OIDC_CLIENT_SECRET: ${ABS_OIDC_CLIENT_SECRET:?audiobookshelf oidc client secret required}
       PAPERLESS_OIDC_CLIENT_SECRET: ${PAPERLESS_OIDC_CLIENT_SECRET:?paperless oidc client secret required}

@@ -694,6 +694,13 @@ secrets:
     recipe: hex:64
     note: "compose hands it to seerr as API_KEY (forces main.apiKey on every load); the seerr-init/bootstrap sidecars read SEERR_API_KEY"
     targets: [{ file: stacks/media/.sops.env, key: SEERR_API_KEY }]
+  - name: jellyfin/oidc
+    class: generate
+    recipe: hex:64
+    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up media. jellyfin-init writes it into the SSO-Auth plugin's authentik provider."
+    targets:
+      - { file: headscale-vps/secrets.sops.yaml, key: JELLYFIN_OIDC_CLIENT_SECRET }
+      - { file: stacks/media/.sops.env, key: JELLYFIN_OIDC_CLIENT_SECRET }
   - name: media/BAZARR_API_KEY
     class: generate
     recipe: hex:32

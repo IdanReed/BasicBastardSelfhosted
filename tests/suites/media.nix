@@ -122,6 +122,20 @@ let
     images."python_3_13-alpine" # media-init + the jellyfin/seerr/bazarr sidecars
   ];
 
+  # The SSO-Auth plugin jellyfin-config-init would download, pre-seeded into
+  # the config volume (the suite is offline) — same pin as SSO_VERSION /
+  # SSO_SHA256 in stacks/media/compose.yaml; the init sees it and skips the
+  # download, exactly its steady state on the host.
+  ssoPlugin = pkgs.runCommand "jellyfin-sso-auth-4.0.0.4" {
+    nativeBuildInputs = [ pkgs.unzip ];
+  } ''
+    mkdir $out
+    unzip -q ${pkgs.fetchurl {
+      url = "https://github.com/9p4/jellyfin-plugin-sso/releases/download/v4.0.0.4/sso-authentication_4.0.0.4.zip";
+      sha256 = "c09f16ba31059a434ddd7f811e4f9608d4b4c4514cc80a5bf1ca33bee61e1107";
+    }} -d $out
+  '';
+
   # Seeds /srv the way the real host gets it: stack-git-sync on the live
   # machine, a store copy here. Only the media stack is seeded — the other
   # stacks are the light suite's job; komodo is masked, so /srv/komodo is not
@@ -230,6 +244,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/jellyfin 0755 root root -"
           "d /mnt/fast/jellyfin/config 0755 root root -"
           "d /mnt/fast/jellyfin/cache 0755 root root -"
+          "d /mnt/fast/jellyfin/config/plugins 0755 root root -"
+          "C /mnt/fast/jellyfin/config/plugins/SSO-Auth_4.0.0.4 - - - - ${ssoPlugin}"
           "d /mnt/fast/radarr 0755 root root -"
           "d /mnt/fast/radarr/config 0755 root root -"
           "d /mnt/fast/sonarr 0755 root root -"
@@ -1261,6 +1277,41 @@ pkgs.testers.runNixOSTest {
         assert "CHANGE:" not in out, (
             f"a jellyfin-init run against a seeded server was not a no-op:\n{out}"
         )
+
+    with subtest("SSO-Auth is active, its authentik provider and login button set"):
+        # jellyfin-config-init found the pre-seeded plugin (the host
+        # downloads the same pin once); jellyfin-init configured it. Nothing
+        # here talks to Authentik — discovery happens at click time.
+        auth = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 -X POST "
+            "-H 'Content-Type: application/json' "
+            + "-H " + shlex.quote("Authorization: " + JF_AUTH) + " "
+            + "-d " + shlex.quote(json.dumps(
+                {"Username": JELLYFIN_USER, "Pw": JELLYFIN_PASS})) + " "
+            "http://127.0.0.1:10050/Users/AuthenticateByName"
+        ))
+        hdr = "-H " + shlex.quote(
+            'Authorization: ' + JF_AUTH + ', Token="' + auth["AccessToken"] + '"')
+        plugins = json.loads(services_vm.succeed(
+            f"curl -sf --max-time 30 {hdr} http://127.0.0.1:10050/Plugins"))
+        sso = [p for p in plugins if p.get("Name") == "SSO Authentication"]
+        assert sso and sso[0].get("Status") == "Active", (
+            f"SSO-Auth plugin not active: {plugins!r}")
+        oid = json.loads(services_vm.succeed(
+            f"curl -sf --max-time 30 {hdr} http://127.0.0.1:10050/sso/OID/Get"))
+        prov = {k.lower(): v for k, v in (oid.get("authentik") or {}).items()}
+        assert prov.get("oidclientid") == "jellyfin", f"sso config: {oid!r}"
+        assert prov.get("oidsecret") == "test_jellyfin_oidc_secret_not_secret", (
+            "the fixture's JELLYFIN_OIDC_CLIENT_SECRET did not reach the plugin")
+        assert prov.get("defaultusernameclaim") == "preferred_username", prov
+        assert prov.get("schemeoverride") == "https", prov
+        # Must stay empty, or SSO logins would switch the admin off password
+        # auth and lock jellyfin-init / seerr-bootstrap out.
+        assert not prov.get("defaultprovider"), prov
+        branding = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 http://127.0.0.1:10050/Branding/Configuration"))
+        assert ("https://jellyfin.svc.idanreed.com/sso/OID/start/authentik"
+                in (branding.get("LoginDisclaimer") or "")), branding
 
     with subtest("seerr is initialised, with the arrs and jellyfin linked"):
         # public.initialized is the first-run flag; /setup is the browser step

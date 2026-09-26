@@ -324,6 +324,54 @@ in
                     f"{oenv.get('OIDC_LOGOUT_URI')!r} does not reference the "
                     f"blueprint's application slug {oslug!r}")
 
+        # --- Jellyfin: jellyfin-init env <-> jellyfin-oidc.yaml -------------
+        # The SSO-Auth plugin builds its callback as
+        # <scheme>://<host>/sso/OID/redirect/<provider>; jellyfin-init pins
+        # the scheme to https and the provider name from this env.
+        with open("${(repo + "/stacks/media/compose.yaml")}") as f:
+            mcomp = yaml.safe_load(f)
+        jenv = {}
+        for e in ((mcomp.get("services") or {}).get("jellyfin-init") or {}).get(
+                "environment") or []:
+            k, _, v = str(e).partition("=")
+            jenv[k] = v
+
+        with open("${(repo + "/headscale-vps/authentik/blueprints/custom/jellyfin-oidc.yaml")}") as f:
+            jdoc = yaml.load(f, Loose)
+
+        jprov = next((e for e in jdoc["entries"]
+                      if e["model"].endswith("oauth2provider")), None)
+        if jprov is None:
+            errs.append("jellyfin: no oauth2provider entry in jellyfin-oidc.yaml")
+        else:
+            jattrs = jprov["attrs"]
+            if jattrs["client_id"] != jenv.get("JELLYFIN_OIDC_CLIENT_ID"):
+                errs.append(
+                    f"jellyfin: client_id mismatch: compose has "
+                    f"{jenv.get('JELLYFIN_OIDC_CLIENT_ID')!r}, blueprint has "
+                    f"{jattrs['client_id']!r}")
+            expected = (jenv.get("JELLYFIN_PUBLIC_URL", "").rstrip("/")
+                        + "/sso/OID/redirect/"
+                        + jenv.get("JELLYFIN_SSO_PROVIDER", ""))
+            juris = [u["url"] for u in jattrs["redirect_uris"]]
+            if expected not in juris:
+                errs.append(
+                    f"jellyfin: compose implies redirect_uri {expected!r}, "
+                    f"blueprint offers {juris!r} — strict matching, so this "
+                    f"is fatal at login")
+
+        japp = next((e for e in jdoc["entries"]
+                     if e["model"] == "authentik_core.application"), None)
+        if japp is None:
+            errs.append("jellyfin: no application entry in jellyfin-oidc.yaml")
+        else:
+            jslug = japp["identifiers"]["slug"]
+            if f"/application/o/{jslug}/" not in jenv.get("JELLYFIN_OIDC_ENDPOINT", ""):
+                errs.append(
+                    f"jellyfin: JELLYFIN_OIDC_ENDPOINT "
+                    f"{jenv.get('JELLYFIN_OIDC_ENDPOINT')!r} does not reference "
+                    f"the blueprint's application slug {jslug!r}")
+
         # --- !Env links: blueprint <-> worker env <-> sops template ---------
         # Loose resolves !Env to None, so the structural checks above are
         # blind to the one tag whose argument is a contract with two other
@@ -2041,8 +2089,6 @@ in
       # the em dash) is deliberate and still passes; run.sh deploy-check greps
       # for that marker and lists them for the operator.
       UNAUTHENTICATED_OK = {
-          "jellyfin.svc.idanreed.com":
-              "Jellyfin's own login. A 302 breaks every native client app.",
           "seerr.svc.idanreed.com":
               "session auth against Jellyfin accounts; its mobile and API "
               "clients authenticate themselves.",
