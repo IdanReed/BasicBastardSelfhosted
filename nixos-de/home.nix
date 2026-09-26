@@ -291,6 +291,7 @@
     zoxide
     lazygit
     gh # GitHub CLI — PRs, Actions runs, releases
+    playwright-mcp # Claude Code's browser for fleet UI setup; bundles its own Chromium
     sops
     age
     openssl # `openssl rand -base64 N` for secret material; installs the bin output
@@ -335,6 +336,26 @@
     settings.StartupWMClass = "sioyek";
   };
   xdg.mimeApps.defaultApplications."application/pdf" = [ "sioyek.desktop" ];
+
+  # Claude Code's browser for per-app UI setup in the server workspace. Headed
+  # with a persistent profile: the operator logs into Authentik (TOTP) once in
+  # that window and every *.svc app's OIDC login rides the session — the agent
+  # never holds the Authentik password. The workspace is not a repo, so the
+  # project .mcp.json and the app-setup skill are materialised from here.
+  home.file."local/projects/server/.mcp.json".text = builtins.toJSON {
+    mcpServers.browser = {
+      type = "stdio";
+      command = "playwright-mcp";
+      args = [
+        "--user-data-dir"
+        "${config.xdg.stateHome}/claude-browser/profile"
+        "--output-dir"
+        "${config.xdg.stateHome}/claude-browser/output"
+      ];
+    };
+  };
+  home.file."local/projects/server/.claude/skills/app-setup/SKILL.md".source =
+    ./claude/app-setup/SKILL.md;
 
   programs.obs-studio = {
     enable = true;

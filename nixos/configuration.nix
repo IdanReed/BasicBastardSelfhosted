@@ -613,6 +613,9 @@ in
       else
         git -C "$work" fetch --quiet origin "$branch" \
           || fail "fetch failed (is Forgejo's sshd reachable at $host:$port, deploy key registered?)"
+        # Refresh first: last tick's chmod left every file stat-dirty, and a
+        # stat-dirty file is rewritten by `reset --hard` even when unchanged.
+        git -C "$work" update-index -q --refresh || true
         git -C "$work" reset --quiet --hard "origin/$branch" \
           || fail "reset to origin/$branch failed"
       fi
@@ -641,11 +644,15 @@ in
       find "$work/stacks" -name '.sops.env' -exec chmod 0600 {} + \
         || fail "chmod 0600 on .sops.env failed"
 
-      # --checksum: unchanged .sops.env keeps its mtime, so no minutely
-      # re-decrypt. 🚨 NO --delete: the decrypted .env is absent from the
-      # checkout and would be nuked — and teardown is the deploy plane's job,
-      # not delivery's. Excludes are belt-and-suspenders.
-      rsync -rlptD --checksum \
+      # 🚨 --checksum AND NO -t: a delivered file's mtime moves only when its
+      # content does, which is the signal decrypt-sops-envs keys on. With -t,
+      # rsync still copies the SOURCE mtime onto skipped files — and the
+      # chmod pass above dirties the checkout's stat info every tick, so
+      # `reset --hard` rewrites every file with a fresh mtime and every .env
+      # was re-decrypted every minute. 🚨 NO --delete: the decrypted .env is
+      # absent from the checkout and would be nuked — and teardown is the
+      # deploy plane's job, not delivery's. Excludes are belt-and-suspenders.
+      rsync -rlpD --checksum \
         --exclude='.env' --exclude='komodo.env' \
         "$work/stacks/" /srv/stacks/ \
         || fail "rsync into /srv/stacks failed"

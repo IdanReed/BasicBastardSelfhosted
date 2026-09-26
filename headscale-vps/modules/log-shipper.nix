@@ -159,7 +159,7 @@ in
       // is what guarantees the directory has anything in it.
       path          = "/var/log/journal"
       relabel_rules = loki.relabel.journal.rules
-      forward_to    = [loki.write.default.receiver]
+      forward_to    = [loki.process.json_host.receiver]
 
       // Cold-start replay bound, same value as the services VM.
       max_age = "12h"
@@ -211,6 +211,21 @@ in
       rule {
         source_labels = ["__journal__hostname"]
         target_label  = "host"
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Rename a top-level JSON "host" key (see stacks/logging/config.alloy)
+    // -------------------------------------------------------------------------
+    // 🚨 THE REASON THIS STAGE EXISTS IS ON THIS HOST: Authentik's JSON request
+    // logs carry "host": "<vhost>", VictoriaLogs parses it into a second `host`
+    // stream tag beside host="headscale-vps", and panics on the duplicate.
+    loki.process "json_host" {
+      forward_to = [loki.write.default.receiver]
+
+      stage.replace {
+        expression = "\"(host)\"\\s*:"
+        replace    = "http_host"
       }
     }
 
