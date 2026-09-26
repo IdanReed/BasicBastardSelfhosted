@@ -154,10 +154,14 @@ pkgs.testers.runNixOSTest {
             print("--- " + cmd)
             print(services_vm.execute(cmd)[1])
 
-    def status(path, method="GET"):
+    # proxied=True sends what Caddy does; bare http meets FORCE_HTTPS first.
+    PROXY_HDRS = "-H 'Host: outline.svc.idanreed.com' -H 'X-Forwarded-Proto: https' "
+
+    def status(path, method="GET", proxied=False):
         return int(services_vm.succeed(
             "curl -s -o /dev/null -w '%{http_code}' --max-redirs 0 "
-            f"--max-time 30 -X {method} {BASE}{path}"
+            + (PROXY_HDRS if proxied else "")
+            + f"--max-time 30 -X {method} {BASE}{path}"
         ).strip())
 
     def sql(q):
@@ -264,7 +268,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("no session means 401, and plain http / means the 301 measured"):
         # No way in but OIDC — asserted, not assumed.
-        code = status("/api/auth.info", method="POST")
+        code = status("/api/auth.info", method="POST", proxied=True)
         assert code == 401, f"unauthenticated /api/auth.info answered {code}"
         # FORCE_HTTPS stays default: `/` 301s on plain http while /_health
         # (the healthcheck, already green above) answers regardless —
