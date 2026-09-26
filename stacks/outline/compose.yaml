@@ -75,8 +75,14 @@ services:
       # at start with "The server does not support SSL connections"
       # (measured). Container-to-container on one host — nothing to protect.
       - PGSSLMODE=disable
-      # DATABASE_URL arrives from .env (carries the password) and must agree
-      # with POSTGRES_PASSWORD below — the stacks/windmill shape.
+      # DATABASE_URL is BUILT from POSTGRES_PASSWORD, never read as its own
+      # secret: two copies of one password drift, and a drifted copy is a
+      # crash loop (FATAL password authentication failed). `environment:` wins
+      # over env_file, so the .sops.env DATABASE_URL key is inert.
+      # `${VAR:-}` interpolates from the project .env at parse time (the
+      # stacks/books shape); empty on a race with the first decrypt, which
+      # fails auth and restarts rather than aborting the deploy.
+      - DATABASE_URL=postgres://outline:${POSTGRES_PASSWORD:-}@outline_db:5432/outline
       #
       # ---- Redis ---------------------------------------------------------
       - REDIS_URL=redis://outline_redis:6379
@@ -145,8 +151,8 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=outline
       - POSTGRES_DB=outline
-      # POSTGRES_PASSWORD arrives from .env and must match the password inside
-      # DATABASE_URL.
+      # POSTGRES_PASSWORD arrives from .env; outline's DATABASE_URL is built
+      # from it.
     # Long form with required:false ON PURPOSE (finding #11): see outline.
     env_file:
       - path: .env
