@@ -1294,7 +1294,8 @@ pkgs.testers.runNixOSTest {
             'Authorization: ' + JF_AUTH + ', Token="' + auth["AccessToken"] + '"')
         plugins = json.loads(services_vm.succeed(
             f"curl -sf --max-time 30 {hdr} http://127.0.0.1:10050/Plugins"))
-        sso = [p for p in plugins if p.get("Name") == "SSO Authentication"]
+        sso = [p for p in plugins if str(p.get("Id", "")).replace("-", "").lower()
+               == "505ce9d1d91642fa86ca673ef241d7df"]
         assert sso and sso[0].get("Status") == "Active", (
             f"SSO-Auth plugin not active: {plugins!r}")
         oid = json.loads(services_vm.succeed(

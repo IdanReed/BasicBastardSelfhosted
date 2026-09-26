@@ -258,9 +258,12 @@ def same(a, b):
     return (a if a not in ("", []) else None) == (b if b not in ("", []) else None)
 
 
+# By GUID (meta.json), not name: the loaded plugin reports "SSO-Auth" while
+# its manifest says "SSO Authentication". /Plugins prints ids without dashes.
+SSO_GUID = "505ce9d1d91642fa86ca673ef241d7df"
 _, plugins = call("/Plugins", token=token)
-sso = next((p for p in (plugins or []) if p.get("Name") == "SSO Authentication"),
-           None)
+sso = next((p for p in (plugins or [])
+            if str(p.get("Id", "")).replace("-", "").lower() == SSO_GUID), None)
 if not OIDC_SECRET:
     log("JELLYFIN_OIDC_CLIENT_SECRET empty - leaving SSO unconfigured")
 elif sso is None or sso.get("Status") != "Active":
