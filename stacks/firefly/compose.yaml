@@ -81,6 +81,15 @@ services:
     env_file:
       - path: .env
         required: false
+    # Interval ONLY — test, timeout and retries still come from the image
+    # (docker merges an unset `test` from the image's HEALTHCHECK). The image
+    # probes every 5 s, and every probe reaches RemoteUserGuard without the
+    # forward-auth header and logs `production.ERROR: No user in header` —
+    # 12 false errors a minute. start_interval keeps first-boot readiness
+    # (the importer's service_healthy gate) as fast as before.
+    healthcheck:
+      interval: 60s
+      start_interval: 5s
     restart: unless-stopped
 
   # Database
@@ -144,6 +153,9 @@ services:
       # /health is a bare 200 with no upstream check — it will NOT detect a
       # broken connection to Firefly.
       - HEALTHCHECK_PATH=/health
+      # The image default is debug: ~8 lines per request, including one
+      # "Have NO valid secrets" per gatus probe while no token is minted.
+      - LOG_LEVEL=info
       # CAN_POST_AUTOIMPORT, CAN_POST_FILES and IMPORT_DIR_ALLOWLIST are
       # deliberately UNSET: they turn on unauthenticated POST endpoints gated
       # only by AUTO_IMPORT_SECRET, on a service that already has no auth.

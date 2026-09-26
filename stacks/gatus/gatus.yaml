@@ -394,16 +394,20 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # /health, not `/`: it is the real Laravel route running User::count(), so
+  # a dead database fails it, where `/` answers 302 to login regardless.
+  # Without the forward-auth header both log "No user in header" — /health
+  # logs it once, `/` three times.
   - name: "firefly (service)"
     group: "service"
-    url: "http://127.0.0.1:10303/"
+    url: "http://127.0.0.1:10303/health"
     interval: 1m
     headers:
       Host: "firefly.svc.idanreed.com"
     client:
       ignore-redirect: true
     conditions:
-      - "[STATUS] < 400"
+      - "[STATUS] == 200"
     alerts:
       - type: ntfy
 
@@ -1125,14 +1129,20 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # /api/health rather than `/`: with AUTH_METHOD=proxy every other route
+  # 401s "Proxy header not set" to anything that is not Caddy, gatus
+  # included. /api/health is shelfmark's own liveness route, answered
+  # without the header (measured: 200 {"status":"ok"}) — the same endpoint
+  # tests/suites/books.nix probes.
   - name: "shelfmark (service)"
     group: "service"
-    url: "http://127.0.0.1:10151/"
+    url: "http://127.0.0.1:10151/api/health"
     interval: 1m
     client:
       ignore-redirect: true
     conditions:
-      - "[STATUS] < 400"
+      - "[STATUS] == 200"
+      - "[BODY].status == ok"
     alerts:
       - type: ntfy
 
