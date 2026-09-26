@@ -254,10 +254,13 @@ pkgs.testers.runNixOSTest {
         assert all(m.get("Type") == "tmpfs" for m in (mounts or [])), (
             f"outline_redis has persistent mounts: {mounts!r}"
         )
+        # Two lines, key then value; the value is the EMPTY line, so no strip().
         save = services_vm.succeed(
             "docker exec outline_redis redis-cli config get save"
-        ).strip().splitlines()
-        assert save and save[-1] == "", f"redis save config: {save!r} (RDB not disabled)"
+        ).splitlines()
+        assert save[:1] == ["save"] and (save[1:2] or [""])[0] == "", (
+            f"redis save config: {save!r} (RDB not disabled)"
+        )
 
     with subtest("no session means 401, and plain http / means the 301 measured"):
         # No way in but OIDC — asserted, not assumed.
