@@ -260,6 +260,8 @@
     tree
     mpv
     vlc
+    haruna     # clean mpv frontend (Qt): playlist panel, loads the whole folder
+    celluloid  # clean mpv frontend (GTK): open a directory -> sidebar playlist
     losslesscut-bin
     gifski
     imv

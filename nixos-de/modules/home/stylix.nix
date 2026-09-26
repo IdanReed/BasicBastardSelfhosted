@@ -70,7 +70,10 @@
 
   qt = {
     enable = true;
-    platformTheme.name = "gtk";
+    # xdgdesktopportal (built into qtbase 5 and 6): Qt file dialogs go through the
+    # portal, which xdg-desktop-portal-gnome hands to Nautilus. "gtk" (= gtk2) has
+    # no portal support, so Qt apps (VLC, Haruna) fell back to Qt's own dialog.
+    platformTheme.name = "xdgdesktopportal";
     style.name = "adwaita-dark";
   };
 }
