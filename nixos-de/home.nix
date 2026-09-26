@@ -296,6 +296,7 @@
     openssl # `openssl rand -base64 N` for secret material; installs the bin output
     tree
     mpv
+    vlc
     losslesscut-bin
     gifski  # video -> gif, e.g. gifski -o out.gif --fps 15 --width 800 in.mp4
     imv
@@ -319,6 +320,21 @@
     terminal = false;
     categories = [ "Utility" ];
   };
+
+  # Shadows nixpkgs' sioyek.desktop so xdg-open (Zed, yazi, nautilus) gets the
+  # same xcb override as the `pdf` helper — the stock entry's Qt-Wayland window
+  # never maps on niri.
+  xdg.desktopEntries.sioyek = {
+    name = "Sioyek";
+    comment = "PDF viewer for reading research papers and technical books";
+    exec = "env QT_QPA_PLATFORM=xcb sioyek %f";
+    icon = "sioyek-icon-linux";
+    terminal = false;
+    categories = [ "Development" "Viewer" ];
+    mimeType = [ "application/pdf" ];
+    settings.StartupWMClass = "sioyek";
+  };
+  xdg.mimeApps.defaultApplications."application/pdf" = [ "sioyek.desktop" ];
 
   programs.obs-studio = {
     enable = true;
