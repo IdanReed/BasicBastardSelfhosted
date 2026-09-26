@@ -89,6 +89,9 @@ services:
     # (the importer's service_healthy gate) as fast as before.
     healthcheck:
       interval: 60s
+      # start_interval is rejected without start_period; 5 min covers a
+      # first-boot migration.
+      start_period: 300s
       start_interval: 5s
     restart: unless-stopped
 
