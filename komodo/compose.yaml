@@ -27,6 +27,13 @@ services:
       POSTGRES_USER: komodo
       POSTGRES_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
       POSTGRES_DB: postgres
+    # pg_cron runs DocumentDB's build_index_concurrently every 2 s, and with
+    # the defaults each run writes two LOG lines (to stderr, so level=error in
+    # VictoriaLogs) AND a cron.job_run_details row that nothing ever prunes —
+    # ~2M rows / 360 MB inside every pg_dumpall. Both GUCs are
+    # postmaster-context, hence flags rather than ALTER SYSTEM. The image's
+    # CMD is plain ["postgres"]; everything else stays in postgresql.conf.
+    command: ["postgres", "-c", "cron.log_run=off", "-c", "cron.log_statement=off"]
     # Core has NO DB retry — it exits FATAL and crash-loops until the cluster
     # accepts connections, so dependents gate on this. start_period covers
     # docdb's initdb.
@@ -54,6 +61,9 @@ services:
       # Keep the password hex (rand -hex) so no '$' / ':' / '@' / '/' breaks
       # this URL.
       FERRETDB_POSTGRESQL_URL: postgres://komodo:${KOMODO_DATABASE_PASSWORD}@postgres:5432/postgres
+      # Default info logs every wire command ("Command handled") — ~90 lines a
+      # minute of Core polling.
+      FERRETDB_LOG_LEVEL: warn
     networks:
       - komodo
     restart: unless-stopped
