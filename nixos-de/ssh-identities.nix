@@ -4,7 +4,9 @@
 # it, so adding identity = one entry here + one key in secrets.sops.yaml
 # (+ its pubkey in ssh-pubkeys.nix, all three copies).
 #
-# Shape: <name> = { host, user, port ? null, extraOptions ? {} }, where
+# Shape: <name> = { host, user, port ? null, aliases ? [], extraOptions ? {} },
+# where aliases are extra names added to the Host pattern (they still connect
+# to `host`), and
 # extraOptions are raw ssh_config directives by their upstream names
 # (e.g. { ProxyJump = "vps"; }) merged into the generated Host block.
 {
@@ -47,9 +49,17 @@
     host = "10.0.0.2";
     user = "root";
   };
+  # The services VM (the identity name predates the rename). Its tailnet
+  # names are aliases so `ssh services-vm` picks up the key; they still
+  # connect over the LAN address.
   arcane-vm = {
     host = "10.0.0.3";
     user = "idan";
+    aliases = [
+      "services-vm"
+      "services-vm.tailnet.idanreed.com"
+      "100.64.0.2"
+    ];
   };
   vps = {
     host = "headscale-vps.tailnet.idanreed.com";

@@ -26,7 +26,7 @@ in
     # silently skip the key for those.
     settings = lib.mapAttrs' (
       name: identity:
-      lib.nameValuePair "${name} ${identity.host}" (
+      lib.nameValuePair (lib.concatStringsSep " " ([ name ] ++ (identity.aliases or [ ]) ++ [ identity.host ])) (
         {
           HostName = identity.host;
           User = identity.user;
