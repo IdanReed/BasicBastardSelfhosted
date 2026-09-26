@@ -70,12 +70,14 @@ let
     # A working-tree copy can capture a developer's locally-decrypted plaintext
     # .env (gitignored on purpose) in the world-readable store.
     rm -f $out/komodo/.env
-    # The remote's stack, exactly as stack-git-sync would deliver it. No
-    # .sops.env by design: forgejo self-generates its keys in the volume.
+    # The remote's stack, exactly as stack-git-sync would deliver it, with the
+    # fixture in place of the real .sops.env (production recipient — it can
+    # never decrypt here, and a failed decrypt fails bootstrap-komodo).
     mkdir -p $out/stacks/forgejo
     cp -r ${../../stacks/forgejo}/. $out/stacks/forgejo/
     chmod -R u+w $out/stacks/forgejo
     rm -f $out/stacks/forgejo/.env
+    cp ${../fixtures/forgejo.sops.env} $out/stacks/forgejo/.sops.env
   '';
 
   # The project as it lives in git, under stacks/ so stack-git-sync (which

@@ -39,8 +39,9 @@ let
     chmod -R u+w $out/stacks/forgejo
     # A working-tree copy can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
-    # forgejo has no secrets by design, but keep the guard anyway.
     rm -f $out/stacks/forgejo/.env
+    # The fixture replaces the real .sops.env (production recipient).
+    cp ${../fixtures/forgejo.sops.env} $out/stacks/forgejo/.sops.env
   '';
 in
 pkgs.testers.runNixOSTest {
