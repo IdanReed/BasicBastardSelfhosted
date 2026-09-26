@@ -165,7 +165,7 @@ for email, _, is_super in roster:
     if is_super:
         continue  # superadmins already have access to every workspace
     code, body = request(
-        f"{WM}/api/w/{workspace}/users/add",
+        f"{WM}/api/w/{workspace}/workspaces/add_user",
         method="POST",
         body={"email": email, "is_admin": False, "operator": False},
         token=secret,

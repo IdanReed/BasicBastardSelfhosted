@@ -153,9 +153,10 @@ pkgs.testers.runNixOSTest {
     WM = "docker compose -f /srv/stacks/windmill/compose.yaml -p windmill"
     BASE = "http://127.0.0.1:10253"
 
-    # Fixture values from tests/fixtures/windmill.sops.env.
-    ADMIN = "wm-admin@test.invalid"
-    ADMIN_PASS = "test_windmill_admin_password_not_secret"
+    # Fixture values: idan is the roster's superadmin (windmill-init.sh),
+    # IDAN_INITIAL_PASSWORD in tests/fixtures/windmill.sops.env.
+    ADMIN = "idan@idanreed.com"
+    ADMIN_PASS = "test_idan_pw_not_secret"
 
     # What Windmill seeds and does NOT force you to change.
     DEFAULT_ADMIN = "admin@windmill.dev"
@@ -266,6 +267,9 @@ pkgs.testers.runNixOSTest {
         assert rc == "0", f"windmill_init exited {rc}"
         logs = services_vm.succeed("docker logs windmill_init 2>&1")
         assert "CHANGE: created superadmin" in logs, logs
+        # Membership is best-effort in the init (WARN, never fatal), so only
+        # the suite can notice a wrong endpoint.
+        assert "WARN: could not add" not in logs, logs
         assert "done" in logs, logs
 
     with subtest("the real superadmin authenticates"):
