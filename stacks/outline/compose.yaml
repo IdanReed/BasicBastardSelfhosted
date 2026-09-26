@@ -129,6 +129,10 @@ services:
     # --save "" disables RDB snapshots; otherwise redis writes dump.rdb into the
     # writable layer on a timer, a slow leak with no reader.
     command: ['redis-server', '--save', '', '--appendonly', 'no', '--loglevel', 'warning']
+    # The image declares VOLUME /data; without a mount there docker attaches a
+    # fresh anonymous volume on every recreate and orphans the last one.
+    tmpfs:
+      - /data
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli ping | grep -q PONG']
       interval: 10s

@@ -249,7 +249,11 @@ pkgs.testers.runNixOSTest {
         mounts = json.loads(services_vm.succeed(
             "docker inspect outline_redis --format '{{json .Mounts}}'"
         ))
-        assert not mounts, f"outline_redis has mounts: {mounts!r}"
+        # tmpfs only: the image's VOLUME /data is covered by a tmpfs so no
+        # anonymous volume is created.
+        assert all(m.get("Type") == "tmpfs" for m in (mounts or [])), (
+            f"outline_redis has persistent mounts: {mounts!r}"
+        )
         save = services_vm.succeed(
             "docker exec outline_redis redis-cli config get save"
         ).strip().splitlines()
