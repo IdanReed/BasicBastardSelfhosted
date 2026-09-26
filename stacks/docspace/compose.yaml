@@ -55,6 +55,19 @@ services:
       - DOCUMENT_CONTAINER_NAME=docspace_ds
       - DOCUMENT_SERVER_URL_EXTERNAL=http://docspace_ds:80
       - DOCUMENT_SERVER_JWT_HEADER=AuthorizationJwt
+      # 🚨 ASC.Identity.minified (the Java OAuth/API-key service under the
+      # same supervisord) reads NEITHER MYSQL_* NOR CONNECTION_STRING: its
+      # Spring datasource is JDBC_*, defaulting to localhost:3306 as dev/dev,
+      # and the entrypoint never maps them. Unset, it exits 1 about 15 s after
+      # every spawn, forever — and its logback has no appender for the
+      # `minified` profile, so the cause is logged nowhere. The password is
+      # interpolated from the same .env at parse time; the parameters mirror
+      # the .NET string's `SSL Mode=none;AllowPublicKeyRetrieval=true`.
+      - JDBC_URL=docspace_db:3306
+      - JDBC_DATABASE=docspace
+      - JDBC_USER_NAME=docspace
+      - JDBC_PASSWORD=${MYSQL_PASSWORD:-}
+      - JDBC_PARAMETERS=allowPublicKeyRetrieval=true&useSSL=false
       # APP_CORE_MACHINEKEY, SPRING_APPLICATION_ENCRYPTION_SECRET,
       # DOCUMENT_SERVER_JWT_SECRET, MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD all
       # arrive from .env.
