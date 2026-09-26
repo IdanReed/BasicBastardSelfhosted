@@ -246,7 +246,7 @@
     composeRef = "ghcr.io/idanreed/caddy-cloudflare:2.11.2-cf0.2.4";
     imageName = "caddy";
     imageDigest = "sha256:25cdc846626b62d05f6b633b9b40c2c9f6ef89b515dc76133cefd920f7dbe562";
-    hash = "sha256-HPpccoluk3umDZjfwDBUlceC2UebrefbbttUtP3QuR8=";
+    hash = "sha256-nIgrfIPDKG/u2rdxaAO6By8dtsNawCsxea9nz+sJ4t4=";
     finalImageName = "ghcr.io/idanreed/caddy-cloudflare";
     finalImageTag = "2.11.2-cf0.2.4";
   };
