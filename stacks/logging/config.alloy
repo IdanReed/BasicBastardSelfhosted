@@ -113,14 +113,14 @@ loki.relabel "journal" {
 //
 // Every selector is {level="error"}: a stdout line is never touched, and
 // once one stage has re-labelled a line the later ones cannot see it.
-// Regexes are RE2 in LogQL backtick strings, so each `\\` below is one
-// regex backslash.
+// Regexes are RE2 in double-quoted LogQL strings (this parser rejects
+// backtick strings), so each `\\\\` below is one regex backslash.
 loki.process "level" {
 	forward_to = [loki.process.json_host.receiver]
 
 	// Postgres, every container: "... UTC [48] LOG:  cron job 2 starting"
 	stage.match {
-		selector = "{level=\"error\"} |~ `\\] (LOG|NOTICE|INFO|DEBUG[1-5]?|DETAIL|HINT|STATEMENT|CONTEXT):  `"
+		selector = "{level=\"error\"} |~ \"\\\\] (LOG|NOTICE|INFO|DEBUG[1-5]?|DETAIL|HINT|STATEMENT|CONTEXT):  \""
 
 		stage.static_labels {
 			values = {level = "info"}
@@ -134,7 +134,7 @@ loki.process "level" {
 	// meilisearch INFO), and bare access-log lines ending in a 1xx-3xx
 	// status (wger's runserver).
 	stage.match {
-		selector = "{level=\"error\"} |~ `\\t(INFO|DEBUG)\\t|\\] [a-z]+\\.(DEBUG|INFO|NOTICE): |level=(info|debug|trace)\\b|\"level\":\"(info|debug|trace)\"|^\\d{4}/\\d\\d/\\d\\d \\d\\d:\\d\\d:\\d\\d (INFO|DEBUG) |\\[(INFO|DEBUG)\\]|\\x1b\\[\\d+m ?(INF|DBG|INFO|DEBUG)\\x1b\\[0m|\" [1-3]\\d\\d \\d+$`"
+		selector = "{level=\"error\"} |~ \"\\\\t(INFO|DEBUG)\\\\t|\\\\] [a-z]+\\\\.(DEBUG|INFO|NOTICE): |level=(info|debug|trace)\\\\b|\\\"level\\\":\\\"(info|debug|trace)\\\"|^\\\\d{4}/\\\\d\\\\d/\\\\d\\\\d \\\\d\\\\d:\\\\d\\\\d:\\\\d\\\\d (INFO|DEBUG) |\\\\[(INFO|DEBUG)\\\\]|\\\\x1b\\\\[\\\\d+m ?(INF|DBG|INFO|DEBUG)\\\\x1b\\\\[0m|\\\" [1-3]\\\\d\\\\d \\\\d+$\""
 
 		stage.static_labels {
 			values = {level = "info"}
@@ -143,7 +143,7 @@ loki.process "level" {
 
 	// The same formats at WARN.
 	stage.match {
-		selector = "{level=\"error\"} |~ `\\] WARNING:  |\\tWARN\\t|\\] [a-z]+\\.WARNING: |level=warn(ing)?\\b|\"level\":\"warn(ing)?\"|^\\d{4}/\\d\\d/\\d\\d \\d\\d:\\d\\d:\\d\\d WARN |\\[WARNING\\]|\\x1b\\[\\d+m ?(WRN|WARN)\\x1b\\[0m`"
+		selector = "{level=\"error\"} |~ \"\\\\] WARNING:  |\\\\tWARN\\\\t|\\\\] [a-z]+\\\\.WARNING: |level=warn(ing)?\\\\b|\\\"level\\\":\\\"warn(ing)?\\\"|^\\\\d{4}/\\\\d\\\\d/\\\\d\\\\d \\\\d\\\\d:\\\\d\\\\d:\\\\d\\\\d WARN |\\\\[WARNING\\\\]|\\\\x1b\\\\[\\\\d+m ?(WRN|WARN)\\\\x1b\\\\[0m\""
 
 		stage.static_labels {
 			values = {level = "warn"}
