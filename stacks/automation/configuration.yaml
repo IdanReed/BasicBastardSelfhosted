@@ -7,9 +7,29 @@
 # headless Caddy is trusted for five minutes and then permanently is not.
 # ha-config-init pre-seeds .storage/http instead.
 
-# frontend, mobile_app, history, logbook and the discovery integrations
-# (inert on a bridge network — devices are added by IP or arrive over MQTT).
-default_config:
+# default_config spelled out MINUS `dhcp`. dhcp is not inert on a bridge: its
+# network watcher reverse-resolves every address of the container's /24
+# (10.89.250.0/24) once an hour, and each PTR walks docker's resolver ->
+# MagicDNS -> the LAN router, which cannot answer RFC1918 reverse zones — ~515
+# timeouts per burst, the only DNS failures on the host. Devices are added by
+# IP or arrive over MQTT, so nothing here needs DHCP discovery.
+# Keep in sync with default_config's manifest when bumping HA.
+assist_pipeline:
+cloud:
+conversation:
+energy:
+go2rtc:
+history:
+homeassistant_alerts:
+logbook:
+media_source:
+mobile_app:
+my:
+ssdp:
+stream:
+sun:
+webhook:
+zeroconf:
 
 homeassistant:
   # Still YAML-authoritative: not part of the http config that moved into
