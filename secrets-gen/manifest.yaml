@@ -692,10 +692,8 @@ secrets:
   - name: media/SEERR_API_KEY
     class: generate
     recipe: hex:64
-    note: "delivered TWICE under two names: seerr reads API_KEY (forces main.apiKey on every load), the seerr-init/bootstrap sidecars read SEERR_API_KEY"
-    targets:
-      - { file: stacks/media/.sops.env, key: SEERR_API_KEY }
-      - { file: stacks/media/.sops.env, key: API_KEY }
+    note: "compose hands it to seerr as API_KEY (forces main.apiKey on every load); the seerr-init/bootstrap sidecars read SEERR_API_KEY"
+    targets: [{ file: stacks/media/.sops.env, key: SEERR_API_KEY }]
   - name: media/BAZARR_API_KEY
     class: generate
     recipe: hex:32

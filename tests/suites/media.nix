@@ -1274,8 +1274,8 @@ pkgs.testers.runNixOSTest {
         )
         # The seeded settings.json reached seerr rather than being ignored:
         # radarr came from the file, the jellyfin block from the auth call.
-        # The API key resolving at all also proves seerr read API_KEY from
-        # .env (it forces main.apiKey on every load).
+        # The API key resolving at all also proves compose handed seerr
+        # API_KEY from SEERR_API_KEY (it forces main.apiKey on every load).
         radarr = json.loads(services_vm.succeed(
             "curl -sf --max-time 30 "
             + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
