@@ -43,7 +43,7 @@ offers no non-browser / non-DB path to it.
 |---|---|---|---|
 | **Beszel** | Set `USER_EMAIL` before the **first** boot | Seeding is declarative, but the PocketBase migration that reads the pair fires only against a virgin `data.db` | Yes — in `data.db` on `/mnt/fast/beszel` |
 | **Beszel** | Log in twice (Authentik forward-auth, then Beszel's own login) | OIDC config lives in `users.oauth2` inside `data.db`; no env vars — browser wizard only | n/a (every login) |
-| **Jellyfin** | (Deferred) install `jellyfin-plugin-sso` for OIDC | No native OIDC; auth plugins are a runtime install | Yes (if ever done) |
+| **Jellyfin** | *(not a chore — a caveat)* the SSO plugin is a one-time pinned download | No native OIDC; the plugin is a runtime install. `jellyfin-config-init` fetches it by version + sha256, `jellyfin-init` configures it | Yes — `/mnt/fast/jellyfin/config/plugins` |
 | **Profilarr** | Bind Dictionarry profiles to the arr instances (one UI action) | API-key auth is scoped to `/api/` paths and `/api/v1/arr` is GET-only; the binding is a session-cookie form action | Yes — `/mnt/fast/profilarr/config` |
 | **Grafana** | Install `victoriametrics-logs-datasource` by hand on the host | The image that bakes it in is built but never published, so the compose still pins stock Grafana | Yes — `/mnt/fast/grafana/plugins` |
 | **Actual** | `docker exec actual node scripts/enable-openid.js`, then log in immediately | OIDC activation is a DB flip with no env equivalent; first OIDC login = permanent owner | Yes — Actual DB |
@@ -108,19 +108,24 @@ hub is healthy. What is not declarative is the *timing*.
   host network), so forward auth is purely a browser concern.
 - **(d) Survives recreate:** n/a — it is every login.
 
-### Jellyfin — no native OIDC
+### Jellyfin — SSO through a plugin
 
-The setup wizard, the first admin and the libraries are all driven from the repo
-now: `jellyfin-config-init` seeds `config/encoding.xml` before the first start,
-and `jellyfin-init` calls `/Startup/*` and `/Library/VirtualFolders`, both of
-which are anonymous while the wizard is open. Only the SSO plugin remains.
+The setup wizard, the first admin and the libraries are all driven from the repo:
+`jellyfin-config-init` seeds `config/encoding.xml` before the first start, and
+`jellyfin-init` calls `/Startup/*` and `/Library/VirtualFolders`, both of which
+are anonymous while the wizard is open. Authentik SSO is declarative too:
 
-- **(b) The step:** install `jellyfin-plugin-sso` — deferred, not done.
-- **(c) Why not declarative:** Jellyfin has no native OIDC, and the plugin is a
-  *runtime* install (three DLLs plus a configuration XML). Deliberately parked: a
-  runtime download the fleet's no-download rule disallows, and one more moving
-  part on a media server.
-- **(d) Survives recreate:** yes, if ever done — `/mnt/fast/jellyfin/config`.
+- **(b) What runs:** `jellyfin-config-init` installs `9p4/jellyfin-plugin-sso`
+  (`SSO_VERSION` + `SSO_SHA256` in compose) before Jellyfin starts;
+  `jellyfin-init` then writes the `authentik` provider (`/sso/OID/Add`, keeping
+  the plugin's user links) and the login-page button (branding).
+- **(c) Why it is a caveat:** it is the fleet's one runtime download. It happens
+  once, is checksum-pinned, and a failure is a WARN — Jellyfin then starts
+  without the button. Bump version and sha256 together.
+- **(d) Survives recreate:** yes — `/mnt/fast/jellyfin/config/plugins`.
+- SSO usernames are Authentik's `preferred_username`, so the `idan` login is the
+  `JELLYFIN_ADMIN_USER` admin. Admin rights follow the Authentik `Admin` group,
+  logins need `headscale-users`. Native apps keep password or Quick Connect.
 
 ⚠ **Do not run `sopsgen rotate user/idan` after Jellyfin's first deploy.**
 `JELLYFIN_ADMIN_PASSWORD` is a twin of idan's password, and Jellyfin has no
