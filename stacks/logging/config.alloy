@@ -62,7 +62,7 @@
 loki.source.journal "host" {
 	path          = "/var/log/journal"
 	relabel_rules = loki.relabel.journal.rules
-	forward_to    = [loki.write.default.receiver]
+	forward_to    = [loki.process.json_host.receiver]
 
 	// How far back to read on a cold start (no positions file yet). Matches
 	// the order of magnitude of the host's journal buffer; longer would mean
@@ -149,6 +149,26 @@ loki.relabel "journal" {
 	rule {
 		source_labels = ["__journal__hostname"]
 		target_label  = "host"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Rename a top-level JSON "host" key before it reaches VictoriaLogs
+// ---------------------------------------------------------------------------
+// 🚨 VictoriaLogs parses a JSON log line into fields, so a line carrying its
+// own top-level "host" key (Authentik's request logs: host="windmill.svc...")
+// adds a SECOND `host` next to the label above. With `host` in
+// `_stream_fields` that is a duplicate stream tag, and VictoriaLogs panics on
+// it (FATAL: cannot unmarshal StreamTags ... "host" less or equal than
+// "host") instead of rejecting the push — a crash loop for the whole store.
+// The line's own key becomes http_host; the label stays the only `host`.
+// Mirrored in headscale-vps/modules/log-shipper.nix.
+loki.process "json_host" {
+	forward_to = [loki.write.default.receiver]
+
+	stage.replace {
+		expression = "\"(host)\"\\s*:"
+		replace    = "http_host"
 	}
 }
 
