@@ -242,7 +242,7 @@ pkgs.testers.runNixOSTest {
         # Exactly the command nixos/backup-prepare.sh runs; container_name
         # and POSTGRES_USER are both load-bearing.
         services_vm.succeed(
-            "docker exec outline_db pg_dumpall -U outline | grep -q 'CREATE ROLE'"
+            "docker exec outline_db pg_dumpall -U outline | grep 'CREATE ROLE' >/dev/null"
         )
 
     with subtest("redis is stateless: no mounts, RDB snapshots off"):
