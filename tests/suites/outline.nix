@@ -194,7 +194,10 @@ pkgs.testers.runNixOSTest {
         # blueprint's redirect_uri agree. Parsed properly rather than
         # substring-matched so percent-encoding case cannot flake it.
         redirect = services_vm.succeed(
+            # As Caddy delivers it: FORCE_HTTPS answers a bare-http request
+            # with a redirect to https://<host> before any OIDC code runs.
             "curl -s -o /dev/null -w '%{redirect_url}' --max-redirs 0 "
+            "-H 'Host: outline.svc.idanreed.com' -H 'X-Forwarded-Proto: https' "
             f"--max-time 30 {BASE}/auth/oidc"
         ).strip()
         assert redirect, "/auth/oidc did not redirect at all"
