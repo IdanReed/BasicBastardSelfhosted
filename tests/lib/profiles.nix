@@ -66,7 +66,11 @@
     let
       tarballs = map (
         img:
-        pkgs.dockerTools.pullImage {
+        # unsafeDiscardReferences: an image whose layers happen to contain a
+        # /nix/store-shaped string (onlyoffice/docspace) is otherwise refused
+        # as a fixed-output derivation "not allowed to refer to other store
+        # paths". The output is content-addressed by `hash` either way.
+        (pkgs.dockerTools.pullImage {
           inherit (img)
             imageName
             imageDigest
@@ -74,7 +78,11 @@
             finalImageName
             finalImageTag
             ;
-        }
+        }).overrideAttrs
+          (_: {
+            __structuredAttrs = true;
+            unsafeDiscardReferences.out = true;
+          })
       ) images;
     in
     { config, ... }:
