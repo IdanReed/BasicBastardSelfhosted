@@ -188,7 +188,20 @@ pkgs.testers.runNixOSTest {
             # --wait gates on the compose healthcheck, which curls
             # /api/healthz inside the container — so a green here already
             # proves the health endpoint, DB init and key generation.
-            services_vm.succeed(f"{COMPOSE} up -d --wait --wait-timeout 300")
+            # Scoped to `forgejo`: --wait fails on ANY exited container, and
+            # forgejo_init is a one-shot that exits by design.
+            services_vm.succeed(f"{COMPOSE} up -d --wait --wait-timeout 300 forgejo")
+            services_vm.succeed(f"{COMPOSE} up -d")
+            services_vm.wait_until_succeeds(
+                "docker inspect --format '{{.State.Status}}' forgejo_init | grep -qx exited",
+                timeout=120,
+            )
+            rc = services_vm.succeed(
+                "docker inspect --format '{{.State.ExitCode}}' forgejo_init"
+            ).strip()
+            # Offline, Authentik discovery is unreachable: the init must WARN
+            # and exit 0, never fail the deploy.
+            assert rc == "0", f"forgejo_init exited {rc}"
         except Exception:
             diag("compose up")
             raise

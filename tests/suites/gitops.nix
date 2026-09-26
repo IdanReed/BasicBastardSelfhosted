@@ -318,7 +318,8 @@ pkgs.testers.runNixOSTest {
         try:
             services_vm.succeed(
                 "docker compose -f /srv/stacks/forgejo/compose.yaml "
-                "-p forgejo up -d --wait --wait-timeout 300"
+                # Scoped: --wait fails on the one-shot forgejo_init exiting.
+                "-p forgejo up -d --wait --wait-timeout 300 forgejo"
             )
         except Exception:
             diag("forgejo up")
