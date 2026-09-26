@@ -234,6 +234,11 @@ hub is healthy. What is not declarative is the *timing*.
   declarative is the **window**: registration must be open for that bootstrap to
   work, so closing it is necessarily a second, later act.
 - **(d) Survives recreate:** yes — it is a compose value once changed.
+- 🚨 **Not safe to flip yet:** `tracking-init.sh` POSTs `/api/v1/users/register`
+  on every run and tolerates only "already registered", so with registration
+  closed it exits FATAL on every redeploy. Guard it first (skip the register
+  call when `/api/v1/status` reports registration closed, keep the login
+  proof), then flip.
 
 ### Firefly III — mint a Personal Access Token by hand
 
