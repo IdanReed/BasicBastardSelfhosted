@@ -214,9 +214,9 @@ pkgs.testers.runNixOSTest {
     with subtest("migrations really ran and the team is UNOWNED (zero users)"):
         n_migrations = int(sql("select count(*) from \\\"SequelizeMeta\\\""))
         assert n_migrations > 0, "SequelizeMeta is empty — migrations did not run"
-        for t in ["users", "teams", "documents", "authentication_providers"]:
-            reg = sql(f"select to_regclass('public.{t}')")
-            assert reg == t, f"table {t} missing (to_regclass: {reg!r})"
+        for table in ["users", "teams", "documents", "authentication_providers"]:
+            reg = sql(f"select to_regclass('public.{table}')")
+            assert reg == table, f"table {table} missing (to_regclass: {reg!r})"
         # 🚨 First login creates the team and owns it (compose header). Zero
         # users is the pinned pre-first-login state; if a seed path ever
         # appears upstream this catches it.
