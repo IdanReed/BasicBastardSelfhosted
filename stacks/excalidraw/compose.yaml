@@ -129,9 +129,8 @@ services:
       # Authentik provider plus, in .env, OIDC_ISSUER_URL / OIDC_CLIENT_ID /
       # OIDC_CLIENT_SECRET / OIDC_CALLBACK_URL (.../api/v2/auth/callback) — and
       # a key-set change, so the .sops.env drift lint applies.
-      # ⚠ Verify discovery against a dead issuer BEFORE enabling: wealthfolio
-      # taught this fleet that discovery can be boot-fatal, and AstraDraw's has
-      # not been measured.
+      # Discovery is boot-safe (measured: the suite with an unreachable issuer
+      # comes up healthy offline), unlike wealthfolio's.
       #
       # Prisma CLI phone-home during the boot-time migrate — off.
       - CHECKPOINT_DISABLE=1
