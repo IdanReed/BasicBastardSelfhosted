@@ -172,6 +172,12 @@ in
         // suite asserts the token string does not appear in it.
         bearer_token_file = "${tokenFile}"
 
+        // Which JSON key holds the message — authentik's is `event`. Must
+        // match stacks/logging/config.alloy's sink headers.
+        headers = {
+          "VL-Msg-Field" = "msg,message,event",
+        }
+
         // A 429 is backpressure, and the one moment this pipeline earns its
         // keep is the moment it is asked to carry a burst.
         retry_on_http_429 = true

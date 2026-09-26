@@ -29,7 +29,7 @@
 loki.source.journal "host" {
 	path          = "/var/log/journal"
 	relabel_rules = loki.relabel.journal.rules
-	forward_to    = [loki.process.json_host.receiver]
+	forward_to    = [loki.process.level.receiver]
 
 	// How far back to read on a cold start; longer means a fresh Alloy
 	// replays days of history into the store on first deploy.
@@ -86,6 +86,8 @@ loki.relabel "journal" {
 
 	// Syslog priority as a word. Deliberately NOT in `_stream_fields`: it
 	// is per-entry, not a log source, and VictoriaLogs colours `level`.
+	// ⚠ For container output this is the FD, not the severity — see
+	// loki.process "level" below, which corrects it.
 	rule {
 		source_labels = ["__journal_priority_keyword"]
 		target_label  = "level"
@@ -95,6 +97,57 @@ loki.relabel "journal" {
 	rule {
 		source_labels = ["__journal__hostname"]
 		target_label  = "host"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Level: trust the line's own severity over the FD it arrived on
+// ---------------------------------------------------------------------------
+// Docker's journald driver writes stdout at PRIORITY 6 and stderr at 3, so
+// for container output `level` says which FD a line used, not how bad it
+// is. Postgres, FerretDB, Laravel, Go's log/slog, zerolog, tracing and
+// Python logging all put routine INFO on stderr — pg_cron chatter alone is
+// ~7,000 "errors" an hour. Each match re-labels an stderr line that NAMES
+// its own non-error severity; a line that names none, or names
+// ERROR/FATAL/PANIC, keeps level=error.
+//
+// Every selector is {level="error"}: a stdout line is never touched, and
+// once one stage has re-labelled a line the later ones cannot see it.
+// Regexes are RE2 in LogQL backtick strings, so each `\\` below is one
+// regex backslash.
+loki.process "level" {
+	forward_to = [loki.process.json_host.receiver]
+
+	// Postgres, every container: "... UTC [48] LOG:  cron job 2 starting"
+	stage.match {
+		selector = "{level=\"error\"} |~ `\\] (LOG|NOTICE|INFO|DEBUG[1-5]?|DETAIL|HINT|STATEMENT|CONTEXT):  `"
+
+		stage.static_labels {
+			values = {level = "info"}
+		}
+	}
+
+	// The rest of the fleet's stderr-INFO formats, one alternative each:
+	// zap/FerretDB (TAB INFO TAB), Laravel (production.DEBUG:), logfmt and
+	// logrus (level=info), JSON ("level":"info"), Go log/slog text (ntfy),
+	// Python/paperless ([INFO]), ANSI console loggers (homebox INF,
+	// meilisearch INFO), and bare access-log lines ending in a 1xx-3xx
+	// status (wger's runserver).
+	stage.match {
+		selector = "{level=\"error\"} |~ `\\t(INFO|DEBUG)\\t|\\] [a-z]+\\.(DEBUG|INFO|NOTICE): |level=(info|debug|trace)\\b|\"level\":\"(info|debug|trace)\"|^\\d{4}/\\d\\d/\\d\\d \\d\\d:\\d\\d:\\d\\d (INFO|DEBUG) |\\[(INFO|DEBUG)\\]|\\x1b\\[\\d+m ?(INF|DBG|INFO|DEBUG)\\x1b\\[0m|\" [1-3]\\d\\d \\d+$`"
+
+		stage.static_labels {
+			values = {level = "info"}
+		}
+	}
+
+	// The same formats at WARN.
+	stage.match {
+		selector = "{level=\"error\"} |~ `\\] WARNING:  |\\tWARN\\t|\\] [a-z]+\\.WARNING: |level=warn(ing)?\\b|\"level\":\"warn(ing)?\"|^\\d{4}/\\d\\d/\\d\\d \\d\\d:\\d\\d:\\d\\d WARN |\\[WARNING\\]|\\x1b\\[\\d+m ?(WRN|WARN)\\x1b\\[0m`"
+
+		stage.static_labels {
+			values = {level = "warn"}
+		}
 	}
 }
 
@@ -132,6 +185,19 @@ loki.write "default" {
 		// promoting an unbounded field silently becomes a cardinality bomb.
 		// Pinning it makes stream membership a two-file decision.
 		url = "http://victorialogs:9428/insert/loki/api/v1/push?_stream_fields=job,unit,container,host"
+
+		// VictoriaLogs parses a JSON line into fields and then looks for the
+		// message in `_msg` — which no app writes — so every JSON line
+		// (caddy, outline, authentik) lands as "missing _msg field". This is
+		// the fleet's list of message keys, first non-empty wins: caddy/zap
+		// `msg`, outline/winston `message`, authentik/structlog `event`. It
+		// only renames fields PARSED FROM JSON; a plain-text line is its own
+		// _msg either way. A header, not a query arg, so the sink url stays
+		// the string the vlogs-ingest-contract lint compares. Mirrored in
+		// headscale-vps/modules/log-shipper.nix.
+		headers = {
+			"VL-Msg-Field" = "msg,message,event",
+		}
 
 		// A 429 from the sink is backpressure, not a reason to drop the
 		// lines: delayed incident logs beat missing ones.
