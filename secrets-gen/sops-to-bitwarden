@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# sops-to-bitwarden — every sops secret as a Bitwarden login item, for import.
+#
+# Output is Bitwarden's own unencrypted JSON export format; import it with
+# Tools -> Import data -> File format "Bitwarden (json)".
+#
+# One item per key, named <name>.<KEY>: <name> is the stack/host directory for
+# .sops.env and secrets.sops.yaml (stacks/media/.sops.env -> media,
+# nixos-de/secrets.sops.yaml -> nixos-de) and the file stem otherwise
+# (nixos/renovate.sops.env -> renovate, secrets-recovery.sops.yaml ->
+# secrets-recovery). Nested YAML keys join with `/`, matching their sops-nix
+# secret names (nixos-de.ssh/github). The password is the decrypted value with
+# the dotenv single-quote convention (ledger #30) stripped. Multi-line values
+# (ssh keys, PEM) are copied into the notes too: Bitwarden's password field is
+# single-line and drops the newlines if the item is ever edited. Empty values
+# and changeme placeholders are skipped and listed on stderr.
+#
+#   secrets-gen/sops-to-bitwarden                        # every tracked sops file outside tests/
+#   secrets-gen/sops-to-bitwarden -o FILE [SOPS_FILE…]   # -o - writes to stdout
+#
+# Key custody as sopsedit: SOPS_AGE_KEY / SOPS_AGE_KEY_FILE from the caller,
+# else one `sudo cat` of the host key. The output is PLAINTEXT: it defaults to
+# tmpfs ($XDG_RUNTIME_DIR), is written 0600, is refused inside the repo, and
+# should be `shred -u`'d once imported.
+set -euo pipefail
+umask 077
+
+die() { echo "sops-to-bitwarden: $*" >&2; exit 1; }
+usage() { sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
+for t in sops jq git realpath; do command -v "$t" >/dev/null || die "missing tool: $t"; done
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+OUT=${XDG_RUNTIME_DIR:-/tmp}/bitwarden-import.json
+
+while (($#)); do
+  case $1 in
+    -o) [[ -n ${2:-} ]] || die "-o needs a path"; OUT=$2; shift 2;;
+    -h|--help) usage;;
+    -*) die "unknown flag: $1";;
+    *) break;;
+  esac
+done
+
+FILES=()
+if (($#)); then
+  FILES=("$@")
+else
+  while IFS= read -r f; do
+    [[ ${f##*/} == .sops.yaml ]] && continue  # sops config, not a secret file
+    FILES+=("$ROOT/$f")
+  done < <(git -C "$ROOT" ls-files -- '*.sops.env' '*.sops.yaml' ':!:tests/')
+fi
+((${#FILES[@]})) || die "no sops files found"
+
+if [[ $OUT != - && $(realpath -m -- "$OUT") == "$ROOT"/* ]]; then
+  die "refusing to write plaintext secrets inside the repo: $OUT"
+fi
+
+if [[ -z ${SOPS_AGE_KEY:-} && -z ${SOPS_AGE_KEY_FILE:-} ]]; then
+  SOPS_AGE_KEY=$(sudo cat /var/lib/sops-nix/sops_age_key.txt) || die "cannot read the age key"
+  export SOPS_AGE_KEY
+fi
+
+name_of() { # sops file path -> item-name prefix
+  local base=${1##*/} dir
+  case $base in
+    .sops.env|secrets.sops.yaml) dir=${1%/*}; echo "${dir##*/}";;
+    *) base=${base%.sops.env}; echo "${base%.sops.yaml}";;
+  esac
+}
+
+# One {name, src, value} per scalar, straight from sops through pipes — the
+# plaintext never lands in a tmpfile (a here-string would spill to one).
+entries=$(
+  for f in "${FILES[@]}"; do
+    [[ -f $f ]] || die "no such file: $f"
+    rel=$(realpath --relative-to="$ROOT" -- "$f")
+    dotenv=false; [[ $f == *.env ]] && dotenv=true
+    sops -d --output-type json "$f" | jq -c \
+      --arg name "$(name_of "$rel")" --arg src "$rel" --argjson dotenv "$dotenv" --arg q "'" '
+      paths(scalars) as $p
+      | (getpath($p) | if . == null then "" else tostring end) as $v
+      | { name: ($name + "." + ($p | map(tostring) | join("/"))),
+          src: $src,
+          value: (if $dotenv and ($v | length >= 2 and startswith($q) and endswith($q))
+                  then $v[1:-1] else $v end) }' \
+      || die "$rel: cannot decrypt (wrong or missing age key?)"
+  done
+)
+
+dupes=$(printf '%s\n' "$entries" | jq -rs 'group_by(.name) | map(select(length > 1) | .[0].name) | .[]')
+[[ -z $dupes ]] || die "two files map to the same item name: $(tr '\n' ' ' <<<"$dupes")"
+
+skipped=$(printf '%s\n' "$entries" | jq -r 'select(.value == "" or (.value | startswith("changeme"))) | "  \(.name)"')
+[[ -z $skipped ]] || printf 'skipped (empty or changeme placeholder):\n%s\n' "$skipped" >&2
+
+# Bitwarden rejects the whole import if one password encrypts past 5000 chars
+# (= 3695 plaintext bytes); such a value goes to the notes alone.
+json=$(printf '%s\n' "$entries" | jq -s '
+  map(select(.value != "" and (.value | startswith("changeme") | not)))
+  | { encrypted: false,
+      folders: [],
+      items: map(
+        (.value | utf8bytelength > 3695) as $big
+        | { type: 1,
+            name: .name,
+            notes: ("source: \(.src)" + (if $big or (.value | contains("\n")) then "\n\n\(.value)" else "" end)),
+            favorite: false,
+            reprompt: 0,
+            fields: [],
+            login: { uris: [], username: null, password: (if $big then null else .value end), totp: null },
+            collectionIds: null,
+            folderId: null,
+            organizationId: null })}')
+
+big=$(printf '%s\n' "$json" | jq -r '.items[] | select(.login.password == null) | .name' | tr '\n' ' ')
+[[ -z $big ]] || echo "too long for a Bitwarden password, stored in notes only: $big" >&2
+
+if [[ $OUT == - ]]; then
+  printf '%s\n' "$json"
+else
+  printf '%s\n' "$json" > "$OUT.tmp.$$" && mv "$OUT.tmp.$$" "$OUT"
+  n=$(jq '.items | length' "$OUT")
+  echo "wrote $n items from ${#FILES[@]} files to $OUT" >&2
+  echo "import: Bitwarden -> Tools -> Import data -> \"Bitwarden (json)\"; then: shred -u $OUT" >&2
+fi
