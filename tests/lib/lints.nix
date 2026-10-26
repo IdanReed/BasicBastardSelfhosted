@@ -2159,12 +2159,24 @@ in
     in
     mkLint "komodo-sync-coverage" ''
       ${py} - <<'PY'
-      import json, sys, tomllib
+      import json, re, sys, tomllib
 
       stacks = json.loads(${builtins.toJSON (builtins.toJSON stackInfo)})
-      declared = tomllib.load(open("${repo + "/komodo/sync/stacks.toml"}", "rb")).get("stack", [])
-      fleet = tomllib.load(open("${repo + "/komodo/sync/fleet.toml"}", "rb"))
+      import os
+      syncdir = "${repo + "/komodo/sync"}"
+      declared = tomllib.load(open(f"{syncdir}/stacks.toml", "rb")).get("stack", [])
+      fleet = tomllib.load(open("${repo + "/komodo/fleet.toml"}", "rb"))
       errs = []
+
+      # komodo/sync/ is what `apply` syncs: stacks only. The sync and `apply`
+      # live in komodo/fleet.toml — declared in the synced files, a running
+      # `apply` would have to update itself, which Komodo refuses.
+      for f in sorted(os.listdir(syncdir)):
+          if f.endswith(".toml"):
+              other = set(tomllib.load(open(f"{syncdir}/{f}", "rb"))) - {"stack"}
+              if other:
+                  errs.append(f"komodo/sync/{f} declares {sorted(other)} — only [[stack]] "
+                              f"blocks belong in the synced files (komodo/fleet.toml holds the rest)")
 
       by_name = {}
       for b in declared:
@@ -2186,6 +2198,9 @@ in
           b = by_name.get(n)
           if b is None:
               continue
+          if b.get("tags") != ["gitops"]:
+              errs.append(f"{n}: tags must be [\"gitops\"] — the fleet sync's match_tags; "
+                          f"an untagged block is silently ignored")
           if b.get("deploy"):
               errs.append(f"{n}: `deploy = true` — the sync's deploy reads a stale "
                           f"cache (upstream #1120); the apply procedure deploys")
@@ -2218,17 +2233,31 @@ in
               errs.append(f"{n}: has no secrets, so no additional_env_files/config_files")
 
       syncs = {s["name"]: s for s in fleet.get("resource_sync", [])}
-      f = syncs.get("fleet", {}).get("config", {})
-      if f.get("resource_path") != ["komodo/sync"] or f.get("webhook_enabled", True):
-          errs.append("fleet.toml: the `fleet` sync must read resource_path "
-                      "['komodo/sync'] and keep its own webhook off")
       procs = {p["name"]: p for p in fleet.get("procedure", [])}
+      if list(syncs) != ["fleet"] or list(procs) != ["apply"] or set(fleet) != {"resource_sync", "procedure"}:
+          errs.append("komodo/fleet.toml must declare exactly the `fleet` sync and the `apply` "
+                      "procedure (komodo-sync-bootstrap applies those two, nothing else)")
+      f = syncs.get("fleet", {}).get("config", {})
+      if (f.get("resource_path") != ["komodo/sync"] or f.get("webhook_enabled", True)
+              or f.get("match_tags") != ["gitops"] or f.get("delete") is not True):
+          errs.append("fleet.toml: the `fleet` sync must read resource_path ['komodo/sync'] "
+                      "with match_tags ['gitops'] and delete = true, and keep its own webhook off")
       ap = procs.get("apply", {}).get("config", {})
       stages = [[e["execution"]["type"] for e in st.get("executions", [])]
                 for st in ap.get("stage", [])]
       if not ap.get("webhook_enabled") or stages != [["RunSync"], ["BatchDeployStackIfChanged"]]:
           errs.append(f"fleet.toml: `apply` must be webhook-enabled and run RunSync "
                       f"then BatchDeployStackIfChanged (got {stages})")
+
+      # Every stack targets the Server Core creates on first start, which is
+      # also the name Periphery connects as.
+      compose = open("${repo + "/komodo/compose.yaml"}").read()
+      first = re.search(r"KOMODO_FIRST_SERVER_NAME:\s*(\S+)", compose)
+      peer = re.search(r"PERIPHERY_CONNECT_AS:\s*(\S+)", compose)
+      first, peer = (first and first.group(1)), (peer and peer.group(1))
+      if first != fixed["server"] or peer != fixed["server"]:
+          errs.append(f"komodo/compose.yaml: KOMODO_FIRST_SERVER_NAME ({first!r}) and "
+                      f"PERIPHERY_CONNECT_AS ({peer!r}) must both be {fixed['server']!r}")
 
       if errs:
           print("komodo sync problems:", file=sys.stderr)

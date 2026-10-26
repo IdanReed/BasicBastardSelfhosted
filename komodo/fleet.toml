@@ -1,11 +1,17 @@
-# Komodo resources that are not stacks. komodo-sync-bootstrap (the host) creates
-# the `fleet` sync once and runs it; from then on Komodo applies this directory
-# itself, on every push, through the `apply` procedure below.
+# The deploy plane's own two Komodo resources: the `fleet` sync and the `apply`
+# procedure. komodo-sync-bootstrap (nixos/modules/deploy-plane.nix) creates them
+# from this file and re-applies it whenever it changes — like every host-level
+# change, it goes live with `nrs-vm`.
+#
+# Deliberately NOT in komodo/sync/: `apply` runs the sync, so a sync that
+# declared either resource would be updating one that is busy running — Komodo
+# refuses, the sync fails, and a failed sync fails `apply` before it deploys.
 #
 # The deploy path, end to end:
 #   git push -> Forgejo push webhook (one, set once in the repo settings) ->
 #   POST http://komodo:9120/listener/github/procedure/apply/main ->
-#   stage 1: RunSync fleet — register / update / remove stacks per stacks.toml
+#   stage 1: RunSync fleet — register / update / remove stacks per
+#            komodo/sync/stacks.toml
 #   stage 2: BatchDeployStackIfChanged "*" — each stack re-reads its files at the
 #            new commit and compares them with what it last deployed; a changed
 #            stack (compose, its secrets.sops.json, or the shared secrets it
@@ -15,7 +21,7 @@
 
 [[resource_sync]]
 name = "fleet"
-description = "Every Komodo resource, from komodo/sync/ in the repo."
+description = "Every stack, from komodo/sync/ in the repo."
 [resource_sync.config]
 git_provider = "forgejo:3000"
 git_https = false
@@ -23,6 +29,11 @@ git_account = "komodo"
 repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 resource_path = ["komodo/sync"]
+# The sync manages ONLY resources tagged `gitops` — every block in
+# komodo/sync/ carries the tag (komodo-sync-coverage). Everything else is out of
+# its reach: Core's own `Local` server and system procedures, this sync, `apply`,
+# anything made in the UI.
+match_tags = ["gitops"]
 # A stack removed from stacks.toml is destroyed (compose down) and deleted —
 # the komodo-sync-coverage lint keeps every stacks/<name> declared.
 delete = true
@@ -32,17 +43,20 @@ webhook_enabled = false
 [[procedure]]
 name = "apply"
 description = "Push to main -> register stacks, then deploy the ones that changed."
+[procedure.config]
 # Signed with KOMODO_WEBHOOK_SECRET (Forgejo sends X-Hub-Signature-256).
-config.webhook_enabled = true
+webhook_enabled = true
 
 [[procedure.config.stage]]
 name = "register"
+enabled = true
 executions = [
-  { execution.type = "RunSync", execution.params.sync = "fleet" },
+  { execution.type = "RunSync", execution.params.sync = "fleet", enabled = true },
 ]
 
 [[procedure.config.stage]]
 name = "deploy"
+enabled = true
 executions = [
-  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*" },
+  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*", enabled = true },
 ]

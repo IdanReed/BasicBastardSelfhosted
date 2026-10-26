@@ -66,20 +66,20 @@ the nixpkgs the hosts are built with.
 |------|-----------|
 | `default.nix` | Entry point. `checks`, `stackChecks`, `driver`, and the evaluated production configs under `config`. |
 | `run.sh` | The only thing you invoke. Its header is the target list. |
-| `lib/sources.nix` | Pins nixpkgs + sops-nix + disko from the host's own lock file. |
+| `lib/sources.nix` | Pins nixpkgs + sops-nix + disko from the repo-root `flake.lock`. |
 | `lib/images.nix` | **Generated.** Content-addressed pins for every image. |
 | `lib/profiles.nix` | The test-only overrides, each with the reason it exists. |
 | `lib/lints.nix` | Pure contract checks, run against production values. |
 | `lib/mk-stack-suite.nix` | The generic per-stack suite, derived from a compose file. |
 | `suites/*.nix` | The hand-written VM suites. |
-| `fixtures/*.sops.env` | Fake secrets, encrypted to the throwaway key below. |
+| `fixtures/` | Fake secrets, encrypted to the throwaway key below: `stacks/<name>.sops.json` per stack, `shared.sops.json`, and the hosts' `*.sops.yaml`. |
 | `keys/test-age-key.txt` | **Throwaway age key, committed on purpose.** |
 | `update-images.sh` | Regenerates `lib/images.nix`. |
 
 ### The committed key is not a leak
 
 Three throwaway keypairs are committed: `keys/test-age-key.txt` (decrypts only
-`tests/fixtures/*.sops.{env,yaml}`, all values like
+`tests/fixtures/` (`*.sops.{json,yaml}`), all values like
 `test_pg_password_not_secret`), `keys/test-ssh-key` (SSH login assertions),
 and `keys/test-storagebox-key` (the in-VM SFTP endpoint). It is committed so the harness runs
 without the production key. `.sops.yaml` gives fixtures their own creation rule,
@@ -108,7 +108,7 @@ you have touched what it covers, and let `heavy-nightly.yml` do the rest.
 | `paperless` | *heavy.* The document pipeline for real: five containers, compose-network DNS, `env_file` threading end to end (the fixture admin must mint an API token), and a document travelling HTTP → redis → celery → postgres and back out of the API. | OCR of real scans — the fixture document is plain text. Caddy routing (the `services` suite owns that). |
 | `backrest` | *heavy.* `config-init` seeding `config.json` once from the decrypted `.env`, including a `$`-laden restic password surviving the whole pipeline; the re-run leaving it byte-identical; the storage-box-key gate both ways; the shared `homelab` network reaching ntfy by name. | A real Hetzner Storage Box — an in-VM SFTP endpoint stands in — and it never restores from what it snapshots. |
 | `rotation` | *heavy.* The `restartUnits` contract executed: a NixOS specialisation switch rotates `HEADSCALE_OIDC_CLIENT_SECRET`, and headscale and authentik both really restart with the new value visible inside the worker container. | Whether Authentik re-reads the blueprint's `!Env` into the provider row — asserted by no suite. |
-| `gitops` | The deploy path offline: Komodo and Forgejo from their production host units, `komodo-sync-bootstrap` registering the `fleet` sync from the real `fleet.toml`, Forgejo's signed push webhook running `apply`, and Periphery deploying from its own clone a container that sees a secret existing only encrypted. A compose change and a ciphertext change (after a simulated switch) each redeploy; unsigned listener calls are refused. | A real Forgejo upgrade, or Komodo deploying the real stacks (the stack suites own those). |
+| `gitops` | The deploy path offline: Komodo and Forgejo from their production host units, `komodo-sync-bootstrap` creating the `fleet` sync and `apply` from the real `komodo/fleet.toml` (and converging on a re-run), the tag-scoped sync leaving Core's own resources alone and a second sync changing nothing, Forgejo's signed push webhook running `apply`, and Periphery deploying from its own clone a container that sees a secret existing only encrypted. A compose change and a ciphertext change (after a simulated switch) each redeploy; unsigned listener calls are refused. | A real Forgejo upgrade, or Komodo deploying the real stacks (the stack suites own those). |
 | `forwardauth` | *heavy.* The bentopdf pilot across the host seam: the blueprint applying to the **embedded** outpost, `import protected` redirecting an unauthenticated tailnet request, and a spoofed `X-Forwarded-Host` rejected. | No authenticated request ever passes THROUGH the gate to the app — that needs a browser. |
 | `forgejo` | *heavy.* `healthz`, the headless admin seed, an API-created repo, a credentialed push and clone-back, and loopback-only web + ssh publishing. | Nothing about the public SSH host key rotation or a real remote clone. |
 | `media` | *heavy.* The gluetun kill-switch offline by construction (wireguard points at TEST-NET-1, so qbittorrent's netns has zero egress), the x265 guard proven against an injected TRaSH custom format, and the EICAR → quarantine chain. | Profilarr's DB link, gluetun turning healthy, and hardware transcode all need egress or a GPU. |
@@ -147,7 +147,7 @@ you have touched what it covers, and let `heavy-nightly.yml` do the rest.
 | `deploy-check` | The same plus `sops-declared` (deploy-readiness) and the operator to-do scan. A RED here means the live host is not ready, not that the code is broken. |
 | `stack <name>` | `lib/mk-stack-suite.nix` — the generic per-stack suite, below. |
 | `disko` | `headscale-vps/disk-config.nix` through disko's own `makeDiskoTest`: formats, mounts, legacy-boots. |
-| `proxmox` | Build gate for `nixos#proxmox-image` (nixos-generators + cloud-init + guest agent). A flake build, not a `tests` attr. |
+| `proxmox` | Build gate for `.#proxmox-image` (nixos-generators + cloud-init + guest agent). A flake build, not a `tests` attr. |
 | `proxmox-boot` | Boots that image with a NoCloud seed and asserts the cloud-init age key and first-boot sops decryption through the guest agent. |
 | `all` | Everything above, plus `diskoTest` and `proxmoxBoot`, which live outside `checks` and would otherwise never run. |
 | `debug <suite>` | The interactive driver — see **Debugging a failure**. |
@@ -155,8 +155,8 @@ you have touched what it covers, and let `heavy-nightly.yml` do the rest.
 ### Generic stack suites
 
 `./tests/run.sh stack <name>` boots the real services VM with ONLY that stack
-seeded and asserts, generically: the fixture `.sops.env` really decrypts to a
-0600 `.env`, `docker compose up --wait` converges, every published port answers
+seeded and asserts, generically: the fixture renders through sops-nix to a
+root-only 0400 `/run/stack-env/<name>.env`, `docker compose up --wait` converges, every published port answers
 on loopback and is refused from another node, and every container is running
 (healthchecked ones healthy). Images, ports and `/mnt` volume roots are all
 derived from the compose file, so adding a stack costs one list entry in

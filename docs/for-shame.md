@@ -69,7 +69,7 @@ offers no non-browser / non-DB path to it.
 
 ### Forgejo → Komodo — the bot, its read token, and the push webhook
 
-- **(a) Service:** Komodo's deploy path (`komodo/sync/`, `nixos/modules/deploy-plane.nix`).
+- **(a) Service:** Komodo's deploy path (`komodo/`, `nixos/modules/deploy-plane.nix`).
 - **(b) The steps,** once per fresh Forgejo:
   1. Forgejo → Site Administration → Create user `komodo` (no admin). On
      `idan/BasicBastardSelfhosted` → Settings → Collaborators, add `komodo`
@@ -77,8 +77,8 @@ offers no non-browser / non-DB path to it.
   2. As `komodo` → Settings → Applications → token with scope
      `read:repository` only. `sopsedit komodo/secrets.sops.json`, set
      `KOMODO_GIT_TOKEN`, commit, `nrs-vm` — the switch restarts Core with the
-     token and `komodo-sync-bootstrap` registers the `fleet` sync, which
-     creates the `apply` procedure and every stack.
+     token and `komodo-sync-bootstrap` creates the `fleet` sync and the
+     `apply` procedure from `komodo/fleet.toml`, then registers every stack.
   3. Repo → Settings → Webhooks → Add → Forgejo: URL
      `http://komodo:9120/listener/github/procedure/apply/main`, content type
      `application/json`, secret = `KOMODO_WEBHOOK_SECRET` from

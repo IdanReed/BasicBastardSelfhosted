@@ -10,9 +10,10 @@
 #   (b) the operator's bring-up, simulated: a `komodo` bot gets a read token
 #       (production: sopsedit komodo/secrets.sops.json + switch; here the
 #       published Core config is rewritten and komodo-core-reload runs).
-#   (c) a repo carrying the REAL komodo/sync/fleet.toml is pushed, and the
-#       production komodo-sync-bootstrap registers + runs the `fleet` sync —
-#       which creates the `apply` procedure and the test stack.
+#   (c) the repo is pushed, and the production komodo-sync-bootstrap creates
+#       the `fleet` sync and the `apply` procedure from the REAL
+#       komodo/fleet.toml, then runs the sync — which registers the test stack
+#       (tagged `gitops`) and leaves everything untagged alone.
 #   (d) Forgejo's push webhook (signed with KOMODO_WEBHOOK_SECRET, sent as
 #       X-Hub-Signature-256) reaches `apply`; Periphery clones from
 #       forgejo:3000 over the homelab network and deploys. The container sees a
@@ -57,6 +58,7 @@ let
   testStacksToml = pkgs.writeText "stacks.toml" ''
     [[stack]]
     name = "ntfy"
+    tags = ["gitops"]
     [stack.config]
     server = "Local"
     git_provider = "forgejo:3000"
@@ -86,11 +88,11 @@ let
           restart: unless-stopped
     '';
 
-  # The repo as pushed: the REAL fleet.toml, the test stacks.toml, and the
-  # stack (compose + the ciphertext its env is rendered from).
+  # The repo as pushed: the test stacks.toml and the stack (compose + the
+  # ciphertext its env is rendered from). komodo/fleet.toml is not needed in
+  # it: the host applies that file from the store.
   repoV1 = pkgs.runCommand "gitops-repo-v1" { } ''
     mkdir -p $out/komodo/sync $out/stacks/ntfy
-    cp ${../../komodo/sync/fleet.toml} $out/komodo/sync/fleet.toml
     cp ${testStacksToml} $out/komodo/sync/stacks.toml
     cp ${compose "one"} $out/stacks/ntfy/compose.yaml
     cp ${../fixtures/stacks/ntfy.sops.json} $out/stacks/ntfy/secrets.sops.json
@@ -331,7 +333,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # (c) the repo is pushed and the fleet sync registers everything
     # -----------------------------------------------------------------------
-    with subtest("komodo-sync-bootstrap registers fleet, which creates apply + the stack"):
+    with subtest("komodo-sync-bootstrap creates fleet + apply and registers the stack"):
         services_vm.succeed(
             "mkdir -p /root/work && cd /root/work && git init -q -b main . && "
             "git config user.email test@test && git config user.name test && "
@@ -347,13 +349,33 @@ pkgs.testers.runNixOSTest {
         kapi("/read/GetProcedure", {"procedure": "apply"})
         stack = json.loads(kapi("/read/GetStack", {"stack": "ntfy"}))
         assert stack["config"]["repo"] == f"{GUSER}/{GREPO}", stack["config"]
+        # delete = true never reached past the `gitops` tag: what Core made for
+        # itself on first start is untouched...
+        kapi("/read/GetServer", {"server": "Local"})
+        kapi("/read/GetBuilder", {"builder": "Local"})
+        for name in ("Backup Core Database", "Global Auto Update", "Rotate Server Keys"):
+            kapi("/read/GetProcedure", {"procedure": name})
+        # ...and a second sync over the same commit has nothing to change —
+        # above all not the sync or `apply`, which a running `apply` could
+        # never update.
+        upd = json.loads(kapi("/execute/RunSync", {"sync": "fleet"}))
+        uid = upd["_id"]["$oid"]
+        services_vm.wait_until_succeeds(
+            f"curl -sf --max-time 15 -X POST {KAPI}/read/GetUpdate "
+            f"-H 'authorization: {klogin()}' -H 'Content-Type: application/json' "
+            f"-d '{json.dumps({'id': uid})}' | jq -e '.status == \"Complete\"'",
+            timeout=120)
+        logs = json.loads(kapi("/read/GetUpdate", {"id": uid}))["logs"]
+        assert any("nothing to do" in log.get("stdout", "") for log in logs), logs
         # Registration is not deployment: nothing runs until apply does.
         services_vm.fail("docker inspect gitops_test")
-        # And a second run is a no-op once apply exists.
+        # And a re-run (every boot, every switch that changes fleet.toml)
+        # converges instead of failing on what already exists.
         services_vm.succeed("systemctl restart komodo-sync-bootstrap.service")
         out = services_vm.succeed(
-            "journalctl -u komodo-sync-bootstrap --no-pager | tail -3")
-        assert "apply procedure exists" in out, out
+            "journalctl -u komodo-sync-bootstrap --no-pager -o cat | tail -6")
+        assert "Procedure apply matches komodo/fleet.toml" in out, out
+        assert "every stack in komodo/sync/ is registered" in out, out
 
     # -----------------------------------------------------------------------
     # (d) Forgejo's push webhook deploys

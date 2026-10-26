@@ -1,12 +1,13 @@
 # The deploy plane: Komodo, run from the flake.
 #
 # Stacks are Komodo git stacks: a push to Forgejo fires ONE webhook at Komodo's
-# `apply` procedure (komodo/sync/fleet.toml), which runs the `fleet` Resource
-# Sync (registers / updates / removes stacks from komodo/sync/*.toml) and then
+# `apply` procedure (komodo/fleet.toml), which runs the `fleet` Resource Sync
+# (registers / updates / removes stacks from komodo/sync/*.toml) and then
 # BatchDeployStackIfChanged — each stack re-reads its files at the new commit,
 # compares them with what it last deployed, and only a changed stack is
 # redeployed. Periphery clones and runs compose; the host only renders the
-# envs (stack-env.nix). Nothing on the host signals Komodo.
+# envs (stack-env.nix) and owns the sync and `apply` themselves. Nothing on the
+# host signals Komodo.
 #
 # Komodo itself (and Forgejo, forgejo.nix) cannot be deployed by Komodo, so
 # both run from the store on `nixos-rebuild switch`.
@@ -18,7 +19,18 @@ let
   # The whole directory, so compose resolves anything relative to the file.
   compose = "${docker} compose -f ${../../komodo}/compose.yaml -p komodo --env-file /run/stack-env/komodo.env";
   api = "http://127.0.0.1:10000";
-  forgejoRepo = "idan/BasicBastardSelfhosted";
+  # The sync and `apply`, as the API takes them. The TOML is Komodo's export
+  # form, which spells a procedure's `stages` as `stage`.
+  fleet = builtins.fromTOML (builtins.readFile ../../komodo/fleet.toml);
+  sync = builtins.head fleet.resource_sync;
+  apply = builtins.head fleet.procedure;
+  fleetJson = pkgs.writeText "komodo-fleet.json" (builtins.toJSON {
+    sync = { inherit (sync) name description config; };
+    apply = {
+      inherit (apply) name description;
+      config = removeAttrs apply.config [ "stage" ] // { stages = apply.config.stage; };
+    };
+  });
 in
 {
   # Core's git provider: the `komodo` bot's read-only Forgejo token. Komodo
@@ -84,13 +96,15 @@ in
     '';
   };
 
-  # Creates the `fleet` Resource Sync once and runs it, which registers the
-  # `apply` procedure the Forgejo webhook calls and every stack. From then on
-  # the sync manages itself (it is declared in komodo/sync/fleet.toml too).
-  # Re-run when the git token changes: before Forgejo has minted it, Komodo
-  # cannot read the repo and this exits 0 having only said so.
+  # Creates the `fleet` sync and the `apply` procedure from komodo/fleet.toml —
+  # or updates them to it — then runs the sync, which registers every stack (a
+  # push deploys them). Neither resource is in the sync's own files: `apply`
+  # runs the sync, and a running resource cannot be updated. A changed
+  # fleet.toml changes this script, so `nrs-vm` re-applies it. Also re-run when
+  # the git token changes: before Forgejo has minted it, Komodo cannot read the
+  # repo and this exits 0 having only said so.
   systemd.services.komodo-sync-bootstrap = {
-    description = "Register Komodo's fleet Resource Sync (first run only)";
+    description = "Apply komodo/fleet.toml to Komodo and register the stacks";
     after = [ "bootstrap-komodo.service" "forgejo.service" ];
     requires = [ "bootstrap-komodo.service" ];
     wantedBy = [ "multi-user.target" ];
@@ -129,24 +143,31 @@ in
           -H "authorization: $jwt" --data-binary "$2" "${api}$1"
       }
 
-      # Done once the first sync has run: it is what creates `apply`. (Not
-      # "the sync exists" — a first RunSync that failed would leave the sync
-      # registered and `apply` missing forever.)
-      if k /read/GetProcedure '{"procedure":"apply"}' >/dev/null 2>&1; then
-        echo "apply procedure exists — Komodo manages the fleet from here."
-        exit 0
-      fi
-
-      if ! k /read/GetResourceSync '{"sync":"fleet"}' >/dev/null 2>&1; then
-        k /write/CreateResourceSync "$(jq -n '{
-          name: "fleet",
-          config: {
-            git_provider: "forgejo:3000", git_https: false, git_account: "komodo",
-            repo: "${forgejoRepo}", branch: "main",
-            resource_path: ["komodo/sync"], delete: true
-          }
-        }')" >/dev/null
-      fi
+      # Create the resource, or update it to the file. A resource that is busy
+      # (an `apply` mid-run) refuses the update, so that is retried.
+      ensure() { # type get-param key
+        local type=$1 param=$2 key=$3 name config id
+        name=$(jq -r ".$key.name" ${fleetJson})
+        config=$(jq -c ".$key.config" ${fleetJson})
+        if id=$(k "/read/Get$type" "$(jq -n --arg p "$param" --arg n "$name" '{($p): $n}')" 2>/dev/null \
+                | jq -er '._id."$oid"'); then
+          for i in $(seq 24); do
+            k "/write/Update$type" "$(jq -n --arg id "$id" --argjson c "$config" '{id: $id, config: $c}')" \
+              >/dev/null && break
+            [ "$i" = 24 ] && { echo "Update$type $name kept failing" >&2; return 1; }
+            sleep 5
+          done
+        else
+          id=$(k "/write/Create$type" "$(jq -n --arg n "$name" --argjson c "$config" '{name: $n, config: $c}')" \
+               | jq -er '._id."$oid"')
+        fi
+        k /write/UpdateResourceMeta "$(jq -n --arg t "$type" --arg id "$id" \
+            --arg d "$(jq -r ".$key.description" ${fleetJson})" \
+            '{target: {type: $t, id: $id}, description: $d}')" >/dev/null
+        echo "$type $name matches komodo/fleet.toml"
+      }
+      ensure ResourceSync sync sync
+      ensure Procedure procedure apply
 
       # The sync clones from Forgejo, which starts beside Komodo at boot.
       for _ in $(seq 120); do
@@ -154,16 +175,26 @@ in
         sleep 5
       done
 
-      k /execute/RunSync '{"sync":"fleet"}' >/dev/null
-      for _ in $(seq 60); do
-        if k /read/GetProcedure '{"procedure":"apply"}' >/dev/null 2>&1; then
-          echo "fleet sync ran: the apply procedure and every stack now exist."
-          exit 0
-        fi
+      # Register (never deploy): a push deploys, and this run may follow a
+      # change to the sync itself. Busy while an `apply` runs it — retried.
+      upd=""
+      for _ in $(seq 24); do
+        upd=$(k /execute/RunSync '{"sync":"fleet"}' 2>/dev/null | jq -er '._id."$oid"') && break
         sleep 5
       done
-      echo "RunSync did not create the apply procedure — see the fleet sync's update log in Komodo" >&2
-      exit 1
+      [ -n "$upd" ] || { echo "Komodo never started the fleet sync" >&2; exit 1; }
+      u=""
+      for _ in $(seq 120); do
+        u=$(k /read/GetUpdate "$(jq -n --arg id "$upd" '{id: $id}')")
+        [ "$(jq -r .status <<<"$u")" = Complete ] && break
+        sleep 5
+      done
+      if [ "$(jq -r .success <<<"$u")" != true ]; then
+        echo "the fleet sync failed (update $upd):" >&2
+        jq -r '.logs[] | select(.success == false) | "\(.stage): \(.stderr)"' <<<"$u" >&2
+        exit 1
+      fi
+      echo "fleet sync ran: every stack in komodo/sync/ is registered."
     '';
   };
 }

@@ -1,5 +1,7 @@
 # Every stack Komodo deploys: one block per stacks/<name>, all the same shape
 # (the komodo-sync-coverage lint holds the fixed fields and the coverage).
+# `tags = ["gitops"]` is what puts a block in the `fleet` sync's reach
+# (match_tags, komodo/fleet.toml): an untagged block is silently ignored.
 #
 # A git stack: Periphery clones the repo into /srv/komodo/stacks/<name> and runs
 # compose in stacks/<name>. The rendered env /run/stack-env/<name>.env is passed
@@ -14,6 +16,7 @@
 
 [[stack]]
 name = "actual"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -31,6 +34,7 @@ config_files = [
 
 [[stack]]
 name = "automation"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -47,6 +51,7 @@ config_files = [
 
 [[stack]]
 name = "backrest"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -63,6 +68,7 @@ config_files = [
 
 [[stack]]
 name = "beszel"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -80,6 +86,7 @@ config_files = [
 
 [[stack]]
 name = "books"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -97,6 +104,7 @@ config_files = [
 
 [[stack]]
 name = "caddy"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -114,6 +122,7 @@ config_files = [
 
 [[stack]]
 name = "dawarich"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -131,6 +140,7 @@ config_files = [
 
 [[stack]]
 name = "docspace"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -147,6 +157,7 @@ config_files = [
 
 [[stack]]
 name = "excalidraw"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -164,6 +175,7 @@ config_files = [
 
 [[stack]]
 name = "firefly"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -180,6 +192,7 @@ config_files = [
 
 [[stack]]
 name = "gatus"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -192,6 +205,7 @@ file_paths = ["compose.yaml"]
 
 [[stack]]
 name = "ghostfolio"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -209,6 +223,7 @@ config_files = [
 
 [[stack]]
 name = "immich"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -226,6 +241,7 @@ config_files = [
 
 [[stack]]
 name = "logging"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -242,6 +258,7 @@ config_files = [
 
 [[stack]]
 name = "mealie"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -259,6 +276,7 @@ config_files = [
 
 [[stack]]
 name = "media"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -276,6 +294,7 @@ config_files = [
 
 [[stack]]
 name = "notes-sync"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -292,6 +311,7 @@ config_files = [
 
 [[stack]]
 name = "ntfy"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -308,6 +328,7 @@ config_files = [
 
 [[stack]]
 name = "outline"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -325,6 +346,7 @@ config_files = [
 
 [[stack]]
 name = "owl"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -337,6 +359,7 @@ file_paths = ["compose.yaml"]
 
 [[stack]]
 name = "paperless"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -354,6 +377,7 @@ config_files = [
 
 [[stack]]
 name = "proton"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -370,6 +394,7 @@ config_files = [
 
 [[stack]]
 name = "samba"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -387,6 +412,7 @@ config_files = [
 
 [[stack]]
 name = "silverbullet"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -403,6 +429,7 @@ config_files = [
 
 [[stack]]
 name = "tandoor"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -420,6 +447,7 @@ config_files = [
 
 [[stack]]
 name = "tracking"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -437,6 +465,7 @@ config_files = [
 
 [[stack]]
 name = "util"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -449,6 +478,7 @@ file_paths = ["compose.yaml"]
 
 [[stack]]
 name = "vaultwarden"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -466,6 +496,7 @@ config_files = [
 
 [[stack]]
 name = "wealthfolio"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -483,6 +514,7 @@ config_files = [
 
 [[stack]]
 name = "wger"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"
@@ -499,6 +531,7 @@ config_files = [
 
 [[stack]]
 name = "windmill"
+tags = ["gitops"]
 [stack.config]
 server = "Local"
 git_provider = "forgejo:3000"

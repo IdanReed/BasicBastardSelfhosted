@@ -17,7 +17,7 @@ are zsh functions — both live in `nixos-de/home.nix`.
 # edit, then:
 git add -A && git commit
 nrs-vps            # only if headscale-vps/ or a value it reads changed
-nrs-vm             # only if nixos/, komodo/, forgejo/ or any secret changed
+nrs-vm             # only if nixos/, forgejo/, komodo/ (not komodo/sync/) or a secret changed
 git push forgejo main
 ```
 
@@ -49,13 +49,19 @@ The servers are one flake at the repo root; the desktop keeps its own in
   Periphery clones from `forgejo:3000` into `/srv/komodo/stacks/<name>` and runs
   `compose.yaml` in `stacks/<name>`. The `komodo-sync-coverage` lint holds every
   block to the same shape and every `stacks/<name>` to a block.
-- `komodo/sync/fleet.toml` defines the `apply` procedure: `RunSync fleet`, then
-  `BatchDeployStackIfChanged "*"`. A stack whose compose, `secrets.sops.json`
+- `komodo/fleet.toml` defines the `fleet` sync and the `apply` procedure:
+  `RunSync fleet`, then `BatchDeployStackIfChanged "*"`. The host owns both —
+  `komodo-sync-bootstrap` creates them and re-applies the file on `nrs-vm` —
+  because `apply` runs the sync, and a sync that declared either one would have
+  to update a resource that is busy running. A stack whose compose, `secrets.sops.json`
   or (for an app reading it) `secrets/shared.sops.json` changed is redeployed;
   `docker compose up -d` then recreates only the containers whose config or
   environment changed.
 - **Removing a stack's block destroys it** (`compose down`) and unregisters it —
-  the sync runs in delete mode.
+  the sync runs in delete mode, scoped by `match_tags = ["gitops"]`: every block
+  in `komodo/sync/` carries the tag, and nothing untagged is ever touched (Core's
+  own `Local` server and system procedures, the sync, `apply`, anything made in
+  the UI). A block without the tag is silently ignored — the lint refuses one.
 - Komodo and Forgejo themselves are **not** stacks: Komodo deploys from Forgejo,
   so neither could bring the other up. Both run from the flake on `nrs-vm`
   (`bootstrap-komodo.service`, `forgejo.service`).

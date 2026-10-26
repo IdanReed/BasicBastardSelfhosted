@@ -41,11 +41,12 @@ the secrets in SOPS+age, and deploys happen via GitOps rather than by hand.
 The moving parts (the repo-level layout and cross-repo conventions live in the
 sibling-repo `CLAUDE.md` files; the essentials):
 
-- **Three deploy targets**: the two servers are one flake at the repo root
-  (`.#services-vm`, `.#headscale-vps`); the desktop has its own in `nixos-de/`.
+- **Three deploy targets, one flake** at the repo root: `.#services-vm`,
+  `.#headscale-vps`, `.#desktop` (+ `homeConfigurations.idan`).
   - **Services VM** (`nixos/`, Proxmox, `10.0.0.3`) — the Docker host. Deploy
     plane is **Komodo** GitOps: a push to Forgejo fires one webhook, Komodo
-    re-applies `komodo/sync/` and deploys every stack whose files changed.
+    re-applies `komodo/sync/stacks.toml` and deploys every stack whose files
+    changed.
     sops-nix renders each stack's env on the host, so the age key never
     reaches the container that runs compose. Komodo and Forgejo themselves run
     from the flake.

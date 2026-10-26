@@ -9,7 +9,7 @@ says **(overrides)**.
 Standing facts behind these calls:
 
 - The fleet is live, and Komodo is the deploy plane: a push to Forgejo fires its `apply` procedure
-  (`komodo/sync/fleet.toml`), which deploys the stacks that changed.
+  (`komodo/fleet.toml`), which deploys the stacks that changed.
 - `sopsgen apply` has **not** been run. Anything that adds, drops or fills a secret value is operator-gated.
 - The branch being landed (`land-code-review`) stops at `fa0a49d`. It does **not** contain `23f35d3`
   (Jellyfin/Seerr/Bazarr + Firefly Passport, "needs sopsgen apply"). D-35 and the seerr half of D-08 are about
