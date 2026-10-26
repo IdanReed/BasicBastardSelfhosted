@@ -327,7 +327,7 @@ So the stacks could never have started:
 
 | Reference | Problem |
 |---|---|
-| `ghcr.io/getarcaneapp/arcane:1.17.4` | (historical — Arcane was the deploy plane then) Upstream tags with a leading `v`; was fixed to `v1.17.4`. Its replacement `ghcr.io/moghtech/komodo-core:2.1.0` uses the OPPOSITE convention — no `v` — which is exactly why `update-images.sh` resolves against the registry rather than guessing. |
+| `ghcr.io/getarcaneapp/arcane:1.17.4` | (historical — Arcane was the deploy plane then) Upstream tags with a leading `v`; was fixed to `v1.17.4`. Its replacement `ghcr.io/moghtech/komodo-core:2.3.4` uses the OPPOSITE convention — no `v` — which is exactly why `update-images.sh` resolves against the registry rather than guessing. |
 | `ghcr.io/civilblur/mazanoke:1.1.5` | Same. Fixed to `v1.1.5`. Note `bentopdf` does *not* use a `v`, which is why `update-images.sh` resolves every reference against the registry rather than trusting it. |
 | `ghcr.io/idanreed/caddy-cloudflare:2.11.2` | Never published — `.github/workflows/build-caddy.yml` has not been run. Substituted with upstream `caddy:2.11.2` in the suites. **Run that workflow before deploying the caddy stack.** |
 

@@ -69,7 +69,7 @@ services:
     restart: unless-stopped
 
   core:
-    image: ghcr.io/moghtech/komodo-core:2.1.0
+    image: ghcr.io/moghtech/komodo-core:2.3.4
     container_name: komodo
     init: true
     labels:
@@ -110,7 +110,7 @@ services:
   # No published port: Periphery dials OUT to Core and holds the connection
   # open. A published :8120 would be a root-equivalent interface on the tailnet.
   periphery:
-    image: ghcr.io/moghtech/komodo-periphery:2.1.0
+    image: ghcr.io/moghtech/komodo-periphery:2.3.4
     container_name: komodo_periphery
     init: true
     labels:

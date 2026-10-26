@@ -34,10 +34,10 @@
 # draft: Core auto-creates an enabled server "Local" (KOMODO_FIRST_SERVER_NAME)
 # and Periphery DIALS Core (ws://core:9120) authenticating with the Noise
 # keypair in the shared /config/keys volume. The old shared KOMODO_PASSKEY is
-# the deprecated v1 path and is gone. Verified against komodo 2.1.0: ListServers
+# the deprecated v1 path and is gone. Verified against komodo 2.3.4: ListServers
 # shows "Local" state Ok with no network.
 #
-# The API contract, verified against a live komodo 2.1.0:
+# The API contract, verified against komodo 2.3.4:
 #   login   POST /auth/login/LoginLocalUser {username,password} -> {data:{jwt}}
 #   authed  POST /read|/write|/execute/<Type>  header `authorization: <jwt>`
 #           (RAW jwt, no Bearer), body = the params object.
@@ -53,8 +53,8 @@
 
 let
   stackImages = [
-    images."ghcr_io_moghtech_komodo-core_2_1_0"
-    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_moghtech_komodo-core_2_3_4"
+    images."ghcr_io_moghtech_komodo-periphery_2_3_4"
     images."ghcr_io_ferretdb_ferretdb_2_7_0"
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     # The remote: the real forgejo stack, playing the production forge.

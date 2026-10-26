@@ -67,8 +67,8 @@ let
   stackImages = [
     # The boot chain: bootstrap-komodo is wantedBy multi-user.target, so its
     # image must be loadable before the script gets control.
-    images."ghcr_io_moghtech_komodo-core_2_1_0"
-    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_moghtech_komodo-core_2_3_4"
+    images."ghcr_io_moghtech_komodo-periphery_2_3_4"
     images."ghcr_io_ferretdb_ferretdb_2_7_0"
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     # The stack, every pinned ref from stacks/immich/compose.yaml:

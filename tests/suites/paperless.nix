@@ -46,8 +46,8 @@ let
     # Not under test here, but bootstrap-komodo is wantedBy multi-user.target
     # in nixos/configuration.nix and runs during boot; without its image it
     # crash-loops and pollutes every journal dump with red herrings.
-    images."ghcr_io_moghtech_komodo-core_2_1_0"
-    images."ghcr_io_moghtech_komodo-periphery_2_1_0"
+    images."ghcr_io_moghtech_komodo-core_2_3_4"
+    images."ghcr_io_moghtech_komodo-periphery_2_3_4"
     images."ghcr_io_ferretdb_ferretdb_2_7_0"
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
   ];

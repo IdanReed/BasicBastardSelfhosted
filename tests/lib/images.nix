@@ -298,21 +298,21 @@
     finalImageName = "ghcr.io/mealie-recipes/mealie";
     finalImageTag = "v3.24.0";
   };
-  "ghcr_io_moghtech_komodo-core_2_1_0" = {
-    composeRef = "ghcr.io/moghtech/komodo-core:2.1.0";
+  "ghcr_io_moghtech_komodo-core_2_3_4" = {
+    composeRef = "ghcr.io/moghtech/komodo-core:2.3.4";
     imageName = "ghcr.io/moghtech/komodo-core";
-    imageDigest = "sha256:4915d91b5c6e9de4e8fd59391eed5cad090ec84dcf6a1a9233d97edfdbbb88e7";
-    hash = "sha256-oOAXEKJIw51I5X68i2pw3QO+f8SzaQl0Raeb42FnMRI=";
+    imageDigest = "sha256:91b2afd7b3bb2abea0ebd3046d65ec457eb1f3d505868d1d60cb0f8562490ef9";
+    hash = "sha256-vb3cTx7+zP3GNZS3hT3SFrOX7EJZtYQsQ0nrKOUyY8A=";
     finalImageName = "ghcr.io/moghtech/komodo-core";
-    finalImageTag = "2.1.0";
+    finalImageTag = "2.3.4";
   };
-  "ghcr_io_moghtech_komodo-periphery_2_1_0" = {
-    composeRef = "ghcr.io/moghtech/komodo-periphery:2.1.0";
+  "ghcr_io_moghtech_komodo-periphery_2_3_4" = {
+    composeRef = "ghcr.io/moghtech/komodo-periphery:2.3.4";
     imageName = "ghcr.io/moghtech/komodo-periphery";
-    imageDigest = "sha256:f5b272e3d9acd60d4eac69ea4fa0292dcaddfdecfc2be64ba5575e5ae18e72ae";
-    hash = "sha256-cCMZDvf6olwByWn0yMaQO0h4lNe2TTFXqVJEWN3lgFI=";
+    imageDigest = "sha256:fb4b52961fcce7a31e3776930e422967b6640f653de876f59f26dea243e29beb";
+    hash = "sha256-tjNOSH3vtu09GL/+F2ZILOERgWHK1aFRqJqePsDdWOs=";
     finalImageName = "ghcr.io/moghtech/komodo-periphery";
-    finalImageTag = "2.1.0";
+    finalImageTag = "2.3.4";
   };
   "ghcr_io_onemorebyte_hydroxide_v0_2_30" = {
     composeRef = "ghcr.io/onemorebyte/hydroxide:v0.2.30";
