@@ -8,8 +8,8 @@
 # healthchecks here do not mean what they look like.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs -> a 0600 .env owned 1000:1000, and env threading END
-#     TO END for three apps: every admin credential exists only in the
+#   - the sops-nix render of the stack env (root-only, 0400), and env threading
+#     END TO END for three apps: every admin credential exists only in the
 #     encrypted fixture, so three working logins prove the whole chain
 #   - **BookStack's seeded admin is GONE.** Its migration seeds
 #     admin@admin.com/password with no env var to change it, and there is no
@@ -80,7 +80,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/tracking/.env
-    rm -f $out/stacks/tracking/.sops.env.example
+    rm -f $out/stacks/tracking/secrets.example.env
     ln -s /run/stack-env/tracking.env $out/stacks/tracking/.env
   '';
 in
@@ -126,8 +126,8 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 4;
 
-        # /srv is tmpfs so its post-reboot re-seed + re-decrypt is the
-        # production shape; /mnt is a real ext4 on a persistent qcow because
+        # /srv is tmpfs so its post-reboot re-seed stands in for Komodo's
+        # clone, and /run/stack-env is re-published at boot; /mnt is a real ext4 on a persistent qcow because
         # the reboot subtest asserts DATA durability — three databases and
         # the meilisearch index must survive.
         virtualisation.emptyDiskImages = [ 16384 ];
@@ -201,7 +201,7 @@ pkgs.testers.runNixOSTest {
     HOMEBOX = "http://127.0.0.1:10301"
     KARAKEEP = "http://127.0.0.1:10302"
 
-    # Fixture values from tests/fixtures/tracking.sops.env.
+    # Fixture values from tests/fixtures/stacks/tracking.sops.json.
     BS_ADMIN = "bookstack-admin@test.invalid"
     BS_PASS = "test_bookstack_password_not_secret"
     HB_ADMIN = "homebox-admin@test.invalid"
@@ -253,7 +253,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # boot chain + decrypt
+    # boot chain: the rendered stack env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")

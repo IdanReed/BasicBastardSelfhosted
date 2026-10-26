@@ -65,15 +65,15 @@ let
   alpine = images."alpine_3_21";
 
   # The real stack directory plus the fixture, exactly as mk-stack-suite
-  # seeds it: the committed .sops.env is encrypted to the production
+  # seeds it: the committed secrets.sops.json is encrypted to the production
   # recipient (undecryptable here), so the fixture stands in and the real
-  # decrypt path still runs.
+  # render path still runs.
   seedSrv = pkgs.runCommand "srv-seed-logging" { } ''
     mkdir -p $out/stacks/logging
     cp -r ${../../stacks/logging}/. $out/stacks/logging/
     chmod -R u+w $out/stacks/logging
     rm -f $out/stacks/logging/.env
-    rm -f $out/stacks/logging/.sops.env $out/stacks/logging/.sops.env.example
+    rm -f $out/stacks/logging/secrets.sops.json $out/stacks/logging/secrets.example.env
     ln -s /run/stack-env/logging.env $out/stacks/logging/.env
   '';
 in
@@ -193,7 +193,7 @@ pkgs.testers.runNixOSTest {
         for label, cmd in [
             ("compose ps", f"{COMPOSE} ps -a || true"),
             ("compose logs", f"{COMPOSE} logs --tail=100 || true"),
-            ("decrypt-sops-envs journal",
+            ("stack-env-publish journal",
              "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("docker journal",
              "journalctl -u docker --no-pager -o cat | tail -30"),

@@ -31,10 +31,11 @@ for entry in $USERS; do
   pw=$(printenv "$var" 2>/dev/null || true)
   [ -n "$pw" ] || die "$var is empty or unset. The image would substitute an
   empty string into config.yml, fail to create user '$u', and then report
-  HEALTHY with a share nobody can authenticate to. See .sops.env.example."
+  HEALTHY with a share nobody can authenticate to. It renders from
+  ${U}_INITIAL_PASSWORD in secrets/shared.sops.json (stacks/samba/env.nix)."
   case "$pw" in
     changeme_*) die "$var is still the committed placeholder. Hand-set a real
-  (memorable) one via sopsedit — see .sops.env.example." ;;
+  (memorable) ${U}_INITIAL_PASSWORD: sopsedit secrets/shared.sops.json, nrs-vm." ;;
   esac
 done
 

@@ -39,4 +39,4 @@ datasources:
       maxLines: 5000
 
     # No `secureJsonData`: VictoriaLogs runs unauthenticated, so there is no
-    # credential to provision and nothing here belongs in .sops.env.
+    # credential to provision and nothing here belongs in secrets.sops.json.

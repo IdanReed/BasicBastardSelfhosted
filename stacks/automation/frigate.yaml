@@ -41,7 +41,7 @@ detectors:
 #         - path: "{FRIGATE_CAM_FRONT_DOOR}"     # rtsp://user:pass@ip:554/...
 #           roles: [detect, record]
 #     detect: {width: 1920, height: 1080, fps: 5}
-# Put the RTSP URL (which contains credentials) in .sops.env as
+# Put the RTSP URL (which contains credentials) in secrets.sops.json as
 # FRIGATE_CAM_<NAME>; the substitution above covers camera input paths.
 # Adding cameras means recomputing shm_size — see the compose file.
 cameras: {}

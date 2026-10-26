@@ -725,9 +725,9 @@
 		# `{$VLOGS_INGEST_TOKEN}` is substituted at ADAPT time, so a missing
 		# key degrades the check below to the literal "Bearer " — an open
 		# write endpoint onto the fleet's log store. That state is real, not
-		# hypothetical: stack-git-sync delivers this file the minute it is
-		# pushed, while the token appears only when an operator runs `sopsgen
-		# apply`. 503 rather than 401 because it is a misconfiguration, and
+		# hypothetical: a push deploys this file the minute it lands, while
+		# the token appears only when an operator runs `sopsgen apply` and
+		# switches. 503 rather than 401 because it is a misconfiguration, and
 		# because the gatus probe expects 401 and so alerts on it.
 		@empty_token {
 			header Authorization "Bearer "

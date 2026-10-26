@@ -68,7 +68,7 @@ let
     cp -r ${../../stacks/samba}/. $out/stacks/samba/
     chmod -R u+w $out/stacks/samba
     rm -f $out/stacks/samba/.env
-    rm -f $out/stacks/samba/.sops.env.example $out/stacks/samba/.sops.env
+    rm -f $out/stacks/samba/secrets.example.env $out/stacks/samba/secrets.sops.json
     ln -s /run/stack-env/samba.env $out/stacks/samba/.env
   '';
 
@@ -213,7 +213,9 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     SMB = "docker compose -f /srv/stacks/samba/compose.yaml -p samba"
     USER = "idan"
-    PASSWORD = "test_samba_password_not_secret"
+    # SAMBA_IDAN_PASSWORD renders from IDAN_INITIAL_PASSWORD in
+    # tests/fixtures/shared.sops.json (stacks/samba/env.nix).
+    PASSWORD = "test_IDAN_initial_pw_not_secret"
 
     def dump_diag():
         for label, cmd in [
@@ -236,12 +238,8 @@ pkgs.testers.runNixOSTest {
 
     try:
         with subtest("the fixture rendered to a root-only stack env"):
-            # NOT wait_for_unit: decrypt-sops-envs is a transient oneshot
-            # with no RemainAfterExit (a minutely timer re-fires it), so
-            # waiting on the UNIT races its inactive-after-success state and
-            # fails with "inactive and there are no pending jobs". The
-            # artifact it must produce is the synchronisation point (see
-            # mk-stack-suite).
+            # The seeded .env is a symlink to /run/stack-env/<stack>.env, which
+            # stack-env-publish copies out of the sops-nix render.
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/samba/.env", timeout=90
             )
@@ -386,9 +384,18 @@ pkgs.testers.runNixOSTest {
 
         with subtest("🚨 samba-init refuses a share it would write unreadably"):
             services_vm.succeed("mkdir -p /tmp/wrongowner && chown 4242:4242 /tmp/wrongowner")
+            # Every roster user needs a password or the guard dies on that
+            # first; read the roster from the script so the two cannot drift.
+            roster = services_vm.succeed(
+                "sed -n 's/^USERS=\"\\(.*\\)\"$/\\1/p' /srv/stacks/samba/samba-init.sh"
+            ).split()
+            assert roster, "no USERS= roster found in samba-init.sh"
+            pw_flags = "".join(
+                f"-e SAMBA_{e.split(':')[0].upper()}_PASSWORD='{PASSWORD}' " for e in roster
+            )
             rc, out = services_vm.execute(
                 "docker run --rm --name bkg-smb-uid "
-                f"-e SAMBA_IDAN_PASSWORD='{PASSWORD}' "
+                f"{pw_flags}"
                 "-e SAMBA_INTERFACES='lo eth1' "
                 "-v /srv/stacks/samba/samba-init.sh:/init.sh:ro "
                 "-v /tmp/wrongowner:/share "

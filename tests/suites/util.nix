@@ -12,7 +12,7 @@
 #     egress-dependent widget for that reason; this suite records why the
 #     obvious probe is absent.
 #   - **The stack needs no secrets at all**, asserted rather than assumed. It
-#     HAD a `.sops.env` while ExcaliDash was in it, and dropping the last
+#     HAD secrets while ExcaliDash was in it, and dropping the last
 #     stateful service is exactly the moment a leftover `env_file` would start
 #     failing the deploy for bentopdf and mazanoke too (finding #11).
 #   - every published port is loopback-only, with a positive control.
@@ -62,7 +62,7 @@ let
     cp -r ${../../stacks/util}/. $out/stacks/util/
     chmod -R u+w $out/stacks/util
     rm -f $out/stacks/util/.env
-    rm -f $out/stacks/util/.sops.env.example
+    rm -f $out/stacks/util/secrets.example.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -176,11 +176,12 @@ pkgs.testers.runNixOSTest {
     with subtest("the stack needs no secrets at all"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
-        # Asserted rather than assumed: this stack HAD a .sops.env while
+        # Asserted rather than assumed: this stack HAD secrets while
         # ExcaliDash was in it, and dropping the last stateful service is
         # exactly the moment a leftover env_file would start failing the
         # deploy for bentopdf and mazanoke too.
-        services_vm.fail("test -e /srv/stacks/util/.sops.env")
+        services_vm.fail("test -e /srv/stacks/util/secrets.sops.json")
+        services_vm.fail("test -e /run/stack-env/util.env")
         services_vm.fail("grep -q env_file /srv/stacks/util/compose.yaml")
 
     services_vm.wait_for_unit("load-test-images.service")
@@ -292,7 +293,7 @@ pkgs.testers.runNixOSTest {
         services_vm.start()
         services_vm.wait_for_unit("multi-user.target")
         # NOT ".env" — this stack has no secrets since ExcaliDash was
-        # deferred, so decrypt-sops-envs writes nothing here. Wait on the
+        # deferred, so stack-env-publish writes nothing for it. Wait on the
         # thing that actually appears: the seeded compose file.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/util/compose.yaml", timeout=180

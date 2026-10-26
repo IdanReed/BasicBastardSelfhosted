@@ -72,7 +72,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/dawarich/.env
-    rm -f $out/stacks/dawarich/.sops.env.example
+    rm -f $out/stacks/dawarich/secrets.example.env
     ln -s /run/stack-env/dawarich.env $out/stacks/dawarich/.env
   '';
 in
@@ -118,8 +118,8 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 4;
 
-        # /srv is tmpfs so its post-reboot re-seed + re-decrypt is the
-        # production shape; /mnt is a real ext4 on a persistent qcow because
+        # /srv is tmpfs so its post-reboot re-seed stands in for Komodo's
+        # clone, and /run/stack-env is re-published at boot; /mnt is a real ext4 on a persistent qcow because
         # the reboot subtest asserts DATA durability — the user account created
         # by dawarich_init must survive, and so must the country seed.
         virtualisation.emptyDiskImages = [ 16384 ];
@@ -186,7 +186,7 @@ pkgs.testers.runNixOSTest {
     BASE = "http://127.0.0.1:10304"
     VHOST = "dawarich.svc.idanreed.com"
 
-    # Fixture values from tests/fixtures/dawarich.sops.env.
+    # Fixture values from tests/fixtures/stacks/dawarich.sops.json.
     ADMIN = "test-admin@example.invalid"
     ADMIN_PASS = "test_dawarich_admin_password_not_secret"
 
@@ -247,7 +247,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # boot chain + decrypt
+    # boot chain: the rendered stack env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")

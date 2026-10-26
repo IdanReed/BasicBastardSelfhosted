@@ -15,10 +15,10 @@
 # assertion spec.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs -> a 0600 .env owned 1000:1000, and env threading END
-#     TO END: the MQTT credentials and the HA owner exist only in the
+#   - the sops-nix render of the stack env (root-only, 0400), and env threading
+#     END TO END: the MQTT credentials and the HA owner exist only in the
 #     encrypted fixture, so a working broker login and a working HA login
-#     prove the whole sops -> .env -> env_file chain
+#     prove the whole sops -> /run/stack-env -> env_file chain
 #   - **the five-minute auto-revert is not armed.** Since 2026.8.0 HA migrates
 #     `http:` into a storage-backed config, stages it as *pending*, and
 #     reverts it after five minutes unless a human promotes it in the UI. The
@@ -127,7 +127,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/automation/.env
-    rm -f $out/stacks/automation/.sops.env.example
+    rm -f $out/stacks/automation/secrets.example.env
     ln -s /run/stack-env/automation.env $out/stacks/automation/.env
     # The single deliberate divergence from production — see above.
     cp ${frigateTestConfig} $out/stacks/automation/frigate.yaml
@@ -180,8 +180,8 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 4;
 
-        # /srv stays tmpfs ON PURPOSE: its post-reboot re-seed + re-decrypt is
-        # itself the production shape. /mnt is a real ext4 on a persistent
+        # /srv stays tmpfs ON PURPOSE: its post-reboot re-seed stands in for
+        # Komodo's clone, and /run/stack-env is re-published at boot. /mnt is a real ext4 on a persistent
         # qcow because the reboot subtest asserts DATA durability — both
         # SQLite databases, the pre-seeded .storage/http and the broker's
         # password file must survive, which tmpfs cannot represent.
@@ -253,7 +253,7 @@ pkgs.testers.runNixOSTest {
     HA = "http://127.0.0.1:10250"
     FRIGATE = "http://127.0.0.1:10252"
 
-    # Fixture values from tests/fixtures/automation.sops.env.
+    # Fixture values from tests/fixtures/stacks/automation.sops.json.
     HA_USER = "test_ha_admin"
     HA_PASS = "test_ha_password_not_secret"
     MQTT_FRIGATE_PASS = "test_frigate_mqtt_password_not_secret"

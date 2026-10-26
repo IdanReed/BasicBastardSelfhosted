@@ -53,7 +53,7 @@ def call(path, method="GET", body=None, token=None, timeout=60):
             return resp.status, raw
 
 
-REPAIR = ("docker compose -f /srv/stacks/beszel/compose.yaml -p beszel "
+REPAIR = ("docker compose -f /srv/komodo/stacks/beszel/stacks/beszel/compose.yaml -p beszel "
           "run --rm --entrypoint /beszel beszel superuser upsert <email> <pw>")
 
 required = ("USER_EMAIL", "USER_PASSWORD")

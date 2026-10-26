@@ -6,11 +6,11 @@
 # ServerNotes/designs/service-ebook-stack-research.md is the assertion spec.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs turning stacks/books/.sops.env into a 0600 .env owned
-#     1000:1000, and env threading END TO END: the JWT key and both admin
-#     credential pairs exist only in the encrypted fixture, so a working login
-#     in each app and a rendered appsettings.json carrying the fixture token
-#     key prove the whole sops -> .env -> env_file chain
+#   - the sops-nix render of the stack env (root-only, 0400), and env threading
+#     END TO END: the JWT key and both admin credential pairs exist only in the
+#     encrypted fixture, so a working login in each app and a rendered
+#     appsettings.json carrying the fixture token key prove the whole
+#     sops -> /run/stack-env -> env_file chain
 #   - kavita-config-init's MERGE-style render contract: it owns only the keys
 #     the template declares, preserves everything else in the file, is a no-op
 #     on re-run, and — the point of the whole exercise (annex §0.5) — the
@@ -176,7 +176,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/books/.env
-    rm -f $out/stacks/books/.sops.env.example
+    rm -f $out/stacks/books/secrets.example.env
     ln -s /run/stack-env/books.env $out/stacks/books/.env
   '';
 in
@@ -221,7 +221,7 @@ pkgs.testers.runNixOSTest {
 
         # Keep the deploy plane out of the boot path: this suite already
         # loads a Chromium-bearing image. Coverage lost — the
-        # decrypt-sops-envs -> docker-network-homelab -> bootstrap-komodo
+        # stack-env-publish -> docker-network-homelab -> bootstrap-komodo
         # chain — is what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
         # Komodo's sync bootstrap Requires the masked unit and would pull it
@@ -234,10 +234,8 @@ pkgs.testers.runNixOSTest {
         # healthcheck window a coin toss; 4 keeps it sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service `requires = srv.mount`; the tmpfs gives it
-        # a genuine .mount unit. /srv stays tmpfs ON PURPOSE: its post-reboot
-        # re-seed + re-decrypt is itself the production shape (git sync +
-        # the decrypt timer).
+        # /srv is tmpfs ON PURPOSE: the post-reboot re-seed stands in for
+        # Komodo's clone, and /run/stack-env is re-published at every boot.
         #
         # /mnt is a real ext4 on a persistent qcow (auto-formatted on first
         # boot only), because the reboot subtest asserts DATA DURABILITY — the
@@ -367,9 +365,9 @@ pkgs.testers.runNixOSTest {
     ABS = "http://127.0.0.1:10152"
     SHELFMARK = "http://127.0.0.1:10151"
 
-    # Fixture values from tests/fixtures/books.sops.env — committed test-only
-    # secrets (see the fixture header; stack-env-drift keeps the key set
-    # honest against .sops.env.example).
+    # Fixture values from tests/fixtures/stacks/books.sops.json — committed test-only
+    # secrets (stack-env-drift keeps the key set honest against
+    # secrets.example.env).
     KAVITA_USER = "test_kavita_admin"
     KAVITA_PASS = "test_kavita_password_not_secret"
     ABS_USER = "test_abs_admin"
@@ -442,13 +440,13 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
+    # §6.1 boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
-        # Transient oneshot on a minutely timer, so wait_for_unit would race
-        # its inactive-after-success state; the artifact is the sync point.
+        # The seeded .env is a symlink to /run/stack-env/books.env, which
+        # stack-env-publish copies out of the sops-nix render.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/books/.env", timeout=120
         )
@@ -995,8 +993,8 @@ pkgs.testers.runNixOSTest {
         services_vm.shutdown()
         services_vm.start()
         services_vm.wait_for_unit("multi-user.target")
-        # /srv is tmpfs: the seed + decrypt path runs again, exactly as the
-        # git sync + decrypt timer would on the real host.
+        # /srv is tmpfs: the seed stands in for Komodo's clone, and
+        # stack-env-publish re-publishes the env at boot as on the real host.
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/books/.env", timeout=120
         )

@@ -94,7 +94,7 @@ let
       mkdir -p $out/stacks/${s}
       cp -r ${../../stacks + "/${s}"}/. $out/stacks/${s}/
       chmod -R u+w $out/stacks/${s}
-      rm -f $out/stacks/${s}/.sops.env.example
+      rm -f $out/stacks/${s}/secrets.example.env
       ${lib.optionalString (builtins.pathExists (../fixtures/stacks + "/${s}.sops.json")) ''
         ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
       ''}

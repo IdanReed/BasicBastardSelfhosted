@@ -35,7 +35,7 @@
 #     client-side cryptography — master-key derivation, a wrapped symmetric
 #     key, an RSA keypair — and reimplementing it in a test would risk proving
 #     that a vault no real client can open is "working". The first account is
-#     an operator step ON PURPOSE (see .sops.env.example), so nothing here logs
+#     an operator step ON PURPOSE (see secrets.example.env), so nothing here logs
 #     into a vault.
 #   - **SSO.** Ships ON (SSO_ENABLED=true since the 2026-09-05 rollout) but
 #     unreachable here — discovery is lazy, so all that is asserted is that
@@ -68,7 +68,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/vaultwarden/.env
-    rm -f $out/stacks/vaultwarden/.sops.env.example
+    rm -f $out/stacks/vaultwarden/secrets.example.env
     ln -s /run/stack-env/vaultwarden.env $out/stacks/vaultwarden/.env
   '';
 in
@@ -109,8 +109,8 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 2;
 
-        # /srv is tmpfs so its post-reboot re-seed + re-decrypt is the
-        # production shape; /mnt is a real ext4 on a persistent qcow because
+        # /srv is tmpfs so its post-reboot re-seed stands in for Komodo's
+        # clone, and /run/stack-env is re-published at boot; /mnt is a real ext4 on a persistent qcow because
         # the reboot subtest asserts DATA durability.
         virtualisation.emptyDiskImages = [ 4096 ];
         virtualisation.fileSystems = {
@@ -194,7 +194,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # boot chain + decrypt
+    # boot chain: the rendered stack env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
@@ -213,15 +213,15 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("grep -qx 'SSO_CLIENT_ID=' /srv/stacks/vaultwarden/.env")
         services_vm.fail("grep -qx 'SSO_CLIENT_SECRET=' /srv/stacks/vaultwarden/.env")
 
-    with subtest("the decrypted .env keeps the PHC SINGLE-QUOTED"):
-        # sops round-trips the quotes as part of the value. If a future edit
-        # drops them, the container gets a mangled token and /admin dies — so
+    with subtest("the rendered env keeps the PHC SINGLE-QUOTED"):
+        # stack-env.nix single-quotes every rendered value. If a future edit
+        # drops that, the container gets a mangled token and /admin dies — so
         # catch it here, one layer before the symptom.
         line = services_vm.succeed(
             "grep '^ADMIN_TOKEN=' /srv/stacks/vaultwarden/.env"
         ).strip()
         assert line.startswith("ADMIN_TOKEN='") and line.endswith("'"), (
-            f"ADMIN_TOKEN is not single-quoted in the decrypted .env: {line[:40]}... "
+            f"ADMIN_TOKEN is not single-quoted in the rendered env: {line[:40]}... "
             "Compose interpolates env_file values, so an unquoted argon2 PHC "
             "loses $argon2id/$v/$m and arrives as a different string."
         )
@@ -385,8 +385,8 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed(f"{VW} up -d --wait --wait-timeout 600")
         services_vm.succeed(f"test -f {DATA}/db.sqlite3")
         services_vm.succeed(f"test -f {DATA}/rsa_key.pem")
-        # And the token still works, which proves the .env was re-decrypted
-        # from the encrypted fixture rather than surviving in tmpfs.
+        # And the token still works, which proves the env was re-rendered
+        # from the encrypted fixture at boot (/run is tmpfs).
         out = services_vm.succeed(
             "curl -sS -i --max-time 30 -X POST "
             f"-d {shlex.quote('token=' + ADMIN_PASS)} {BASE}/admin"

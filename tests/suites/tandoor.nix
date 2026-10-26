@@ -56,7 +56,7 @@ let
     cp -r ${../../stacks/tandoor}/. $out/stacks/tandoor/
     chmod -R u+w $out/stacks/tandoor
     rm -f $out/stacks/tandoor/.env
-    rm -f $out/stacks/tandoor/.sops.env.example
+    rm -f $out/stacks/tandoor/secrets.example.env
     ln -s /run/stack-env/tandoor.env $out/stacks/tandoor/.env
   '';
 in

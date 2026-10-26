@@ -57,10 +57,9 @@
 # cloud-init stage. On the very first boot after imaging, the key does not
 # exist yet when activation runs, so /run/secrets stays unpopulated until the
 # next activation — the reboot below, or the config-only `nixos-rebuild switch`
-# the deploy runbook performs right after imaging. Stack secrets recover
-# earlier on the real host (decrypt-sops-envs re-runs minutely and reads the
-# key at runtime), but OS-level secrets, TAILSCALE_AUTH_KEY included, wait for
-# the second activation. The suite asserts the gap explicitly so a sops-nix
+# the deploy runbook performs right after imaging. Stack secrets are sops-nix
+# renders too, so OS-level and stack secrets alike, TAILSCALE_AUTH_KEY
+# included, wait for the second activation. The suite asserts the gap explicitly so a sops-nix
 # upgrade that closes it (systemd-based activation ordered after cloud-init)
 # shows up as a failing — and then deletable — assertion, not as silence.
 
@@ -329,8 +328,8 @@ pkgs.runCommand "proxmox-boot"
     # multi-user.target — which matters, because tailscale-autoconnect fails
     # and retries against the unreachable production headscale URL in this
     # sandbox, and units that genuinely cannot run here (srv.mount does not
-    # exist without hardware-configuration.nix, so decrypt-sops-envs and
-    # bootstrap-komodo never start) would stall any target-based wait forever.
+    # exist without hardware-configuration.nix, so bootstrap-komodo never
+    # starts) would stall any target-based wait forever.
     # The same is true on a freshly imaged Proxmox VM, incidentally: the image
     # carries no hardware-configuration.nix either.
     wait_qga "guest agent never answered guest-ping on first boot"

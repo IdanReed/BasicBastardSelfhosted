@@ -27,12 +27,12 @@ fail() {
 
 check() {
     # $1 = variable name. Empty or a leftover placeholder are both failures:
-    # the .sops.env.example ships changeme_ values, and a stack deployed with
+    # the secrets.example.env ships changeme_ values, and a stack deployed with
     # the example copied verbatim should not start.
     eval "value=\${$1:-}"
-    [ -n "$value" ] || fail "$1 is unset or empty in .env (decrypt race?)"
+    [ -n "$value" ] || fail "$1 is unset or empty in the stack env (not rendered?)"
     case "$value" in
-        changeme_*) fail "$1 is still the .sops.env.example placeholder" ;;
+        changeme_*) fail "$1 is still the secrets.example.env placeholder" ;;
     esac
     # ':' is the field separator in the staged file below, and
     # mosquitto_passwd -U would silently keep only the part before it.

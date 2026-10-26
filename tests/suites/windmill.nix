@@ -60,7 +60,7 @@ let
     cp -r ${../../stacks/windmill}/. $out/stacks/windmill/
     chmod -R u+w $out/stacks/windmill
     rm -f $out/stacks/windmill/.env
-    rm -f $out/stacks/windmill/.sops.env.example
+    rm -f $out/stacks/windmill/secrets.example.env
     ln -s /run/stack-env/windmill.env $out/stacks/windmill/.env
   '';
 in
@@ -155,9 +155,9 @@ pkgs.testers.runNixOSTest {
     BASE = "http://127.0.0.1:10253"
 
     # Fixture values: idan is the roster's superadmin (windmill-init.sh),
-    # IDAN_INITIAL_PASSWORD in tests/fixtures/windmill.sops.env.
+    # IDAN_INITIAL_PASSWORD in tests/fixtures/shared.sops.json.
     ADMIN = "idan@idanreed.com"
-    ADMIN_PASS = "test_idan_pw_not_secret"
+    ADMIN_PASS = "test_IDAN_initial_pw_not_secret"
 
     # What Windmill seeds and does NOT force you to change.
     DEFAULT_ADMIN = "admin@windmill.dev"

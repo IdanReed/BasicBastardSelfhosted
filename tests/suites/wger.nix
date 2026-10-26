@@ -60,7 +60,7 @@ let
     cp -r ${../../stacks/wger}/. $out/stacks/wger/
     chmod -R u+w $out/stacks/wger
     rm -f $out/stacks/wger/.env
-    rm -f $out/stacks/wger/.sops.env.example
+    rm -f $out/stacks/wger/secrets.example.env
     ln -s /run/stack-env/wger.env $out/stacks/wger/.env
   '';
 in

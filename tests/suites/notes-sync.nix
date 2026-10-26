@@ -69,7 +69,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/notes-sync/.env
-    rm -f $out/stacks/notes-sync/.sops.env.example
+    rm -f $out/stacks/notes-sync/secrets.example.env
     ln -s /run/stack-env/notes-sync.env $out/stacks/notes-sync/.env
   '';
 in
@@ -184,7 +184,7 @@ pkgs.testers.runNixOSTest {
     ST = "http://127.0.0.1:10201"
     STCFG = "/mnt/fast/syncthing/config"
 
-    # Fixture values from tests/fixtures/notes-sync.sops.env.
+    # Fixture values from tests/fixtures/stacks/notes-sync.sops.json.
     RM_ADMIN = "rmadmin@test.invalid"
     RM_PASS = "test_rmfakecloud_password_not_secret"
     ST_KEY = "test_syncthing_api_key_not_secret_00000000000000000000"
@@ -225,7 +225,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # boot chain + decrypt
+    # boot chain: the rendered stack env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")

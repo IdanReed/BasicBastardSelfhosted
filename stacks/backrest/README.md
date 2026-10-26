@@ -101,12 +101,13 @@ That is deliberate: a missing VPS backup should be noisy, not silent.
 
 ### 4. Secrets
 
-Copy `.sops.env.example` → `.sops.env`, fill in, encrypt. The admin password
-goes in as **base64 of the bcrypt hash** (see the generate command in the
-example) — Backrest base64-decodes `passwordBcrypt` before comparing, so a raw
-bcrypt can never log in. Any value containing `$` (e.g. a generated
-`RESTIC_PASSWORD`) must be single-quoted before encrypting — the
-decrypt-and-source path would otherwise expand it.
+`sopsgen apply` fills `secrets.sops.json` from `secrets.example.env`; set
+hand-picked values with `sopsedit stacks/backrest/secrets.sops.json`, then
+`nrs-vm`. The admin password goes in as **base64 of the bcrypt hash** (see the
+generate command in the example) — Backrest base64-decodes `passwordBcrypt`
+before comparing, so a raw bcrypt can never log in. A `$` in a value (e.g. a
+generated `RESTIC_PASSWORD`) needs nothing: the rendered env single-quotes
+every value.
 
 `config-init` refuses to seed `config.json` if **any** value it substitutes is
 empty *or still contains `changeme`*. `config.json` is written exactly once
@@ -132,7 +133,7 @@ lost, the backups are unreadable and nothing else matters.
 
 It must contain:
 
-1. The **age private key** (`sops_age_key.txt`) — decrypts every `.sops.env`.
+1. The **age private key** (`sops_age_key.txt`) — decrypts every sops file in the repo.
 2. The **restic repository password** — decrypts the backup repository.
 3. **Storage Box credentials** — sub-account username, password, hostname.
 

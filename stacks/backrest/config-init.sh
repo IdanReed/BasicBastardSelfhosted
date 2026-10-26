@@ -55,17 +55,17 @@ fail=0
 for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.json | tr -d '${}' | sort -u); do
   eval "val=\${$v:-}"
   if [ -z "$val" ]; then
-    echo "ERROR: $v is unset or empty in .env - refusing to seed config.json"
+    echo "ERROR: $v is unset or empty in the stack env - refusing to seed config.json"
     fail=1
     continue
   fi
   case "$val" in
     *changeme*|*CHANGEME*)
-      echo "ERROR: $v is still a changeme placeholder from .sops.env.example"
+      echo "ERROR: $v is still a changeme placeholder from secrets.example.env"
       echo "  - refusing to seed config.json. config.json is written ONCE;"
       echo "  Backrest owns it afterwards, so a placeholder seeded now is"
-      echo "  permanent. Put the real value in stacks/backrest/.sops.env"
-      echo "  (see .sops.env.example for how to generate each one)."
+      echo "  permanent. Put the real value in stacks/backrest/secrets.sops.json"
+      echo "  (see secrets.example.env for how to generate each one), then nrs-vm."
       fail=1
       ;;
     # Values go into JSON verbatim: a quote breaks the parse and a backslash
@@ -75,7 +75,7 @@ for v in $(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' /template/config.template.jso
       echo "ERROR: $v contains a double quote or backslash - inserted verbatim"
       echo "  into JSON it would corrupt config.json (or silently change the"
       echo "  value restic actually uses). Pick a value without either"
-      echo "  character in stacks/backrest/.sops.env."
+      echo "  character in stacks/backrest/secrets.sops.json."
       fail=1
       ;;
   esac

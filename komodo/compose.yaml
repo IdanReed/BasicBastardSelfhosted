@@ -23,7 +23,7 @@ services:
     environment:
       # Fleet convention: POSTGRES_USER is the stack name, which is what
       # backup-prepare.sh's `pg_dumpall -U komodo` and the backup-coverage lint
-      # expect. Only the password comes from /srv/komodo/.env.
+      # expect. Only the password comes from /run/stack-env/komodo.env.
       POSTGRES_USER: komodo
       POSTGRES_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
       POSTGRES_DB: postgres

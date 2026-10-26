@@ -168,15 +168,12 @@ pkgs.testers.runNixOSTest {
       TOKEN = "test0bootstrap0token0deadbeef0deadbeef0deadbeef"
       OIDC_FIXTURE = "test0oidc0client0secret0deadbeef0deadbeef0dead"
       # The immich provider's secret travels sops -> template -> worker env ->
-      # blueprint !Env -> DB, exactly like headscale's — but its OTHER copy
-      # lives in stacks/immich/.sops.env on a different host, so this suite can
-      # only pin the VPS end against the fixture; the immich suite pins the
-      # stack end against ITS fixture, and the two fixtures agreeing is what
-      # closes the loop.
+      # blueprint !Env -> DB, exactly like headscale's. It is stored ONCE, in
+      # secrets/shared.sops.json, which the services VM reads too; this suite
+      # pins the VPS end and the immich suite the stack end, both against
+      # tests/fixtures/shared.sops.json.
       IMMICH_OIDC_FIXTURE = "test_immich_oidc_client_secret_not_secret"
-      # Same twin shape as immich: the other copy lives in
-      # stacks/outline/.sops.env (fixture tests/fixtures/outline.sops.env),
-      # and the two fixtures agreeing closes the loop.
+      # Same shape as immich: OUTLINE_OIDC_CLIENT_SECRET in the shared file.
       OUTLINE_OIDC_FIXTURE = "test_outline_oidc_client_secret_not_secret"
 
       API = "http://127.0.0.1:9000/api/v3"

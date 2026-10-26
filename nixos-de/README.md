@@ -34,7 +34,6 @@ nixos-de/
 ├── disko.nix                    declarative disk partitioning (targetDisk — see below)
 ├── home.nix                     home-manager: aliases, sopsedit/sopsgen, starship
 ├── ssh-identities.nix           name → host/user/port; drives sops.secrets AND ssh config
-├── ssh-pubkeys.nix              copy of the repo-root one the servers import (lint-enforced)
 ├── secrets.sops.yaml{,.example} 14 keys: ssh/* ×7, workvpn/* ×6, SAMBA_IDAN_PASSWORD
 ├── test.sh / test-wsl.sh        config validation, no deploy
 ├── FUTURE.md                    tooling tracker

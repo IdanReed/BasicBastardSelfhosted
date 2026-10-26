@@ -9,8 +9,8 @@
 # start (finding #14). The `stack-dirs-generated` lint re-runs the generator and
 # byte-compares, so editing this file by hand is a lint failure.
 #
-# Rules that are NOT stack-derived (/srv, /var/lib/sops-nix, /mnt/fast/docker,
-# the /srv/stacks 'Z' rule) stay hand-written in hardware-configuration.nix,
+# Rules that are NOT stack-derived (/srv, /srv/komodo, /var/lib/sops-nix,
+# /mnt/fast/docker) stay hand-written in hardware-configuration.nix,
 # which imports this file.
 {
   systemd.tmpfiles.rules = [
@@ -166,8 +166,9 @@
     # 1000:1000, matching the USER_UID/USER_GID the compose sets. /data holds
     # app.ini — the SECRET_KEY, INTERNAL_TOKEN and JWT secrets Forgejo
     # self-generates on first start — plus gitea.db and every repository,
-    # including the compose repo stack-git-sync pulls from. There is no
-    # .sops.env for this stack precisely because that material lives here.
+    # including the compose repo Komodo deploys from. There is no
+    # secrets.sops.json for this stack's own state precisely because that
+    # material lives here.
     "d /mnt/fast/forgejo 0755 1000 1000 -"
     "d /mnt/fast/forgejo/data 0755 1000 1000 -"
     # === gatus (bind sources in its compose.yaml) ===
@@ -228,7 +229,7 @@
     "d /mnt/fast/alloy 0755 root root -"
     # 472:472, NOT root — the image sets USER 472. grafana.db is created here
     # on first start and is the only per-install state (the datasource is
-    # provisioned read-only and the admin credential comes from .sops.env);
+    # provisioned read-only and the admin credential comes from the stack env);
     # backup-prepare.sh dumps it with `sqlite3 .backup` because it is WAL-mode.
     # Root-owned this fails visibly for once: /api/health reports the
     # database.
@@ -345,7 +346,7 @@
     # slow-volume-selective plan, not a dump.
     "d /mnt/fast/proton 0755 root root -"
     # auth.json — the Proton refresh token and passwords, encrypted with a key
-    # derived from the bridge password in .sops.env; neither half is useful
+    # derived from the bridge password in secrets.sops.json; neither half is useful
     # alone. Written by the one-time `hydroxide auth` as uid 1000; nothing
     # in-container repairs a wrong owner.
     "d /mnt/fast/proton/hydroxide 0755 1000 1000 -"

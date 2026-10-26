@@ -87,7 +87,7 @@ let
   ];
 
   # backrest is seeded for exactly ONE value: its fixture RESTIC_PASSWORD,
-  # reached through the real decrypt-sops-envs -> .env -> source path rather
+  # reached through the real sops-nix -> /run/stack-env -> source path rather
   # than written into this file. A drill whose repository password is a
   # constant in the test proves the test can talk to itself; this one fails if
   # the path the operator would actually use is broken. Nothing deploys the
@@ -106,7 +106,7 @@ let
       # The working-tree cp -r can capture a developer's locally-decrypted
       # plaintext .env (gitignored on purpose) in the world-readable store.
       rm -f $out/stacks/${s}/.env
-      rm -f $out/stacks/${s}/.sops.env.example
+      rm -f $out/stacks/${s}/secrets.example.env
       ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
     '') seededStacks}
   '';

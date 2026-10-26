@@ -40,7 +40,7 @@ let
     # A working-tree copy can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/forgejo/.env
-    # The fixture replaces the real .sops.env (production recipient).
+    # The env comes from the fixture's render, never the production file.
     ln -s /run/stack-env/forgejo.env $out/stacks/forgejo/.env
   '';
 in
@@ -76,7 +76,7 @@ pkgs.testers.runNixOSTest {
         # Keep Komodo out of the boot path: its images and bootstrap
         # ordering are irrelevant to proving the forgejo stack.
         #
-        # Coverage lost: the decrypt-sops-envs -> docker-network-homelab ->
+        # Coverage lost: the stack-env-publish -> docker-network-homelab ->
         # bootstrap-komodo chain and Komodo itself — checks.services covers
         # the chain, checks.gitops covers Komodo driving THIS forgejo.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
@@ -86,9 +86,8 @@ pkgs.testers.runNixOSTest {
         systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
         systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
-        # decrypt-sops-envs.service `requires = srv.mount`; without a real
-        # mount unit it never starts. tmpfs gives a genuine .mount unit, and
-        # /mnt/fast backs the stack's /data volume root.
+        # tmpfs /srv holds the seeded compose; /mnt/fast backs the stack's
+        # /data volume root.
         virtualisation.fileSystems = {
           "/srv" = {
             device = "tmpfs";

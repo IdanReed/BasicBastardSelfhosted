@@ -6,11 +6,11 @@
 # ServerNotes/designs/service-immich-stack-research.md is the assertion spec.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs turning stacks/immich/.sops.env into a 0600 .env owned
-#     1000:1000, and env threading END TO END: the DB password, the OIDC
-#     client secret and the admin credentials exist only in the encrypted
-#     fixture, so a working login + a rendered immich.json carrying the
-#     fixture secret prove the whole sops -> .env -> env_file chain
+#   - the sops-nix render of the stack env (root-only, 0400), and env threading
+#     END TO END: the DB password, the OIDC client secret and the admin
+#     credentials exist only in the encrypted fixtures, so a working login + a
+#     rendered immich.json carrying the fixture secret prove the whole
+#     sops -> /run/stack-env -> env_file chain
 #   - immich-config-init's MAKE-STYLE render contract (annex §3 rotation
 #     coupling): renders exactly the template with ONLY the secret
 #     substituted, 0600, no-op on re-run, REWRITES on a rotated secret
@@ -92,7 +92,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/immich/.env
-    rm -f $out/stacks/immich/.sops.env.example
+    rm -f $out/stacks/immich/secrets.example.env
     ln -s /run/stack-env/immich.env $out/stacks/immich/.env
   '';
 in
@@ -143,10 +143,10 @@ pkgs.testers.runNixOSTest {
         # cores make every healthcheck window a coin toss; 4 keeps it sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service and bootstrap-komodo.service both
-        # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
-        # /srv stays tmpfs ON PURPOSE: its post-reboot re-seed + re-decrypt is
-        # itself the production shape (git sync + the decrypt timer).
+        # bootstrap-komodo.service `requires = srv.mount`; the tmpfs gives it
+        # a genuine .mount unit.
+        # /srv stays tmpfs ON PURPOSE: the post-reboot re-seed stands in for
+        # Komodo's clone, and /run/stack-env is re-published at every boot.
         #
         # /mnt is DIFFERENT from the media suite: a real ext4 on a persistent
         # qcow (auto-formatted on first boot only), because the reboot subtest
@@ -230,9 +230,10 @@ pkgs.testers.runNixOSTest {
     IMMICH = "docker compose -f /srv/stacks/immich/compose.yaml -p immich"
     BASE = "http://127.0.0.1:10102"
 
-    # Fixture values from tests/fixtures/immich.sops.env — committed test-only
-    # secrets (see the fixture header; stack-env-drift keeps the key set
-    # honest against the real .sops.env).
+    # Fixture values from tests/fixtures/stacks/immich.sops.json — committed test-only
+    # secrets; OIDC_SECRET is IMMICH_OIDC_CLIENT_SECRET in
+    # tests/fixtures/shared.sops.json (stack-env-drift keeps the key sets
+    # honest against the real files).
     ADMIN_EMAIL = "admin@test.invalid"
     ADMIN_PASS = "test_immich_admin_password_not_secret"
     OIDC_SECRET = "test_immich_oidc_client_secret_not_secret"
@@ -278,7 +279,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
+    # §6.1 boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("docker-network-homelab.service")
@@ -289,7 +290,7 @@ pkgs.testers.runNixOSTest {
         ).strip()
         assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # The keys everything below depends on: a later failure then points
-        # at the service, not at decryption.
+        # at the service, not at the render.
         for k in ["DB_PASSWORD", "POSTGRES_PASSWORD",
                   "IMMICH_OIDC_CLIENT_SECRET", "IMMICH_ADMIN_EMAIL"]:
             services_vm.succeed(f"grep -q '^{k}=' /srv/stacks/immich/.env")

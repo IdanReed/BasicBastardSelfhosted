@@ -59,7 +59,7 @@ let
     cp -r ${../../stacks/docspace}/. $out/stacks/docspace/
     chmod -R u+w $out/stacks/docspace
     rm -f $out/stacks/docspace/.env
-    rm -f $out/stacks/docspace/.sops.env.example
+    rm -f $out/stacks/docspace/secrets.example.env
     ln -s /run/stack-env/docspace.env $out/stacks/docspace/.env
   '';
 in
@@ -165,7 +165,7 @@ pkgs.testers.runNixOSTest {
     DOCSPACE = "docker compose -f /srv/stacks/docspace/compose.yaml -p docspace"
     BASE = "http://127.0.0.1:10404"
 
-    # Fixture values from tests/fixtures/docspace.sops.env.
+    # Fixture values from tests/fixtures/stacks/docspace.sops.json.
     MACHINEKEY = "testdocspacemachinekey0000000000"
 
     def diag(label):

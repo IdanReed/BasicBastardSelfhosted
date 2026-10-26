@@ -48,7 +48,7 @@ let
     cp -r ${../../stacks/outline}/. $out/stacks/outline/
     chmod -R u+w $out/stacks/outline
     rm -f $out/stacks/outline/.env
-    rm -f $out/stacks/outline/.sops.env.example
+    rm -f $out/stacks/outline/secrets.example.env
     ln -s /run/stack-env/outline.env $out/stacks/outline/.env
   '';
 

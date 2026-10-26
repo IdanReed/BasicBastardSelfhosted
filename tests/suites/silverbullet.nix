@@ -5,7 +5,7 @@
 #
 # The staging trick: the fixture's GIT_SYNC_REMOTE is
 #   http://test:test_pat_not_secret@127.0.0.1:10550/test/space.git
-# and instead of rewriting .env (which the minutely decrypt timer would
+# and instead of rewriting the rendered env (which the next activation would
 # revert), this suite makes REALITY match the fixture: a Forgejo user `test`
 # with that password and a private repo `test/space`. The sidecar is
 # host-networked, so the fixture URL works verbatim — the exact credential
@@ -207,7 +207,7 @@ pkgs.testers.runNixOSTest {
 
     start_all()
 
-    with subtest("decrypt-sops-envs produced the sidecar's .env (remote + PAT)"):
+    with subtest("the sidecar's stack env rendered (remote + PAT)"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_until_succeeds(

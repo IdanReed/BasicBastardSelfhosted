@@ -142,7 +142,8 @@ services:
       # ⚠ All three must be WORLD-READABLE on the host — grafana is uid 472
       # in-container. A 0600 uid-1000 delivery EACCESes the provisioner,
       # which Grafana treats as FATAL (an ~11s crash loop behind a 502).
-      # stack-git-sync normalises delivery to 0644/0755; look there first.
+      # Periphery's git clone gives 0644/0755 from the repo modes; a file
+      # committed 0600 is the first thing to check.
       - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/victorialogs.yaml:ro
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/fleet.yaml:ro
       - ./dashboards:/etc/grafana/dashboards:ro

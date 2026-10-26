@@ -28,7 +28,7 @@ fj()  { forgejo --config "$CONF" "$@"; }
 
 SECRET="${FORGEJO_OIDC_CLIENT_SECRET:-}"
 case "$SECRET" in
-  "")         die "FORGEJO_OIDC_CLIENT_SECRET is empty/unset — .env not decrypted or the secret was never filled (sops-gen forgejo/oidc)" ;;
+  "")         die "FORGEJO_OIDC_CLIENT_SECRET is empty/unset — the stack env was not rendered, or the shared secret was never filled (sopsgen forgejo/oidc, nrs-vm)" ;;
   changeme*)  die "FORGEJO_OIDC_CLIENT_SECRET is still a changeme placeholder" ;;
 esac
 

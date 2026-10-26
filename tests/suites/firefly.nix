@@ -74,7 +74,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/firefly/.env
-    rm -f $out/stacks/firefly/.sops.env.example
+    rm -f $out/stacks/firefly/secrets.example.env
     ln -s /run/stack-env/firefly.env $out/stacks/firefly/.env
   '';
 in
@@ -120,8 +120,8 @@ pkgs.testers.runNixOSTest {
 
         virtualisation.cores = lib.mkForce 4;
 
-        # /srv is tmpfs so its post-reboot re-seed + re-decrypt is the
-        # production shape; /mnt is a real ext4 on a persistent qcow because
+        # /srv is tmpfs so its post-reboot re-seed stands in for Komodo's
+        # clone, and /run/stack-env is re-published at boot; /mnt is a real ext4 on a persistent qcow because
         # the reboot subtest asserts DATA durability — the accounts created
         # through the guard must survive.
         virtualisation.emptyDiskImages = [ 8192 ];
@@ -183,7 +183,7 @@ pkgs.testers.runNixOSTest {
     BASE = "http://127.0.0.1:10303"
     IMPORTER = "http://127.0.0.1:10305"
 
-    # Fixture value from tests/fixtures/firefly.sops.env — exactly 32 chars,
+    # Fixture value from tests/fixtures/stacks/firefly.sops.json — exactly 32 chars,
     # which Binder\CLIToken requires.
     CRON_TOKEN = "testfireflycrontokennotsecret000"
 
@@ -229,7 +229,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # boot chain + decrypt
+    # boot chain: the rendered stack env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
@@ -365,7 +365,7 @@ pkgs.testers.runNixOSTest {
         code = status(BASE, f"/api/v1/cron/{CRON_TOKEN[:31]}", timeout=180)
         assert code != 200, (
             "a 31-character token was accepted; the exactly-32 check in "
-            "Binder\\CLIToken is gone and the .sops.env warning is now wrong"
+            "Binder\\CLIToken is gone and the secrets.example.env warning is now wrong"
         )
 
     with subtest("firefly-cron.service runs the real host unit"):

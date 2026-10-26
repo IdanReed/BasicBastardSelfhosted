@@ -77,7 +77,7 @@ let
     # A locally-decrypted plaintext .env is gitignored but would still be
     # captured by cp -r into the world-readable store.
     rm -f $out/stacks/proton/.env
-    rm -f $out/stacks/proton/.sops.env.example $out/stacks/proton/.sops.env
+    rm -f $out/stacks/proton/secrets.example.env $out/stacks/proton/secrets.sops.json
     ln -s /run/stack-env/proton.env $out/stacks/proton/.env
   '';
 
@@ -204,7 +204,7 @@ pkgs.testers.runNixOSTest {
 
   testScript = ''
     PROTON = "docker compose -f /srv/stacks/proton/compose.yaml -p proton"
-    # Fixture values (tests/fixtures/proton.sops.env) — used for the
+    # Fixture values (tests/fixtures/stacks/proton.sops.json) — used for the
     # clean-refusal negative; there is nothing they could ever log in to.
     ACCOUNT = "test_proton_account_not_secret@example.invalid"
     BRIDGE_PASS = "test_bridge_password_not_secret"
@@ -214,7 +214,7 @@ pkgs.testers.runNixOSTest {
             ("compose ps", f"{PROTON} ps -a"),
             ("hydroxide logs", "docker logs hydroxide 2>&1 | tail -40"),
             ("export logs", "docker logs proton_export 2>&1 | tail -40"),
-            ("decrypt journal",
+            ("stack-env-publish journal",
              "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("state dir", "ls -la /mnt/fast/proton/hydroxide"),
             ("archive dir", "ls -la /mnt/slow/proton-mail-archive"),
@@ -230,8 +230,8 @@ pkgs.testers.runNixOSTest {
 
     try:
         with subtest("the fixture rendered to a root-only stack env"):
-            # The artifact, not the unit: decrypt-sops-envs is a transient
-            # oneshot on a minutely timer (mk-stack-suite's rule).
+            # The seeded .env is a symlink to /run/stack-env/<stack>.env, which
+            # stack-env-publish copies out of the sops-nix render.
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/proton/.env", timeout=90
             )

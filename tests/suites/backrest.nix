@@ -82,8 +82,8 @@ let
   ];
 
   # Seeds /srv the way the real host gets it: Komodo's clone on the live
-  # machine, a store copy here. The fixture .sops.env files stand in for the
-  # real encrypted ones so decrypt-sops-envs.service runs for real; the
+  # machine, a store copy here. The fixture JSON files stand in for the
+  # real encrypted ones so the sops-nix render runs for real; the
   # backrest fixture deliberately carries a single-quoted '$'-laden restic
   # password, a base64 bcrypt that actually decodes (so the API login works),
   # and a DEADMAN_URL pointing at the discard port.
@@ -98,7 +98,7 @@ let
       # The working-tree cp -r can capture a developer's locally-decrypted
       # plaintext .env (gitignored on purpose) in the world-readable store.
       rm -f $out/stacks/${s}/.env
-      rm -f $out/stacks/${s}/.sops.env.example
+      rm -f $out/stacks/${s}/secrets.example.env
       ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
     '') seededStacks}
   '';
@@ -135,8 +135,7 @@ pkgs.testers.runNixOSTest {
           }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-komodo.service both
-        # `requires = srv.mount`; backrest additionally bind-mounts /mnt/fast
+        # bootstrap-komodo.service `requires = srv.mount`; backrest additionally bind-mounts /mnt/fast
         # and /mnt/slow read-only. tmpfs gives each a genuine .mount unit.
         virtualisation.fileSystems = {
           "/srv" = {

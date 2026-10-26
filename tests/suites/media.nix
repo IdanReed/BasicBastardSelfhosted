@@ -4,11 +4,11 @@
 # ServerNotes/designs/service-media-stack-research.md is the assertion spec.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs turning stacks/media/.sops.env into a 0600 .env owned
-#     1000:1000, and env threading END TO END: the arr API keys, the qbit
-#     PBKDF2 seed and the gluetun provider config exist only in the encrypted
-#     fixture, so an API answering to the fixture key proves the whole
-#     sops -> .env -> env_file -> {APP}__AUTH__APIKEY chain
+#   - the sops-nix render of the stack env (root-only, 0400), and env threading
+#     END TO END: the arr API keys, the qbit PBKDF2 seed and the gluetun
+#     provider config exist only in the encrypted fixture, so an API answering
+#     to the fixture key proves the whole
+#     sops -> /run/stack-env -> env_file -> {APP}__AUTH__APIKEY chain
 #   - the KILL-SWITCH (the crown): the fixture points gluetun at TEST-NET-1
 #     (192.0.2.1 — unroutable by construction), so the tunnel is down for the
 #     whole suite. gluetun starts, raises its default-drop firewall, never
@@ -147,7 +147,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/media/.env
-    rm -f $out/stacks/media/.sops.env.example
+    rm -f $out/stacks/media/secrets.example.env
     ln -s /run/stack-env/media.env $out/stacks/media/.env
   '';
 in
@@ -204,8 +204,8 @@ pkgs.testers.runNixOSTest {
         # healthcheck window a coin toss; 4 keeps startup contention sane.
         virtualisation.cores = lib.mkForce 4;
 
-        # decrypt-sops-envs.service and bootstrap-komodo.service both
-        # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
+        # bootstrap-komodo.service `requires = srv.mount`; the tmpfs gives it
+        # a genuine .mount unit.
         # /mnt/fast holds every config volume, /mnt/slow the /data tree.
         virtualisation.fileSystems = {
           "/srv" = {
@@ -329,16 +329,19 @@ pkgs.testers.runNixOSTest {
 
     MEDIA = "docker compose -f /srv/stacks/media/compose.yaml -p media"
 
-    # Fixture values from tests/fixtures/media.sops.env — committed test-only
-    # secrets, same pattern as the backrest suite's test_backrest_password.
+    # Fixture values from tests/fixtures/stacks/media.sops.json — committed
+    # test-only secrets, same pattern as the backrest suite's
+    # test_backrest_password. Both passwords are idan's one password, rendered
+    # from IDAN_INITIAL_PASSWORD in tests/fixtures/shared.sops.json (the qBit
+    # PBKDF2 in the stack fixture is a real hash of it).
     RKEY = "746573747261646172726b6579303031"
     SKEY = "74657374736f6e6172726b6579303031"
     PKEY = "7465737470726f776c6172726b657931"
     PFKEY = "7465737470726f66696c6172726b65793030303030303030303030303030"
     QBIT_USER = "test_qbit_user"
-    QBIT_PASS = "test_qbit_password_not_secret"
+    QBIT_PASS = "test_IDAN_initial_pw_not_secret"
     JELLYFIN_USER = "idan"
-    JELLYFIN_PASS = "test_jellyfin_password_not_secret"
+    JELLYFIN_PASS = "test_IDAN_initial_pw_not_secret"
     SEERR_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     BAZARR_KEY = "fedcba9876543210fedcba9876543210"
 
@@ -412,12 +415,12 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # Boot chain: sops fixture -> decrypted .env -> homelab network -> stack
+    # Boot chain: sops fixture -> /run/stack-env -> homelab network -> stack
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("docker-network-homelab.service")
-        # Komodo is masked here, so decrypt runs via its minutely timer, not
-        # bootstrap-komodo's Requires — wait the .env out (mk-stack-suite pattern).
+        # Komodo is masked here, so nothing Requires stack-env-publish but
+        # multi-user.target — wait the .env out (mk-stack-suite pattern).
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_until_succeeds("test -s /srv/stacks/media/.env", timeout=90)
         stat = services_vm.succeed(

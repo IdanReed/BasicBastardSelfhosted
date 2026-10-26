@@ -22,7 +22,7 @@
 #
 # Genuinely under test:
 #   - 🚨 **The key/token triangle end to end.** beszel-init seeds the hub's
-#     ed25519 identity from .sops.env; the hub signs the agent's token with it;
+#     ed25519 identity from the stack env; the hub signs the agent's token with it;
 #     the agent verifies that signature against KEY. Asserted positively (the
 #     system reaches status `up`) and negatively (a wrong KEY produces
 #     `invalid signature`, loudly, rather than a silent non-report).
@@ -79,7 +79,7 @@ let
     # A developer's locally-decrypted plaintext .env is gitignored but would
     # still be captured by cp -r into the world-readable store.
     rm -f $out/stacks/beszel/.env
-    rm -f $out/stacks/beszel/.sops.env.example $out/stacks/beszel/.sops.env
+    rm -f $out/stacks/beszel/secrets.example.env $out/stacks/beszel/secrets.sops.json
     ln -s /run/stack-env/beszel.env $out/stacks/beszel/.env
   '';
 
@@ -224,7 +224,9 @@ pkgs.testers.runNixOSTest {
     BZ = "docker compose -f /srv/stacks/beszel/compose.yaml -p beszel"
     BASE = "http://127.0.0.1:10452"
     EMAIL = "test-beszel@example.invalid"
-    PASSWORD = "test_beszel_password_not_secret"
+    # USER_PASSWORD is idan's one password: IDAN_INITIAL_PASSWORD in
+    # tests/fixtures/shared.sops.json, rendered through stacks/beszel/env.nix.
+    PASSWORD = "test_IDAN_initial_pw_not_secret"
     TOKEN_UUID = "8d1f708c-cb90-4b11-bd98-4d85dd15d359"
 
     HUB_IMG = "henrygd/beszel:0.18.8"
@@ -281,12 +283,8 @@ pkgs.testers.runNixOSTest {
             assert fast != slow, f"both tiers are on {fast}"
 
         with subtest("the fixture rendered to a root-only stack env"):
-            # NOT wait_for_unit: decrypt-sops-envs is a transient oneshot
-            # with no RemainAfterExit (a minutely timer re-fires it), so
-            # waiting on the UNIT races its inactive-after-success state and
-            # fails with "inactive and there are no pending jobs". The
-            # artifact it must produce is the synchronisation point (see
-            # mk-stack-suite).
+            # The seeded .env is a symlink to /run/stack-env/<stack>.env, which
+            # stack-env-publish copies out of the sops-nix render.
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/beszel/.env", timeout=90
             )

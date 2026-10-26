@@ -68,7 +68,7 @@ let
     # A locally-decrypted plaintext .env is gitignored but would still be
     # captured by cp -r into the world-readable store.
     rm -f $out/stacks/wealthfolio/.env
-    rm -f $out/stacks/wealthfolio/.sops.env.example $out/stacks/wealthfolio/.sops.env
+    rm -f $out/stacks/wealthfolio/secrets.example.env $out/stacks/wealthfolio/secrets.sops.json
     ln -s /run/stack-env/wealthfolio.env $out/stacks/wealthfolio/.env
   '';
 
@@ -207,7 +207,7 @@ pkgs.testers.runNixOSTest {
         for label, cmd in [
             ("compose ps", f"{WF} ps -a"),
             ("app logs", "docker logs wealthfolio 2>&1 | tail -50"),
-            ("decrypt journal",
+            ("stack-env-publish journal",
              "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("data dir", "ls -la /mnt/fast/wealthfolio"),
         ]:
@@ -222,9 +222,8 @@ pkgs.testers.runNixOSTest {
 
     try:
         with subtest("the fixture rendered to a root-only stack env"):
-            # The artifact, not the unit: decrypt-sops-envs is a transient
-            # oneshot on a minutely timer, so waiting on the unit races its
-            # inactive-after-success state (mk-stack-suite's rule).
+            # The seeded .env is a symlink to /run/stack-env/<stack>.env, which
+            # stack-env-publish copies out of the sops-nix render.
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/wealthfolio/.env", timeout=90
             )

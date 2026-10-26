@@ -15,7 +15,7 @@
 --
 -- The DDL matches @keyv/postgres 1.4.11's defaults byte-for-byte; a bump that
 -- changes them brings the race back, and the suite's zero-"Connection Error"
--- assertion across a restart is the tripwire. STORAGE_URI in .sops.env must
+-- assertion across a restart is the tripwire. STORAGE_URI (built in env.nix) must
 -- point at THIS database.
 CREATE DATABASE excalidraw_storage OWNER excalidraw;
 

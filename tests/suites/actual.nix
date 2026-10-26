@@ -80,7 +80,7 @@ let
     # A developer's locally-decrypted plaintext .env is gitignored but would
     # still be captured by cp -r into the world-readable store.
     rm -f $out/stacks/actual/.env
-    rm -f $out/stacks/actual/.sops.env.example $out/stacks/actual/.sops.env
+    rm -f $out/stacks/actual/secrets.example.env $out/stacks/actual/secrets.sops.json
     ln -s /run/stack-env/actual.env $out/stacks/actual/.env
   '';
 in

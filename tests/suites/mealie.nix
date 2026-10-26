@@ -58,7 +58,7 @@ let
     # A developer's locally-decrypted plaintext .env is gitignored but would
     # still be captured by cp -r into the world-readable store.
     rm -f $out/stacks/mealie/.env
-    rm -f $out/stacks/mealie/.sops.env.example $out/stacks/mealie/.sops.env
+    rm -f $out/stacks/mealie/secrets.example.env $out/stacks/mealie/secrets.sops.json
     ln -s /run/stack-env/mealie.env $out/stacks/mealie/.env
   '';
 
@@ -176,7 +176,7 @@ pkgs.testers.runNixOSTest {
     BASE = "http://127.0.0.1:10352"
     DB = "/mnt/fast/mealie/mealie.db"
 
-    # Must match tests/fixtures/mealie.sops.env exactly.
+    # Must match tests/fixtures/stacks/mealie.sops.json exactly.
     ADMIN_USER = "mealie-admin"
     ADMIN_EMAIL = "test-mealie@example.invalid"
     ADMIN_PASSWORD = "test_mealie_admin_password_not_secret"
@@ -226,8 +226,8 @@ pkgs.testers.runNixOSTest {
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
-        # NOT wait_for_unit on decrypt-sops-envs: it is a transient oneshot
-        # re-fired by a minutely timer; the artifact is the sync point.
+        # The seeded .env is a symlink to /run/stack-env/mealie.env, which
+        # stack-env-publish copies out of the sops-nix render.
         services_vm.wait_until_succeeds("test -s /srv/stacks/mealie/.env", timeout=120)
         stat = services_vm.succeed("stat -L -c '%a %u:%g' /srv/stacks/mealie/.env").strip()
         assert stat == "400 0:0", f".env is {stat}"

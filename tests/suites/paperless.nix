@@ -1,10 +1,10 @@
 # Paperless heavy suite: the full document pipeline on the services VM.
 #
-# The light services-vm suite proves the boot chain (sops decrypt -> docker
-# network -> komodo) and the small stacks; this one boots the multi-GB
+# The light services-vm suite proves the boot chain (sops-nix render ->
+# stack-env-publish -> docker network -> komodo) and the small stacks; this one boots the multi-GB
 # Paperless stack for real and pushes a document through it. Genuinely under
 # test:
-#   - decrypt-sops-envs turning stacks/paperless/.sops.env into a 0600 .env
+#   - the sops-nix render of the stack env (root-only, 0400)
 #   - the real compose file: five containers, the named redis volume, the
 #     /mnt/fast bind mounts, and the compose-network DNS the services rely on
 #     (paperless -> tika/gotenberg by service name)
@@ -56,8 +56,8 @@ let
   # machine, a store copy here. ONLY the paperless stack is seeded — the other
   # stacks are the light suite's job — plus /srv/komodo, because
   # bootstrap-komodo runs unconditionally at boot and `docker compose up`
-  # against an absent compose file would leave a failed unit in the chain
-  # decrypt-sops-envs participates in.
+  # against an absent compose file would leave a failed unit in the boot
+  # chain.
   seedSrv = pkgs.runCommand "srv-seed-paperless" { } ''
     mkdir -p $out/komodo $out/stacks/paperless
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
@@ -67,7 +67,7 @@ let
     # The working-tree cp -r can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/paperless/.env
-    rm -f $out/stacks/paperless/.sops.env.example
+    rm -f $out/stacks/paperless/secrets.example.env
     ln -s /run/stack-env/paperless.env $out/stacks/paperless/.env
   '';
 in
@@ -114,8 +114,8 @@ pkgs.testers.runNixOSTest {
           }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-komodo.service both
-        # `requires = srv.mount`; the tmpfs gives them a genuine .mount unit.
+        # bootstrap-komodo.service `requires = srv.mount`; the tmpfs gives it
+        # a genuine .mount unit.
         # /mnt/fast is where the compose file bind-mounts everything.
         # Coverage lost: nothing — the real partitions are just ext4 mounts.
         virtualisation.fileSystems = {
@@ -202,9 +202,9 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # (a) Secret decryption
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env for paperless"):
-        # Transient oneshot (re-armed by a timer); bootstrap-komodo
-        # Requires+After it, so komodo up proves the decrypt pass ran.
+    with subtest("the paperless stack env rendered root-only (0400)"):
+        # bootstrap-komodo Requires+After stack-env-publish, so komodo up
+        # proves the env was published.
         services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/paperless/.env")
         mode = services_vm.succeed("stat -L -c '%a' /srv/stacks/paperless/.env").strip()

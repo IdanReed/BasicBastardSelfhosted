@@ -18,8 +18,8 @@ VPS_KEY="${VPS_KEY:-/var/lib/backup/vps_ed25519}"
 
 # Escape hatch, space-separated, matched against stack or container name: a
 # deliberately-stopped stack would otherwise page every night. An env var on
-# the unit rather than a marker file, because stack-git-sync owns /srv/stacks
-# and would overwrite one dropped there.
+# the unit rather than a marker file, because Periphery owns its clones under
+# /srv/komodo/stacks and would overwrite one dropped there.
 BACKUP_SKIP="${BACKUP_SKIP:-}"
 
 # Two counters, not one: the exit code aggregates, but the success stamps are
@@ -166,7 +166,7 @@ sqlite_backup vaultwarden    /mnt/fast/vaultwarden/db.sqlite3
 # Mealie is sqlite on purpose; see its compose header.
 sqlite_backup mealie         /mnt/fast/mealie/mealie.db
 # Wealthfolio (evaluation). secrets.json beside it is covered as a file, useful
-# only with WF_SECRET_KEY from .sops.env.
+# only with WF_SECRET_KEY from secrets.sops.json.
 sqlite_backup wealthfolio    /mnt/fast/wealthfolio/wealthfolio.db
 # Karakeep keeps the app database and a separate liteque job queue.
 sqlite_backup karakeep       /mnt/fast/karakeep/data/db.db
