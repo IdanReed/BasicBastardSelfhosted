@@ -2,7 +2,7 @@
 
 Declarative NixOS desktop: Niri + Stylix (Gruvbox) + Nixvim + CachyOS
 performance tuning. This is also the fleet's admin box — every `sopsedit`,
-`sopsgen`, `nrs-vps` and `./deploy` runs from here.
+`sopsgen`, `nrs-vm`, `nrs-vps` and `git push forgejo main` runs from here.
 
 **Target hardware:** AMD Ryzen 7 7800X3D + NVIDIA RTX 4090
 
@@ -28,13 +28,13 @@ inventory, and the keybindings.
 
 ```
 nixos-de/
-├── flake.nix, flake.lock
+├── (built by the repo-root flake: .#desktop, .#idan)
 ├── configuration.nix            system config + CachyOS performance + nix caches
 ├── hardware-configuration.nix
 ├── disko.nix                    declarative disk partitioning (targetDisk — see below)
-├── home.nix                     home-manager: aliases, sopsedit/sopsgen/redeploy, starship
+├── home.nix                     home-manager: aliases, sopsedit/sopsgen, starship
 ├── ssh-identities.nix           name → host/user/port; drives sops.secrets AND ssh config
-├── ssh-pubkeys.nix              shared with nixos/ and headscale-vps/ (lint-enforced)
+├── ssh-pubkeys.nix              copy of the repo-root one the servers import (lint-enforced)
 ├── secrets.sops.yaml{,.example} 14 keys: ssh/* ×7, workvpn/* ×6, SAMBA_IDAN_PASSWORD
 ├── test.sh / test-wsl.sh        config validation, no deploy
 ├── FUTURE.md                    tooling tracker
@@ -47,8 +47,7 @@ nixos-de/
 ```
 
 Desktop secrets are **`secrets.sops.yaml` (YAML)**, alongside
-`secrets.sops.yaml.example`. There is no `.sops.env` for the desktop — dotenv is
-the format stacks use, and sops-nix extracts per key only from yaml/json.
+`secrets.sops.yaml.example` — sops-nix extracts per key only from yaml/json.
 
 ## SSH identities
 
@@ -60,9 +59,8 @@ upstream `ssh_config` directives. Each block gets
 `IdentityFile /run/secrets/ssh/<name>` and `IdentitiesOnly yes`, and the Host
 pattern matches both the alias and the real hostname.
 
-Public halves live in `ssh-pubkeys.nix`, duplicated byte-identically into all
-three flakes (a flake cannot reference files outside its root); the
-`ssh-pubkey-parity` lint fails on drift. `gatech` and `forgejo` deliberately have
+Public halves live in the repo-root `ssh-pubkeys.nix`, which every host imports
+(one flake for the whole repo). `gatech` and `forgejo` deliberately have
 **no** `ssh-pubkeys.nix` entry — they are client identities for third-party
 forges, not host authorized keys.
 
@@ -192,8 +190,8 @@ nix flake update                              # alias: nfu
 aliases                                       # list the shell aliases
 ```
 
-`aliases` prints `shellAliases` only. `sopsedit`, `sopseditnvim`, `sopsgen` and
-`redeploy` are zsh functions defined in the same file (`home.nix`, `initContent`)
+`aliases` prints `shellAliases` only. `sopsedit`, `sopseditnvim` and `sopsgen`
+are zsh functions defined in the same file (`home.nix`, `initContent`)
 and do not appear in that listing.
 
 ## CachyOS performance optimizations

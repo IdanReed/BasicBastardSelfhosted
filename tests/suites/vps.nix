@@ -363,7 +363,7 @@ pkgs.testers.runNixOSTest {
       # The key is the committed test keypair authorised by
       # profiles.testSshAccess, merged alongside the production list (the
       # ssh-pubkeys.nix entries, all filled now; a null entry would grant
-      # no access and the ssh-pubkey-parity lint WARNs on it).
+      # no access and `run.sh deploy-check` reports it).
       with subtest("key login works, passwords and root are refused"):
           outsider.succeed(
               f"{SSH} -i /etc/test-ssh-key idan@headscale-vps true"

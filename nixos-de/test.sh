@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Validate the nixos-de flake WITHOUT deploying. Run from the nixos-de directory.
+# Validate the desktop (the root flake's .#desktop and .#idan) WITHOUT
+# deploying. Run from the nixos-de directory; `.` resolves to the root flake.
 
 set -e
 

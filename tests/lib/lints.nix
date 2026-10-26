@@ -1367,62 +1367,6 @@ in
       PY
     '';
 
-  # The root ssh-pubkeys.nix is canonical; nixos-de/ keeps a byte-identical
-  # copy because its flake cannot reference paths outside its root. A drifted
-  # copy silently authorises a stale key on the next desktop deploy. Bytes, not
-  # attrset equality: the comments are contract too.
-  ssh-pubkey-parity =
-    let
-      readOrNull = f: if builtins.pathExists (repo + "/${f}") then builtins.readFile (repo + "/${f}") else null;
-      # Canonical copy FIRST: the rest are compared against element 0.
-      copies = map (f: {
-        name = f;
-        text = readOrNull f;
-      }) [
-        "ssh-pubkeys.nix"
-        "nixos-de/ssh-pubkeys.nix"
-      ];
-    in
-    mkLint "ssh-pubkey-parity" ''
-      ${py} - <<'PY'
-      import json, re, sys
-
-      copies = json.loads(${builtins.toJSON (builtins.toJSON copies)})
-      canonical = copies[0]
-
-      errs = []
-      for c in copies:
-          if c["text"] is None:
-              errs.append(f"{c['name']} does not exist — the desktop flake "
-                          f"must carry a byte-identical copy of the identity "
-                          f"list (canonical: {canonical['name']})")
-      if canonical["text"] is not None:
-          for c in copies[1:]:
-              if c["text"] is not None and c["text"] != canonical["text"]:
-                  errs.append(f"{c['name']} drifted from {canonical['name']} "
-                              f"(byte comparison) — re-copy the canonical "
-                              f"file; a stale copy deploys stale authorized "
-                              f"keys")
-
-      # WARN leg: null = keypair not generated, no access granted. Read from
-      # the first EXISTING copy so it still prints when canonical is missing.
-      source = next((c for c in copies if c["text"] is not None), None)
-      if source is not None:
-          nulls = re.findall(r"^\s*([A-Za-z0-9_-]+)\s*=\s*null\s*;",
-                             source["text"], re.M)
-          for n in nulls:
-              print(f"WARN: identity '{n}' is still null in {source['name']} "
-                    f"— keypair not generated yet, no access granted")
-
-      if errs:
-          print("ssh-pubkeys.nix parity problems:", file=sys.stderr)
-          for e in errs:
-              print("  - " + e, file=sys.stderr)
-          sys.exit(1)
-      print(f"ssh-pubkeys parity OK ({len(copies)} byte-identical copies)")
-      PY
-    '';
-
   # loopback-binding and mk-stack-suite's probe list are both built from
   # `ports:`, which a `network_mode:` service has none of — so it PASSES them
   # with an empty set while bound to every interface. The only defence is to

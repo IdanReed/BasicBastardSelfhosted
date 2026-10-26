@@ -1,6 +1,5 @@
-# SSH public keys by identity name — the one copy both servers import (the
-# root flake sees the whole repo). nixos-de/ keeps a byte-identical copy until
-# the desktop joins the root flake; the ssh-pubkey-parity lint fails on drift.
+# SSH public keys by identity name — the one copy every host imports (the root
+# flake sees the whole repo).
 #
 # null = keypair not generated yet. Consumers filter nulls, so an unfilled
 # entry means "no access granted" rather than an eval failure; the lint

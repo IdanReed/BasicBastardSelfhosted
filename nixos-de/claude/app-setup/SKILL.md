@@ -52,7 +52,8 @@ click is the fallback, not the default.
   browser window.
 - A step that *mints* a secret (API token, PAT): stop before revealing it;
   the operator copies it straight into `sopsedit <file>`. The value lands in
-  a `.sops.env`, never anywhere else.
+  a sops file (a stack's `secrets.sops.json`, `secrets/shared.sops.json`, or a
+  host's `secrets.sops.yaml`), never anywhere else.
 
 ## After each app
 

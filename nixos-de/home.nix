@@ -59,7 +59,6 @@
 
     shellAliases =
       let
-        flakeDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/nixos-de";
         serverDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted";
         myAliases = {
           ".." = "cd ..";
@@ -71,8 +70,8 @@
           lg = "lazygit";
           v = "nvim";
           zed = "zeditor";
-          nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
-          nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
+          nrs = "sudo nixos-rebuild switch --flake ${serverDir}#desktop";
+          nrb = "sudo nixos-rebuild build --flake ${serverDir}#desktop";
           # No local sudo: the build is user-side, privilege is remote.
           "nrs-vps" = "nixos-rebuild switch --flake ${serverDir}#headscale-vps --target-host idan@vps --use-remote-sudo";
           "nrb-vps" = "nixos-rebuild build --flake ${serverDir}#headscale-vps";
@@ -80,9 +79,11 @@
           "nrb-vm" = "nixos-rebuild build --flake ${serverDir}#services-vm";
           # The trailing source+rehash run in the invoking shell (aliases expand
           # in place), so new aliases are usable without a new shell.
-          hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
-          hmb = "home-manager build --flake ${flakeDir}#idan";
-          nfu = "nix flake update";
+          hms = "home-manager switch --flake ${serverDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
+          hmb = "home-manager build --flake ${serverDir}#idan";
+          # The desktop's inputs only: the root flake also pins the servers'
+          # (nixos-25.11), which move deliberately, with the test harness.
+          nfu = "nix flake update --flake ${serverDir} nixpkgs-unstable home-manager stylix nixvim niri noctalia noctalia-greeter zen-browser handy disko-unstable sops-nix-unstable";
           ngc = "sudo nix-collect-garbage -d";
           ccupdate = "nix profile upgrade claude-code-nix";
         };
@@ -118,7 +119,7 @@
         local editor=$1
         shift
         if [[ -z $1 ]]; then
-          echo "usage: ''${funcstack[2]} <file.sops.yaml|.sops.env>" >&2
+          echo "usage: ''${funcstack[2]} <file.sops.yaml|.sops.json>" >&2
           return 1
         fi
         local key
