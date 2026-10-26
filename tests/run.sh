@@ -103,10 +103,11 @@ case "$TARGET" in
     echo "==> operator readiness (informational — not part of the exit code)"
     if git rev-parse --git-dir >/dev/null 2>&1; then
       root=$(git rev-parse --show-toplevel)
-      # Real .sops.env values are encrypted, so a decrypted changeme_ cannot
-      # leak here — only committed placeholders match.
-      pending=$(git -C "$root" grep -lE 'changeme_' -- 'stacks/**/.sops.env.example' 'headscale-vps/**/*.example' 2>/dev/null || true)
-      [ -n "$pending" ] && { echo "  .sops.env still on placeholders (fill before deploy):"; echo "$pending" | sed 's/^/    /'; } || echo "  .sops.env placeholders: none flagged"
+      # Real values are encrypted, so a decrypted changeme_ cannot leak here —
+      # only committed placeholders match. sopsgen apply --dry-run lists which
+      # REAL values are still placeholders (it needs no key for that).
+      pending=$(git -C "$root" grep -lE 'changeme_' -- '**/secrets.example.env' 'headscale-vps/**/*.example' 2>/dev/null || true)
+      [ -n "$pending" ] && { echo "  templates carrying changeme_ placeholders (fill the real files before deploy):"; echo "$pending" | sed 's/^/    /'; } || echo "  template placeholders: none flagged"
       nulls=$(git -C "$root" grep -n '= null' -- 'ssh-pubkeys.nix' 2>/dev/null || true)
       [ -n "$nulls" ] && { echo "  ssh-pubkeys.nix null entries (generate keypairs before deploy):"; echo "$nulls" | sed 's/^/    /'; } || echo "  ssh-pubkeys null entries: none"
       # An exemption a lint accepts but nobody has actually ruled on — today

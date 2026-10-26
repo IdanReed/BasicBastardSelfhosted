@@ -29,7 +29,7 @@
 #    is absolute:
 #
 #    🚨 THE PUSH MUST USE THE AUTOMATIC TOKEN. NEVER A PAT. A PAT — including
-#    the Renovate PAT in nixos/renovate.sops.env — is a normal user
+#    the Renovate PAT (RENOVATE_TOKEN in nixos/secrets.sops.yaml) — is a normal user
 #    credential; a push made with one is an ordinary authored change and DOES
 #    trigger workflows. Swapping the token here for "a PAT so it has more
 #    permissions" converts this file into an infinite CI loop that costs a

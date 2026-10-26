@@ -58,13 +58,15 @@ SSH, which is the whole reason the VPS and the services VM behave differently.
 
 ### Access and secrets
 
-- `authorizedKeys` is **generated from `ssh-pubkeys.nix`** (the `vps` and
-  `backup-vps` entries), which is byte-identical across all three flakes and
-  guarded by the `ssh-pubkey-parity` lint. Never hand-edit it in
+- `authorizedKeys` is **generated from the repo-root `ssh-pubkeys.nix`** (the
+  `vps` and `backup-vps` entries), which both servers import; the desktop's copy
+  is held byte-identical by the `ssh-pubkey-parity` lint. Never hand-edit it in
   `configuration.nix`.
-- All VPS secrets live in `secrets.sops.yaml` (**32 keys** — the inventory is
-  `deploy-handbook.md` §4), decrypted per key by sops-nix at activation into
-  `/run/secrets`. **No plaintext `.env` is ever written to disk.** YAML rather
+- The VPS's own secrets live in `secrets.sops.yaml`; the app OIDC client
+  secrets, the login passwords and the vlogs token are read from the
+  repo-root `secrets/shared.sops.json` (`secrets/shared.nix`), the same values
+  the services VM renders. Both are decrypted per key by sops-nix at activation
+  into `/run/secrets` (the inventory is `deploy-handbook.md` §4). **No plaintext `.env` is ever written to disk.** YAML rather
   than dotenv is load-bearing: `sops-install-secrets` applies the per-secret key
   only for yaml/json.
 - The age private key lives only at `/var/lib/sops-nix/sops_age_key.txt`, never
@@ -79,13 +81,12 @@ SSH, which is the whole reason the VPS and the services VM behave differently.
 ## Files
 
 ```
-headscale-vps/
-├── flake.nix, flake.lock
+headscale-vps/                  (built by the repo-root flake: .#headscale-vps)
+├── host.nix                    the module set the flake and the test harness share
 ├── configuration.nix           identity, firewall, fail2ban, nix settings
 ├── disk-config.nix             disko partitioning for the Hetzner disk
 ├── deploy.sh                   nixos-anywhere installer (DESTRUCTIVE)
 ├── policy.hujson               headscale ACL
-├── ssh-pubkeys.nix             shared with nixos/ and nixos-de/ (lint-enforced)
 ├── secrets.sops.yaml{,.example}
 ├── modules/
 │   ├── headscale.nix           services.headscale, embedded DERP

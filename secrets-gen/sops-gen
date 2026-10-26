@@ -232,7 +232,7 @@ hex_b64() { printf '%s' "$1" | xxd -r -p | base64 -w0; }
 # A PEM is multi-line and a dotenv value is one line. Laravel Passport (and
 # anything else reading a PEM from the environment) undoes exactly this:
 # str_replace('\\n', "\n", $key). Never double-quote the result in the
-# plaintext .sops.env — compose would then expand the escape itself.
+# stored value — compose would then expand the escape itself.
 pem_escape()   { sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'; }
 pem_unescape() { sed -e 's/\\n/\n/g'; }
 

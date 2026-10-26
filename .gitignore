@@ -1,5 +1,6 @@
 *.claude
-# Decrypted secrets (generated from .sops.env)
+# Plaintext env files — nothing in the repo should ever hold one (stack envs
+# are rendered on the host, into /run/stack-env)
 **/.env
 
 # Age private key (NEVER commit)

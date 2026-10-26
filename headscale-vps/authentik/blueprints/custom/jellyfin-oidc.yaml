@@ -4,8 +4,8 @@
 # its callback. Jellyfin keeps its own login for native apps, so no
 # forward-auth entry and no `import protected` on its Caddy route.
 # client_secret travels sops -> modules/authentik.nix template -> worker env
-# -> !Env below, twinned into stacks/media/.sops.env; the shared blueprint
-# conventions are documented in headscale-oidc.yaml.
+# -> !Env below; Jellyfin reads the SAME value from secrets/shared.sops.json
+# through stacks/media/env.nix. The shared blueprint conventions are documented in headscale-oidc.yaml.
 version: 1
 metadata:
   name: jellyfin-oidc

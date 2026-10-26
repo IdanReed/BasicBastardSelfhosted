@@ -201,10 +201,11 @@ pkgs.testers.runNixOSTest {
     def klogin():
         body = json.dumps({"username": env_value("KOMODO_INIT_ADMIN_USERNAME"),
                            "password": env_value("KOMODO_INIT_ADMIN_PASSWORD")})
-        jwt = services_vm.succeed(
-            f"curl -sf --max-time 15 -X POST {KAPI}/auth/login/LoginLocalUser "
-            f"-H 'Content-Type: application/json' -d '{body}' | jq -re '.data.jwt'"
-        ).strip()
+        cmd = (f"curl -sf --max-time 15 -X POST {KAPI}/auth/login/LoginLocalUser "
+               f"-H 'Content-Type: application/json' -d '{body}' | jq -re '.data.jwt'")
+        # Core restarts on a git-config change; wait it out rather than race it.
+        services_vm.wait_until_succeeds(cmd, timeout=180)
+        jwt = services_vm.succeed(cmd).strip()
         assert jwt and jwt != "null", f"no jwt from komodo login: {jwt!r}"
         return jwt
 

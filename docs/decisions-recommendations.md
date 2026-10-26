@@ -8,8 +8,8 @@ says **(overrides)**.
 
 Standing facts behind these calls:
 
-- The fleet is live. `CLAUDE.md` names Komodo the deploy plane, but `./deploy`'s remote leg runs
-  `docker compose -p <stack> up -d` itself — no Komodo call anywhere in the chain (D-17).
+- The fleet is live, and Komodo is the deploy plane: a push to Forgejo fires its `apply` procedure
+  (`komodo/sync/fleet.toml`), which deploys the stacks that changed.
 - `sopsgen apply` has **not** been run. Anything that adds, drops or fills a secret value is operator-gated.
 - The branch being landed (`land-code-review`) stops at `fa0a49d`. It does **not** contain `23f35d3`
   (Jellyfin/Seerr/Bazarr + Firefly Passport, "needs sopsgen apply"). D-35 and the seerr half of D-08 are about
@@ -20,7 +20,6 @@ Standing facts behind these calls:
 ## 1. Keep current behaviour — no work, or a comment only (12)
 
 - **D-19 · Eight byte-identical Postgres blocks** — **Recommendation:** leave; one directory = one deployable stack is the property both the deploy plane and the harness rely on.
-- **D-22 · Failed `decrypt-sops-envs` stops the deploy** — **Recommendation:** keep both legs fatal; a once-per-breakage block after an ntfy alert has already fired is the right shape.
 - **D-29 · `postgis:17-3.5-alpine` moving tag** — **Recommendation:** keep, with a one-line "conscious exception, no patch-pinned alpine tag exists" comment; `images.nix` already makes drift visible.
 - **D-30 · `scan-downloads.sh` quarantines partials** — **Recommendation:** leave; it fails safe and the alternative reopens the mtime hole.
 - **D-33 · Vaultwarden `SSO_SIGNUPS_ALLOWED=true`** — **Recommendation:** keep `true`; the Authentik user list is the gate and a second one buys nothing for 7 users.
@@ -42,7 +41,6 @@ Ships with a normal push / `./deploy`; no secret values, no live lookups.
 - **D-10 · `akadmin` + bootstrap token are permanent** — **Recommendation:** document as break-glass now in the three named docs; retire `akadmin` once the per-app OIDC UI steps are done.
 - **D-12 · fail2ban can lock a tailnet device out of SSH** — **Recommendation:** add the tailnet ranges to `services.fail2ban.ignoreIP`; the reputation policy still scores per `(username, ip)`.
 - **D-14 · Published desktop container ports bypass the firewall** — **Recommendation:** document the `127.0.0.1:PORT:PORT` convention in `containers.nix`; `iptables = false` breaks outbound networking.
-- **D-18 · `redeploy` vs `./deploy`** — **Recommendation:** rewrite `docs/deploy.md` §4 around `./deploy` and label `redeploy` "stacks only, no push, escape hatch"; two overlapping commands is how a stack gets converged by the wrong one.
 - **D-25 · Where trimmed analysis lives** — **Recommendation:** move the three named passages (vaultwarden quoting, SimpleFIN walkthrough, rmfakecloud `sanitizeEmail`) from git history into `ServerNotes/designs/`; examples stay terse.
 - **D-27 · Two unwired secret knobs** — **Recommendation (picks):** keep `FRIGATE_CAM_EXAMPLE` with an example comment; hardcode `1000` in `samba-init.sh` and drop the `SAMBA_SHARE_GID` indirection — it is in no env file, so this is a script-only edit.
 - **D-28 · Paperless ordering + healthchecks** — **Recommendation:** add `pg_isready`/`redis-cli ping`, `condition: service_healthy`, and an app healthcheck on an endpoint checked against 2.20 (not `/`); gate on `./tests/run.sh paperless`.
@@ -91,7 +89,7 @@ Order matters: do D-35, D-08 (seerr), D-23, D-24 and D-02's SMTP choice **before
 - **D-32 · Paperless superuser-group variable** — **Recommendation:** keep the manual `/admin` grant; set the variable when a ≥3.1 bump is wanted for its own sake.
 - **D-38 · Beszel OIDC provider PATCH** — **Recommendation:** leave the double login until it annoys; the role bug is already fixed.
 - **D-42 · Stale MAC in `10-lan.link`** — **Recommendation:** keep both MACs; converge (and `qm set --net0` if needed) at the next maintenance window.
-- **D-43 · `bootstrap-komodo`'s `sleep 5`** — **Recommendation:** decide D-17 first; if Komodo stays, `--wait` + `TimeoutStartSec` with a `gitops` run.
+- **D-43 · `bootstrap-komodo`'s `sleep 5`** — **Recommendation:** `--wait` + `TimeoutStartSec`, landed together with a `gitops` run.
 - **D-46 · nixfmt adoption** — **Recommendation:** leave non-fatal; if adopted, one standalone mechanical commit.
 - **D-50 · `images-generated` drift lint** — **Recommendation:** add at the next full `update-images.sh` regeneration, bundled with D-51.
 - **D-51 · Reshape `images.nix`** — **Recommendation:** same regeneration commit as D-50.
@@ -99,7 +97,6 @@ Order matters: do D-35, D-08 (seerr), D-23, D-24 and D-02's SMTP choice **before
 ## 6. Needs your judgement (2)
 
 - **D-11 · No patch cadence on the VPS** — **Recommendation (overrides):** a monthly `nfu` of `nixos/` + `headscale-vps/` then `./deploy --vps --vm`, written into `maintenance-handbook.md`; `system.autoUpgrade` against the committed lock applies no patches, and with `--update-input` the host runs a lock that is not in git (and the next `./deploy` rolls it back).
-- **D-17 · Komodo: remove, finish, or admit optionality** — **Recommendation:** lean remove; `./deploy` is the path actually used and verified, and Periphery is the fleet's only docker-socket mount. If you keep it, at minimum rewrite CLAUDE.md and `komodo-migration.md` to say `./deploy` deploys and Komodo is a dashboard, because the docs currently describe a plane the code bypasses.
 
 ## 7. Drop / obsolete (2)
 

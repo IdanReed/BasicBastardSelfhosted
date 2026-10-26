@@ -1,8 +1,8 @@
 # OIDC provider + application for Tandoor (slug "tandoor"). Native
 # OIDC, so no forward-auth entry and no `import protected` on its Caddy
 # route. client_secret travels sops -> modules/authentik.nix template ->
-# worker env -> !Env below, twinned into the stack's own .sops.env; the
-# shared blueprint conventions are documented in headscale-oidc.yaml.
+# worker env -> !Env below; the app reads the SAME value from
+# secrets/shared.sops.json through its env.nix. The shared blueprint conventions are documented in headscale-oidc.yaml.
 version: 1
 metadata:
   name: tandoor-oidc

@@ -1,8 +1,8 @@
 # OIDC provider + application for Outline (slug "outline"). Native
 # OIDC, so no forward-auth entry and no `import protected` on its Caddy
 # route. client_secret travels sops -> modules/authentik.nix template ->
-# worker env -> !Env below, twinned into the stack's own .sops.env; the
-# shared blueprint conventions are documented in headscale-oidc.yaml.
+# worker env -> !Env below; the app reads the SAME value from
+# secrets/shared.sops.json through its env.nix. The shared blueprint conventions are documented in headscale-oidc.yaml.
 # Outline has NO local accounts of any kind, so this provider IS the
 # login: a drifted client_id or redirect_uri makes the service
 # permanently unenterable, at login time, with a healthy container.

@@ -4,7 +4,7 @@ Functional changes the review branch `worktree-code-review` found but deliberate
 because each needs an operator decision. Use it as a queue: decide → implement → delete the entry.
 The full per-lane review-session reports (nixos-vm, vps, desktop, sops, stacks-a, stacks-b, tests,
 arch-security, declarative, docs-audit) are **not** in the repo; the arch-security findings (AS-nn)
-are summarised below, so this file stands alone. 64 decisions, 9 accepted risks.
+are summarised below, so this file stands alone. 61 decisions, 9 accepted risks.
 
 ---
 
@@ -307,33 +307,6 @@ store, which is where fail2ban ban evidence and Authentik `login_failed` events 
 
 ### Architecture
 
-#### D-17 Komodo: remove it, finish it, or say you are paying for optionality
-**Area** Architecture · **Raised by** arch-security (AS-7 / S-1) · **Severity/effort** Medium / M
-**Context:** There is no Resource-Sync TOML anywhere in the repo, so the declarative half of the Komodo design
-does not exist as committed state; deploy-on-sync is upstream-broken (#1120). The path that is documented *and*
-used is `./deploy` (repo root), which SSHes to 10.0.0.3 and runs `docker compose up -d` — Komodo is not in it.
-The cost: `komodo/compose.yaml` runs four containers, `komodo_periphery` is the **only** container of ~120 that
-mounts `/var/run/docker.sock` (read-write, no `security_opt`, no `user:`) plus `/srv/stacks` read-write;
-`komodo/.sops.env` holds four secrets; plus `bootstrap-komodo.service`, a Caddy vhost the Caddyfile itself calls
-"the entry with the largest blast radius in this file", a `pg_dumpall` backup target and `tests/suites/gitops.nix`.
-The two units doing the real work (`stack-git-sync`, `decrypt-sops-envs`) are independent of Komodo.
-**Options:**
-- Remove Komodo, keep `./deploy`. Deletes 4 containers, the socket mount, 4 secrets, a bootstrap unit, a vhost, a backup target and ~450 lines of suite. Loses the dashboard and the option value once #1120 lands.
-- Keep and finish: commit the Resource-Sync TOML, wire the Forgejo → `/listener/.../deploy` webhook, delete `redeploy`.
-- Status quo, stated explicitly in `ServerNotes/designs/komodo-migration.md` as "we are paying for optionality" — the doc currently reads as though Komodo is the deploy plane.
-**Recommendation:** remove it, or set a date for finishing it. Today the fleet pays for both and gets neither.
-
-#### D-18 `redeploy` vs `./deploy`, and which one the docs teach
-**Area** Architecture/Docs · **Raised by** arch-security (S-2), docs-audit (Q2) · **Severity/effort** Low / S
-**Context:** `redeploy` (a zsh function in `nixos-de/home.nix`) and `./deploy` have overlapping semantics and
-different safety properties: `./deploy` gates on an uncommitted/unpushed tree, pushes, detects the VPS and
-`nixos/` legs, force-starts both timers instead of waiting, redeploys and verifies each container. `docs/deploy.md`
-§4 still documents the manual `sopsedit → git push → wait → redeploy` chain that `./deploy` was written to replace.
-**Options:**
-- Delete `redeploy`; add `deploy --all` if the no-arg "converge everything" shorthand is wanted.
-- Keep `redeploy` as a documented "stacks only, no push" escape hatch and rewrite §4 around `./deploy`.
-**Recommendation:** rewrite §4 around `./deploy` and keep `redeploy` explicitly demoted. Two commands with overlapping semantics is how a stack gets converged by the wrong one.
-
 #### D-19 Eight stacks carry a byte-identical Postgres block
 **Area** Architecture/Stacks · **Raised by** stacks-b (Decision 1) · **Severity/effort** Low / M
 **Context:** `stacks/{ghostfolio,outline,dawarich,windmill,tandoor,firefly,excalidraw,paperless}/compose.yaml`
@@ -370,21 +343,6 @@ non-loopback listeners in the fleet — are never dialled from a tailnet peer.
 - Leave; the curated port sweeps are enough.
 - Add a `firewall-declared` lint plus extend the tailnet suite's negative sweep to the full published-port list. A few hundred lines.
 **Recommendation:** do it before writing another stack suite — better value per line than more of the same.
-
-#### D-22 Should a failed `decrypt-sops-envs` stop the whole deploy?
-**Area** Architecture · **Raised by** security-apply (Decision 4) · **Severity/effort** Low / S
-**Context:** `deploy`'s remote leg used to run `systemctl start stack-git-sync.service` and
-`decrypt-sops-envs.service` with `2>/dev/null || true`, so a failed sync or decrypt was swallowed and the
-subsequent `docker compose up -d` ran against stale files. Both now fail the run with a named reason (applied,
-AS-10). The residual question is the decrypt leg specifically: `decrypt-sops-envs` (`nixos/modules/secrets.nix`)
-exits 1 only on a *newly* failing set — its stamp suppresses repeats — so one broken `.sops.env` anywhere blocks
-the first deploy after it breaks, then lets subsequent ones through. That is arguably the right shape (the ntfy
-alert has fired by then), but it means an unrelated stack's bad secret can stop a deploy once.
-**Options:**
-- Keep both legs fatal (current state) — closest to the script's stated purpose of never half-completing.
-- Return `decrypt-sops-envs` to a warning and keep `stack-git-sync` fatal: a stale checkout is unambiguously worse than a stale `.env`, which `env_file: required: false` already degrades gracefully.
-- Make the decrypt leg fatal only for the stacks named on the `./deploy` command line.
-**Recommendation:** keep both fatal for now; revisit if it actually bites during an unrelated outage.
 
 ### Secrets
 
@@ -655,11 +613,11 @@ any re-image the Match failed and the pin was dead code. The link now matches **
 #### D-43 `bootstrap-komodo`'s bare `sleep 5`
 **Area** NixOS hosts · **Raised by** nixos-vm (Decision 2) · **Severity/effort** Low / S
 **Context:** `nixos/modules/deploy-plane.nix` sleeps 5 seconds before `docker compose up -d`, although the unit
-already `Requires=`/`After=` docker.service, srv.mount, `decrypt-sops-envs` and `docker-network-homelab`. What the
+already `Requires=`/`After=` docker.service, srv.mount, `stack-env-publish` and `docker-network-homelab`. What the
 sleep buys is unexplained, and there is no `--wait` and no retry, so a failed bring-up does not fail the unit and
 never reaches ntfy.
 **Options:** leave it; drop it; or replace with `docker compose up -d --wait` plus a `TimeoutStartSec`.
-**Recommendation:** `--wait` + timeout, but only alongside a `./tests/run.sh gitops` run — it changes when the unit is considered started. Moot if D-17 removes Komodo.
+**Recommendation:** `--wait` + timeout, but only alongside a `./tests/run.sh gitops` run — it changes when the unit is considered started.
 
 #### D-44 `tmpfiles.d` rule order moved (cosmetic)
 **Area** NixOS hosts · **Raised by** nixos-vm (Decision 3) · **Severity/effort** Low / S

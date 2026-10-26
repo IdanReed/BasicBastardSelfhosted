@@ -6,6 +6,12 @@ Fills every `generate`- and `derived`-class entry in `manifest.yaml`, refuses th
 committed key material. The inventory grouped by bring-up step is
 `ServerNotes/designs/deploy-handbook.md` §4.
 
+A value is stored ONCE, so most entries have a single target. Cross-host values
+live in `secrets/shared.sops.json`; values built from others (a URL around a
+password, an app's copy of a shared OIDC secret) are the stack's `env.nix`,
+rendered by sops-nix on the host — never a manifest target. Multiple targets
+remain only for hashes of one draw (a login password and its bcrypt/PBKDF2).
+
 ```bash
 nix-shell secrets-gen/shell.nix          # sops, age, openssl, yq, wg, htpasswd, argon2, xxd
 secrets-gen/sops-gen apply --dry-run     # read-only plan: plaintext key grep, no decryption
@@ -17,9 +23,9 @@ SOPS_AGE_KEY="$(sudo cat /var/lib/sops-nix/sops_age_key.txt)" secrets-gen/sops-g
 | Command | Needs key | Does |
 | --- | --- | --- |
 | `apply --dry-run` | no | plan only — no writes, no decryption |
-| `apply` | for full run | fill absent/`^changeme` values; create missing `.sops.env` from `.sops.env.example` (pubkey-only) |
+| `apply` | for full run | fill absent/`^changeme` values; create a missing `secrets.sops.json` from its `secrets.example.env` (pubkey-only) |
 | `rotate NAME [--force]` | yes | force-regenerate one entry (`--force` for frozen) |
-| `sort [--dry-run] [FILE]` | yes | reorder keys to the `.example`'s order, in place |
+| `sort [--dry-run] [FILE]` | yes | reorder a yaml/dotenv file's keys to its example's order (JSON is skipped) |
 | `list` | no | every entry: class, recipe, flags, present/missing per target |
 | `view FILE` | for values | one file's keys + classes; values decrypted when possible |
 | `search --keys PAT` | no | grep key names across all managed files |
@@ -62,21 +68,19 @@ are kept in step with their stack's example).
 
 ```bash
 sopsgen sort --dry-run                       # every managed file: what would move
-sopsgen sort stacks/media/.sops.env          # one file
+sopsgen sort nixos/secrets.sops.yaml         # one file
 ```
 
 ## Hash-derived credentials
 
 vaultwarden ADMIN_TOKEN (argon2id), backrest admin (bcrypt+b64), qbittorrent
 (PBKDF2), wealthfolio (argon2id): a strong password is drawn, the **hash**
-goes into the stack's `.sops.env`, and the **plaintext** is escrowed in
+goes into the stack's `secrets.sops.json`, and the **plaintext** is escrowed in
 `secrets-recovery.sops.yaml` (repo root, same age key) and printed once.
-Central file on purpose: every `.sops.env` key becomes a container env var,
-and `decrypt-sops-envs` only globs literal `.sops.env` names — the recovery
-file never reaches a container. If you prefer in-file recovery instead, move
-the plaintext to an `UNUSED_<KEY>` key in the same `.sops.env` and drop the
-`recovery:` field (accepting that it then rides into the container env).
-qbittorrent needs no recovery entry — its plaintext is a real env key already.
+Central file on purpose: every stored stack key becomes a container env var,
+and no host reads the recovery file — it never reaches a container. The
+backrest and qBittorrent hashes are of `IDAN_INITIAL_PASSWORD`, whose plaintext
+is already in `secrets/shared.sops.json`, so they need no recovery entry.
 
 ## Manifest schema
 
@@ -84,7 +88,7 @@ qbittorrent needs no recovery entry — its plaintext is a real env key already.
 version: 1
 recovery_file: secrets-recovery.sops.yaml
 files:                                    # every file sops-gen may touch
-  - { path: stacks/x/.sops.env, format: dotenv, example: stacks/x/.sops.env.example }
+  - { path: stacks/x/secrets.sops.json, format: json, example: stacks/x/secrets.example.env }
 secrets:
   - name: x/db                            # unique; the `rotate` handle
     class: generate                       # generate | derived | pull | config
@@ -95,13 +99,13 @@ secrets:
     note: "..."                           # shown in reports; pull: how to obtain
     reminder: "..."                       # printed after a fill (manual follow-ups)
     deps: [other-entry]                   # optional: must be defined earlier
-    targets:                              # >1 target = twins, one draw
-      - { file: stacks/x/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/x/.sops.env, key: DATABASE_URL,
-          template: "postgres://x:${v}@x_db:5432/x" }   # ${v} = rendered value
-      - { file: stacks/x/.sops.env, key: HASH, part: argon2 }
-      - { file: h/secrets.sops.yaml, key: PW, source: true }  # copy_only: the
-          # one hand-set target; `rotate x/db` re-derives all others from it
+    targets:                              # >1 target = one draw, several forms
+      - { file: stacks/x/secrets.sops.json, key: ADMIN_PASSWORD }
+      - { file: stacks/x/secrets.sops.json, key: ADMIN_URL,
+          template: "https://admin:${v}@x" }   # ${v} = rendered value
+      - { file: stacks/x/secrets.sops.json, key: HASH, part: argon2 }
+      - { file: secrets/shared.sops.json, key: PW, source: true }  # copy_only:
+          # the one hand-set target; `rotate` re-derives all others from it
 ```
 
 Target `source: true` (copy_only only): marks the single target that holds the
@@ -116,10 +120,10 @@ Target `part`: `plain` (default), `bcrypt`, `bcrypt_b64`, `argon2`,
 `pbkdf2_qbit`, `htpasswd:USER`, and for keypair recipes `private`,
 `private_b64`, `public`. yaml keys nest with `/` (`ssh/github`).
 
-Missing-file creation copies the `.sops.env.example` verbatim — comments and
-key order included, so a fresh file starts already `sort`ed — substituting only
-the generate-class values; pull/config keys keep their `changeme` placeholders.
-(`stack-env-drift` itself compares key SETS, not order.)
+Missing-file creation reads the example's `KEY=value` lines into a JSON object
+(`format: json`) or copies the example verbatim (yaml/dotenv), substituting
+only the generate-class values; pull/config keys keep their `changeme`
+placeholders. (`stack-env-drift` compares key SETS, not order.)
 
 `recovery_file:` is separate from `files:`, so the recovery escrow is written
 and read but never listed by `list` / `view` / `search`.

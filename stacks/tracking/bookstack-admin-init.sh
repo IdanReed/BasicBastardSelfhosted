@@ -21,13 +21,13 @@ log() { echo "[bookstack-admin-init] $*"; }
 
 if [ -z "${BOOKSTACK_ADMIN_EMAIL:-}" ] || [ -z "${BOOKSTACK_ADMIN_PASSWORD:-}" ]; then
     log "BOOKSTACK_ADMIN_EMAIL/PASSWORD not set — LEAVING THE SEEDED ADMIN IN"
-    log "PLACE (admin@admin.com / password). Set them in .sops.env."
+    log "PLACE (admin@admin.com / password). Set them in secrets.sops.json."
     exit 0
 fi
 
 case "$BOOKSTACK_ADMIN_PASSWORD" in
     changeme_*)
-        log "BOOKSTACK_ADMIN_PASSWORD is still the .sops.env.example"
+        log "BOOKSTACK_ADMIN_PASSWORD is still the secrets.example.env"
         log "placeholder — refusing to set it. The seeded admin stays."
         exit 0
         ;;

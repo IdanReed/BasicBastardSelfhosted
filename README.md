@@ -25,8 +25,8 @@ errors an LLM introduced and a human skimmed past. This repo is a record of what
 was built and why — not authoritative guidance on how you should build yours.
 
 **Secrets are SOPS-encrypted (age).** Nothing sensitive is committed in
-cleartext — application secrets live in encrypted `.sops.env` files, OS secrets
-in `secrets.sops.yaml`, and the private key never enters the repo. That said,
+cleartext — application secrets live in encrypted `secrets.sops.json` files, OS
+secrets in `secrets.sops.yaml`, and the private key never enters the repo. That said,
 the security model was designed for *this* threat model (tailnet-only exposure,
 one operator). Don't assume it fits yours.
 
@@ -41,12 +41,14 @@ the secrets in SOPS+age, and deploys happen via GitOps rather than by hand.
 The moving parts (the repo-level layout and cross-repo conventions live in the
 sibling-repo `CLAUDE.md` files; the essentials):
 
-- **Three NixOS flakes / deploy targets**, each with its own `flake.nix` and lock
-  — always `cd` into the target before running nix:
+- **Three deploy targets**: the two servers are one flake at the repo root
+  (`.#services-vm`, `.#headscale-vps`); the desktop has its own in `nixos-de/`.
   - **Services VM** (`nixos/`, Proxmox, `10.0.0.3`) — the Docker host. Deploy
-    plane is **Komodo** GitOps: host-side units decrypt secrets and git-sync the
-    compose repo from Forgejo, Komodo Core/Periphery deploy the stacks. Adding a
-    service needs no OS rebuild.
+    plane is **Komodo** GitOps: a push to Forgejo fires one webhook, Komodo
+    re-applies `komodo/sync/` and deploys every stack whose files changed.
+    sops-nix renders each stack's env on the host, so the age key never
+    reaches the container that runs compose. Komodo and Forgejo themselves run
+    from the flake.
   - **Headscale VPS** (`headscale-vps/`, Hetzner) — the only public host.
     Deployed by `nixos-rebuild --target-host` over SSH; no manager, no checkout
     on the host. Runs Headscale (native systemd) and Authentik (containerised).
@@ -56,9 +58,11 @@ sibling-repo `CLAUDE.md` files; the essentials):
   bound to the tailnet IP only. Nothing at home is exposed publicly.
 - **Authentik** — the identity provider: native **OIDC** for apps that support
   it, plus Caddy **forward-auth** for apps that don't. One IdP for both hosts.
-- **SOPS + age** — one key encrypts everything; two file formats
-  (`secrets.sops.yaml` for OS secrets, `.sops.env` for application secrets). The
-  private key lives only at `/var/lib/sops-nix/sops_age_key.txt` on each host.
+- **SOPS + age** — one key encrypts everything, and a value is stored once:
+  `secrets.sops.yaml` per host for OS secrets, `secrets.sops.json` per stack,
+  and `secrets/shared.sops.json` for what both hosts read (OIDC client secrets,
+  login passwords). The private key lives only at
+  `/var/lib/sops-nix/sops_age_key.txt` on each host.
 
 **The honest caveat:** declarative-first is the *goal*, not a claim of 100%
 coverage. A handful of services force an irreducible manual step — a browser-only
@@ -219,8 +223,8 @@ The recorded plan is one compose stack per game behind an idle-hibernation waker
 
 Operator runbooks live in this repo:
 
-- [`docs/deploy.md`](docs/deploy.md) — the day-2 quick reference: the three
-  deploy targets, the `./deploy` chain, the secrets commands, the two ordering
+- [`docs/deploy.md`](docs/deploy.md) — the day-2 quick reference: commit →
+  switch → push, how a stack deploys, the secrets commands, the two ordering
   traps, and the gotcha list.
 - [`docs/for-shame.md`](docs/for-shame.md) — the catalogue of manual,
   non-declarative bring-up steps: for each, the exact step, *why* the app makes

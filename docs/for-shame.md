@@ -1,7 +1,7 @@
 # The Wall of Shame — manual, non-declarative bring-up steps
 
 Declarative-first is the goal of this fleet: every service should come up from
-the repo — compose + `.sops.env` + init containers — with no human clicking
+the repo — compose + `secrets.sops.json` + init containers — with no human clicking
 through a browser, no `docker exec` into a running container, and no state that
 lives only in a database nobody can regenerate. Most stacks hit that bar. This
 document is the honest inventory of the ones that **can't**, and exactly where
@@ -41,6 +41,7 @@ offers no non-browser / non-DB path to it.
 
 | Service | Manual step | Why not declarative | Survives recreate? |
 |---|---|---|---|
+| **Forgejo → Komodo** | Create the `komodo` bot (read collaborator on the repo), mint its `read:repository` PAT into `komodo/secrets.sops.json`, add the repo's push webhook | The bot, its token and the webhook live in Forgejo's DB; a token can only be minted once Forgejo runs, and Forgejo has no declarative webhook config | Yes — Forgejo DB + the sops value |
 | **Beszel** | Set `USER_EMAIL` before the **first** boot | Seeding is declarative, but the PocketBase migration that reads the pair fires only against a virgin `data.db` | Yes — in `data.db` on `/mnt/fast/beszel` |
 | **Beszel** | Log in twice (Authentik forward-auth, then Beszel's own login) | OIDC config lives in `users.oauth2` inside `data.db`; no env vars — browser wizard only | n/a (every login) |
 | **Jellyfin** | *(not a chore — a caveat)* the SSO plugin is a one-time pinned download | No native OIDC; the plugin is a runtime install. `jellyfin-config-init` fetches it by version + sha256, `jellyfin-init` configures it | Yes — `/mnt/fast/jellyfin/config/plugins` |
@@ -54,9 +55,9 @@ offers no non-browser / non-DB path to it.
 | **Firefly Importer** | Every import is an operator at the importer UI uploading a config JSON | No scheduled sync exists; `SIMPLEFIN_TOKEN` is a one-shot claim URL | No — redone per import |
 | **Cleanuparr** | Configure the arr connections and the malware blocker in the web UI | v2 keeps all of it in `/config` SQLite; `cleanuparr.json` covers only `PORT`/`BASE_PATH` | Yes — `/mnt/fast/cleanuparr/config` |
 | **qBittorrent** | Rotating the WebUI password needs `qBittorrent.conf` deleted and the stack redeployed | The conf is seed-once: `qbit-init` writes it only when absent, and qbit rewrites it whole on shutdown | Yes — `/mnt/fast/qbittorrent/config` |
-| **Proton / hydroxide** | One interactive `docker exec -it hydroxide … auth <account>` | Env credentials are refused by design so the Proton password never reaches sops; the bridge password prints **once** | Yes — `auth.json` on `/mnt/fast/proton`, but the value must be pasted into `.sops.env` |
+| **Proton / hydroxide** | One interactive `docker exec -it hydroxide … auth <account>` | Env credentials are refused by design so the Proton password never reaches sops; the bridge password prints **once** | Yes — `auth.json` on `/mnt/fast/proton`, but the value must be pasted into `secrets.sops.json` |
 | **Syncthing** | Add each peer by device ID, from **both** sides | Deliberate: no device is pre-seeded, so nothing can pair itself | Yes — Syncthing config |
-| **SilverBullet** | Create the private Forgejo mirror repo and a `write:repository` PAT, embed both in `GIT_SYNC_REMOTE` | The stack creates neither, by design | Yes — the `.sops.env` value |
+| **SilverBullet** | Create the private Forgejo mirror repo and a `write:repository` PAT, embed both in `GIT_SYNC_REMOTE` | The stack creates neither, by design | Yes — the `secrets.sops.json` value |
 | **Excalidraw / Wealthfolio** | OIDC is staged but shipped OFF; enabling it is an operator flip | Both panic or misbehave against an unavailable issuer, so the repo ships them off | One-shot (compose edit) |
 | **Audiobookshelf / Dawarich** | Ensure your Authentik email == the seeded admin email **before** the first SSO login | Auto-register matches by email; a mismatch mints a second account to merge | Ordering constraint (one-shot) |
 | **Paperless-ngx** | Grant admin/staff in `/admin` if the SSO user needs it | The superuser-group env var first exists in 3.1.0; the compose pins 2.20, where it is silently ignored | Yes — Paperless DB |
@@ -65,6 +66,30 @@ offers no non-browser / non-DB path to it.
 ---
 
 ## Per-service detail
+
+### Forgejo → Komodo — the bot, its read token, and the push webhook
+
+- **(a) Service:** Komodo's deploy path (`komodo/sync/`, `nixos/modules/deploy-plane.nix`).
+- **(b) The steps,** once per fresh Forgejo:
+  1. Forgejo → Site Administration → Create user `komodo` (no admin). On
+     `idan/BasicBastardSelfhosted` → Settings → Collaborators, add `komodo`
+     with **Read**.
+  2. As `komodo` → Settings → Applications → token with scope
+     `read:repository` only. `sopsedit komodo/secrets.sops.json`, set
+     `KOMODO_GIT_TOKEN`, commit, `nrs-vm` — the switch restarts Core with the
+     token and `komodo-sync-bootstrap` registers the `fleet` sync, which
+     creates the `apply` procedure and every stack.
+  3. Repo → Settings → Webhooks → Add → Forgejo: URL
+     `http://komodo:9120/listener/github/procedure/apply/main`, content type
+     `application/json`, secret = `KOMODO_WEBHOOK_SECRET` from
+     `komodo/secrets.sops.json`, trigger on push events, branch filter `main`.
+     "Test Delivery" deploys the current head.
+- **(c) Why not declarative:** the bot, its token and the webhook are rows in
+  Forgejo's database, a token can only be minted by a running Forgejo, and
+  Forgejo reads no webhook config from env or files.
+- **(d) Survives recreate:** yes — Forgejo's DB is on `/mnt/fast/forgejo`, the
+  token is a sops value. A Komodo database rebuild needs only the switch (the
+  bootstrap re-registers `fleet`; the webhook URL names the procedure, not an id).
 
 ### Beszel — the app login is a *different* collection from the admin console
 
@@ -81,7 +106,7 @@ The **seeding itself is declarative**: `USER_PASSWORD` is a derived target of
 `role: "user"` (PocketBase's `InitializeUserRole` default) to `"admin"` once the
 hub is healthy. What is not declarative is the *timing*.
 
-- **(b) The step:** set `USER_EMAIL` in `stacks/beszel/.sops.env` before the
+- **(b) The step:** set `USER_EMAIL` in `stacks/beszel/secrets.sops.json` before the
   **first** boot (it is `class: config`, hand-set). Recovery on an
   already-initialized DB: patch the existing `users` record's email via the
   superuser API — the migration will not re-fire.
@@ -237,7 +262,7 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
 ### Firefly III — mint a Personal Access Token by hand
 
 - **(b) The step:** in the Firefly UI (*Profile → OAuth*), mint a Personal Access
-  Token and paste it into `stacks/firefly/.sops.env` as
+  Token and paste it into `stacks/firefly/secrets.sops.json` as
   `FIREFLY_III_ACCESS_TOKEN` for the data importer. Never set
   `FIREFLY_III_CLIENT_ID` — the OAuth client is likewise minted by hand.
 - **(c) Why not declarative:** the only `createToken` call in the image sits
@@ -282,7 +307,7 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   ```bash
   docker compose -p media stop qbittorrent
   rm /mnt/fast/qbittorrent/config/qBittorrent/qBittorrent.conf
-  ./deploy media        # qbit-init re-seeds the conf from the new .env
+  # redeploy media in Komodo — qbit-init re-seeds the conf from the new env
   ```
 - **(c) Why not declarative:** `qbit-init` seeds `qBittorrent.conf` **only when
   absent**, because qBittorrent rewrites that file whole on shutdown — an
@@ -301,7 +326,7 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   ```bash
   docker exec -it hydroxide /app/hydroxide auth idan@idanreed.com
   #   ... prints "Bridge password: <base64>" — shown ONCE, save it NOW
-  sopsedit stacks/proton/.sops.env      # PROTON_BRIDGE_PASSWORD, PROTON_ACCOUNT
+  sopsedit stacks/proton/secrets.sops.json   # PROTON_BRIDGE_PASSWORD, PROTON_ACCOUNT
   docker restart proton_export
   docker exec proton_export /sync       # first export on demand
   ```
@@ -309,10 +334,10 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   refuses environment credentials so the Proton account password never reaches
   sops; the container consumes **no environment at all**. The bridge password it
   prints is the key that decrypts `auth.json`, is stored nowhere else, and is
-  displayed exactly once — so the volume alone is useless and `.sops.env` alone is
+  displayed exactly once — so the volume alone is useless and `secrets.sops.json` alone is
   useless. It is the only step in the fleet that requires a TTY.
 - **(d) Survives recreate:** yes — `auth.json` under `/mnt/fast/proton`, but the
-  bridge password must be captured into `.sops.env` at the moment it is printed.
+  bridge password must be captured into `secrets.sops.json` at the moment it is printed.
 
 ### Syncthing — peers are paired from both sides, on purpose
 
@@ -328,7 +353,7 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
 
 - **(b) The step:** create a private Forgejo repository, mint a
   `write:repository` PAT, and embed both in `GIT_SYNC_REMOTE` in
-  `stacks/silverbullet/.sops.env`.
+  `stacks/silverbullet/secrets.sops.json`.
 - **(c) Why not declarative:** the stack deliberately creates neither the repo nor
   the token — a write-scoped credential that a container could mint for itself
   would be a credential a compromised container could mint for itself.
@@ -373,13 +398,13 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
 ### Samba — why there's a manual login at all
 
 This row is a *why*, not a chore: credentials are seeded declaratively by
-`samba-init.sh` from `.sops.env` on every deploy, and the passwords themselves
+`samba-init.sh` from the stack env on every deploy, and the passwords themselves
 come from `sopsgen rotate user/<name>`. It is recorded here so the `Local` auth
 cell on the Samba row has an explanation.
 
 - **(c) Why not SSO:** the nixpkgs Samba is built `--without-ldap --without-ads`,
   so OIDC/AD integration is **not achievable**. Exposure is tailnet-only.
-- **(d) Survives recreate:** yes — re-seeded from `.sops.env` on every deploy.
+- **(d) Survives recreate:** yes — re-seeded from the stack env on every deploy.
 
 ---
 

@@ -92,7 +92,7 @@ admin_password = env("MEALIE_ADMIN_PASSWORD")
 if len(admin_password) < 12:
     fatal("MEALIE_ADMIN_PASSWORD must be at least 12 characters")
 if admin_password.startswith("changeme_"):
-    fatal("MEALIE_ADMIN_PASSWORD is still the .sops.env.example placeholder")
+    fatal("MEALIE_ADMIN_PASSWORD is still the secrets.example.env placeholder")
 if admin_password == DEFAULT_PASSWORD:
     fatal("MEALIE_ADMIN_PASSWORD must not be the published default 'MyPassword'")
 if admin_user == "admin":
@@ -110,7 +110,7 @@ else:
     if default_token is None:
         fatal("neither the configured admin nor the boot-time default can "
               "log in — refusing to guess at this instance's state (was the "
-              "admin password changed in the UI without updating .sops.env?)")
+              "admin password changed in the UI without updating secrets.sops.json?)")
     code, body = req("POST", "/api/admin/users", token=default_token, json_body={
         "username": admin_user,
         "fullName": admin_user,

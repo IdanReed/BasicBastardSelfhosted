@@ -820,7 +820,7 @@ secrets:
       - { file: stacks/vaultwarden/secrets.sops.json, key: ADMIN_TOKEN, part: argon2 }
   # Rollout 2026-09-05: only the SECRET is generated. SSO_CLIENT_ID is public
   # and pinned to the literal "vaultwarden" in compose.yaml (overrides the
-  # vestigial .sops.env stub), so it is not a managed secret. vaultwarden/server
+  # vestigial env stub), so it is not a managed secret. vaultwarden/server
   # 1.37.2 has native SSO (1.34+) — no separate -sso build. Lazy discovery;
   # master-password login stays as fallback (SSO_ONLY off).
   - name: vaultwarden/sso
