@@ -107,7 +107,7 @@ let
       # plaintext .env (gitignored on purpose) in the world-readable store.
       rm -f $out/stacks/${s}/.env
       rm -f $out/stacks/${s}/.sops.env.example
-      cp ${../fixtures + "/${s}.sops.env"} $out/stacks/${s}/.sops.env
+      ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
     '') seededStacks}
   '';
 
@@ -163,8 +163,11 @@ pkgs.testers.runNixOSTest {
       ];
 
       systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-      # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
-      systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+      # Komodo's sync bootstrap Requires the masked unit and would pull it
+      # back in; Forgejo runs from the host too, and only the forgejo and
+      # gitops suites load its image.
+      systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+      systemd.services.forgejo.wantedBy = lib.mkForce [ ];
       virtualisation.cores = lib.mkForce 2;
 
       virtualisation.emptyDiskImages = [ 4096 ];
@@ -197,8 +200,6 @@ pkgs.testers.runNixOSTest {
         description = "Seed /srv from the repo (test only)";
         after = [ "srv.mount" ];
         requires = [ "srv.mount" ];
-        before = [ "decrypt-sops-envs.service" ];
-        requiredBy = [ "decrypt-sops-envs.service" ];
         wantedBy = [ "multi-user.target" ];
         serviceConfig = {
           Type = "oneshot";

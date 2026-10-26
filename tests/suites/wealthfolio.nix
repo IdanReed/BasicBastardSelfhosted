@@ -59,7 +59,7 @@ let
     images."wealthfolio_wealthfolio_3_7_0"
   ];
 
-  fixture = ../fixtures/wealthfolio.sops.env;
+  fixture = ../fixtures/stacks/wealthfolio.sops.json;
 
   seedSrv = pkgs.runCommand "srv-seed-wealthfolio" { } ''
     mkdir -p $out/stacks/wealthfolio
@@ -69,7 +69,7 @@ let
     # captured by cp -r into the world-readable store.
     rm -f $out/stacks/wealthfolio/.env
     rm -f $out/stacks/wealthfolio/.sops.env.example $out/stacks/wealthfolio/.sops.env
-    cp ${fixture} $out/stacks/wealthfolio/.sops.env
+    ln -s /run/stack-env/wealthfolio.env $out/stacks/wealthfolio/.env
   '';
 
   # /mnt tmpfiles rules from the SAME generated file the real host imports
@@ -122,8 +122,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         virtualisation.fileSystems = {
@@ -154,8 +157,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the wealthfolio stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -207,7 +208,7 @@ pkgs.testers.runNixOSTest {
             ("compose ps", f"{WF} ps -a"),
             ("app logs", "docker logs wealthfolio 2>&1 | tail -50"),
             ("decrypt journal",
-             "journalctl -u decrypt-sops-envs --no-pager -o cat | tail -20"),
+             "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("data dir", "ls -la /mnt/fast/wealthfolio"),
         ]:
             print(f"--- {label} ---")
@@ -220,7 +221,7 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("load-test-images.service")
 
     try:
-        with subtest("the fixture .sops.env decrypted to a 0600 .env"):
+        with subtest("the fixture rendered to a root-only stack env"):
             # The artifact, not the unit: decrypt-sops-envs is a transient
             # oneshot on a minutely timer, so waiting on the unit races its
             # inactive-after-success state (mk-stack-suite's rule).
@@ -228,9 +229,9 @@ pkgs.testers.runNixOSTest {
                 "test -s /srv/stacks/wealthfolio/.env", timeout=90
             )
             mode = services_vm.succeed(
-                "stat -c %a /srv/stacks/wealthfolio/.env"
+                "stat -L -c %a /srv/stacks/wealthfolio/.env"
             ).strip()
-            assert mode == "600", f".env is mode {mode}, expected 600"
+            assert mode == "400", f".env is mode {mode}, expected 400"
 
         with subtest("the stack comes up healthy, offline"):
             # One container, no oneshot: --wait is safe here (finding #39

@@ -6,7 +6,7 @@ creation_rules:
   # secrets to the production recipient.
   #
   # Nothing here is a real credential. See tests/README.md.
-  - path_regex: tests/fixtures/.*\.sops\.(env|yaml)$
+  - path_regex: tests/fixtures/.*\.sops\.(env|yaml|json)$
     age:
       - age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
 
@@ -30,6 +30,15 @@ creation_rules:
   # only say "ignored if format is binary"). The tests/ lint
   # `sops-dotenv-extraction` guards against regressing this.
   - path_regex: secrets\.sops\.yaml$
+    age:
+      - age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf
+
+  # Stack secrets (stacks/<name>/secrets.sops.json, komodo/secrets.sops.json)
+  # and the cross-host values (secrets/shared.sops.json). JSON because
+  # sops-nix extracts one key per secret only from yaml/json, and because Nix
+  # can read the key names straight out of the encrypted file
+  # (nixos/modules/stack-env.nix renders each stack's env from them).
+  - path_regex: \.sops\.json$
     age:
       - age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf
 

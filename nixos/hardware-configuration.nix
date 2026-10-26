@@ -66,16 +66,9 @@
   # ONLY rules NOT derived from a compose file belong here; per-stack /mnt bind
   # sources are generated into ./stack-dirs.nix above.
   systemd.tmpfiles.rules = [
-    # Holds the komodo compose and its decrypted .env — no non-root owner.
+    # Periphery's root: each Komodo git stack is cloned under stacks/<name>.
+    # Root-owned — Periphery runs as root and clones as root.
     "d /srv/komodo 0755 root root -"
-    # 1000:1000 (finding #10): stack-git-sync writes project directories here
-    # as 1000 and decrypt-sops-envs chowns each .env to it. Root-owned, GitOps
-    # delivery is silently dead.
-    "d /srv/stacks 0755 1000 1000 -"
-    # 'd' applies its owner only when it CREATES the directory, and on the live
-    # VM /srv/stacks pre-existed root-owned. Mode left '-' so per-file modes
-    # (0600 .env vs 0644 compose) stay untouched.
-    "Z /srv/stacks - 1000 1000 -"
     # Bind SOURCE for the /var/lib/docker mount above — the daemon's own
     # storage. 0711: it needs traverse, nothing else needs to list it.
     "d /mnt/fast/docker 0711 root root -"

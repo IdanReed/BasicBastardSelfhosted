@@ -61,7 +61,7 @@ let
     images."crazymax_samba_4_23_8"
   ];
 
-  fixture = ../fixtures/samba.sops.env;
+  fixture = ../fixtures/stacks/samba.sops.json;
 
   seedSrv = pkgs.runCommand "srv-seed-samba" { } ''
     mkdir -p $out/stacks/samba
@@ -69,7 +69,7 @@ let
     chmod -R u+w $out/stacks/samba
     rm -f $out/stacks/samba/.env
     rm -f $out/stacks/samba/.sops.env.example $out/stacks/samba/.sops.env
-    cp ${fixture} $out/stacks/samba/.sops.env
+    ln -s /run/stack-env/samba.env $out/stacks/samba/.env
   '';
 
   # /mnt tmpfiles rules, read from the SAME generated file the real host
@@ -126,8 +126,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         # 🚨 REAL DISKS for the two tiers, not tmpfs, and the reboot subtest is
@@ -180,8 +183,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the samba stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -234,7 +235,7 @@ pkgs.testers.runNixOSTest {
     outsider.wait_for_unit("network.target")
 
     try:
-        with subtest("the fixture .sops.env decrypted to a 0600 .env"):
+        with subtest("the fixture rendered to a root-only stack env"):
             # NOT wait_for_unit: decrypt-sops-envs is a transient oneshot
             # with no RemainAfterExit (a minutely timer re-fires it), so
             # waiting on the UNIT races its inactive-after-success state and
@@ -244,8 +245,8 @@ pkgs.testers.runNixOSTest {
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/samba/.env", timeout=90
             )
-            mode = services_vm.succeed("stat -c %a /srv/stacks/samba/.env").strip()
-            assert mode == "600", f".env is mode {mode}, expected 600"
+            mode = services_vm.succeed("stat -L -c %a /srv/stacks/samba/.env").strip()
+            assert mode == "400", f".env is mode {mode}, expected 400"
 
         with subtest("the stack comes up: samba-init then samba"):
             # No `--wait`: samba-init is a one-shot that must EXIT, and

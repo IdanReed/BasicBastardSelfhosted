@@ -1,0 +1,9 @@
+# Values built at activation from other secrets, never stored twice — see
+# nixos/modules/stack-env.nix. `secret` reads this stack's secrets.sops.json,
+# `shared` reads secrets/shared.sops.json.
+{ shared, ... }:
+{
+  # The Authentik client's secret, one value in secrets/shared.sops.json.
+  # Outline has no local accounts, so a mismatch here is a total lockout.
+  OIDC_CLIENT_SECRET = shared "OUTLINE_OIDC_CLIENT_SECRET";
+}

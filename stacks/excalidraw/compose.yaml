@@ -95,10 +95,8 @@ services:
     ports:
       - '127.0.0.1:10409:8080'
     # Carries POSTGRES_PASSWORD, STORAGE_URI, JWT_SECRET, ROOM_KEY_SECRET and
-    # ADMIN_PASSWORD — see .sops.env.example.
-    env_file:
-      - path: .env
-        required: false
+    # ADMIN_PASSWORD — see secrets.example.env.
+    env_file: /run/stack-env/excalidraw.env
     environment:
       - TZ=America/Chicago
       # Flips the session cookie to Secure, correct behind the HTTPS vhost.
@@ -128,7 +126,7 @@ services:
       # Ready but OFF (empty issuer = local auth only). Turning it on needs an
       # Authentik provider plus, in .env, OIDC_ISSUER_URL / OIDC_CLIENT_ID /
       # OIDC_CLIENT_SECRET / OIDC_CALLBACK_URL (.../api/v2/auth/callback) — and
-      # a key-set change, so the .sops.env drift lint applies.
+      # a key-set change, so the stack-env-drift lint applies.
       # Discovery is boot-safe (measured: the suite with an unreachable issuer
       # comes up healthy offline), unlike wealthfolio's.
       #
@@ -169,9 +167,7 @@ services:
       - POSTGRES_DB=excalidraw
       # POSTGRES_PASSWORD arrives from .env and must match the password embedded
       # in STORAGE_URI.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/excalidraw.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not
       # a role.

@@ -84,9 +84,7 @@ services:
       # are derived from it, so rotation makes every encrypted attribute
       # undecryptable — and Geocoding::Config only logs a warning, so the damage
       # is silent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/dawarich.env
     healthcheck:
       # Upstream's compose probe plus the header that survives
       # APPLICATION_PROTOCOL=https (see above). Grepping the body rather than
@@ -145,9 +143,7 @@ services:
       - BACKGROUND_PROCESSING_CONCURRENCY=3
       - STORE_GEODATA=true
       - PROMETHEUS_EXPORTER_ENABLED=false
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/dawarich.env
     healthcheck:
       # Sidekiq has no HTTP surface; a process check is the honest answer here.
       # The suite proves the worker actually drains a job.
@@ -190,9 +186,7 @@ services:
       # DAWARICH_ADMIN_EMAIL/_PASSWORD, SECRET_KEY_BASE and DATABASE_PASSWORD
       # arrive from .env. SECRET_KEY_BASE is required even here — the OTP keys
       # are derived from it and application.rb raises without them.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/dawarich.env
     restart: "no"
 
   # Database
@@ -214,9 +208,7 @@ services:
       - POSTGRES_USER=dawarich
       - POSTGRES_DB=dawarich
       # POSTGRES_PASSWORD arrives from .env and must match DATABASE_PASSWORD.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/dawarich.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not
       # a role, and reports "no response" against a healthy server.

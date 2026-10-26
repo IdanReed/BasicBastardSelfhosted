@@ -1,7 +1,7 @@
 # GENERATED FILE — DO NOT EDIT BY HAND.
 #
 #   Regenerate:  nixos/generate-stack-dirs.sh
-#   Source:      stacks/*/compose.yaml + komodo/compose.yaml
+#   Source:      stacks/*/compose.yaml + komodo/compose.yaml + forgejo/compose.yaml
 #   Generator:   nixos/generate-stack-dirs.py (ownership table + prose live there)
 #
 # One `d` rule per /mnt bind-mount source named by a compose file, plus its
@@ -196,12 +196,12 @@
     "d /mnt/slow/photos 0755 root root -"
     # === komodo (bind sources in its compose.yaml) ===
     # All root:root. Core keeps all its state in the Mongo-wire DB and has no
-    # /mnt source; Periphery mounts the docker socket and /srv/stacks (neither
-    # a /mnt source) and runs as root, so it reads the 0600 .env files;
-    # FerretDB is stateless; Postgres is the only stateful component and
-    # chowns its own datadir to uid 999 from a root entrypoint. The age key
-    # never enters any of them — decrypt-sops-envs and stack-git-sync are host
-    # units.
+    # /mnt source; Periphery mounts the docker socket, /srv/komodo (its stack
+    # clones) and /run/stack-env (none a /mnt source) and runs as root, so it
+    # reads the root-only rendered envs; FerretDB is stateless; Postgres is
+    # the only stateful component and chowns its own datadir to uid 999 from a
+    # root entrypoint. The age key never enters any of them — sops-nix renders
+    # the envs on the host.
     "d /mnt/fast/komodo 0755 root root -"
     # The FerretDB backend — Komodo's entire state as JSONB, captured by the
     # pg_dumpall loop rather than a mongodump path. root:root because the

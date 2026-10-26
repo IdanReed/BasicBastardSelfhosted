@@ -15,6 +15,11 @@
 #                  canonical plaintext; `rotate <name>` re-reads it and re-derives
 #                  every OTHER target from it (plain copies + hash parts). This is
 #                  how one edit to a source value fans out to all its copies+hashes.
+#
+# A value is stored ONCE. Cross-host values live in secrets/shared.sops.json;
+# values BUILT from others (a URL around a password, an app's copy of a shared
+# OIDC secret) are the stack's env.nix, rendered at activation — never a target
+# here. Multiple targets remain only for hashes of one draw.
 
 version: 1
 recovery_file: secrets-recovery.sops.yaml
@@ -23,39 +28,38 @@ files:
   - { path: nixos/secrets.sops.yaml, format: yaml }
   - { path: headscale-vps/secrets.sops.yaml, format: yaml }
   - { path: nixos-de/secrets.sops.yaml, format: yaml }
-  - { path: komodo/.sops.env, format: dotenv, example: komodo/.sops.env.example }
-  - { path: nixos/forgejo-runner.sops.env, format: dotenv, example: nixos/forgejo-runner.sops.env.example }
-  - { path: nixos/renovate.sops.env, format: dotenv, example: nixos/renovate.sops.env.example }
-  - { path: stacks/actual/.sops.env, format: dotenv, example: stacks/actual/.sops.env.example }
-  - { path: stacks/automation/.sops.env, format: dotenv, example: stacks/automation/.sops.env.example }
-  - { path: stacks/backrest/.sops.env, format: dotenv, example: stacks/backrest/.sops.env.example }
-  - { path: stacks/beszel/.sops.env, format: dotenv, example: stacks/beszel/.sops.env.example }
-  - { path: stacks/books/.sops.env, format: dotenv, example: stacks/books/.sops.env.example }
-  - { path: stacks/caddy/.sops.env, format: dotenv, example: stacks/caddy/.sops.env.example }
-  - { path: stacks/dawarich/.sops.env, format: dotenv, example: stacks/dawarich/.sops.env.example }
-  - { path: stacks/docspace/.sops.env, format: dotenv, example: stacks/docspace/.sops.env.example }
-  - { path: stacks/firefly/.sops.env, format: dotenv, example: stacks/firefly/.sops.env.example }
-  - { path: stacks/forgejo/.sops.env, format: dotenv, example: stacks/forgejo/.sops.env.example }
-  - { path: stacks/ghostfolio/.sops.env, format: dotenv, example: stacks/ghostfolio/.sops.env.example }
-  - { path: stacks/immich/.sops.env, format: dotenv, example: stacks/immich/.sops.env.example }
-  - { path: stacks/logging/.sops.env, format: dotenv, example: stacks/logging/.sops.env.example }
-  - { path: stacks/mealie/.sops.env, format: dotenv, example: stacks/mealie/.sops.env.example }
-  - { path: stacks/media/.sops.env, format: dotenv, example: stacks/media/.sops.env.example }
-  - { path: stacks/notes-sync/.sops.env, format: dotenv, example: stacks/notes-sync/.sops.env.example }
-  - { path: stacks/ntfy/.sops.env, format: dotenv, example: stacks/ntfy/.sops.env.example }
-  - { path: stacks/outline/.sops.env, format: dotenv, example: stacks/outline/.sops.env.example }
-  - { path: stacks/paperless/.sops.env, format: dotenv, example: stacks/paperless/.sops.env.example }
-  - { path: stacks/samba/.sops.env, format: dotenv, example: stacks/samba/.sops.env.example }
-  - { path: stacks/silverbullet/.sops.env, format: dotenv, example: stacks/silverbullet/.sops.env.example }
-  - { path: stacks/tandoor/.sops.env, format: dotenv, example: stacks/tandoor/.sops.env.example }
-  - { path: stacks/tracking/.sops.env, format: dotenv, example: stacks/tracking/.sops.env.example }
-  - { path: stacks/vaultwarden/.sops.env, format: dotenv, example: stacks/vaultwarden/.sops.env.example }
-  - { path: stacks/wealthfolio/.sops.env, format: dotenv, example: stacks/wealthfolio/.sops.env.example }
-  - { path: stacks/wger/.sops.env, format: dotenv, example: stacks/wger/.sops.env.example }
-  - { path: stacks/windmill/.sops.env, format: dotenv, example: stacks/windmill/.sops.env.example }
+  - { path: komodo/secrets.sops.json, format: json, example: komodo/secrets.example.env }
+  - { path: secrets/shared.sops.json, format: json, example: secrets/shared.example.env }
+  - { path: stacks/actual/secrets.sops.json, format: json, example: stacks/actual/secrets.example.env }
+  - { path: stacks/automation/secrets.sops.json, format: json, example: stacks/automation/secrets.example.env }
+  - { path: stacks/backrest/secrets.sops.json, format: json, example: stacks/backrest/secrets.example.env }
+  - { path: stacks/beszel/secrets.sops.json, format: json, example: stacks/beszel/secrets.example.env }
+  - { path: stacks/books/secrets.sops.json, format: json, example: stacks/books/secrets.example.env }
+  - { path: stacks/caddy/secrets.sops.json, format: json, example: stacks/caddy/secrets.example.env }
+  - { path: stacks/dawarich/secrets.sops.json, format: json, example: stacks/dawarich/secrets.example.env }
+  - { path: stacks/docspace/secrets.sops.json, format: json, example: stacks/docspace/secrets.example.env }
+  - { path: stacks/firefly/secrets.sops.json, format: json, example: stacks/firefly/secrets.example.env }
+  - { path: stacks/forgejo/secrets.sops.json, format: json, example: stacks/forgejo/secrets.example.env }
+  - { path: stacks/ghostfolio/secrets.sops.json, format: json, example: stacks/ghostfolio/secrets.example.env }
+  - { path: stacks/immich/secrets.sops.json, format: json, example: stacks/immich/secrets.example.env }
+  - { path: stacks/logging/secrets.sops.json, format: json, example: stacks/logging/secrets.example.env }
+  - { path: stacks/mealie/secrets.sops.json, format: json, example: stacks/mealie/secrets.example.env }
+  - { path: stacks/media/secrets.sops.json, format: json, example: stacks/media/secrets.example.env }
+  - { path: stacks/notes-sync/secrets.sops.json, format: json, example: stacks/notes-sync/secrets.example.env }
+  - { path: stacks/ntfy/secrets.sops.json, format: json, example: stacks/ntfy/secrets.example.env }
+  - { path: stacks/outline/secrets.sops.json, format: json, example: stacks/outline/secrets.example.env }
+  - { path: stacks/paperless/secrets.sops.json, format: json, example: stacks/paperless/secrets.example.env }
+  - { path: stacks/samba/secrets.sops.json, format: json, example: stacks/samba/secrets.example.env }
+  - { path: stacks/silverbullet/secrets.sops.json, format: json, example: stacks/silverbullet/secrets.example.env }
+  - { path: stacks/tandoor/secrets.sops.json, format: json, example: stacks/tandoor/secrets.example.env }
+  - { path: stacks/tracking/secrets.sops.json, format: json, example: stacks/tracking/secrets.example.env }
+  - { path: stacks/vaultwarden/secrets.sops.json, format: json, example: stacks/vaultwarden/secrets.example.env }
+  - { path: stacks/wealthfolio/secrets.sops.json, format: json, example: stacks/wealthfolio/secrets.example.env }
+  - { path: stacks/wger/secrets.sops.json, format: json, example: stacks/wger/secrets.example.env }
+  - { path: stacks/windmill/secrets.sops.json, format: json, example: stacks/windmill/secrets.example.env }
   # post-fork stacks (merged after sops-keygen branched): excalidraw + proton.
-  - { path: stacks/excalidraw/.sops.env, format: dotenv, example: stacks/excalidraw/.sops.env.example }
-  - { path: stacks/proton/.sops.env, format: dotenv, example: stacks/proton/.sops.env.example }
+  - { path: stacks/excalidraw/secrets.sops.json, format: json, example: stacks/excalidraw/secrets.example.env }
+  - { path: stacks/proton/secrets.sops.json, format: json, example: stacks/proton/secrets.example.env }
 
 secrets:
   # --- nixos/secrets.sops.yaml (services VM, OS-level) ---------------------
@@ -75,12 +79,6 @@ secrets:
     freeze: true
     note: "done by hand — never touch; pubkey x3 + Hetzner ssh-copy-id; tmpfiles C+ copy for backrest"
     targets: [{ file: nixos/secrets.sops.yaml, key: BACKUP_STORAGEBOX_SSH_KEY, part: private }]
-  - name: nixos/STACK_GIT_SSH_KEY
-    class: derived
-    recipe: ssh-ed25519
-    note: "replaces the v1 STACK_GIT_TOKEN pull entry (SSH since 2026-09): a deploy KEY is generable before Forgejo exists, so this fills at pre-flight instead of the token's mint-after-bring-up dance"
-    reminder: "paste the PUBLIC half (ssh-keygen -y on the decrypted private) into the Forgejo repo Settings -> Deploy keys as READ-ONLY once Forgejo is up (deploy-handbook §6)"
-    targets: [{ file: nixos/secrets.sops.yaml, key: STACK_GIT_SSH_KEY, part: private }]
 
   # --- headscale-vps/secrets.sops.yaml -------------------------------------
   - name: vps/TAILSCALE_AUTH_KEY
@@ -119,18 +117,15 @@ secrets:
   - name: immich/oidc
     class: generate
     recipe: hex:64
-    copy_only: true
-    note: "COPY-JOB: real value already on the VPS — propagate into the immich dotenv, NEVER fresh-generate"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: IMMICH_OIDC_CLIENT_SECRET }
-      - { file: stacks/immich/.sops.env, key: IMMICH_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: IMMICH_OIDC_CLIENT_SECRET }
   - name: outline/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up outline"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: OUTLINE_OIDC_CLIENT_SECRET }
-      - { file: stacks/outline/.sops.env, key: OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: OUTLINE_OIDC_CLIENT_SECRET }
 
   # --- nixos-de/secrets.sops.yaml (desktop) --------------------------------
   # SSH identities: all real, done by hand. sops-gen must never touch them;
@@ -188,84 +183,83 @@ secrets:
       - { file: nixos-de/secrets.sops.yaml, key: workvpn/rdp_user }
       - { file: nixos-de/secrets.sops.yaml, key: workvpn/rdp_domain }
 
-  # --- komodo/.sops.env (deploy plane) -------------------------------------
+  # --- komodo/secrets.sops.json (deploy plane) -------------------------------------
   - name: komodo/KOMODO_INIT_ADMIN_PASSWORD
     class: generate
     recipe: hex:48
     note: "hex-only mandated"
-    targets: [{ file: komodo/.sops.env, key: KOMODO_INIT_ADMIN_PASSWORD }]
+    targets: [{ file: komodo/secrets.sops.json, key: KOMODO_INIT_ADMIN_PASSWORD }]
   - name: komodo/KOMODO_JWT_SECRET
     class: generate
     recipe: hex:64
     note: "unset => per-boot regen (logout-everyone)"
-    targets: [{ file: komodo/.sops.env, key: KOMODO_JWT_SECRET }]
+    targets: [{ file: komodo/secrets.sops.json, key: KOMODO_JWT_SECRET }]
   - name: komodo/KOMODO_WEBHOOK_SECRET
     class: generate
     recipe: hex:64
     reminder: "paste this same value into every Forgejo webhook"
-    targets: [{ file: komodo/.sops.env, key: KOMODO_WEBHOOK_SECRET }]
+    targets: [{ file: komodo/secrets.sops.json, key: KOMODO_WEBHOOK_SECRET }]
   - name: komodo/KOMODO_DATABASE_PASSWORD
     class: generate
     recipe: hex:48
     note: "one key, three consumers via compose ${}"
-    targets: [{ file: komodo/.sops.env, key: KOMODO_DATABASE_PASSWORD }]
+    targets: [{ file: komodo/secrets.sops.json, key: KOMODO_DATABASE_PASSWORD }]
 
   # --- nixos host-adjacent dotenv ------------------------------------------
   - name: forgejo-runner/TOKEN
     class: pull
     note: "one-shot registration token minted by Forgejo; exchange-once"
-    targets: [{ file: nixos/forgejo-runner.sops.env, key: TOKEN }]
+    targets: [{ file: nixos/secrets.sops.yaml, key: FORGEJO_RUNNER_TOKEN }]
   - name: renovate/RENOVATE_TOKEN
     class: pull
     note: "Forgejo PAT for renovate"
-    targets: [{ file: nixos/renovate.sops.env, key: RENOVATE_TOKEN }]
+    targets: [{ file: nixos/secrets.sops.yaml, key: RENOVATE_TOKEN }]
 
-  # --- stacks: real .sops.env exists, placeholder fills --------------------
+  # --- stacks: secrets.sops.json exists, placeholder fills --------------------
   - name: actual/ACTUAL_INIT_PASSWORD
     class: generate
     recipe: base64:24
     freeze: true
     note: "first-run-only bootstrap; later rotation here is a silent no-op (reset via client UI / reset-password.js)"
-    targets: [{ file: stacks/actual/.sops.env, key: ACTUAL_INIT_PASSWORD }]
+    targets: [{ file: stacks/actual/secrets.sops.json, key: ACTUAL_INIT_PASSWORD }]
   # Rollout 2026-09-05: only the SECRET is generated. ACTUAL_OPENID_CLIENT_ID is
   # public and pinned to the literal "actual" in compose.yaml (which overrides
-  # the vestigial .sops.env stub via compose's environment>env_file precedence),
+  # the vestigial env stub via compose's environment>env_file precedence),
   # so it is intentionally NOT a managed secret. Native OIDC ships ready-and-off:
   # the value is inert until `docker exec actual node scripts/enable-openid.js`
   # (a DB flip) — the first OIDC login then becomes the server owner permanently.
   - name: actual/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost; the enable step is a manual CLI/DB flip — see maintenance-handbook OIDC section"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ACTUAL_OPENID_CLIENT_SECRET }
-      - { file: stacks/actual/.sops.env, key: ACTUAL_OPENID_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: ACTUAL_OPENID_CLIENT_SECRET }
 
   - name: beszel/hub-ssh
     class: derived
     recipe: ssh-ed25519
     note: "one keypair, two keys, one file: b64 private + literal pubkey line"
     targets:
-      - { file: stacks/beszel/.sops.env, key: HUB_SSH_KEY_B64, part: private_b64 }
-      - { file: stacks/beszel/.sops.env, key: KEY, part: public }
+      - { file: stacks/beszel/secrets.sops.json, key: HUB_SSH_KEY_B64, part: private_b64 }
+      - { file: stacks/beszel/secrets.sops.json, key: KEY, part: public }
   - name: beszel/TOKEN
     class: generate
     recipe: uuid
-    targets: [{ file: stacks/beszel/.sops.env, key: TOKEN }]
+    targets: [{ file: stacks/beszel/secrets.sops.json, key: TOKEN }]
   - name: beszel/config
     class: config
     note: "hub login email + root block device basename"
     targets:
-      - { file: stacks/beszel/.sops.env, key: USER_EMAIL }
-      - { file: stacks/beszel/.sops.env, key: FILESYSTEM }
+      - { file: stacks/beszel/secrets.sops.json, key: USER_EMAIL }
+      - { file: stacks/beszel/secrets.sops.json, key: FILESYSTEM }
 
   - name: caddy/CLOUDFLARE_API_TOKEN
     class: pull
     note: "Cloudflare zone DNS edit token (done)"
-    targets: [{ file: stacks/caddy/.sops.env, key: CLOUDFLARE_API_TOKEN }]
+    targets: [{ file: stacks/caddy/secrets.sops.json, key: CLOUDFLARE_API_TOKEN }]
   - name: caddy/TAILNET_IP
     class: config
-    targets: [{ file: stacks/caddy/.sops.env, key: TAILNET_IP }]
+    targets: [{ file: stacks/caddy/secrets.sops.json, key: TAILNET_IP }]
 
   # Cross-host twin, and the only non-OIDC one: the VPS's Alloy presents this
   # bearer token to the vlogs-ingest vhost, which is the only path from that
@@ -276,98 +270,91 @@ secrets:
     recipe: hex:64
     note: "VPS journal shipping; both sides must match or every push 401s"
     targets:
-      - { file: stacks/caddy/.sops.env, key: VLOGS_INGEST_TOKEN }
-      - { file: headscale-vps/secrets.sops.yaml, key: VLOGS_INGEST_TOKEN }
+      - { file: secrets/shared.sops.json, key: VLOGS_INGEST_TOKEN }
 
   - name: ghostfolio/ACCESS_TOKEN_SALT
     class: generate
     recipe: hex:64
     freeze: true
     note: "rotation = all-account lockout"
-    targets: [{ file: stacks/ghostfolio/.sops.env, key: ACCESS_TOKEN_SALT }]
+    targets: [{ file: stacks/ghostfolio/secrets.sops.json, key: ACCESS_TOKEN_SALT }]
   - name: ghostfolio/JWT_SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/ghostfolio/.sops.env, key: JWT_SECRET_KEY }]
+    targets: [{ file: stacks/ghostfolio/secrets.sops.json, key: JWT_SECRET_KEY }]
   - name: ghostfolio/POSTGRES_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/ghostfolio/.sops.env, key: POSTGRES_PASSWORD }]
+    targets: [{ file: stacks/ghostfolio/secrets.sops.json, key: POSTGRES_PASSWORD }]
   - name: ghostfolio/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side bare OIDC_CLIENT_SECRET (env_file). Ghostfolio OIDC is EXPERIMENTAL and eager-discovers AT BOOT — compose sets all three OIDC_*_URL overrides so boot skips discovery and stays safe. Then VPS nixos-rebuild switch + re-up ghostfolio."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: GHOSTFOLIO_OIDC_CLIENT_SECRET }
-      - { file: stacks/ghostfolio/.sops.env, key: OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: GHOSTFOLIO_OIDC_CLIENT_SECRET }
   - name: forgejo/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up forgejo. Stack-side FORGEJO_OIDC_CLIENT_SECRET is read by forgejo-init (admin auth add-oauth into the DB), not the main container."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: FORGEJO_OIDC_CLIENT_SECRET }
-      - { file: stacks/forgejo/.sops.env, key: FORGEJO_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: FORGEJO_OIDC_CLIENT_SECRET }
 
   - name: logging/GF_SECURITY_ADMIN_PASSWORD
     class: generate
     recipe: base64:30
-    targets: [{ file: stacks/logging/.sops.env, key: GF_SECURITY_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/logging/secrets.sops.json, key: GF_SECURITY_ADMIN_PASSWORD }]
   - name: logging/GF_SECURITY_ADMIN_USER
     class: config
     note: "choose the grafana admin username"
-    targets: [{ file: stacks/logging/.sops.env, key: GF_SECURITY_ADMIN_USER }]
+    targets: [{ file: stacks/logging/secrets.sops.json, key: GF_SECURITY_ADMIN_USER }]
 
   - name: mealie/MEALIE_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/mealie/.sops.env, key: MEALIE_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/mealie/secrets.sops.json, key: MEALIE_ADMIN_PASSWORD }]
   - name: mealie/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up mealie. Stack side is bare OIDC_CLIENT_SECRET; VPS side is namespaced MEALIE_OIDC_CLIENT_SECRET (the blueprint !Env)."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: MEALIE_OIDC_CLIENT_SECRET }
-      - { file: stacks/mealie/.sops.env, key: OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: MEALIE_OIDC_CLIENT_SECRET }
 
   - name: outline/SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/outline/.sops.env, key: SECRET_KEY }]
+    targets: [{ file: stacks/outline/secrets.sops.json, key: SECRET_KEY }]
   - name: outline/UTILS_SECRET
     class: generate
     recipe: hex:64
     note: "must differ from SECRET_KEY (separate draw by construction)"
-    targets: [{ file: stacks/outline/.sops.env, key: UTILS_SECRET }]
+    targets: [{ file: stacks/outline/secrets.sops.json, key: UTILS_SECRET }]
   - name: outline/db
-    class: derived
+    class: generate
     recipe: hex:48
     note: "one draw: bare password + rendered into DATABASE_URL"
     targets:
-      - { file: stacks/outline/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/outline/.sops.env, key: DATABASE_URL, template: "postgres://outline:${v}@outline_db:5432/outline" }
+      - { file: stacks/outline/secrets.sops.json, key: POSTGRES_PASSWORD }
 
   - name: paperless/PAPERLESS_SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/paperless/.sops.env, key: PAPERLESS_SECRET_KEY }]
+    targets: [{ file: stacks/paperless/secrets.sops.json, key: PAPERLESS_SECRET_KEY }]
   - name: paperless/PAPERLESS_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/paperless/.sops.env, key: PAPERLESS_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/paperless/secrets.sops.json, key: PAPERLESS_ADMIN_PASSWORD }]
   - name: paperless/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/paperless/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/paperless/.sops.env, key: PAPERLESS_DBPASS }
+      - { file: stacks/paperless/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: paperless/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side is interpolated into PAPERLESS_SOCIALACCOUNT_PROVIDERS (compose ${...}); then VPS nixos-rebuild switch + re-up paperless."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: PAPERLESS_OIDC_CLIENT_SECRET }
-      - { file: stacks/paperless/.sops.env, key: PAPERLESS_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: PAPERLESS_OIDC_CLIENT_SECRET }
 
   # --- Per-user login passwords (rollout 2026-09-05) -----------------------
   # ONE human-memorable password per user, HAND-SET (copy_only = sops-gen never
@@ -398,237 +385,214 @@ secrets:
     copy_only: true
     note: "idan's ONE password (source = VPS IDAN_INITIAL_PASSWORD). rotate re-derives all copies + hashes below"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: IDAN_INITIAL_PASSWORD, source: true }
-      - { file: stacks/samba/.sops.env, key: SAMBA_IDAN_PASSWORD }
+      - { file: secrets/shared.sops.json, key: IDAN_INITIAL_PASSWORD, source: true }
       # desktop cifs credential (nixos-de/modules/nixos/samba-mounts.nix)
       - { file: nixos-de/secrets.sops.yaml, key: SAMBA_IDAN_PASSWORD }
-      - { file: stacks/windmill/.sops.env, key: IDAN_INITIAL_PASSWORD }
-      - { file: stacks/beszel/.sops.env, key: USER_PASSWORD }
-      - { file: stacks/backrest/.sops.env, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
-      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD }
-      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
+      - { file: stacks/backrest/secrets.sops.json, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
+      - { file: stacks/media/secrets.sops.json, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
       # Jellyfin's first admin, and the account SEERR authenticates against.
       # ⚠ Jellyfin has no headless password reset, so a rotation reaches
       # jellyfin-init's LOGIN, not the stored password: reset it in the UI
       # first (or wipe /mnt/fast/jellyfin/config) or the next deploy fails.
-      - { file: stacks/media/.sops.env, key: JELLYFIN_ADMIN_PASSWORD }
   - name: user/alondra
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ALONDRA_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: ALONDRA_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_ALONDRA_PASSWORD }
+      - { file: secrets/shared.sops.json, key: ALONDRA_INITIAL_PASSWORD, source: true }
   - name: user/cale
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: CALE_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: CALE_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_CALE_PASSWORD }
+      - { file: secrets/shared.sops.json, key: CALE_INITIAL_PASSWORD, source: true }
   - name: user/zach
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ZACH_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: ZACH_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_ZACH_PASSWORD }
+      - { file: secrets/shared.sops.json, key: ZACH_INITIAL_PASSWORD, source: true }
   - name: user/rylan
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: RYLAN_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: RYLAN_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_RYLAN_PASSWORD }
+      - { file: secrets/shared.sops.json, key: RYLAN_INITIAL_PASSWORD, source: true }
   - name: user/cameron
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: CAMERON_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: CAMERON_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_CAMERON_PASSWORD }
+      - { file: secrets/shared.sops.json, key: CAMERON_INITIAL_PASSWORD, source: true }
   - name: user/justin
     class: generate
     recipe: base64:24
     copy_only: true
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: JUSTIN_INITIAL_PASSWORD, source: true }
-      - { file: stacks/windmill/.sops.env, key: JUSTIN_INITIAL_PASSWORD }
-      - { file: stacks/samba/.sops.env, key: SAMBA_JUSTIN_PASSWORD }
+      - { file: secrets/shared.sops.json, key: JUSTIN_INITIAL_PASSWORD, source: true }
   - name: samba/SAMBA_INTERFACES
     class: config
     note: "lo + tailscale0 + the real nic"
-    targets: [{ file: stacks/samba/.sops.env, key: SAMBA_INTERFACES }]
+    targets: [{ file: stacks/samba/secrets.sops.json, key: SAMBA_INTERFACES }]
 
   - name: silverbullet/SB_USER
     class: derived
     recipe: base64:24
     note: "composite idan:<pw>"
     targets:
-      - { file: stacks/silverbullet/.sops.env, key: SB_USER, template: "idan:${v}" }
+      - { file: stacks/silverbullet/secrets.sops.json, key: SB_USER, template: "idan:${v}" }
   - name: silverbullet/GIT_SYNC_REMOTE
     class: pull
     note: "Forgejo PAT embedded in the remote URL"
-    targets: [{ file: stacks/silverbullet/.sops.env, key: GIT_SYNC_REMOTE }]
+    targets: [{ file: stacks/silverbullet/secrets.sops.json, key: GIT_SYNC_REMOTE }]
 
   - name: wealthfolio/WF_SECRET_KEY
     class: generate
     recipe: base64:32
     freeze: true
     note: "rotation wipes stored provider keys"
-    targets: [{ file: stacks/wealthfolio/.sops.env, key: WF_SECRET_KEY }]
+    targets: [{ file: stacks/wealthfolio/secrets.sops.json, key: WF_SECRET_KEY }]
   - name: wealthfolio/auth
     class: derived
     recipe: base64:24
     recovery: WEALTHFOLIO_AUTH_PASSWORD
     note: "argon2id PHC, single-quoted ($ in dotenv); malformed hash is boot-fatal"
     targets:
-      - { file: stacks/wealthfolio/.sops.env, key: WF_AUTH_PASSWORD_HASH, part: argon2 }
+      - { file: stacks/wealthfolio/secrets.sops.json, key: WF_AUTH_PASSWORD_HASH, part: argon2 }
   - name: wealthfolio/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05, new key). 🚨 Wealthfolio OIDC discovery runs ONCE AT STARTUP and PANICS the server with NO escape hatch — enabling it makes EVERY stack restart hostage to VPS reachability. Ships OFF in compose by design; flipping it on is an explicit operator decision (see maintenance-handbook OIDC section). The secret is generated regardless so the flip is one edit away."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: WEALTHFOLIO_OIDC_CLIENT_SECRET }
-      - { file: stacks/wealthfolio/.sops.env, key: WF_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: WEALTHFOLIO_OIDC_CLIENT_SECRET }
 
-  # --- stacks: no real .sops.env yet — apply creates it from the example ---
+  # --- stacks: no secrets.sops.json yet — apply creates it from the example
   - name: automation/HA_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/automation/.sops.env, key: HA_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/automation/secrets.sops.json, key: HA_ADMIN_PASSWORD }]
   - name: automation/FRIGATE_MQTT_PASSWORD
     class: generate
     recipe: hex:48
     note: "mosquitto-init hashes in-stack"
-    targets: [{ file: stacks/automation/.sops.env, key: FRIGATE_MQTT_PASSWORD }]
+    targets: [{ file: stacks/automation/secrets.sops.json, key: FRIGATE_MQTT_PASSWORD }]
   - name: automation/MQTT_HA_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/automation/.sops.env, key: MQTT_HA_PASSWORD }]
+    targets: [{ file: stacks/automation/secrets.sops.json, key: MQTT_HA_PASSWORD }]
   - name: automation/MQTT_HEALTHCHECK_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/automation/.sops.env, key: MQTT_HEALTHCHECK_PASSWORD }]
+    targets: [{ file: stacks/automation/secrets.sops.json, key: MQTT_HEALTHCHECK_PASSWORD }]
   - name: automation/FRIGATE_CAM_EXAMPLE
     class: pull
     note: "camera credentials"
-    targets: [{ file: stacks/automation/.sops.env, key: FRIGATE_CAM_EXAMPLE }]
+    targets: [{ file: stacks/automation/secrets.sops.json, key: FRIGATE_CAM_EXAMPLE }]
 
   - name: backrest/RESTIC_PASSWORD
     class: generate
     recipe: base64:48
     freeze: true
     note: "encrypts EVERY restic repo — loss or rotation = total backup loss; double-gated"
-    targets: [{ file: stacks/backrest/.sops.env, key: RESTIC_PASSWORD }]
+    targets: [{ file: stacks/backrest/secrets.sops.json, key: RESTIC_PASSWORD }]
   # backrest admin password: folded into the shared `services-admin` entry
   # (BACKREST_ADMIN_PASSWORD_BCRYPT is a bcrypt_b64 target there).
   - name: backrest/DEADMAN_URL
     class: pull
     note: "hc-ping.com check URL"
-    targets: [{ file: stacks/backrest/.sops.env, key: DEADMAN_URL }]
+    targets: [{ file: stacks/backrest/secrets.sops.json, key: DEADMAN_URL }]
 
   - name: books/KAVITA_TOKEN_KEY
     class: generate
     recipe: hex:128
     note: "must exceed 64 chars"
-    targets: [{ file: stacks/books/.sops.env, key: KAVITA_TOKEN_KEY }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: KAVITA_TOKEN_KEY }]
   - name: books/JWT_SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/books/.sops.env, key: JWT_SECRET_KEY }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: JWT_SECRET_KEY }]
   - name: books/KAVITA_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/books/.sops.env, key: KAVITA_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: KAVITA_ADMIN_PASSWORD }]
   - name: books/ABS_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/books/.sops.env, key: ABS_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: ABS_ADMIN_PASSWORD }]
   - name: kavita/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up books stack"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: KAVITA_OIDC_CLIENT_SECRET }
-      - { file: stacks/books/.sops.env, key: KAVITA_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: KAVITA_OIDC_CLIENT_SECRET }
   - name: abs/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up books stack. books-init.sh PATCHes /api/auth-settings when the stack-side value is non-empty."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: ABS_OIDC_CLIENT_SECRET }
-      - { file: stacks/books/.sops.env, key: ABS_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: ABS_OIDC_CLIENT_SECRET }
   - name: books/AA_DONATOR_KEY
     class: pull
     note: "external"
-    targets: [{ file: stacks/books/.sops.env, key: AA_DONATOR_KEY }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: AA_DONATOR_KEY }]
   - name: books/AA_MIRROR_URLS
     class: config
     note: "comma-separated, no trailing slash; EMPTY is a complete state (shelfmark's direct-download source simply does not work)"
-    targets: [{ file: stacks/books/.sops.env, key: AA_MIRROR_URLS }]
+    targets: [{ file: stacks/books/secrets.sops.json, key: AA_MIRROR_URLS }]
 
   - name: dawarich/SECRET_KEY_BASE
     class: generate
     recipe: hex:128
-    targets: [{ file: stacks/dawarich/.sops.env, key: SECRET_KEY_BASE }]
+    targets: [{ file: stacks/dawarich/secrets.sops.json, key: SECRET_KEY_BASE }]
   - name: dawarich/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/dawarich/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/dawarich/.sops.env, key: DATABASE_PASSWORD }
+      - { file: stacks/dawarich/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: dawarich/DAWARICH_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/dawarich/.sops.env, key: DAWARICH_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/dawarich/secrets.sops.json, key: DAWARICH_ADMIN_PASSWORD }]
   - name: dawarich/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05): ONE draw into both files; then VPS nixos-rebuild switch + re-up dawarich."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: DAWARICH_OIDC_CLIENT_SECRET }
-      - { file: stacks/dawarich/.sops.env, key: DAWARICH_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: DAWARICH_OIDC_CLIENT_SECRET }
 
   - name: docspace/APP_CORE_MACHINEKEY
     class: generate
     recipe: hex:32
-    targets: [{ file: stacks/docspace/.sops.env, key: APP_CORE_MACHINEKEY }]
+    targets: [{ file: stacks/docspace/secrets.sops.json, key: APP_CORE_MACHINEKEY }]
   - name: docspace/SPRING_APPLICATION_ENCRYPTION_SECRET
     class: generate
     recipe: hex:32
-    targets: [{ file: stacks/docspace/.sops.env, key: SPRING_APPLICATION_ENCRYPTION_SECRET }]
+    targets: [{ file: stacks/docspace/secrets.sops.json, key: SPRING_APPLICATION_ENCRYPTION_SECRET }]
   - name: docspace/jwt
     class: generate
     recipe: hex:64
     note: "same-file twin"
     targets:
-      - { file: stacks/docspace/.sops.env, key: DOCUMENT_SERVER_JWT_SECRET }
-      - { file: stacks/docspace/.sops.env, key: JWT_SECRET }
+      - { file: stacks/docspace/secrets.sops.json, key: DOCUMENT_SERVER_JWT_SECRET }
   - name: docspace/MYSQL_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/docspace/.sops.env, key: MYSQL_PASSWORD }]
+    targets: [{ file: stacks/docspace/secrets.sops.json, key: MYSQL_PASSWORD }]
   - name: docspace/MYSQL_ROOT_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/docspace/.sops.env, key: MYSQL_ROOT_PASSWORD }]
+    targets: [{ file: stacks/docspace/secrets.sops.json, key: MYSQL_ROOT_PASSWORD }]
   - name: docspace/DOCSPACE_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/docspace/.sops.env, key: DOCSPACE_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/docspace/secrets.sops.json, key: DOCSPACE_ADMIN_PASSWORD }]
 
   - name: firefly/PASSPORT_KEYPAIR
     class: derived
@@ -636,80 +600,77 @@ secrets:
     freeze: true
     note: "Passport's token-signing keypair, stored as ONE-LINE PEMs with literal \\n (PassportServiceProvider::makeCryptKey un-escapes them). WITHOUT it storage/ is unpersisted and every container recreate mints a new pair, silently invalidating FIREFLY_III_ACCESS_TOKEN."
     targets:
-      - { file: stacks/firefly/.sops.env, key: PASSPORT_PRIVATE_KEY, part: pem_escaped_private }
-      - { file: stacks/firefly/.sops.env, key: PASSPORT_PUBLIC_KEY, part: pem_escaped_public }
+      - { file: stacks/firefly/secrets.sops.json, key: PASSPORT_PRIVATE_KEY, part: pem_escaped_private }
+      - { file: stacks/firefly/secrets.sops.json, key: PASSPORT_PUBLIC_KEY, part: pem_escaped_public }
   - name: firefly/APP_KEY
     class: generate
     recipe: base64:24
     freeze: true
     note: "exactly 32 chars (24 bytes b64); rotation invalidates every PAT"
-    targets: [{ file: stacks/firefly/.sops.env, key: APP_KEY }]
+    targets: [{ file: stacks/firefly/secrets.sops.json, key: APP_KEY }]
   - name: firefly/STATIC_CRON_TOKEN
     class: generate
     recipe: hex:32
     note: "exactly 32 hex chars"
-    targets: [{ file: stacks/firefly/.sops.env, key: STATIC_CRON_TOKEN }]
+    targets: [{ file: stacks/firefly/secrets.sops.json, key: STATIC_CRON_TOKEN }]
   - name: firefly/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/firefly/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/firefly/.sops.env, key: DB_PASSWORD }
+      - { file: stacks/firefly/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: firefly/FIREFLY_III_ACCESS_TOKEN
     class: pull
     note: "needs an authenticated Firefly UI session; cannot be generated (upstream)"
-    targets: [{ file: stacks/firefly/.sops.env, key: FIREFLY_III_ACCESS_TOKEN }]
+    targets: [{ file: stacks/firefly/secrets.sops.json, key: FIREFLY_III_ACCESS_TOKEN }]
   - name: firefly/SIMPLEFIN_TOKEN
     class: pull
     note: "one-shot claim URL from the bridge"
-    targets: [{ file: stacks/firefly/.sops.env, key: SIMPLEFIN_TOKEN }]
+    targets: [{ file: stacks/firefly/secrets.sops.json, key: SIMPLEFIN_TOKEN }]
 
   - name: immich/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/immich/.sops.env, key: DB_PASSWORD }
-      - { file: stacks/immich/.sops.env, key: POSTGRES_PASSWORD }
+      - { file: stacks/immich/secrets.sops.json, key: DB_PASSWORD }
   - name: immich/IMMICH_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/immich/.sops.env, key: IMMICH_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/immich/secrets.sops.json, key: IMMICH_ADMIN_PASSWORD }]
 
   - name: media/RADARR__AUTH__APIKEY
     class: generate
     recipe: hex:32
-    targets: [{ file: stacks/media/.sops.env, key: RADARR__AUTH__APIKEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: RADARR__AUTH__APIKEY }]
   - name: media/SONARR__AUTH__APIKEY
     class: generate
     recipe: hex:32
-    targets: [{ file: stacks/media/.sops.env, key: SONARR__AUTH__APIKEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: SONARR__AUTH__APIKEY }]
   - name: media/PROWLARR__AUTH__APIKEY
     class: generate
     recipe: hex:32
-    targets: [{ file: stacks/media/.sops.env, key: PROWLARR__AUTH__APIKEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: PROWLARR__AUTH__APIKEY }]
   - name: media/SEERR_API_KEY
     class: generate
     recipe: hex:64
     note: "compose hands it to seerr as API_KEY (forces main.apiKey on every load); the seerr-init/bootstrap sidecars read SEERR_API_KEY"
-    targets: [{ file: stacks/media/.sops.env, key: SEERR_API_KEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: SEERR_API_KEY }]
   - name: jellyfin/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost: ONE draw into both files; then VPS nixos-rebuild switch + re-up media. jellyfin-init writes it into the SSO-Auth plugin's authentik provider."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: JELLYFIN_OIDC_CLIENT_SECRET }
-      - { file: stacks/media/.sops.env, key: JELLYFIN_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: JELLYFIN_OIDC_CLIENT_SECRET }
   - name: media/BAZARR_API_KEY
     class: generate
     recipe: hex:32
     note: "bazarr's auth.apikey, seeded into config/config.yaml; the default is a random 16 bytes nobody can know"
-    targets: [{ file: stacks/media/.sops.env, key: BAZARR_API_KEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: BAZARR_API_KEY }]
   - name: media/PROFILARR_API_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/media/.sops.env, key: PROFILARR_API_KEY }]
+    targets: [{ file: stacks/media/secrets.sops.json, key: PROFILARR_API_KEY }]
   # qBittorrent WebUI password: folded into the shared `services-admin` entry
   # (QBIT_WEBUI_PASSWORD plain + QBIT_WEBUI_PASSWORD_PBKDF2 are targets there).
   # QBIT_WEBUI_USER stays a config value (media/config) — pin it to idan.
@@ -717,118 +678,116 @@ secrets:
     class: pull
     note: "VPN provider owns these"
     targets:
-      - { file: stacks/media/.sops.env, key: WIREGUARD_PRIVATE_KEY }
-      - { file: stacks/media/.sops.env, key: WIREGUARD_PRESHARED_KEY }
-      - { file: stacks/media/.sops.env, key: WIREGUARD_PUBLIC_KEY }
-      - { file: stacks/media/.sops.env, key: WIREGUARD_ADDRESSES }
-      - { file: stacks/media/.sops.env, key: VPN_ENDPOINT_IP }
-      - { file: stacks/media/.sops.env, key: VPN_ENDPOINT_PORT }
-      - { file: stacks/media/.sops.env, key: OPENVPN_USER }
-      - { file: stacks/media/.sops.env, key: OPENVPN_PASSWORD }
+      - { file: stacks/media/secrets.sops.json, key: WIREGUARD_PRIVATE_KEY }
+      - { file: stacks/media/secrets.sops.json, key: WIREGUARD_PRESHARED_KEY }
+      - { file: stacks/media/secrets.sops.json, key: WIREGUARD_PUBLIC_KEY }
+      - { file: stacks/media/secrets.sops.json, key: WIREGUARD_ADDRESSES }
+      - { file: stacks/media/secrets.sops.json, key: VPN_ENDPOINT_IP }
+      - { file: stacks/media/secrets.sops.json, key: VPN_ENDPOINT_PORT }
+      - { file: stacks/media/secrets.sops.json, key: OPENVPN_USER }
+      - { file: stacks/media/secrets.sops.json, key: OPENVPN_PASSWORD }
   - name: media/config
     class: config
     targets:
-      - { file: stacks/media/.sops.env, key: QBIT_WEBUI_USER }
-      - { file: stacks/media/.sops.env, key: JELLYFIN_ADMIN_USER }
-      - { file: stacks/media/.sops.env, key: SEERR_ADMIN_EMAIL }
-      - { file: stacks/media/.sops.env, key: VPN_SERVICE_PROVIDER }
-      - { file: stacks/media/.sops.env, key: SERVER_COUNTRIES }
+      - { file: stacks/media/secrets.sops.json, key: QBIT_WEBUI_USER }
+      - { file: stacks/media/secrets.sops.json, key: JELLYFIN_ADMIN_USER }
+      - { file: stacks/media/secrets.sops.json, key: SEERR_ADMIN_EMAIL }
+      - { file: stacks/media/secrets.sops.json, key: VPN_SERVICE_PROVIDER }
+      - { file: stacks/media/secrets.sops.json, key: SERVER_COUNTRIES }
       # wireguard | openvpn — decides which half of the gluetun block above
       # the provider actually reads.
-      - { file: stacks/media/.sops.env, key: VPN_TYPE }
+      - { file: stacks/media/secrets.sops.json, key: VPN_TYPE }
       # on | off, and only on for a provider that supports it: when on,
       # gluetun's UP_COMMAND pushes the forwarded port into qBittorrent.
-      - { file: stacks/media/.sops.env, key: VPN_PORT_FORWARDING }
+      - { file: stacks/media/secrets.sops.json, key: VPN_PORT_FORWARDING }
 
   - name: notes-sync/JWT_SECRET_KEY
     class: generate
     recipe: hex:64
     freeze: true
     note: "unset/changed => every tablet re-pairs"
-    targets: [{ file: stacks/notes-sync/.sops.env, key: JWT_SECRET_KEY }]
+    targets: [{ file: stacks/notes-sync/secrets.sops.json, key: JWT_SECRET_KEY }]
   - name: notes-sync/RMFAKECLOUD_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/notes-sync/.sops.env, key: RMFAKECLOUD_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/notes-sync/secrets.sops.json, key: RMFAKECLOUD_ADMIN_PASSWORD }]
   - name: notes-sync/STGUIAPIKEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/notes-sync/.sops.env, key: STGUIAPIKEY }]
+    targets: [{ file: stacks/notes-sync/secrets.sops.json, key: STGUIAPIKEY }]
   - name: notes-sync/ST_GUI_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/notes-sync/.sops.env, key: ST_GUI_PASSWORD }]
+    targets: [{ file: stacks/notes-sync/secrets.sops.json, key: ST_GUI_PASSWORD }]
 
   - name: ntfy/NTFY_SMTP_SENDER_PASS
     class: pull
     note: "Proton SMTP token"
-    targets: [{ file: stacks/ntfy/.sops.env, key: NTFY_SMTP_SENDER_PASS }]
+    targets: [{ file: stacks/ntfy/secrets.sops.json, key: NTFY_SMTP_SENDER_PASS }]
 
   - name: tandoor/SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/tandoor/.sops.env, key: SECRET_KEY }]
+    targets: [{ file: stacks/tandoor/secrets.sops.json, key: SECRET_KEY }]
   - name: tandoor/POSTGRES_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/tandoor/.sops.env, key: POSTGRES_PASSWORD }]
+    targets: [{ file: stacks/tandoor/secrets.sops.json, key: POSTGRES_PASSWORD }]
   - name: tandoor/TANDOOR_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/tandoor/.sops.env, key: TANDOOR_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/tandoor/secrets.sops.json, key: TANDOOR_ADMIN_PASSWORD }]
   - name: tandoor/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05, new key). Stack side is interpolated into the SOCIALACCOUNT_PROVIDERS Python-literal JSON in compose (${...}); then VPS nixos-rebuild switch + re-up tandoor."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: TANDOOR_OIDC_CLIENT_SECRET }
-      - { file: stacks/tandoor/.sops.env, key: TANDOOR_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: TANDOOR_OIDC_CLIENT_SECRET }
 
   - name: tracking/APP_KEY
     class: derived
     recipe: base64:32
     note: "Laravel APP_KEY is literally base64:<32 random bytes b64> — same artifact artisan key:generate mints"
     targets:
-      - { file: stacks/tracking/.sops.env, key: APP_KEY, template: "base64:${v}" }
+      - { file: stacks/tracking/secrets.sops.json, key: APP_KEY, template: "base64:${v}" }
   - name: tracking/BOOKSTACK_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/tracking/.sops.env, key: BOOKSTACK_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: BOOKSTACK_ADMIN_PASSWORD }]
   - name: tracking/MYSQL_ROOT_PASSWORD
     class: generate
     recipe: hex:48
-    targets: [{ file: stacks/tracking/.sops.env, key: MYSQL_ROOT_PASSWORD }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: MYSQL_ROOT_PASSWORD }]
   - name: tracking/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/tracking/.sops.env, key: MARIADB_PASSWORD }
-      - { file: stacks/tracking/.sops.env, key: DB_PASSWORD }
+      - { file: stacks/tracking/secrets.sops.json, key: MARIADB_PASSWORD }
   - name: tracking/HBOX_AUTH_API_KEY_PEPPER
     class: generate
     recipe: base64:48
     freeze: true
-    targets: [{ file: stacks/tracking/.sops.env, key: HBOX_AUTH_API_KEY_PEPPER }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: HBOX_AUTH_API_KEY_PEPPER }]
   - name: tracking/HOMEBOX_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/tracking/.sops.env, key: HOMEBOX_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: HOMEBOX_ADMIN_PASSWORD }]
   - name: tracking/NEXTAUTH_SECRET
     class: generate
     recipe: base64:36
-    targets: [{ file: stacks/tracking/.sops.env, key: NEXTAUTH_SECRET }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: NEXTAUTH_SECRET }]
   - name: tracking/MEILI_MASTER_KEY
     class: generate
     recipe: base64:32
     note: "shared karakeep<->meili in-file"
-    targets: [{ file: stacks/tracking/.sops.env, key: MEILI_MASTER_KEY }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: MEILI_MASTER_KEY }]
   - name: tracking/KARAKEEP_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/tracking/.sops.env, key: KARAKEEP_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/tracking/secrets.sops.json, key: KARAKEEP_ADMIN_PASSWORD }]
   # Rollout 2026-09-05: three DISTINCT client secrets (one per app), NOT one
-  # shared draw — the tracking stack packs three apps into one .sops.env, and
+  # shared draw — the tracking stack packs three apps into one secrets file, and
   # each app's compose remaps its prefixed key to the bare name the app reads
   # (OIDC_CLIENT_SECRET / HBOX_OIDC_CLIENT_SECRET / OAUTH_CLIENT_SECRET). Each
   # is a gen+twin xhost: stack side prefixed, VPS side same prefixed name (the
@@ -836,24 +795,21 @@ secrets:
   - name: bookstack/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost; then VPS nixos-rebuild switch + re-up tracking stack"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: BOOKSTACK_OIDC_CLIENT_SECRET }
-      - { file: stacks/tracking/.sops.env, key: BOOKSTACK_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: BOOKSTACK_OIDC_CLIENT_SECRET }
   - name: homebox/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost. Homebox resolves OIDC discovery AT BOOT — enabling it couples the tracking stack's start to VPS reachability (eager-discovery, restart-loops on a tailnet blip)."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: HOMEBOX_OIDC_CLIENT_SECRET }
-      - { file: stacks/tracking/.sops.env, key: HOMEBOX_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: HOMEBOX_OIDC_CLIENT_SECRET }
   - name: karakeep/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost; enable OIDC only AFTER tracking-init seeds the local admin (DISABLE_PASSWORD_AUTH would block the seed)"
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: KARAKEEP_OIDC_CLIENT_SECRET }
-      - { file: stacks/tracking/.sops.env, key: KARAKEEP_OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: KARAKEEP_OIDC_CLIENT_SECRET }
 
   - name: vaultwarden/admin
     class: derived
@@ -861,7 +817,7 @@ secrets:
     recovery: VAULTWARDEN_ADMIN_PASSWORD
     note: "argon2id PHC, single-quoted — a mangled $ here is a login-bypass-shaped failure (ledger #30)"
     targets:
-      - { file: stacks/vaultwarden/.sops.env, key: ADMIN_TOKEN, part: argon2 }
+      - { file: stacks/vaultwarden/secrets.sops.json, key: ADMIN_TOKEN, part: argon2 }
   # Rollout 2026-09-05: only the SECRET is generated. SSO_CLIENT_ID is public
   # and pinned to the literal "vaultwarden" in compose.yaml (overrides the
   # vestigial .sops.env stub), so it is not a managed secret. vaultwarden/server
@@ -870,78 +826,73 @@ secrets:
   - name: vaultwarden/sso
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost; then VPS nixos-rebuild switch + re-up vaultwarden. VPS !Env is VAULTWARDEN_OIDC_CLIENT_SECRET, stack side is SSO_CLIENT_SECRET."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: VAULTWARDEN_OIDC_CLIENT_SECRET }
-      - { file: stacks/vaultwarden/.sops.env, key: SSO_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: VAULTWARDEN_OIDC_CLIENT_SECRET }
 
   - name: wger/SECRET_KEY
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/wger/.sops.env, key: SECRET_KEY }]
+    targets: [{ file: stacks/wger/secrets.sops.json, key: SECRET_KEY }]
   - name: wger/db
     class: generate
     recipe: hex:48
     note: "same-file twin"
     targets:
-      - { file: stacks/wger/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/wger/.sops.env, key: DJANGO_DB_PASSWORD }
+      - { file: stacks/wger/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: wger/WGER_ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/wger/.sops.env, key: WGER_ADMIN_PASSWORD }]
+    targets: [{ file: stacks/wger/secrets.sops.json, key: WGER_ADMIN_PASSWORD }]
 
   - name: windmill/db
-    class: derived
+    class: generate
     recipe: hex:48
     note: "one draw: bare password + rendered into DATABASE_URL"
     targets:
-      - { file: stacks/windmill/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/windmill/.sops.env, key: DATABASE_URL, template: "postgres://windmill:${v}@windmill_db:5432/windmill?sslmode=disable" }
+      - { file: stacks/windmill/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: windmill/SUPERADMIN_SECRET
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/windmill/.sops.env, key: SUPERADMIN_SECRET }]
+    targets: [{ file: stacks/windmill/secrets.sops.json, key: SUPERADMIN_SECRET }]
   # windmill admin (idan): unified into the per-user `user/idan` entry above
-  # (windmill .sops.env key IDAN_INITIAL_PASSWORD). windmill-init creates idan as
+  # (windmill env.nix key IDAN_INITIAL_PASSWORD). windmill-init creates idan as
   # super_admin with it and the 5 friends as regular users with theirs.
 
-  # --- stacks/excalidraw/.sops.env (AstraDraw; merged post-fork) -----------
+  # --- stacks/excalidraw/secrets.sops.json (AstraDraw; merged post-fork) -----------
   - name: excalidraw/pg
-    class: derived
+    class: generate
     recipe: hex:64
     note: "two-key lockstep: bare pw + embedded raw in STORAGE_URI (hex so the URL needs no encoding)"
     targets:
-      - { file: stacks/excalidraw/.sops.env, key: POSTGRES_PASSWORD }
-      - { file: stacks/excalidraw/.sops.env, key: STORAGE_URI, template: "postgres://excalidraw:${v}@excalidraw_db:5432/excalidraw_storage" }
+      - { file: stacks/excalidraw/secrets.sops.json, key: POSTGRES_PASSWORD }
   - name: excalidraw/JWT_SECRET
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/excalidraw/.sops.env, key: JWT_SECRET }]
+    targets: [{ file: stacks/excalidraw/secrets.sops.json, key: JWT_SECRET }]
   - name: excalidraw/ROOM_KEY_SECRET
     class: generate
     recipe: hex:64
-    targets: [{ file: stacks/excalidraw/.sops.env, key: ROOM_KEY_SECRET }]
+    targets: [{ file: stacks/excalidraw/secrets.sops.json, key: ROOM_KEY_SECRET }]
   - name: excalidraw/ADMIN_PASSWORD
     class: generate
     recipe: base64:24
-    targets: [{ file: stacks/excalidraw/.sops.env, key: ADMIN_PASSWORD }]
+    targets: [{ file: stacks/excalidraw/secrets.sops.json, key: ADMIN_PASSWORD }]
   - name: excalidraw/oidc
     class: generate
     recipe: hex:64
-    note: "gen+twin xhost (rollout 2026-09-05, new key). AstraDraw is ALPHA and its OIDC discovery timing is UNMEASURED (may be boot-fatal like wealthfolio). Ships OFF in compose (empty OIDC_ISSUER_URL); flip on only after testing against a dead issuer. Secret generated regardless. Then VPS nixos-rebuild switch + re-up excalidraw."
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
-      - { file: headscale-vps/secrets.sops.yaml, key: EXCALIDRAW_OIDC_CLIENT_SECRET }
-      - { file: stacks/excalidraw/.sops.env, key: OIDC_CLIENT_SECRET }
+      - { file: secrets/shared.sops.json, key: EXCALIDRAW_OIDC_CLIENT_SECRET }
 
-  # --- stacks/proton/.sops.env (hydroxide export sidecar; merged post-fork) -
+  # --- stacks/proton/secrets.sops.json (hydroxide export sidecar; merged post-fork) -
   # Both are PULL-class: the account email and the bridge password printed once
   # by `hydroxide auth` — neither is generable.
   - name: proton/PROTON_ACCOUNT
     class: pull
     note: "the Proton account email the bridge was auth'd as"
-    targets: [{ file: stacks/proton/.sops.env, key: PROTON_ACCOUNT }]
+    targets: [{ file: stacks/proton/secrets.sops.json, key: PROTON_ACCOUNT }]
   - name: proton/PROTON_BRIDGE_PASSWORD
     class: pull
     note: "printed exactly once by `hydroxide auth`; not derivable"
-    targets: [{ file: stacks/proton/.sops.env, key: PROTON_BRIDGE_PASSWORD }]
+    targets: [{ file: stacks/proton/secrets.sops.json, key: PROTON_BRIDGE_PASSWORD }]

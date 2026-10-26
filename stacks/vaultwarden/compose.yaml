@@ -76,13 +76,12 @@ services:
       # https://vaultwarden.svc.idanreed.com/identity/connect/oidc-signin — do
       # NOT register bitwarden://sso-callback, those never reach the IdP.
       #
-      # SSO_CLIENT_SECRET and ADMIN_TOKEN arrive from .env.
-      # 🚨 ADMIN_TOKEN must be single-quoted in the plaintext .sops.env: Compose
-      # interpolates env_file values, so a bare argon2 PHC has $argon2id/$v/$m
-      # expanded away and /admin then accepts nothing. Do not $$-escape either.
-    env_file:
-      - path: .env
-        required: false
+      # SSO_CLIENT_SECRET and ADMIN_TOKEN arrive from the stack env.
+      # 🚨 ADMIN_TOKEN is an argon2 PHC full of '$': Compose interpolates
+      # env_file values, so the rendered env single-quotes it (stack-env.nix
+      # quotes every value) — a bare one has $argon2id/$v/$m expanded away and
+      # /admin then accepts nothing. Store it raw; never $$-escape it.
+    env_file: /run/stack-env/vaultwarden.env
     # NO healthcheck stanza: the builtin curls /alive, whose handler takes a
     # DbConn guard, so it really does verify the database.
     restart: unless-stopped

@@ -5,10 +5,10 @@
 #   ferretdb   Mongo-wire front Core talks to
 #   postgres   FerretDB's backend; the only stateful component
 #
-# The age key never enters this compose: decrypt-sops-envs (a host unit) writes
-# every .env, and Periphery only reads one that already exists. That keeps the
-# KEY out, not the PLAINTEXT — Periphery is root and bind-mounts /srv/stacks
-# read-write, so it holds every deployed secret (arch-security AS-8). See
+# The age key never enters this compose: sops-nix renders every stack's env on
+# the host at activation (nixos/modules/stack-env.nix) and Periphery only reads
+# the copies in /run/stack-env. That keeps the KEY out, not the PLAINTEXT —
+# Periphery is root and reads every deployed secret (arch-security AS-8). See
 # ServerNotes/designs/komodo-migration.md.
 services:
   postgres:
@@ -96,15 +96,15 @@ services:
     volumes:
       # Noise keypairs, shared with periphery. Regenerable, so not backed up.
       - komodo_keys:/config/keys
-    # Long form, required:false (finding #11): decrypt-sops-envs writes
-    # /srv/komodo/.env host-side, and a plain `env_file: .env` would hard-fail
-    # before the first decrypt.
-    env_file:
-      - path: .env
-        required: false
+      # The Forgejo git provider + read token (Core reads every *config.* file
+      # under /config). Rendered by sops-nix and published by the host
+      # (nixos/modules/deploy-plane.nix); Core re-reads it only on restart,
+      # which the host does when the token changes.
+      - /run/stack-env/komodo-core.config.toml:/config/git.config.toml:ro
+    env_file: /run/stack-env/komodo.env
     networks:
       - komodo # reach ferretdb + periphery
-      - homelab # reach forgejo for Resource-Sync polling
+      - homelab # reach forgejo (clones) and receive its push webhook
     restart: unless-stopped
 
   # No published port: Periphery dials OUT to Core and holds the connection
@@ -120,17 +120,23 @@ services:
     volumes:
       - komodo_keys:/config/keys
       - /var/run/docker.sock:/var/run/docker.sock
-      # Same path in and out, so files_on_host run_directory paths resolve
-      # identically on the host daemon.
-      - /srv/stacks:/srv/stacks
+      # Each git stack is cloned under <root>/stacks/<name>. Same path in and
+      # out: a compose file's `./` bind sources resolve in the clone, and the
+      # host daemon must find them at that path.
+      - /srv/komodo:/srv/komodo
+      # The rendered stack envs, read by compose (env_file and --env-file).
+      # Read-only, and a plain directory rather than /run/secrets (whose
+      # generation symlink a bind mount would pin — nixos/modules/stack-env.nix).
+      - /run/stack-env:/run/stack-env:ro
     environment:
       PERIPHERY_CORE_ADDRESS: ws://core:9120
       PERIPHERY_CONNECT_AS: Local
       PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
-      # run_directory must be a CHILD of this root.
-      PERIPHERY_ROOT_DIRECTORY: /srv/stacks
+      # Stack clones land in <root>/stacks/<name>.
+      PERIPHERY_ROOT_DIRECTORY: /srv/komodo
     networks:
       - komodo
+      - homelab # clone from forgejo:3000
     restart: unless-stopped
 
 volumes:

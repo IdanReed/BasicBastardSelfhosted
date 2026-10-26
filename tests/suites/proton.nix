@@ -68,7 +68,7 @@ let
     images."theohbrothers_docker-isync_1_5_0"
   ];
 
-  fixture = ../fixtures/proton.sops.env;
+  fixture = ../fixtures/stacks/proton.sops.json;
 
   seedSrv = pkgs.runCommand "srv-seed-proton" { } ''
     mkdir -p $out/stacks/proton
@@ -78,7 +78,7 @@ let
     # captured by cp -r into the world-readable store.
     rm -f $out/stacks/proton/.env
     rm -f $out/stacks/proton/.sops.env.example $out/stacks/proton/.sops.env
-    cp ${fixture} $out/stacks/proton/.sops.env
+    ln -s /run/stack-env/proton.env $out/stacks/proton/.env
   '';
 
   # /mnt tmpfiles rules from the SAME generated file the real host imports
@@ -135,8 +135,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         virtualisation.fileSystems = {
@@ -167,8 +170,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the proton stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -214,7 +215,7 @@ pkgs.testers.runNixOSTest {
             ("hydroxide logs", "docker logs hydroxide 2>&1 | tail -40"),
             ("export logs", "docker logs proton_export 2>&1 | tail -40"),
             ("decrypt journal",
-             "journalctl -u decrypt-sops-envs --no-pager -o cat | tail -20"),
+             "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("state dir", "ls -la /mnt/fast/proton/hydroxide"),
             ("archive dir", "ls -la /mnt/slow/proton-mail-archive"),
         ]:
@@ -228,16 +229,16 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("load-test-images.service")
 
     try:
-        with subtest("the fixture .sops.env decrypted to a 0600 .env"):
+        with subtest("the fixture rendered to a root-only stack env"):
             # The artifact, not the unit: decrypt-sops-envs is a transient
             # oneshot on a minutely timer (mk-stack-suite's rule).
             services_vm.wait_until_succeeds(
                 "test -s /srv/stacks/proton/.env", timeout=90
             )
             mode = services_vm.succeed(
-                "stat -c %a /srv/stacks/proton/.env"
+                "stat -L -c %a /srv/stacks/proton/.env"
             ).strip()
-            assert mode == "600", f".env is mode {mode}, expected 600"
+            assert mode == "400", f".env is mode {mode}, expected 400"
 
         with subtest("🚨 the stack comes up with NO creds and NO egress"):
             # --wait is safe: hydroxide has a healthcheck, proton_export has

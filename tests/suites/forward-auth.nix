@@ -133,14 +133,13 @@ let
   seedSrv = pkgs.runCommand "srv-seed" { } ''
     mkdir -p $out/komodo $out/stacks
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
       cp -r ${../../stacks + "/${s}"}/. $out/stacks/${s}/
       chmod -R u+w $out/stacks/${s}
       rm -f $out/stacks/${s}/.sops.env.example
-      ${lib.optionalString (builtins.pathExists (../fixtures + "/${s}.sops.env")) ''
-        cp ${../fixtures + "/${s}.sops.env"} $out/stacks/${s}/.sops.env
+      ${lib.optionalString (builtins.pathExists (../fixtures/stacks + "/${s}.sops.json")) ''
+        ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
       ''}
     '') stacks}
     cp ${testCaddyfile} $out/stacks/caddy/Caddyfile
@@ -227,8 +226,12 @@ pkgs.testers.runNixOSTest {
             images = stackImages;
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
-          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
-          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
+          # Komodo runs here, Forgejo does not: the fleet-sync bootstrap would try
+          # to clone (gitops.nix covers it), and forgejo.service has no image.
+          {
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         security.pki.certificateFiles = [ nodes.acme.test-support.acme.caCert ];
@@ -271,8 +274,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";

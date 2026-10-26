@@ -1,0 +1,110 @@
+# Forgejo — the git ROOT for this homelab (10550 web, 10551 ssh).
+# Design: ServerNotes/designs/dev-forgejo.md. GitHub is only a push mirror.
+#
+# NOT a Komodo stack: Komodo deploys every stack FROM this server, so it cannot
+# also be what brings it up. nixos/modules/forgejo.nix runs this file from the
+# flake on `nixos-rebuild switch`, like komodo/ itself.
+#
+# Caddy cannot proxy SSH, so 10551 is loopback-only: humans reach it by
+# ProxyJump through the VM's own sshd (the desktop `forgejo` identity in
+# nixos-de/ssh-identities.nix). Komodo clones over HTTP as forgejo:3000 on the
+# `homelab` network, and Forgejo's push webhook reaches Komodo Core the same
+# way. The web UI and git-over-https still ride Caddy.
+#
+# Forgejo self-generates SECRET_KEY, INTERNAL_TOKEN and the JWT secrets into
+# /data/gitea/conf/app.ini, so app.ini is STATE and lives in the volume — the
+# fast-volume Backrest plan covers it. The only sops secret here is the OIDC
+# client secret.
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0
+    container_name: forgejo
+    environment:
+      # The classic image runs its `git` user at this uid; /mnt/fast/forgejo is
+      # owned to match.
+      - USER_UID=1000
+      - USER_GID=1000
+      - TZ=America/Chicago
+      # Headless bring-up: no install wizard. With no DB configured the image
+      # defaults to sqlite3 at /data/gitea/gitea.db.
+      - FORGEJO__security__INSTALL_LOCK=true
+      # Clone URLs and redirects are built from this; must match the Caddy route
+      # (the caddy-routes lint ties the published port to it).
+      - FORGEJO__server__ROOT_URL=https://forgejo.svc.idanreed.com/
+      # Explicit false, not merely absent: environment-to-ini PERSISTED the old
+      # DISABLE_SSH=true into the stateful app.ini, and only an explicit false
+      # overwrites it.
+      - FORGEJO__server__DISABLE_SSH=false
+      # What the UI's ssh clone button advertises: git@forgejo:... where
+      # "forgejo" is the desktop's ssh Host alias, which carries the ProxyJump.
+      # SSH_PORT here is app.ini-level (clone URLs only); the container's sshd
+      # listens on 22 because the plain SSH_PORT container env is left unset.
+      - FORGEJO__server__SSH_DOMAIN=forgejo
+      - FORGEJO__server__SSH_PORT=10551
+      # The admin is created headless with the CLI; nobody self-registers.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+      # Push-to-create: this instance is the git root and new repos start life
+      # as a working copy on the desktop. Repos born that way are private —
+      # upstream's default already, pinned so a flip cannot silently publish one.
+      - FORGEJO__repository__ENABLE_PUSH_CREATE_USER=true
+      - FORGEJO__repository__DEFAULT_PUSH_CREATE_PRIVATE=true
+      # Only HALF the toggle: Actions must also be enabled PER REPOSITORY
+      # (Settings -> Units -> Actions) before the runner registration or any
+      # .forgejo/workflows/* means anything.
+      - FORGEJO__actions__ENABLED=true
+      # OIDC
+      # The auth SOURCE is seeded into the DB by forgejo_init; these govern what
+      # an Authentik login does. DISABLE_REGISTRATION stays true above, so only
+      # Authentik can mint accounts. ACCOUNT_LINKING=auto keeps the seeded
+      # admin's local break-glass password working alongside SSO.
+      - FORGEJO__oauth2_client__ENABLE_AUTO_REGISTRATION=true
+      - FORGEJO__oauth2_client__ACCOUNT_LINKING=auto
+      - FORGEJO__oauth2_client__USERNAME=preferred_username
+      # Webhooks
+      # The push webhook targets Komodo Core (container `komodo`) on the
+      # homelab network. Forgejo refuses private addresses unless allow-listed,
+      # and the default list is `external` only.
+      - FORGEJO__webhook__ALLOWED_HOST_LIST=komodo
+    volumes:
+      - /mnt/fast/forgejo/data:/data
+    ports:
+      - '127.0.0.1:10550:3000'
+      # git-over-ssh, loopback-only: consumers arrive via ProxyJump. Host keys
+      # self-generate into /data/ssh.
+      - '127.0.0.1:10551:22'
+    networks:
+      - default
+      # Komodo Core and Periphery reach forgejo:3000 here (clones, sync), and
+      # the push webhook reaches Core.
+      - homelab
+    healthcheck:
+      # The dedicated endpoint, not '/': it checks the DB and cache backends,
+      # and both the suites and `up --wait` key off it.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/healthz >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Init
+  # Seeds the Authentik OAuth2 auth source — it lives in Forgejo's DATABASE, not
+  # app.ini, so a one-shot CLI call is the only declarative route. See
+  # forgejo-init.sh. FORGEJO_OIDC_CLIENT_SECRET arrives from the stack env.
+  forgejo_init:
+    image: codeberg.org/forgejo/forgejo:16.0
+    container_name: forgejo_init
+    user: "1000:1000"
+    entrypoint: ['/bin/sh', '/init/forgejo-init.sh']
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /mnt/fast/forgejo/data:/data
+      - ./forgejo-init.sh:/init/forgejo-init.sh:ro
+    env_file: /run/stack-env/forgejo.env
+    restart: "no"
+
+networks:
+  homelab:
+    external: true

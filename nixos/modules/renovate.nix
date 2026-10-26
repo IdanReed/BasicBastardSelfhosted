@@ -7,9 +7,18 @@
 # both are needed: `automerge` defaults false, but `platformAutomerge` defaults
 # TRUE and hands the merge to the forge.
 
-_:
+{ config, pkgs, ... }:
 
+let
+  envFile = config.sops.templates."renovate.env".path;
+in
 {
+  # The EnvironmentFile shape Renovate reads; the PAT is a sops secret in
+  # nixos/secrets.sops.yaml. A switch that changes it reaches the next run.
+  sops.templates."renovate.env".content = ''
+    RENOVATE_TOKEN=${config.sops.placeholder.RENOVATE_TOKEN}
+  '';
+
   services.renovate = {
     enable = true;
 
@@ -51,27 +60,24 @@ _:
   };
 
   systemd.services.renovate = {
-    after = [
-      "ci-secrets.service"
-      "network-online.target"
-    ];
-    wants = [
-      "ci-secrets.service"
-      "network-online.target"
-    ];
-
-    unitConfig = {
-      # Skipped, not failed, while the PAT is unset — the steady state until
-      # the token is minted. Keeps `systemctl --failed` clean, which the
-      # services and forgejo suites assert on literally.
-      ConditionPathExists = "/run/ci-secrets/renovate.env";
-    };
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
 
     serviceConfig = {
       # RENOVATE_TOKEN. Not the module's `credentials` option: that wants a
-      # bare value, and ci-secrets.nix emits a dotenv, which the runner's
-      # tokenFile also needs.
-      EnvironmentFile = "/run/ci-secrets/renovate.env";
+      # bare value; a dotenv is what the runner's tokenFile needs too.
+      EnvironmentFile = envFile;
+
+      # Skipped, not failed, while the PAT is still the changeme_ placeholder —
+      # the steady state until the token is minted. A non-zero ExecCondition
+      # skips the unit, which keeps `systemctl --failed` clean (the services
+      # and forgejo suites assert on that literally). `+` runs it as root (the
+      # unit's DynamicUser cannot read the template), and only grep's explicit
+      # "no match" (1) lets it start — an unreadable file skips too.
+      ExecCondition = "+${pkgs.writeShellScript "renovate-token-set" ''
+        ${pkgs.gnugrep}/bin/grep -q '^RENOVATE_TOKEN=changeme_' ${envFile}
+        [ $? -eq 1 ]
+      ''}";
     };
 
     # Upstream sets no Restart=, so the unit reaches `failed` on the first bad

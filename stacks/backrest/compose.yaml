@@ -25,11 +25,7 @@ services:
     # Backrest owns the file afterwards; the template is a bootstrap seed, not
     # a source of truth. To re-seed: delete /mnt/fast/backrest/config/config.json.
     entrypoint: ["/bin/sh", "/template/config-init.sh"]
-    # Long form: a deploy can race the host-side decrypt, and the plain form
-    # aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/backrest.env
     volumes:
       - ./config-init.sh:/template/config-init.sh:ro
       - ./config.template.json:/template/config.template.json:ro
@@ -86,9 +82,7 @@ services:
       - '127.0.0.1:10002:9898'
     networks:
       - homelab
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/backrest.env
     restart: unless-stopped
 
 networks:

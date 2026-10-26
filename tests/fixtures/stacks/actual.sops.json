@@ -1,0 +1,16 @@
+{
+	"ACTUAL_INIT_PASSWORD": "ENC[AES256_GCM,data:Iifbyb8SgcK33kRPvpd1zeSgL3ip2AmJj8NjPG8CIA==,iv:RtDzcSPYTsnac9R9kSUYeu5OIeqr4c9HI9gYgHF2knA=,tag:YrlkmOsA3/6Zp2c5C37GiA==,type:str]",
+	"ACTUAL_OPENID_CLIENT_ID": "ENC[AES256_GCM,data:oEAl6afHj2mk54VfJG8qhVol1Am2lMfgzFqQBNVQRYZOwgTfSg==,iv:uDDyjCk8O1bFfisr2N08xXtfiMfc0bLr/aLQCBVNV6I=,tag:8kctcd937w/ZZPQuxKS37g==,type:str]",
+	"sops": {
+		"age": [
+			{
+				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j",
+				"enc": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0d1RGWFVFMng0ck9IZERV\nc21YUXJsNTJ0RkVUdU9PTUdmbktEcEdZVlhzCmZiSGJNajZIbTU3RHlYcGFPaXd0\ncm5UYU0zUGI2WWFVQ29Mc3RCdXhuVm8KLS0tIG51WUJpT2t6QXJKbnhwWGZpMWk5\nclNPK24wSDJKMWx0Ri9Dc2d0T0tnbTgKGKF57hy0SjMBConiiWQNGhfa1kA3FHL4\n85ycEjF+6OmSijvUWFOcxhyTkklzx58Kxk5EDfHJ5JQ2TzOUIocLYA==\n-----END AGE ENCRYPTED FILE-----\n"
+			}
+		],
+		"lastmodified": "2026-10-26T21:02:51Z",
+		"mac": "ENC[AES256_GCM,data:kScvMvzhZoQd5VhPl0StTcXuVyla0tXdIjo0v9LaRQY0YKjWgzhciqZ7huPh49u3Y+ZT6Y/MchcG++qobUi23abRKhZ2FgOBOYwwjLRF/xoPk7k7KHwaOMPU9iWMf0V78TpW+qD0stNm81lSCNmlXmptCSnrPiYBJN17Ibu8WDE=,iv:q0bPHOhil9NFxXrQX/P4zJ0wwas1SHHu2+1Pd/7UBjA=,tag:zvlIeNz/AlIQtqyqKDHYNA==,type:str]",
+		"unencrypted_suffix": "_unencrypted",
+		"version": "3.12.1"
+	}
+}

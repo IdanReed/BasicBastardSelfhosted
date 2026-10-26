@@ -69,7 +69,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/vaultwarden/.env
     rm -f $out/stacks/vaultwarden/.sops.env.example
-    cp ${../fixtures/vaultwarden.sops.env} $out/stacks/vaultwarden/.sops.env
+    ln -s /run/stack-env/vaultwarden.env $out/stacks/vaultwarden/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -101,8 +101,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 2;
 
@@ -138,8 +141,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -195,16 +196,16 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # boot chain + decrypt
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
+    with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/vaultwarden/.env", timeout=120
         )
         stat = services_vm.succeed(
-            "stat -c '%a %u:%g' /srv/stacks/vaultwarden/.env"
+            "stat -L -c '%a %u:%g' /srv/stacks/vaultwarden/.env"
         ).strip()
-        assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
+        assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # SSO_CLIENT_ID is empty on purpose — compose.yaml's `environment:`
         # sets it and wins over env_file. SSO_CLIENT_SECRET must NOT be:
         # config.rs refuses to start vaultwarden when SSO_ENABLED is true and

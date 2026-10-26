@@ -1,14 +1,57 @@
+# The deploy plane: Komodo, run from the flake.
+#
+# Stacks are Komodo git stacks: a push to Forgejo fires ONE webhook at Komodo's
+# `apply` procedure (komodo/sync/fleet.toml), which runs the `fleet` Resource
+# Sync (registers / updates / removes stacks from komodo/sync/*.toml) and then
+# BatchDeployStackIfChanged — each stack re-reads its files at the new commit,
+# compares them with what it last deployed, and only a changed stack is
+# redeployed. Periphery clones and runs compose; the host only renders the
+# envs (stack-env.nix). Nothing on the host signals Komodo.
+#
+# Komodo itself (and Forgejo, forgejo.nix) cannot be deployed by Komodo, so
+# both run from the store on `nixos-rebuild switch`.
+
 { config, pkgs, ... }:
 
+let
+  docker = "${config.virtualisation.docker.package}/bin/docker";
+  # The whole directory, so compose resolves anything relative to the file.
+  compose = "${docker} compose -f ${../../komodo}/compose.yaml -p komodo --env-file /run/stack-env/komodo.env";
+  api = "http://127.0.0.1:10000";
+  forgejoRepo = "idan/BasicBastardSelfhosted";
+in
 {
-  # Komodo
+  # Core's git provider: the `komodo` bot's read-only Forgejo token. Komodo
+  # clones over HTTP with a token only (no ssh); Core hands it to Periphery
+  # per request. Published to /run/stack-env with the stack envs and mounted
+  # at /config/git.config.toml (komodo/compose.yaml).
+  sops.templates."stacks/komodo-core.config.toml" = {
+    content = ''
+      [[git_provider]]
+      domain = "forgejo:3000"
+      https = false
+      accounts = [
+        { username = "komodo", token = "komodo:${config.sops.placeholder."stacks/komodo/KOMODO_GIT_TOKEN"}" },
+      ]
+    '';
+    restartUnits = [
+      "stack-env-publish.service"
+      "komodo-core-reload.service"
+      "komodo-sync-bootstrap.service"
+    ];
+  };
+
+  # A changed Komodo env re-runs `up -d`, which recreates exactly the
+  # containers whose environment changed.
+  sops.templates."stacks/komodo.env".restartUnits = [ "bootstrap-komodo.service" ];
+
   systemd.services.bootstrap-komodo = {
-    description = "Bootstrap Komodo container management";
-    # Core joins `homelab` to reach Forgejo for Resource-Sync polling, so the
+    description = "Komodo deploy plane (docker compose from the flake)";
+    # Core joins `homelab` to reach Forgejo and receive its webhook, so the
     # network is a start dependency, not just an ordering edge.
-    after = [ "docker.service" "network-online.target" "srv.mount" "decrypt-sops-envs.service" "docker-network-homelab.service" ];
+    after = [ "docker.service" "network-online.target" "srv.mount" "stack-env-publish.service" "docker-network-homelab.service" ];
     wants = [ "network-online.target" ];
-    requires = [ "docker.service" "srv.mount" "decrypt-sops-envs.service" "docker-network-homelab.service" ];
+    requires = [ "docker.service" "srv.mount" "stack-env-publish.service" "docker-network-homelab.service" ];
     wantedBy = [ "multi-user.target" ];
 
     # Deploy plane down = running stacks keep running, so nothing looks wrong
@@ -18,135 +61,109 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      WorkingDirectory = "/srv/komodo";
     };
 
+    # From the store: a changed compose.yaml changes this script, so a switch
+    # re-runs it. The project name is pinned — the store path changes on every
+    # rebuild and would otherwise orphan the running containers.
     script = ''
       sleep 5
-      ${config.virtualisation.docker.package}/bin/docker compose up -d
+      ${compose} up -d --remove-orphans
     '';
   };
 
-  # Stack delivery
-  # The clone lives on the host (invariant #1: git credentials and file writes
-  # stay out of the socket-mounting Periphery). Timer-driven, not
-  # wantedBy multi-user.target: Forgejo is itself a managed stack, so a
-  # boot-time pull would race it and page.
-  systemd.services.stack-git-sync = {
-    description = "Sync compose stacks from Forgejo into /srv/stacks";
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
+  # Core reads its config files only at start.
+  systemd.services.komodo-core-reload = {
+    description = "Restart Komodo Core to re-read its git-provider config";
+    after = [ "stack-env-publish.service" "bootstrap-komodo.service" ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      if ${docker} inspect komodo >/dev/null 2>&1; then
+        ${docker} restart komodo
+      fi
+    '';
+  };
 
-    # Silent failure mode: a stack that never updates.
+  # Creates the `fleet` Resource Sync once and runs it, which registers the
+  # `apply` procedure the Forgejo webhook calls and every stack. From then on
+  # the sync manages itself (it is declared in komodo/sync/fleet.toml too).
+  # Re-run when the git token changes: before Forgejo has minted it, Komodo
+  # cannot read the repo and this exits 0 having only said so.
+  systemd.services.komodo-sync-bootstrap = {
+    description = "Register Komodo's fleet Resource Sync (first run only)";
+    after = [ "bootstrap-komodo.service" "forgejo.service" ];
+    requires = [ "bootstrap-komodo.service" ];
+    wantedBy = [ "multi-user.target" ];
     onFailure = [ "notify-failure@%n.service" ];
-
-    path = with pkgs; [
-      git
-      openssh # git shells out to ssh for the ssh:// remote
-      rsync
-      coreutils
-    ];
-
+    path = with pkgs; [ curl jq coreutils gnugrep ];
     serviceConfig = {
       Type = "oneshot";
-      StateDirectory = "stack-git-sync";
-      StateDirectoryMode = "0700";
+      RemainAfterExit = true;
     };
-
     script = ''
-      # NOT set -e: each step is `|| fail` so errors alert with a message.
-      set -uo pipefail
-      umask 077
+      set -euo pipefail
+      # The rendered env single-quotes every value, so it sources cleanly.
+      set -a
+      . /run/stack-env/komodo.env
+      set +a
 
-      # Loopback SSH, not the tailnet vhost: keeps tailscaled and Caddy out of
-      # the dependency set. 10551 is the forgejo stack's loopback sshd publish.
-      host="127.0.0.1"
-      port="10551"
-      repo="idan/BasicBastardSelfhosted"
-      branch="main"
-      work="$STATE_DIRECTORY/checkout"
-      url="ssh://git@$host:$port/$repo.git"
+      if [[ $KOMODO_GIT_TOKEN == changeme* ]]; then
+        echo "KOMODO_GIT_TOKEN is still a placeholder — mint it in Forgejo, sopsedit komodo/secrets.sops.json, switch."
+        exit 0
+      fi
 
-      # Deploy key via GIT_SSH_COMMAND, never argv. accept-new pins Forgejo's
-      # host key on first contact (its host keys are generated at first start,
-      # so there is nothing to pin against beforehand); a later mismatch fails
-      # loudly, which is the wanted signal on /data loss.
-      export GIT_SSH_COMMAND="ssh -i ${config.sops.secrets.STACK_GIT_SSH_KEY.path} -o IdentitiesOnly=yes -o UserKnownHostsFile=$STATE_DIRECTORY/known_hosts -o StrictHostKeyChecking=accept-new"
-      export GIT_TERMINAL_PROMPT=0
+      # Core needs a while on a fresh database.
+      jwt=""
+      for _ in $(seq 60); do
+        jwt=$(jq -n --arg u "$KOMODO_INIT_ADMIN_USERNAME" --arg p "$KOMODO_INIT_ADMIN_PASSWORD" \
+                '{username: $u, password: $p}' \
+              | curl -fsS --max-time 10 -X POST -H 'content-type: application/json' \
+                  --data-binary @- ${api}/auth/login/LoginLocalUser 2>/dev/null \
+              | jq -r '.data.jwt // empty') && [ -n "$jwt" ] && break
+        sleep 5
+      done
+      [ -n "$jwt" ] || { echo "Komodo Core never accepted the admin login at ${api}" >&2; exit 1; }
 
-      # Alert on state CHANGE: a persistent failure must not ntfy every 60s.
-      stamp=/run/stack-git-sync.failed
-
-      fail() {
-        echo "$1" >&2
-        if [ -e "$stamp" ] && [ "$1" = "$(cat "$stamp")" ]; then
-          echo "(already notified; see the journal above)" >&2
-          exit 0
-        fi
-        printf '%s\n' "$1" > "$stamp"
-        exit 1
+      k() { # path json-body
+        curl -fsS --max-time 300 -X POST -H 'content-type: application/json' \
+          -H "authorization: $jwt" --data-binary "$2" "${api}$1"
       }
 
-      # Clone once, fetch+reset thereafter, so a force-push heals rather than
-      # wedging.
-      if [ ! -d "$work/.git" ]; then
-        rm -rf "$work"
-        git clone --quiet --branch "$branch" "$url" "$work" \
-          || fail "clone failed (is Forgejo's sshd reachable at $host:$port, deploy key registered?)"
-      else
-        git -C "$work" fetch --quiet origin "$branch" \
-          || fail "fetch failed (is Forgejo's sshd reachable at $host:$port, deploy key registered?)"
-        # Refresh first: last tick's chmod left every file stat-dirty, and a
-        # stat-dirty file is rewritten by `reset --hard` even when unchanged.
-        git -C "$work" update-index -q --refresh || true
-        git -C "$work" reset --quiet --hard "origin/$branch" \
-          || fail "reset to origin/$branch failed"
+      # Done once the first sync has run: it is what creates `apply`. (Not
+      # "the sync exists" — a first RunSync that failed would leave the sync
+      # registered and `apply` missing forever.)
+      if k /read/GetProcedure '{"procedure":"apply"}' >/dev/null 2>&1; then
+        echo "apply procedure exists — Komodo manages the fleet from here."
+        exit 0
       fi
 
-      [ -d "$work/stacks" ] || fail "repo checkout has no stacks/ directory"
+      if ! k /read/GetResourceSync '{"sync":"fleet"}' >/dev/null 2>&1; then
+        k /write/CreateResourceSync "$(jq -n '{
+          name: "fleet",
+          config: {
+            git_provider: "forgejo:3000", git_https: false, git_account: "komodo",
+            repo: "${forgejoRepo}", branch: "main",
+            resource_path: ["komodo/sync"], delete: true
+          }
+        }')" >/dev/null
+      fi
 
-      # Delivered files must be world-readable, secrets excepted (finding #79):
-      # umask 077 makes git create them 0600 and rsync -p copies that verbatim,
-      # which EACCESes any file bind-mounted into a non-root container.
-      # Normalise at the source so -p propagates exact modes and the
-      # destination never flaps; the checkout sits in the 0700 StateDirectory.
-      chmod -R u=rwX,go=rX "$work/stacks" \
-        || fail "chmod on checkout failed"
-      find "$work/stacks" -name '.sops.env' -exec chmod 0600 {} + \
-        || fail "chmod 0600 on .sops.env failed"
-
-      # --checksum AND NO -t: a delivered file's mtime moves only when its
-      # content does, which is the signal decrypt-sops-envs keys on (with -t
-      # every .env was re-decrypted minutely). NO --delete: the decrypted .env
-      # is absent from the checkout and would be nuked. Excludes are
-      # belt-and-suspenders.
-      rsync -rlpD --checksum \
-        --exclude='.env' --exclude='komodo.env' \
-        "$work/stacks/" /srv/stacks/ \
-        || fail "rsync into /srv/stacks failed"
-
-      # rsync copies root-owned; the deploy plane reads as uid 1000
-      # (finding #10). Only the dirs this sync manages, never /srv/stacks.
-      for d in "$work"/stacks/*/; do
-        name="$(basename "$d")"
-        [ -d "/srv/stacks/$name" ] && chown -R 1000:1000 "/srv/stacks/$name"
+      # The sync clones from Forgejo, which starts beside Komodo at boot.
+      for _ in $(seq 120); do
+        curl -fsS --max-time 5 http://127.0.0.1:10550/api/healthz >/dev/null 2>&1 && break
+        sleep 5
       done
 
-      if [ -e "$stamp" ]; then
-        rm -f "$stamp"
-        echo "recovered: stack sync succeeded again"
-      fi
-      exit 0
+      k /execute/RunSync '{"sync":"fleet"}' >/dev/null
+      for _ in $(seq 60); do
+        if k /read/GetProcedure '{"procedure":"apply"}' >/dev/null 2>&1; then
+          echo "fleet sync ran: the apply procedure and every stack now exist."
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "RunSync did not create the apply procedure — see the fleet sync's update log in Komodo" >&2
+      exit 1
     '';
-  };
-
-  systemd.timers.stack-git-sync = {
-    description = "Poll Forgejo for compose stack changes";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "minutely";
-      AccuracySec = "1s";
-      Unit = "stack-git-sync.service";
-    };
   };
 }

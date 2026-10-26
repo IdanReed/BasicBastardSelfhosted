@@ -78,9 +78,6 @@
           "nrb-vps" = "nixos-rebuild build --flake ${serverDir}#headscale-vps";
           "nrs-vm" = "nixos-rebuild switch --flake ${serverDir}#services-vm --target-host idan@10.0.0.3 --use-remote-sudo";
           "nrb-vm" = "nixos-rebuild build --flake ${serverDir}#services-vm";
-          # deploy [stack…] — gate -> push -> nrs-vps -> sync+decrypt ->
-          # redeploy -> verify. Superset of `redeploy`; see the script header.
-          deploy = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/deploy";
           # The trailing source+rehash run in the invoking shell (aliases expand
           # in place), so new aliases are usable without a new shell.
           hms = "home-manager switch --flake ${flakeDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
@@ -145,24 +142,6 @@
         # real nix-shell flag, so the command silently never ran.
         SOPS_AGE_KEY=$key nix-shell "$repo/secrets-gen/shell.nix" \
           --run "cd $repo && secrets-gen/sops-gen ''${(j: :)''${(q)@}}"
-      }
-
-      # redeploy [stack…] — STOP-GAP for Komodo #1120: stack-git-sync pulls new
-      # compose to /srv/stacks but Komodo does not recreate containers. Runs
-      # `docker compose up -d` per stack (all of /srv/stacks/* if none named),
-      # which recreates only what actually changed. Delete once #1120 is fixed.
-      # ⚠ Converges each stack to the REPO state: a stack hand-patched live on
-      # the host reverts to its .sops.env value — name stacks explicitly.
-      redeploy() {
-        local script='
-      [ "$#" -gt 0 ] || set -- /srv/stacks/*/
-      for a in "$@"; do
-        s=$(basename "$a")
-        [ -f /srv/stacks/$s/compose.yaml ] || { echo "skip $s (no compose.yaml)"; continue; }
-        echo "=== $s ==="
-        ( cd /srv/stacks/$s && docker compose -p "$s" up -d )
-      done'
-        print -r -- "$script" | ssh idan@10.0.0.3 bash -s -- "$@"
       }
 
       # md2pdf <file.md> [out.pdf] — typst, not LaTeX: ~90MB of closure instead

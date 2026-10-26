@@ -61,9 +61,7 @@ services:
       - OIDC_CLIENT_ID=mealie
       - OIDC_SIGNUP_ENABLED=true
       - OIDC_USER_CLAIM=email
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/mealie.env
     healthcheck:
       # The baked probe is honest (/api/app/about runs a real query against the
       # configured DB, unauthenticated, no outbound calls); rewritten only to
@@ -95,7 +93,5 @@ services:
     environment:
       - MEALIE_BASE_URL=http://mealie:9000
       # MEALIE_ADMIN_USER / _EMAIL / _PASSWORD arrive from .env.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/mealie.env
     restart: "no"

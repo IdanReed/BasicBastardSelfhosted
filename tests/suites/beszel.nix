@@ -70,7 +70,7 @@ let
     images."henrygd_beszel-agent_0_18_8"
   ];
 
-  fixture = ../fixtures/beszel.sops.env;
+  fixture = ../fixtures/stacks/beszel.sops.json;
 
   seedSrv = pkgs.runCommand "srv-seed-beszel" { } ''
     mkdir -p $out/stacks/beszel
@@ -80,7 +80,7 @@ let
     # still be captured by cp -r into the world-readable store.
     rm -f $out/stacks/beszel/.env
     rm -f $out/stacks/beszel/.sops.env.example $out/stacks/beszel/.sops.env
-    cp ${fixture} $out/stacks/beszel/.sops.env
+    ln -s /run/stack-env/beszel.env $out/stacks/beszel/.env
   '';
 
   # /mnt tmpfiles rules, read from the SAME generated file the real host
@@ -137,8 +137,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         # 🚨 TWO EXTRA DISKS, and this is the whole reason this suite does not
@@ -193,8 +196,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the beszel stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -279,7 +280,7 @@ pkgs.testers.runNixOSTest {
             slow = services_vm.succeed("findmnt -no SOURCE /mnt/slow").strip()
             assert fast != slow, f"both tiers are on {fast}"
 
-        with subtest("the fixture .sops.env decrypted to a 0600 .env"):
+        with subtest("the fixture rendered to a root-only stack env"):
             # NOT wait_for_unit: decrypt-sops-envs is a transient oneshot
             # with no RemainAfterExit (a minutely timer re-fires it), so
             # waiting on the UNIT races its inactive-after-success state and
@@ -291,9 +292,9 @@ pkgs.testers.runNixOSTest {
             )
             services_vm.succeed("test -f /srv/stacks/beszel/.env")
             mode = services_vm.succeed(
-                "stat -c %a /srv/stacks/beszel/.env"
+                "stat -L -c %a /srv/stacks/beszel/.env"
             ).strip()
-            assert mode == "600", f".env is mode {mode}, expected 600"
+            assert mode == "400", f".env is mode {mode}, expected 400"
 
         with subtest("the stack comes up: init -> hub -> agent"):
             # No `--wait`: beszel-init is a one-shot that must EXIT, and

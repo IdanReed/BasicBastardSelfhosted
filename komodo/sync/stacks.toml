@@ -1,0 +1,515 @@
+# Every stack Komodo deploys: one block per stacks/<name>, all the same shape
+# (the komodo-sync-coverage lint holds the fixed fields and the coverage).
+#
+# A git stack: Periphery clones the repo into /srv/komodo/stacks/<name> and runs
+# compose in stacks/<name>. The rendered env /run/stack-env/<name>.env is passed
+# with --env-file (compose.yaml's own `${VAR}` interpolation; the containers
+# read it via env_file) and NOT tracked — Komodo stores tracked contents in its
+# database and UI, and this file is plaintext. What IS tracked, as Redeploy, is
+# the ciphertext the env is rendered from, so a secrets change in git redeploys
+# the stack: its secrets.sops.json, and secrets/shared.sops.json for a stack
+# whose env.nix reads it. (The env itself is re-rendered by `nixos-rebuild
+# switch`, which therefore comes BEFORE the push.)
+
+
+[[stack]]
+name = "actual"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/actual"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/actual.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "automation"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/automation"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/automation.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "backrest"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/backrest"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/backrest.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "beszel"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/beszel"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/beszel.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "books"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/books"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/books.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "caddy"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/caddy"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/caddy.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "dawarich"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/dawarich"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/dawarich.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "docspace"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/docspace"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/docspace.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "excalidraw"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/excalidraw"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/excalidraw.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "firefly"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/firefly"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/firefly.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "gatus"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/gatus"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "ghostfolio"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/ghostfolio"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/ghostfolio.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "immich"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/immich"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/immich.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "logging"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/logging"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/logging.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "mealie"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/mealie"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/mealie.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "media"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/media"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/media.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "notes-sync"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/notes-sync"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/notes-sync.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "ntfy"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/ntfy"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/ntfy.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "outline"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/outline"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/outline.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "owl"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/owl"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "paperless"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/paperless"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/paperless.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "proton"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/proton"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/proton.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "samba"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/samba"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/samba.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "silverbullet"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/silverbullet"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/silverbullet.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "tandoor"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/tandoor"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/tandoor.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "tracking"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/tracking"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/tracking.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "util"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/util"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "vaultwarden"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/vaultwarden"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/vaultwarden.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "wealthfolio"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/wealthfolio"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/wealthfolio.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "wger"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/wger"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/wger.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "windmill"
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/windmill"
+file_paths = ["compose.yaml"]
+additional_env_files = [{ path = "/run/stack-env/windmill.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]

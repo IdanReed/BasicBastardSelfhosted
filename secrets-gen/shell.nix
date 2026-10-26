@@ -23,5 +23,6 @@ pkgs.mkShell {
     openssh # ssh-keygen
     util-linux # uuidgen
     unixtools.xxd # hex->bin for pbkdf2
+    python3 # migrate-to-templates.py (one-shot layout conversion)
   ];
 }

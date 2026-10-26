@@ -7,7 +7,12 @@ in
   # Hetzner Cloud is KVM: without virtio in stage 1 the boot hangs waiting for
   # the root partlabel. The VM suites cannot catch this — the test driver
   # injects its own qemu-vm profile.
-  imports = [ (modulesPath + "/profiles/qemu-guest.nix") ];
+  imports = [
+    (modulesPath + "/profiles/qemu-guest.nix")
+    # The cross-host secrets (OIDC client secrets, login passwords, the vlogs
+    # token), read by both hosts from secrets/shared.sops.json.
+    ../secrets/shared.nix
+  ];
 
   # Identity
   networking.hostName = "headscale-vps";

@@ -13,10 +13,9 @@
 { config, pkgs, lib, ... }:
 
 let
-  # Decrypted at runtime by ci-secrets.nix from nixos/forgejo-runner.sops.env,
-  # whose single key is `TOKEN` — the EnvironmentFile shape nixpkgs' module
-  # reads.
-  tokenFile = "/run/ci-secrets/forgejo-runner-token.env";
+  # The registration token (FORGEJO_RUNNER_TOKEN in nixos/secrets.sops.yaml)
+  # rendered as `TOKEN=…`, the EnvironmentFile shape nixpkgs' module reads.
+  tokenFile = config.sops.templates."forgejo-runner-token.env".path;
 
   # Matching is superset-style: `runs-on: [self-hosted, nix]` needs BOTH names
   # registered — `self-hosted` is not implicit in Forgejo. Changing this list
@@ -95,19 +94,29 @@ in
     };
   };
 
+  sops.templates."forgejo-runner-token.env" = {
+    content = ''
+      TOKEN=${config.sops.placeholder.FORGEJO_RUNNER_TOKEN}
+    '';
+    # A rotated token must reach the running runner.
+    restartUnits = [ "gitea-runner-forgejo.service" ];
+  };
+
   systemd.services.gitea-runner-forgejo = {
     # Registration resolves the url above over the tailnet. Ordering only, no
     # wants=: autoconnect is a non-RemainAfterExit oneshot and test profiles
     # pull it out of multi-user.target.
     after = [ "tailscale-autoconnect.service" ];
 
-    # Skipped, not failed, until the registration token exists — otherwise
-    # RestartSec=2 trips the start limiter and fires OnFailure on every boot.
-    unitConfig.ConditionPathExists = tokenFile;
-
-    # A rotated secret changes ci-secrets.service but nothing else would
-    # restart this unit to pick it up.
-    restartTriggers = [ ../forgejo-runner.sops.env ];
+    # Skipped, not failed, while the token is still the changeme_ placeholder —
+    # otherwise RestartSec=2 trips the start limiter and fires OnFailure on
+    # every boot. A non-zero ExecCondition skips the unit. `+` runs it as root:
+    # the unit's DynamicUser cannot read the template, and an unreadable file
+    # must skip too — so only grep's explicit "no match" (1) lets it start.
+    serviceConfig.ExecCondition = "+${pkgs.writeShellScript "forgejo-runner-token-set" ''
+      ${pkgs.gnugrep}/bin/grep -q '^TOKEN=changeme_' ${tokenFile}
+      [ $? -eq 1 ]
+    ''}";
 
     # Upstream's RestartSec=2 is under the ~3s line for the default limiter, so
     # the unit reaches `failed` and this is not dead code.

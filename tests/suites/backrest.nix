@@ -81,7 +81,7 @@ let
     images."alpine_3_21"
   ];
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
   # machine, a store copy here. The fixture .sops.env files stand in for the
   # real encrypted ones so decrypt-sops-envs.service runs for real; the
   # backrest fixture deliberately carries a single-quoted '$'-laden restic
@@ -90,7 +90,6 @@ let
   seedSrv = pkgs.runCommand "srv-seed-backrest" { } ''
     mkdir -p $out/komodo $out/stacks
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
@@ -100,7 +99,7 @@ let
       # plaintext .env (gitignored on purpose) in the world-readable store.
       rm -f $out/stacks/${s}/.env
       rm -f $out/stacks/${s}/.sops.env.example
-      cp ${../fixtures + "/${s}.sops.env"} $out/stacks/${s}/.sops.env
+      ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
     '') seededStacks}
   '';
 in
@@ -128,8 +127,12 @@ pkgs.testers.runNixOSTest {
             images = stackImages;
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
-          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
-          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
+          # Komodo runs here, Forgejo does not: the fleet-sync bootstrap would try
+          # to clone (gitops.nix covers it), and forgejo.service has no image.
+          {
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         # decrypt-sops-envs.service and bootstrap-komodo.service both
@@ -178,13 +181,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         # Populate /srv before anything reads it — the stand-in for
-        # stack-git-sync having already run.
+        # Komodo's clone having already run.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";

@@ -33,8 +33,8 @@ services:
       # silent upstream change would be a 502 with a healthy container.
       - PORT=3333
       # Assembled from POSTGRES_PASSWORD so the password exists in exactly ONE
-      # key of .sops.env. The `:-` default meets the decrypt-race constraint —
-      # an absent .env renders empty instead of failing the stack. connect_timeout
+      # key of secrets.sops.json (interpolated from the stack env, which Komodo
+      # passes with --env-file). connect_timeout
       # is Prisma's, in seconds, and generous because the migration step runs
       # before the app and a cold first-init takes tens of seconds.
       - 'DATABASE_URL=postgresql://ghostfolio:${POSTGRES_PASSWORD:-}@ghostfolio_db:5432/ghostfolio?connect_timeout=300'
@@ -64,9 +64,7 @@ services:
       - OIDC_TOKEN_URL=https://auth.idanreed.com/application/o/token/
       - OIDC_USER_INFO_URL=https://auth.idanreed.com/application/o/userinfo/
       - OIDC_CLIENT_ID=ghostfolio
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/ghostfolio.env
     healthcheck:
       # /api/v1/health is honest: it runs a real Property query with
       # skipCache:true and also checks Redis, so one probe covers all three
@@ -96,9 +94,7 @@ services:
       - POSTGRES_DB=ghostfolio
       # POSTGRES_PASSWORD arrives from .env — the same value DATABASE_URL
       # interpolates above.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/ghostfolio.env
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ghostfolio -d ghostfolio']
       interval: 10s

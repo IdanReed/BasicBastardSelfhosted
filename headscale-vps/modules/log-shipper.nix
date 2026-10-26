@@ -12,7 +12,8 @@
 # The transport contract spans three files nothing else links (the
 # vlogs-ingest-contract lint keeps them honest): this module (sink URL +
 # token), stacks/caddy/Caddyfile (the vhost that terminates it), and
-# secrets-gen/manifest.yaml (VLOGS_INGEST_TOKEN as a cross-host twin).
+# stacks/caddy/env.nix (Caddy reads the same VLOGS_INGEST_TOKEN from
+# secrets/shared.sops.json, declared by secrets/shared.nix).
 
 let
   # Its own hostname rather than a path on an existing one: the wildcard cert

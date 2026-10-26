@@ -66,11 +66,7 @@ services:
       - ./configuration.yaml:/config/configuration.yaml:ro
     environment:
       - TZ=America/Chicago
-    # Long form throughout this file: a deploy can race the host-side decrypt,
-    # and the plain form aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     healthcheck:
       # The image ships none. /manifest.json is the only right probe: 200 both
       # before and after onboarding, where `/` redirects pre-onboarding and
@@ -128,9 +124,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     restart: unless-stopped
 
   # NVR
@@ -184,9 +178,7 @@ services:
       # Frigate substitutes {FRIGATE_*} (SINGLE braces — python str.format,
       # not shell) into six fields, all of them the secret ones, which is why
       # this stack needs no config-init container for Frigate.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     # NO healthcheck stanza: the image's builtin is correct and subtle — it
     # curls the port-5000 bypass, which works regardless of auth config, and
     # short-circuits on a /dev/shm/.frigate-is-stopping sentinel so a graceful
@@ -208,9 +200,7 @@ services:
     volumes:
       - ./passwd-init.sh:/init/passwd-init.sh:ro
       - /mnt/fast/mosquitto/config:/mosquitto/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     restart: "no"
 
   # HTTP config seed
@@ -234,9 +224,7 @@ services:
       # The DIRECTORY, never the single file: HA writes .storage/http with an
       # atomic rename, which fails onto a bind-mounted file.
       - /mnt/fast/homeassistant:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     restart: "no"
 
   # Onboarding
@@ -252,7 +240,5 @@ services:
         condition: service_healthy
     volumes:
       - ./automation-init.sh:/init/automation-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/automation.env
     restart: "no"

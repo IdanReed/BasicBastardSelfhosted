@@ -99,8 +99,11 @@ pkgs.testers.runNixOSTest {
       # Nothing container-shaped needs to run at boot: this suite starts its
       # own throwaway containers and never touches /srv.
       systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-      # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
-      systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+      # Komodo's sync bootstrap Requires the masked unit and would pull it
+      # back in; Forgejo runs from the host too, and only the forgejo and
+      # gitops suites load its image.
+      systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+      systemd.services.forgejo.wantedBy = lib.mkForce [ ];
       systemd.tmpfiles.rules = [ "d /var/lib/sops-nix 0700 root root -" ];
     };
 

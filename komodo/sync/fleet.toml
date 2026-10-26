@@ -1,0 +1,48 @@
+# Komodo resources that are not stacks. komodo-sync-bootstrap (the host) creates
+# the `fleet` sync once and runs it; from then on Komodo applies this directory
+# itself, on every push, through the `apply` procedure below.
+#
+# The deploy path, end to end:
+#   git push -> Forgejo push webhook (one, set once in the repo settings) ->
+#   POST http://komodo:9120/listener/github/procedure/apply/main ->
+#   stage 1: RunSync fleet — register / update / remove stacks per stacks.toml
+#   stage 2: BatchDeployStackIfChanged "*" — each stack re-reads its files at the
+#            new commit and compares them with what it last deployed; a changed
+#            stack (compose, its secrets.sops.json, or the shared secrets it
+#            reads) is redeployed, an unchanged one is left alone.
+# Not the sync's own `deploy = true`: that compares against a cache only the
+# hourly poll refreshes (upstream #1120), so compose-only changes never deploy.
+
+[[resource_sync]]
+name = "fleet"
+description = "Every Komodo resource, from komodo/sync/ in the repo."
+[resource_sync.config]
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+resource_path = ["komodo/sync"]
+# A stack removed from stacks.toml is destroyed (compose down) and deleted —
+# the komodo-sync-coverage lint keeps every stacks/<name> declared.
+delete = true
+# The sync is run by `apply`, never by its own webhook.
+webhook_enabled = false
+
+[[procedure]]
+name = "apply"
+description = "Push to main -> register stacks, then deploy the ones that changed."
+# Signed with KOMODO_WEBHOOK_SECRET (Forgejo sends X-Hub-Signature-256).
+config.webhook_enabled = true
+
+[[procedure.config.stage]]
+name = "register"
+executions = [
+  { execution.type = "RunSync", execution.params.sync = "fleet" },
+]
+
+[[procedure.config.stage]]
+name = "deploy"
+executions = [
+  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*" },
+]

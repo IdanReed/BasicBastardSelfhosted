@@ -49,9 +49,7 @@ services:
       # start jobs.
       #
       # DATABASE_URL and SUPERADMIN_SECRET arrive from .env.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/windmill.env
     healthcheck:
       # /api/health/status, NOT /api/version, which answers from the binary and
       # says nothing about the DB. Honest limits: 503 only when the DATABASE is
@@ -87,9 +85,7 @@ services:
       - WORKER_GROUP=default
       - RUST_LOG=info
       # DATABASE_URL arrives from .env.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/windmill.env
     healthcheck:
       # No HTTP listener, and a `pgrep` probe would be a lie that `up --wait`
       # reports as success. Worker liveness is asserted FROM THE SERVER SIDE (the
@@ -112,9 +108,7 @@ services:
       - POSTGRES_USER=windmill
       - POSTGRES_DB=windmill
       # POSTGRES_PASSWORD arrives from .env and must match DATABASE_URL's.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/windmill.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), not a role.
       test: ['CMD-SHELL', 'pg_isready -U windmill -d windmill']
@@ -136,9 +130,7 @@ services:
         condition: service_healthy
     volumes:
       - ./windmill-init.sh:/init/windmill-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/windmill.env
     restart: "no"
 
 volumes:

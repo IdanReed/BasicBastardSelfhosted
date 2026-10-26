@@ -15,9 +15,5 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /mnt/fast/caddy/data:/data
       - /mnt/fast/caddy/config:/config
-    # Long form: a deploy can race the host-side decrypt, and the plain form
-    # aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/caddy.env
     restart: unless-stopped

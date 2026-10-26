@@ -147,11 +147,7 @@ services:
       - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/fleet.yaml:ro
       - ./dashboards:/etc/grafana/dashboards:ro
 
-    # Long form: a deploy can race the first decrypt, and the plain form
-    # aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/logging.env
 
     environment:
       - TZ=America/Chicago

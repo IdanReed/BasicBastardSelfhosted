@@ -81,7 +81,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/tracking/.env
     rm -f $out/stacks/tracking/.sops.env.example
-    cp ${../fixtures/tracking.sops.env} $out/stacks/tracking/.sops.env
+    ln -s /run/stack-env/tracking.env $out/stacks/tracking/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -118,8 +118,11 @@ pkgs.testers.runNixOSTest {
         # The deploy plane stays out of the boot path (mk-stack-suite's
         # rationale); checks.services covers that chain.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
         virtualisation.cores = lib.mkForce 4;
 
@@ -162,8 +165,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -254,16 +255,16 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # boot chain + decrypt
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
+    with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_until_succeeds(
             "test -s /srv/stacks/tracking/.env", timeout=120
         )
         stat = services_vm.succeed(
-            "stat -c '%a %u:%g' /srv/stacks/tracking/.env"
+            "stat -L -c '%a %u:%g' /srv/stacks/tracking/.env"
         ).strip()
-        assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
+        assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # APP_KEY, not BOOKSTACK_APP_KEY: BookStack reads the variable
         # verbatim out of the environment, so a prefixed name in .env leaves
         # it UNSET — and an unset APP_KEY makes the image's init script

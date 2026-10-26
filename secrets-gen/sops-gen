@@ -114,11 +114,13 @@ keypath() {
 # ---------------------------------------------------------------------------
 # read side (no key needed)
 # ---------------------------------------------------------------------------
-key_present() { # file format key -> 0/1; keys are plaintext in both formats
+key_present() { # file format key -> 0/1; keys are plaintext in every format
   local f=$ROOT/$1 fmt=$2 key=$3
   [[ -f $f ]] || return 1
   if [[ $fmt == dotenv ]]; then
     grep -qE "^${key}=" "$f"
+  elif [[ $fmt == json ]]; then
+    yq -e -p json -o yaml "has(\"$key\")" "$f" >/dev/null 2>&1
   elif [[ $key == */* ]]; then
     grep -qE "^${key%%/*}:" "$f" && grep -qE "^[[:space:]]+${key##*/}:" "$f"
   else
@@ -132,6 +134,9 @@ file_keys() { # file format -> key names, one per line
   if [[ $fmt == dotenv ]]; then
     # sops_* = encrypted-dotenv metadata keys, not secrets
     grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$f" | tr -d '=' | grep -v '^sops_' || true
+  elif [[ $fmt == json ]]; then
+    # flat object; "sops" is the metadata block
+    yq -p json -o yaml -r 'keys | .[] | select(. != "sops")' "$f"
   else
     # top-level + one nested level; sops metadata filtered by name
     awk '
@@ -298,8 +303,8 @@ recovery_set() { # key value — create pubkey-only if absent, else sops set
     scratch
     {
       echo "# Central recovery plaintext for hash-derived app credentials."
-      echo "# Written by sops-gen; NOT a .sops.env — decrypt-sops-envs never"
-      echo "# turns this into a container .env. Read with: sops -d $RECOVERY_FILE"
+      echo "# Written by sops-gen; no host reads it — it never reaches a container."
+      echo "# Read with: sops -d $RECOVERY_FILE"
       printf '%s: %s\n' "$1" "$2"
     } > "$SCRATCH/recovery.yaml"
     sops_encrypt_new "$RECOVERY_FILE" "$SCRATCH/recovery.yaml"
@@ -473,13 +478,25 @@ create_new_files() { # materialize NEWFILE paths from their examples + FILLS
     scratch
     local plain=$SCRATCH/new-file
     : > "$plain"
-    while IFS= read -r line; do
-      if [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] && [[ -n ${FILLS["$path|${BASH_REMATCH[1]}"]:-} ]]; then
-        printf '%s=%s\n' "${BASH_REMATCH[1]}" "${FILLS["$path|${BASH_REMATCH[1]}"]}"
-      else
-        printf '%s\n' "$line"
-      fi
-    done < "$ROOT/${EX_OF[$path]}" > "$plain"
+    if [[ ${FMT_OF[$path]} == json ]]; then
+      # The example is a dotenv-shaped template (comments document each key);
+      # the file it seeds is a flat JSON object, filled values or placeholders.
+      local -a pairs=()
+      while IFS= read -r line; do
+        [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+        k=${BASH_REMATCH[1]}
+        pairs+=("$(json_str "$k"): $(json_str "${FILLS["$path|$k"]:-${BASH_REMATCH[2]}}")")
+      done < "$ROOT/${EX_OF[$path]}"
+      { printf '{'; (IFS=,; printf '%s' "${pairs[*]}"); printf '}\n'; } > "$plain"
+    else
+      while IFS= read -r line; do
+        if [[ $line =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] && [[ -n ${FILLS["$path|${BASH_REMATCH[1]}"]:-} ]]; then
+          printf '%s=%s\n' "${BASH_REMATCH[1]}" "${FILLS["$path|${BASH_REMATCH[1]}"]}"
+        else
+          printf '%s\n' "$line"
+        fi
+      done < "$ROOT/${EX_OF[$path]}" > "$plain"
+    fi
     sops_encrypt_new "$path" "$plain"
     shred -u "$plain"
     echo "  created   $path (from ${EX_OF[$path]}; pull/config values left as in the example)"
@@ -720,6 +737,9 @@ example_of() { # relpath -> the .example that defines its key order ("" if none)
 
 sort_one() { # relpath -> 0 sorted/ok, 1 problem (reported, never fatal)
   local rel=$1 ex want have
+  # JSON carries no comments to keep beside a key, and nothing reads its key
+  # order — the example's grouping is documentation only.
+  [[ ${FMT_OF[$rel]:-} == json ]] && { echo "  skip      $rel — JSON, order is not kept"; return 0; }
   ex=$(example_of "$rel")
   [[ -n $ex ]]           || { echo "  skip      $rel — no .example to order against"; return 0; }
   [[ -f $ROOT/$ex ]]     || { warn "$rel: example $ex does not exist"; return 1; }

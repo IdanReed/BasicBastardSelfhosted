@@ -5,7 +5,7 @@
 #
 # ONE OF THREE STACKS IN THE TRACKING RANGE: Firefly III and Dawarich are
 # separate projects, because thirteen containers do not fit the generic
-# suite's budget and one .sops.env over five unrelated apps would make every
+# suite's budget and one secrets file over five unrelated apps would make every
 # rotation touch every fixture. All three stay inside 10300-10349; the lints
 # key on ports, not stack names.
 #
@@ -93,11 +93,7 @@ services:
       # Remapped: the shared .env carries prefixed names (three apps, one
       # file); BookStack reads the bare one.
       - OIDC_CLIENT_SECRET=${BOOKSTACK_OIDC_CLIENT_SECRET:-}
-    # Long form throughout this file: a deploy can race the first host-side
-    # decrypt, and the plain form aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tracking.env
     healthcheck:
       # No builtin. /status is 200 only if database, cache AND session are
       # healthy, which catches both the `sleep infinity` state above and
@@ -127,9 +123,7 @@ services:
       - MARIADB_USER=bookstack
       # MYSQL_ROOT_PASSWORD (not MARIADB_) and MYSQL_PASSWORD arrive from
       # .env — see above.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tracking.env
     healthcheck:
       # --innodb_initialized proves recovery finished, which matters on first
       # boot: BookStack's 30s wait would otherwise expire and migrate against
@@ -181,9 +175,7 @@ services:
       # HBOX_AUTH_API_KEY_PEPPER arrives from .env and is REQUIRED — boot
       # refuses under 32 bytes, and it is absent from every compose example
       # online.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tracking.env
     healthcheck:
       # The builtin returns 200 unconditionally, dead SQLite included, so this
       # is liveness only; the suite asserts /api/v1/status CONTENT instead.
@@ -246,9 +238,7 @@ services:
       # is the only IdP and it verifies emails.
       - OAUTH_ALLOW_DANGEROUS_EMAIL_ACCOUNT_LINKING=true
       # NEXTAUTH_SECRET and MEILI_MASTER_KEY arrive from .env.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tracking.env
     # NO healthcheck stanza: the image's builtin is already correct, and
     # liveness is all it can prove — DB and Meili are the suite's job.
     restart: unless-stopped
@@ -323,7 +313,5 @@ services:
         condition: service_healthy
     volumes:
       - ./tracking-init.sh:/init/tracking-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tracking.env
     restart: "no"

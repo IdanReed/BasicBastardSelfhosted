@@ -44,11 +44,7 @@ services:
       - TZ=America/Chicago
       - IMMICH_CONFIG_FILE=/config/immich.json
       # DB_PASSWORD arrives from .env.
-    # Long form throughout this file: a deploy can race the host-side decrypt,
-    # and the plain form aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/immich.env
     healthcheck:
       # The image's own test is kept (it probes the server this container
       # really runs); only the timing is overridden, because first boot
@@ -85,9 +81,7 @@ services:
       - POSTGRES_INITDB_ARGS=--data-checksums
       # POSTGRES_PASSWORD arrives from .env and must equal DB_PASSWORD — two
       # names because the two images read different vars.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/immich.env
     # Postgres wants more than docker's 64mb default for parallel workers.
     shm_size: 128mb
     healthcheck:
@@ -161,9 +155,7 @@ services:
     volumes:
       - ./immich.json.template:/template/immich.json.template:ro
       - /mnt/fast/immich/config:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/immich.env
     restart: "no"
 
   # Admin seed
@@ -180,7 +172,5 @@ services:
         condition: service_healthy
     volumes:
       - ./immich-init.sh:/init/immich-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/immich.env
     restart: "no"

@@ -53,8 +53,8 @@ DEFAULT_OWNER = ("root", "root")
 # silently is indistinguishable from choosing it. An empty string is a valid
 # entry. A stale entry is an error too.
 #
-# komodo/compose.yaml is scanned despite living outside stacks/, because the
-# deploy plane is bootstrapped onto the same host.
+# komodo/compose.yaml and forgejo/compose.yaml are scanned despite living
+# outside stacks/, because the host runs both on the same machine.
 STACK_NOTES = {
     "actual": """\
 1001:1001 — the uid the compose PINS with `user: "1001:1001"`. The image
@@ -146,12 +146,12 @@ immich-config-init (alpine, root) writes the 0600 immich.json. Finding
 missing bind source with no say over the parent /mnt/fast/immich.""",
     "komodo": """\
 All root:root. Core keeps all its state in the Mongo-wire DB and has no
-/mnt source; Periphery mounts the docker socket and /srv/stacks (neither
-a /mnt source) and runs as root, so it reads the 0600 .env files;
-FerretDB is stateless; Postgres is the only stateful component and
-chowns its own datadir to uid 999 from a root entrypoint. The age key
-never enters any of them — decrypt-sops-envs and stack-git-sync are host
-units.""",
+/mnt source; Periphery mounts the docker socket, /srv/komodo (its stack
+clones) and /run/stack-env (none a /mnt source) and runs as root, so it
+reads the root-only rendered envs; FerretDB is stateless; Postgres is
+the only stateful component and chowns its own datadir to uid 999 from a
+root entrypoint. The age key never enters any of them — sops-nix renders
+the envs on the host.""",
     "mealie": """\
 root:root is fine and any hand-fix is futile: entry.sh runs
 `chown -R $PUID:$PGID /app` — which includes the bind-mounted /app/data —
@@ -501,17 +501,18 @@ SMB user traverse into their own 0700 subdir.""",
 def discover(repo: str) -> list[dict]:
     """Every compose file whose bind mounts land on the services VM.
 
-    Globbed, never listed. komodo/ rides along because it is bootstrapped
-    outside stacks/ but onto the same host; headscale-vps/authentik/ does not,
-    being a different machine with different filesystems.
+    Globbed, never listed. komodo/ and forgejo/ ride along because the host
+    runs them outside stacks/ but onto the same machine; headscale-vps/authentik/
+    does not, being a different machine with different filesystems.
     """
     entries = [
         {"stack": os.path.basename(os.path.dirname(p)), "path": p}
         for p in sorted(glob.glob(os.path.join(repo, "stacks", "*", "compose.yaml")))
     ]
-    komodo = os.path.join(repo, "komodo", "compose.yaml")
-    if os.path.exists(komodo):
-        entries.append({"stack": "komodo", "path": komodo})
+    for host_run in ("komodo", "forgejo"):
+        path = os.path.join(repo, host_run, "compose.yaml")
+        if os.path.exists(path):
+            entries.append({"stack": host_run, "path": path})
     return entries
 
 
@@ -618,7 +619,7 @@ HEADER = """\
 # GENERATED FILE — DO NOT EDIT BY HAND.
 #
 #   Regenerate:  nixos/generate-stack-dirs.sh
-#   Source:      stacks/*/compose.yaml + komodo/compose.yaml
+#   Source:      stacks/*/compose.yaml + komodo/compose.yaml + forgejo/compose.yaml
 #   Generator:   nixos/generate-stack-dirs.py (ownership table + prose live there)
 #
 # One `d` rule per /mnt bind-mount source named by a compose file, plus its

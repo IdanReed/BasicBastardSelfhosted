@@ -53,9 +53,8 @@ services:
       # start with "The server does not support SSL connections".
       - PGSSLMODE=disable
       # DATABASE_URL is BUILT from POSTGRES_PASSWORD (two copies drifted into a
-      # password-auth crash loop); `environment:` wins over env_file, so the
-      # .sops.env key is inert. Empty on a race with the first decrypt: auth
-      # fails and the container restarts rather than aborting the deploy.
+      # password-auth crash loop), interpolated from the stack env that Komodo
+      # passes with --env-file.
       - DATABASE_URL=postgres://outline:${POSTGRES_PASSWORD:-}@outline_db:5432/outline
       # Redis
       - REDIS_URL=redis://outline_redis:6379
@@ -76,9 +75,7 @@ services:
       # FORCE_HTTPS stays default (true): `/` 301s a plain-http request, but
       # /_health answers 200 regardless, so the healthcheck and Gatus keep
       # working. SMTP_* unset — every account arrives through Authentik.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/outline.env
     healthcheck:
       # The image ships this same wget with an interval and NOTHING else — no
       # start_period/retries/timeout (upstream #7547) — so cold-DB migrations
@@ -107,9 +104,7 @@ services:
       - POSTGRES_DB=outline
       # POSTGRES_PASSWORD arrives from .env; outline's DATABASE_URL is built
       # from it.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/outline.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not
       # a role.

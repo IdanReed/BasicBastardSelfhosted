@@ -57,16 +57,20 @@ let
         dir = repo + "/komodo";
       }
       {
+        # The git root, run by the host for the same reason.
+        stack = "forgejo";
+        path = repo + "/forgejo/compose.yaml";
+        dir = repo + "/forgejo";
+      }
+      {
         stack = "authentik";
         path = repo + "/headscale-vps/authentik/compose.yaml";
         dir = repo + "/headscale-vps/authentik";
       }
     ];
 
-  # Keys of a dotenv file, or null when it does not exist (stack-env-drift must
-  # tell "file absent" from "file empty"). Encrypted .sops.env works too: sops
-  # encrypts dotenv VALUES and leaves KEYS plaintext. 'sops_' drops its
-  # metadata lines.
+  # Keys of a dotenv file (the secrets.example.env templates), or null when it
+  # does not exist (stack-env-drift must tell "file absent" from "file empty").
   dotenvKeys =
     path:
     if builtins.pathExists path then
@@ -82,16 +86,42 @@ let
     else
       null;
 
+  # Keys of an encrypted secrets JSON, or null when it does not exist. sops
+  # encrypts JSON VALUES and leaves KEYS plaintext; "sops" is its metadata.
+  jsonKeys =
+    path:
+    if builtins.pathExists path then
+      lib.filter (k: k != "sops") (lib.attrNames (builtins.fromJSON (builtins.readFile path)))
+    else
+      null;
+
+  # The keys a stack's env.nix BUILDS (never stored): evaluated with inert
+  # stand-ins for its two readers.
+  builtKeys =
+    dir:
+    let
+      f = dir + "/env.nix";
+    in
+    if builtins.pathExists f then
+      lib.attrNames (
+        import f {
+          secret = _: "";
+          shared = _: "";
+        }
+      )
+    else
+      [ ];
+
   manifest = pkgs.writeText "compose-manifest.json" (
     builtins.toJSON (
       map (c: {
         inherit (c) stack;
         path = "${c.path}";
-        hasSopsEnv = builtins.pathExists (c.dir + "/.sops.env");
-        hasSopsExample = builtins.pathExists (c.dir + "/.sops.env.example");
-        sopsEnvKeys = dotenvKeys (c.dir + "/.sops.env");
-        sopsExampleKeys = dotenvKeys (c.dir + "/.sops.env.example");
-        fixtureKeys = dotenvKeys (../fixtures + "/${c.stack}.sops.env");
+        hasSecrets = builtins.pathExists (c.dir + "/secrets.sops.json");
+        secretsKeys = jsonKeys (c.dir + "/secrets.sops.json");
+        exampleKeys = dotenvKeys (c.dir + "/secrets.example.env");
+        fixtureKeys = jsonKeys (../fixtures/stacks + "/${c.stack}.sops.json");
+        builtKeys = builtKeys c.dir;
       }) composeFiles
     )
   );
@@ -438,8 +468,15 @@ in
   sops-declared =
     let
       # sops.templates need no leg of their own: a placeholder that is not a
-      # declared secret fails evaluation outright.
-      declared = cfg: lib.attrNames cfg.sops.secrets;
+      # declared secret fails evaluation outright. Only secrets read from the
+      # host's own yaml count here; the stack and shared JSON files are pinned
+      # by stack-env-drift and the shared leg below (and sops-nix's build-time
+      # validateSopsFiles checks every key exists).
+      declared =
+        cfg:
+        lib.attrNames (
+          lib.filterAttrs (_: s: s.sopsFile == cfg.sops.defaultSopsFile) cfg.sops.secrets
+        );
 
       # The desktop flake tracks nixos-unstable and pulls home-manager, so the
       # harness cannot evaluate it the way it does the two servers. Both of its
@@ -452,16 +489,13 @@ in
         ++ lib.attrNames
           (import (repo + "/nixos-de/modules/nixos/work-vpn.nix") { inherit lib; }).sops.secrets;
 
-      # The two sops DOTENV files on the services VM. Same contract, different
-      # format: their consumers are EnvironmentFile= units, so a key that is in
-      # the example and not in the real file fails at unit start.
-      dotenvCase =
-        name:
-        {
-          inherit name;
-          real = dotenvKeys (repo + "/nixos/${name}.sops.env");
-          example = dotenvKeys (repo + "/nixos/${name}.sops.env.example");
-        };
+      # secrets/shared.sops.json, read by both hosts: the real key set and the
+      # fixture's must agree, or a suite renders an env the host cannot.
+      shared = {
+        real = jsonKeys (repo + "/secrets/shared.sops.json");
+        fixture = jsonKeys ../fixtures/shared.sops.json;
+        example = dotenvKeys (repo + "/secrets/shared.example.env");
+      };
     in
     mkLint "sops-declared" ''
       ${py} - <<'PY'
@@ -524,18 +558,18 @@ in
                               f"(extra: {sorted(other - real_keys)}, "
                               f"missing: {sorted(real_keys - other)})")
 
-      dotenv = json.loads(${builtins.toJSON (builtins.toJSON (map dotenvCase [ "forgejo-runner" "renovate" ]))})
-      for case in dotenv:
-          if case["real"] is None or case["example"] is None:
-              errs.append(f"nixos/{case['name']}.sops.env: the file or its "
-                          f".example does not exist")
-              continue
-          if set(case["real"]) != set(case["example"]):
-              errs.append(f"nixos/{case['name']}.sops.env.example drifted from "
-                          f"the real file (extra: "
-                          f"{sorted(set(case['example']) - set(case['real']))}, "
-                          f"missing: "
-                          f"{sorted(set(case['real']) - set(case['example']))})")
+      shared = json.loads(${builtins.toJSON (builtins.toJSON shared)})
+      if shared["real"] is None:
+          errs.append("secrets/shared.sops.json does not exist — run "
+                      "secrets-gen/migrate-to-templates")
+      else:
+          for label, other in [("tests/fixtures/shared.sops.json", shared["fixture"]),
+                               ("secrets/shared.example.env", shared["example"])]:
+              other = set(other or [])
+              if set(shared["real"]) != other:
+                  errs.append(f"{label} drifted from secrets/shared.sops.json "
+                              f"(extra: {sorted(other - set(shared['real']))}, "
+                              f"missing: {sorted(set(shared['real']) - other)})")
 
       if errs:
           print("SOPS declaration problems:", file=sys.stderr)
@@ -544,7 +578,7 @@ in
           sys.exit(1)
       print(f"SOPS declarations OK ({len(cases)} hosts, "
             f"{sum(len(c[2]) for c in cases)} parity files, "
-            f"{len(dotenv)} dotenv pairs)")
+            f"{len(shared['real'] or [])} shared keys)")
       PY
     '';
 
@@ -588,9 +622,8 @@ in
                         file=sys.stderr)
           print("", file=sys.stderr)
           print("Fix: move these into a .sops.yaml with "
-                "defaultSopsFormat = \"yaml\". Keep dotenv only for the stack "
-                ".env files, which are consumed whole by the sops CLI in "
-                "decrypt-sops-envs.service and are unaffected.",
+                "defaultSopsFormat = \"yaml\" (stack secrets are JSON, "
+                "rendered by nixos/modules/stack-env.nix).",
                 file=sys.stderr)
           sys.exit(1)
       print("sops dotenv extraction OK")
@@ -642,8 +675,9 @@ in
       PY
     '';
 
-  # decrypt-sops-envs only writes a .env where a .sops.env sits beside it, so a
-  # compose naming env_file without one never starts on the host (finding #11).
+  # A stack's env exists only where stack-env.nix renders one — the stack has a
+  # secrets.sops.json — and only at /run/stack-env/<stack>.env, so a compose
+  # naming any other env_file never starts on the host.
   env-file-coverage =
     mkLint "env-file-coverage" ''
       ${py} - <<'PY'
@@ -654,17 +688,25 @@ in
 
       for c in manifest:
           text = open(c["path"]).read()
-          if not re.search(r"^\s*env_file:", text, re.M):
+          refs = re.findall(r"^\s*env_file:\s*(\S.*)$", text, re.M)
+          has_env = c["fixtureKeys"] is not None or c["hasSecrets"]
+          if not refs:
+              if has_env and c["stack"] != "authentik":
+                  warns.append(f"{c['stack']}: secrets are rendered but no "
+                               f"service reads them (no env_file)")
               continue
-          if c["hasSopsEnv"]:
-              continue
-          if c["hasSopsExample"]:
-              warns.append(f"{c['stack']}: compose declares env_file but only "
-                           f".sops.env.example exists — `docker compose up` "
-                           f"will fail until the real .sops.env is created")
-          else:
-              errs.append(f"{c['stack']}: compose declares env_file and the "
-                          f"stack has neither .sops.env nor .sops.env.example")
+          want = f"/run/stack-env/{c['stack']}.env"
+          for r in refs:
+              if r.strip() != want:
+                  errs.append(f"{c['stack']}: env_file is {r.strip()!r}; it must "
+                              f"be {want} — the file stack-env-publish writes")
+          if c["fixtureKeys"] is None:
+              errs.append(f"{c['stack']}: env_file but no "
+                          f"tests/fixtures/stacks/{c['stack']}.sops.json — the "
+                          f"suites cannot render this stack's env")
+          if not c["hasSecrets"]:
+              warns.append(f"{c['stack']}: env_file but no secrets.sops.json "
+                           f"yet — run secrets-gen/migrate-to-templates")
 
       for w in warns:
           print("WARN: " + w)
@@ -1171,41 +1213,25 @@ in
                           f"authenticates with the bearer token, never with a "
                           f"browser redirect")
 
-      # --- 5: the secret is declared on both hosts and generated -----------
+      # --- 5: ONE secret, read by both hosts -------------------------------
+      # The shipper's token and Caddy's must be the same value, so both read
+      # VLOGS_INGEST_TOKEN from secrets/shared.sops.json: the VPS through
+      # secrets/shared.nix, Caddy through its env.nix. A host-local copy
+      # anywhere would be generated independently and 401 forever.
       if "sops.secrets.VLOGS_INGEST_TOKEN" not in shipper:
           errs.append("log-shipper.nix does not declare "
                       "sops.secrets.VLOGS_INGEST_TOKEN — nothing delivers the "
                       "token to /run/secrets")
-
-      for f, want in [
-          ("headscale-vps/secrets.sops.yaml.example", "VLOGS_INGEST_TOKEN:"),
-          ("stacks/caddy/.sops.env.example", "VLOGS_INGEST_TOKEN="),
-      ]:
-          if want not in open("${repo}/" + f).read():
-              errs.append(f"{f} does not declare VLOGS_INGEST_TOKEN — a host "
-                          f"built from the template ships no logs (or, on the "
-                          f"caddy side, serves an OPEN ingest endpoint: an "
-                          f"unset var makes the matcher expect a bare "
-                          f'"Bearer ")')
-
-      # sops-gen fills both sides with ONE draw; two independent secrets would
-      # be generated to different values and 401 forever.
-      man = yaml.safe_load(open("${repo + "/secrets-gen/manifest.yaml"}"))
-      twins = [s for s in man["secrets"]
-               if any(t["key"] == "VLOGS_INGEST_TOKEN" for t in s["targets"])]
-      if not twins:
-          errs.append("secrets-gen/manifest.yaml has no VLOGS_INGEST_TOKEN "
-                      "entry — the token would be hand-generated twice and the "
-                      "two sides would never match")
-      else:
-          for s in twins:
-              files = {t["file"] for t in s["targets"]}
-              want = {"stacks/caddy/.sops.env",
-                      "headscale-vps/secrets.sops.yaml"}
-              if files != want:
-                  errs.append(f"manifest entry {s['name']!r} targets {files} — "
-                              f"it must be a twin over exactly {want}, one draw "
-                              f"for both sides")
+      caddy_env = open("${repo}/stacks/caddy/env.nix").read()
+      if 'VLOGS_INGEST_TOKEN = shared "VLOGS_INGEST_TOKEN"' not in caddy_env:
+          errs.append("stacks/caddy/env.nix does not build VLOGS_INGEST_TOKEN "
+                      "from the shared file — an unset var makes the matcher "
+                      'expect a bare "Bearer " (an OPEN ingest endpoint)')
+      for f in ["headscale-vps/secrets.sops.yaml.example",
+                "stacks/caddy/secrets.example.env"]:
+          if "VLOGS_INGEST_TOKEN" in open("${repo}/" + f).read():
+              errs.append(f"{f} still lists VLOGS_INGEST_TOKEN — the value "
+                          f"lives only in secrets/shared.sops.json")
 
       if errs:
           print("vlogs ingest contract violations:", file=sys.stderr)
@@ -1229,22 +1255,18 @@ in
       rules = json.loads(${builtins.toJSON (builtins.toJSON servicesFullConfig.systemd.tmpfiles.rules)})
 
       # tmpfiles rule fields: type path mode user group age [argument]
-      srv = [r.split() for r in rules
-             if len(r.split()) >= 5 and r.split()[1] == "/srv/stacks"]
+      komodo = [r.split() for r in rules
+                if len(r.split()) >= 5 and r.split()[1] == "/srv/komodo"]
 
       errs = []
-      # A 'd' rule specifically: the 'Z' rule beside it adjusts but never
-      # CREATES, so losing 'd' leaves first boot with no /srv/stacks at all.
-      if not any(f[0].lower().startswith("d") for f in srv):
-          errs.append("no tmpfiles 'd' rule creates /srv/stacks — "
-                      "stack-git-sync has nowhere to deliver stacks on "
-                      "first boot")
-      for f in srv:
-          if (f[3], f[4]) != ("1000", "1000"):
-              errs.append(f"rule {' '.join(f)!r} gives /srv/stacks to "
-                          f"{f[3]}:{f[4]}, not 1000:1000 — the finding-#10 "
-                          f"delivery contract (stacks and their 0600 .env "
-                          f"files owned uid 1000) silently breaks")
+      # Periphery's root: it clones every stack under stacks/<name>, and the
+      # bind mount needs the source to exist before the container starts.
+      if not any(f[0].lower().startswith("d") for f in komodo):
+          errs.append("no tmpfiles 'd' rule creates /srv/komodo — Periphery's "
+                      "clone root bind mount has no source on first boot")
+      if any(r.split()[1] == "/srv/stacks" for r in rules if len(r.split()) >= 2):
+          errs.append("a tmpfiles rule still names /srv/stacks — nothing "
+                      "delivers there any more (Komodo clones to /srv/komodo)")
 
       # --- bind-source parity ---------------------------------------------
       # Not redundant with stack-dirs-generated: that compares the generator's
@@ -1264,11 +1286,11 @@ in
                           "./stack-dirs.nix).")
 
       if errs:
-          print("/srv/stacks tmpfiles problems:", file=sys.stderr)
+          print("tmpfiles problems:", file=sys.stderr)
           for e in errs:
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
-      print("/srv/stacks tmpfiles ownership OK (1000:1000); "
+      print("tmpfiles OK (/srv/komodo); "
             f"{len(enum['sources'])} bind sources across "
             f"{len(enum['byStack'])} stacks, {len(enum['directories'])} "
             "directories with them, all have 'd' rules")
@@ -1295,10 +1317,10 @@ in
       echo "nixos/stack-dirs.nix matches the generator ($(grep -c '^    "d ' generated.nix) rules)"
     '';
 
-  # The three dotenv surfaces per stack (.sops.env, its .example, the fixture)
-  # must carry the same keys. Compose substitutes an EMPTY STRING for a key the
-  # delivered .env lacks, so a fixture-only key is a green suite and a
-  # production container started with the variable silently unset.
+  # The three key sets per stack (secrets.sops.json, its secrets.example.env,
+  # the fixture) must agree, and none may store a key env.nix builds. A key the
+  # real file lacks fails activation; a fixture-only key is a green suite and a
+  # host that cannot render the env.
   stack-env-drift =
     mkLint "stack-env-drift" ''
       ${py} - <<'PY'
@@ -1308,12 +1330,20 @@ in
       errs = []
 
       for c in manifest:
+          s = c["stack"]
+          home = "komodo" if s == "komodo" else f"stacks/{s}"
           # null = file absent (nothing to compare); [] = file exists, empty.
           present = {label: set(ks) for label, ks in [
-              ("stacks/" + c["stack"] + "/.sops.env", c["sopsEnvKeys"]),
-              ("stacks/" + c["stack"] + "/.sops.env.example", c["sopsExampleKeys"]),
-              ("tests/fixtures/" + c["stack"] + ".sops.env", c["fixtureKeys"]),
+              (f"{home}/secrets.sops.json", c["secretsKeys"]),
+              (f"{home}/secrets.example.env", c["exampleKeys"]),
+              (f"tests/fixtures/stacks/{s}.sops.json", c["fixtureKeys"]),
           ] if ks is not None}
+          built = set(c["builtKeys"])
+          for label, ks in present.items():
+              clash = sorted(ks & built)
+              if clash:
+                  errs.append(f"{s}: {label} stores {clash}, which env.nix "
+                              f"builds — a value must live in one place")
           if len(present) < 2:
               continue
           labels = sorted(present)
@@ -1322,18 +1352,18 @@ in
                   only_a = sorted(present[a] - present[b])
                   only_b = sorted(present[b] - present[a])
                   if only_a or only_b:
-                      errs.append(f"{c['stack']}: {a} vs {b} — "
+                      errs.append(f"{s}: {a} vs {b} — "
                                   f"only in former: {only_a}, "
                                   f"only in latter: {only_b}")
 
       if errs:
-          print("dotenv key drift (compose substitutes an empty string for "
-                "missing keys — the container starts with the variable "
-                "silently unset):", file=sys.stderr)
+          print("stack secret key drift (a key the template expects but the "
+                "fixture lacks fails the suites; one the real file lacks fails "
+                "activation):", file=sys.stderr)
           for e in errs:
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
-      print("stack dotenv keys OK (fixture, real and example agree per stack)")
+      print("stack secret keys OK (real, example and fixture agree per stack)")
       PY
     '';
 
@@ -1770,7 +1800,7 @@ in
               "must be REMOVED in the same commit that adds it.",
           "backrest":
               "No database. config.json is re-seeded from "
-              "config.template.json + .sops.env by config-init on every "
+              "config.template.json + the stack env by config-init on every "
               "deploy, and nothing else here is needed to restore FROM the "
               "repository.",
           "caddy":
@@ -1802,7 +1832,7 @@ in
               "as a raw copy inside the slow-volume-selective plan; "
               "auth.json is a small, rarely-rewritten JSON raw-copied by the "
               "fast plan, restorable only together with the bridge password "
-              "in the encrypted .sops.env.",
+              "in the encrypted secrets.sops.json.",
       }
       stacks_with_dumps = {s for src in dump_covered
                            for s in enum["sources"].get(src, [])}
@@ -2168,26 +2198,101 @@ in
       fi
     '';
 
-  # Without AccuracySec=1s systemd's 1min default lets a minutely tick slip
-  # ~120s, which presents as a decrypt bug rather than a timer setting. The
-  # suites use the timers but never read their config, so only this holds it.
-  timer-accuracy =
+  # Komodo deploys exactly the stacks komodo/sync/stacks.toml declares, with
+  # delete mode on: a stack missing from it is never deployed, and one REMOVED
+  # from it is torn down. Every block must also keep the shape the deploy path
+  # relies on — a git stack cloned from Forgejo, the rendered env passed but
+  # untracked, and the ciphertext it renders from tracked as Redeploy.
+  komodo-sync-coverage =
     let
-      acc = t: servicesConfig.systemd.timers.${t}.timerConfig.AccuracySec or null;
-      wanted = {
-        decrypt-sops-envs = "1s";
-        stack-git-sync = "1s";
-      };
-      bad = lib.filterAttrs (t: v: acc t != v) wanted;
+      stackInfo = map (n: {
+        name = n;
+        hasEnv = builtins.pathExists (../fixtures/stacks + "/${n}.sops.json");
+        readsShared =
+          builtins.pathExists (repo + "/stacks/${n}/env.nix")
+          && lib.hasInfix "shared \"" (builtins.readFile (repo + "/stacks/${n}/env.nix"));
+      }) stackNames;
     in
-    mkLint "timer-accuracy" ''
-      ${lib.concatStrings (
-        lib.mapAttrsToList (t: v: ''
-          echo "systemd.timers.${t}.timerConfig.AccuracySec is ${builtins.toJSON (acc t)}, must be \"${v}\" — the suites' delivery waits assume prompt minutely ticks" >&2
-          exit 1
-        '') bad
-      )}
-      echo "timer accuracy OK (decrypt-sops-envs + stack-git-sync pin AccuracySec=1s)"
+    mkLint "komodo-sync-coverage" ''
+      ${py} - <<'PY'
+      import json, sys, tomllib
+
+      stacks = json.loads(${builtins.toJSON (builtins.toJSON stackInfo)})
+      declared = tomllib.load(open("${repo + "/komodo/sync/stacks.toml"}", "rb")).get("stack", [])
+      fleet = tomllib.load(open("${repo + "/komodo/sync/fleet.toml"}", "rb"))
+      errs = []
+
+      by_name = {}
+      for b in declared:
+          if b["name"] in by_name:
+              errs.append(f"stack {b['name']!r} is declared twice")
+          by_name[b["name"]] = b
+      want = {s["name"]: s for s in stacks}
+      for n in sorted(set(want) - set(by_name)):
+          errs.append(f"stacks/{n} has no [[stack]] block in komodo/sync/stacks.toml "
+                      f"— Komodo will never deploy it")
+      for n in sorted(set(by_name) - set(want)):
+          errs.append(f"komodo/sync/stacks.toml declares {n!r} but stacks/{n}/compose.yaml "
+                      f"does not exist (komodo/ and forgejo/ are host-run, never stacks)")
+
+      fixed = {"server": "Local", "git_provider": "forgejo:3000", "git_https": False,
+               "git_account": "komodo", "repo": "idan/BasicBastardSelfhosted",
+               "branch": "main", "file_paths": ["compose.yaml"]}
+      for n, s in sorted(want.items()):
+          b = by_name.get(n)
+          if b is None:
+              continue
+          if b.get("deploy"):
+              errs.append(f"{n}: `deploy = true` — the sync's deploy reads a stale "
+                          f"cache (upstream #1120); the apply procedure deploys")
+          c = b.get("config", {})
+          for k, v in fixed.items():
+              if c.get(k) != v:
+                  errs.append(f"{n}: config.{k} is {c.get(k)!r}, must be {v!r}")
+          if c.get("run_directory") != f"stacks/{n}":
+              errs.append(f"{n}: run_directory must be 'stacks/{n}'")
+          if c.get("environment"):
+              errs.append(f"{n}: config.environment is set — Komodo would write its own env "
+                          f"file; secrets come only from /run/stack-env/{n}.env")
+          env = c.get("additional_env_files", [])
+          files = {f["path"]: f.get("requires") for f in c.get("config_files", [])}
+          if s["hasEnv"]:
+              if env != [{"path": f"/run/stack-env/{n}.env", "track": False}]:
+                  errs.append(f"{n}: additional_env_files must be exactly "
+                              f"[{{ path = \"/run/stack-env/{n}.env\", track = false }}] — "
+                              f"passed for interpolation, never tracked (plaintext)")
+              if files.get("secrets.sops.json") != "Redeploy":
+                  errs.append(f"{n}: config_files must track secrets.sops.json as "
+                              f"Redeploy, or a secrets change never redeploys it")
+              shared = files.get("../../secrets/shared.sops.json")
+              if s["readsShared"] and shared != "Redeploy":
+                  errs.append(f"{n}: its env.nix reads the shared file, so config_files "
+                              f"must track ../../secrets/shared.sops.json as Redeploy")
+              if not s["readsShared"] and shared is not None:
+                  errs.append(f"{n}: tracks the shared file but its env.nix never reads it")
+          elif env or files:
+              errs.append(f"{n}: has no secrets, so no additional_env_files/config_files")
+
+      syncs = {s["name"]: s for s in fleet.get("resource_sync", [])}
+      f = syncs.get("fleet", {}).get("config", {})
+      if f.get("resource_path") != ["komodo/sync"] or f.get("webhook_enabled", True):
+          errs.append("fleet.toml: the `fleet` sync must read resource_path "
+                      "['komodo/sync'] and keep its own webhook off")
+      procs = {p["name"]: p for p in fleet.get("procedure", [])}
+      ap = procs.get("apply", {}).get("config", {})
+      stages = [[e["execution"]["type"] for e in st.get("executions", [])]
+                for st in ap.get("stage", [])]
+      if not ap.get("webhook_enabled") or stages != [["RunSync"], ["BatchDeployStackIfChanged"]]:
+          errs.append(f"fleet.toml: `apply` must be webhook-enabled and run RunSync "
+                      f"then BatchDeployStackIfChanged (got {stages})")
+
+      if errs:
+          print("komodo sync problems:", file=sys.stderr)
+          for e in errs:
+              print("  - " + e, file=sys.stderr)
+          sys.exit(1)
+      print(f"komodo sync OK ({len(want)} stacks declared, apply = sync then deploy-if-changed)")
+      PY
     '';
 
   # run.sh's named-suite case arm and default.nix's `suites` are hand-mirrored:

@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# migrate-to-templates — convert this checkout's secrets to the template layout.
+# One-shot for the gitops migration; delete after the cutover.
+#
+#   secrets-gen/migrate-to-templates             # production files (one sudo for the age key)
+#   secrets-gen/migrate-to-templates --fixtures  # tests/fixtures (committed throwaway key)
+#
+# Reads the OLD layout (stacks/*/.sops.env, komodo/.sops.env, the CI dotenvs)
+# and writes the NEW one (secrets.sops.json per stack, secrets/shared.sops.json,
+# the hosts' yaml minus/plus the moved keys), then `git rm`s what it replaced.
+# Refuses and writes nothing if a twin had already drifted — see the .py.
+# Re-run against main's then-current files right before the branch merges.
+set -euo pipefail
+umask 077
+
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+PROD_RECIPIENT=age1m69ep7lcjgzvdjc49gcaqszmw60u5xj4wfmsd7qcwayh47538shq3wa4xf
+TEST_RECIPIENT=age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j
+
+mode=prod
+extra=()
+for a in "$@"; do
+  case $a in
+    --fixtures) mode=fixtures ;;
+    --accept-drift=*) extra+=(--accept-drift "${a#--accept-drift=}") ;;
+    *) echo "usage: $0 [--fixtures] [--accept-drift=STACK:KEY]..." >&2; exit 2 ;;
+  esac
+done
+
+scratch=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/bbs-migrate.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+
+# The env.nix files evaluated with markers in place of placeholders: which keys
+# each stack builds, and from what.
+nix eval --json --impure --expr '
+  let
+    root = '"$ROOT"';
+    dirs = builtins.mapAttrs (n: _: root + "/stacks/${n}") (builtins.readDir (root + "/stacks"))
+      // { komodo = root + "/komodo"; forgejo = root + "/forgejo"; };
+    names = builtins.filter (n: builtins.pathExists (dirs.${n} + "/env.nix")) (builtins.attrNames dirs);
+  in builtins.listToAttrs (map (n: {
+    name = n;
+    value = import (dirs.${n} + "/env.nix") {
+      secret = k: "@@S:${k}@@";
+      shared = k: "@@H:${k}@@";
+    };
+  }) names)' > "$scratch/spec.json"
+
+# KOMODO_GIT_TOKEN: Core's read-only Forgejo token (komodo/compose.yaml), minted
+# once Forgejo is up — a placeholder until then, like every pull-class value.
+args=(--spec "$scratch/spec.json" --drop outline:DATABASE_URL "${extra[@]}")
+old=()
+if [[ $mode == prod ]]; then
+  args+=(--recipient "$PROD_RECIPIENT")
+  for f in stacks/*/.sops.env; do
+    n=$(basename "$(dirname "$f")")
+    args+=(--stack "$n=$f:stacks/$n/secrets.sops.json")
+    old+=("$f")
+  done
+  args+=(--stack "komodo=komodo/.sops.env:komodo/secrets.sops.json")
+  args+=(--stack "forgejo=forgejo/.sops.env:forgejo/secrets.sops.json")
+  args+=(--add-key "komodo:KOMODO_GIT_TOKEN=changeme_forgejo_komodo_read_token")
+  old+=(komodo/.sops.env forgejo/.sops.env nixos/renovate.sops.env nixos/forgejo-runner.sops.env)
+  args+=(
+    --vps-in headscale-vps/secrets.sops.yaml --vps-out headscale-vps/secrets.sops.yaml
+    --shared-out secrets/shared.sops.json
+    --vm-in nixos/secrets.sops.yaml --vm-out nixos/secrets.sops.yaml
+    --ci RENOVATE_TOKEN=nixos/renovate.sops.env:RENOVATE_TOKEN
+    --ci FORGEJO_RUNNER_TOKEN=nixos/forgejo-runner.sops.env:TOKEN
+    # stack-git-sync's deploy key: Komodo clones with its own token now.
+    --vm-drop STACK_GIT_SSH_KEY
+  )
+  key=${SOPS_AGE_KEY:-$(sudo cat /var/lib/sops-nix/sops_age_key.txt)}
+else
+  args+=(--recipient "$TEST_RECIPIENT" --accept-all-drift)
+  for f in tests/fixtures/*.sops.env; do
+    n=$(basename "$f" .sops.env)
+    args+=(--stack "$n=$f:tests/fixtures/stacks/$n.sops.json")
+    old+=("$f")
+  done
+  args+=(
+    --vps-in tests/fixtures/vps.sops.yaml --vps-out tests/fixtures/vps.sops.yaml
+    --shared-out tests/fixtures/shared.sops.json
+    --vm-in tests/fixtures/services-vm.sops.yaml --vm-out tests/fixtures/services-vm.sops.yaml
+    --ci-literal RENOVATE_TOKEN=changeme_renovate_pat
+    --ci-literal FORGEJO_RUNNER_TOKEN=changeme_runner_token
+    --add-key "komodo:KOMODO_GIT_TOKEN=test_komodo_git_token_not_secret"
+  )
+  key=$(cat tests/keys/test-age-key.txt)
+fi
+
+SOPS_AGE_KEY=$key nix-shell secrets-gen/shell.nix --run \
+  "python3 secrets-gen/migrate-to-templates.py $(printf '%q ' "${args[@]}")"
+
+git rm -q -- "${old[@]}"
+if [[ $mode == prod ]]; then
+  git add -- stacks/*/secrets.sops.json komodo/secrets.sops.json forgejo/secrets.sops.json \
+    secrets/shared.sops.json headscale-vps/secrets.sops.yaml nixos/secrets.sops.yaml
+else
+  git add -- tests/fixtures
+fi
+echo "done ($mode). Next: git diff --stat, ./tests/run.sh, commit."

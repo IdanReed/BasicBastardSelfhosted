@@ -41,16 +41,18 @@ in
   # Imports live here, not in flake.nix: tests/default.nix evaluates this file
   # directly, so a flake-only module would deploy while staying lint-invisible.
   imports = [
+    ../secrets/shared.nix
     ./modules/alerting.nix
     ./modules/backup.nix
-    ./modules/ci-secrets.nix
     ./modules/deploy-plane.nix
     ./modules/docker.nix
     ./modules/firefly-cron.nix
+    ./modules/forgejo.nix
     ./modules/forgejo-runner.nix
     ./modules/network.nix
     ./modules/renovate.nix
     ./modules/secrets.nix
+    ./modules/stack-env.nix
   ];
 
   # Identity

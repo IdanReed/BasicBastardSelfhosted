@@ -22,7 +22,7 @@ services:
       - TZ=America/Chicago
       # Suppresses the startup disclaimer modal.
       - OWL_SKIP_DISCLAIMER=1
-    # NO env_file: no secrets, so no .sops.env — env-file-coverage only demands
+    # NO env_file: no secrets, so no secrets.sops.json — env-file-coverage only demands
     # one where `env_file:` is declared.
     healthcheck:
       # Overrides the image's own probe: it has no start_period (every probe

@@ -1,0 +1,20 @@
+{
+	"KOMODO_INIT_ADMIN_USERNAME": "ENC[AES256_GCM,data:1EapE+8=,iv:7unSSC591R+nuxQagzfOa89J02VjLcCiB9A3hj8PeLA=,tag:QkfOFwCj3GLi1egXdDcnlw==,type:str]",
+	"KOMODO_INIT_ADMIN_PASSWORD": "ENC[AES256_GCM,data:mtBJtrYwmMfayyLa7gH69k4dFmmZBll6gRpUwhmh,iv:shUOHRZYZj9dINfnl29j3i6bkisYI367ecRMCLv/akY=,tag:h4z4PAlyFaSdltSUAOarnA==,type:str]",
+	"KOMODO_JWT_SECRET": "ENC[AES256_GCM,data:2mBnE+/AJOixXdExlW+J55dL80On3ZE7tvM=,iv:RrjFu5jvjpbyf+PV3t6TEVgsciSrKhFuVf647KMgA0w=,tag:1dtRKzjjU6hOJuXzuvNNeQ==,type:str]",
+	"KOMODO_WEBHOOK_SECRET": "ENC[AES256_GCM,data:VMTgiM9ILWsvEgJaHv1Fq+YUwcemE822TUYgXZva,iv:OQShJF+VaLJ9C/3UTr7TvAOnKnXuGQ3IJbWAREwuZZc=,tag:6bUyztOHfp+6DTcTvPQJxg==,type:str]",
+	"KOMODO_DATABASE_PASSWORD": "ENC[AES256_GCM,data:f0gTqaMzWH4Nz4ZT9+9zjVnoNW+kbB8y++oC,iv:ooIMlOygQbQ935WzyJ1itI3GVe2agfu2Bjqv6dnGLtw=,tag:Fi2uOeXIJsRwlg9UnxeXaQ==,type:str]",
+	"KOMODO_GIT_TOKEN": "ENC[AES256_GCM,data:UWsaApuE24XC0+MY/iX54ji6nutHVMWit5SGazY+URc=,iv:GKYdy0GHplPDgempWN4X916MTCAAHi4dC51AjZ5Pms0=,tag:BmjmSG6d2R9mzKqip4bQWw==,type:str]",
+	"sops": {
+		"age": [
+			{
+				"enc": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA2T1pJNlhwYjIrQ01TMUdT\nelQ4bkh1THppejhuVG5DTzJqSnJQME52K0M0CnVnRC9QcU1SbDFHdTIzT0h1VXJB\naXNjV05YNW9QZGxzeG5qZ3dZSHV5QVEKLS0tIFJrbzJIdGFPTzlFbTFxWjExdVdL\nNHpidzd6cDYzRmZZRVU4dlh5dHlvYWcKPBi6h6qoB1MEz34WbEU6am9aLSMMltk2\nNUi8y3ttpbtSgAW1vOsXwdRcQX4rQbP5o+CwMqGQLFlcFrns55OP7A==\n-----END AGE ENCRYPTED FILE-----\n",
+				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j"
+			}
+		],
+		"lastmodified": "2026-10-26T21:20:05Z",
+		"mac": "ENC[AES256_GCM,data:8Y33NILPs566Uh83sbuSnMU5aBitJNcIqKoiEdEy1XMHNUCP+eO0lHZETiE1hWuRtFOVMzffWgDzoJ8p2YhNeZzEpWjbXsaJlLHL4Rvg+E903eYc7yNpUE1gGSGn1Xi3Q73iOolHBK2bxbuo5wt02uIrFdX6BnfeDEiZOM05Ckw=,iv:60hzxkM958Y4u+ei6xO38rU60YbStZZbaGG65Jnfi0U=,tag:q4WY22uyxVwOGpJY2K2DFQ==,type:str]",
+		"unencrypted_suffix": "_unencrypted",
+		"version": "3.12.1"
+	}
+}

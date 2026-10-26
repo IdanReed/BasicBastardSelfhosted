@@ -56,7 +56,7 @@ services:
       - AUTHENTICATION_GUARD_EMAIL=HTTP_X_AUTHENTIK_EMAIL
       # ⚠ NEVER set FIREFLY_III_CLIENT_ID: /oauth/authorize needs a StatefulGuard
       # and RemoteUserGuard is not one, so the flow fatals. Personal access
-      # tokens only — minting one is an operator step (.sops.env.example).
+      # tokens only — minting one is an operator step (secrets.example.env).
       #
       # 🚨 LOAD-BEARING, and a bug fix rather than a nicety. Passport signs
       # every access token with an RSA pair at storage/oauth-{public,private}
@@ -66,8 +66,9 @@ services:
       # hand-minted FIREFLY_III_ACCESS_TOKEN: the importer starts 401ing with
       # nothing said at deploy time. config/passport.php reads them, and
       # PassportServiceProvider::makeCryptKey does
-      # str_replace('\n', "\n", ...) — which is why the .sops.env value is
-      # ONE LINE with literal \n and must never be double-quoted.
+      # str_replace('\n', "\n", ...) — which is why the stored value is ONE
+      # LINE with literal \n (the rendered env single-quotes it, so compose
+      # leaves the backslashes alone).
       - PASSPORT_PRIVATE_KEY=${PASSPORT_PRIVATE_KEY:-}
       - PASSPORT_PUBLIC_KEY=${PASSPORT_PUBLIC_KEY:-}
       #
@@ -91,9 +92,7 @@ services:
       # wrong length fails as "Auth driver [remote_user_guard] ... is not
       # defined": the encrypter fails during config resolution and guard
       # registration collapses downstream.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/firefly.env
     # Interval ONLY — test, timeout and retries still come from the image
     # (docker merges an unset `test` from the image's HEALTHCHECK). The image
     # probes every 5 s, and every probe reaches RemoteUserGuard without the
@@ -121,9 +120,7 @@ services:
       - POSTGRES_USER=firefly
       - POSTGRES_DB=firefly
       # POSTGRES_PASSWORD arrives from .env and must match DB_PASSWORD.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/firefly.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not
       # a role, and reports "no response" against a healthy server.
@@ -188,9 +185,7 @@ services:
       # linked bank account — an OPERATOR decision, see ServerNotes/designs/_todo.md.
       # The SIMPLEFIN_* tuning knobs stay unset; config/simplefin.php defaults
       # them all.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/firefly.env
     restart: unless-stopped
 
 # NO cron sidecar: upstream's runs `apk add tzdata` at container start, which

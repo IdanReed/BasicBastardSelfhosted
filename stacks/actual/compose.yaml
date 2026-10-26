@@ -28,9 +28,7 @@ services:
       - ACTUAL_OPENID_CLIENT_ID=actual
       # SimpleFIN needs no wiring: the credential is pasted in the client UI
       # and stored in account.sqlite.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/actual.env
     healthcheck:
       # Upstream's own script; the final image has no curl/wget, only node.
       # Liveness only — /health is a bare express 200.
@@ -58,7 +56,5 @@ services:
     command: ['node', '/init/actual-init.js']
     environment:
       - INIT_URL=http://actual:5006
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/actual.env
     restart: "no"

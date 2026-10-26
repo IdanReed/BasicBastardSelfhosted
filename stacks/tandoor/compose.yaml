@@ -67,9 +67,7 @@ services:
       # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a
       # [WARNING], so every session cookie is signed with a public constant key
       # and nothing looks wrong across restarts.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tandoor.env
     healthcheck:
       # ⚠ `wget`, not `curl`: the image apk-dels curl with its build-deps.
       # /openapi/ is drf-spectacular's AllowAny schema view — it introspects
@@ -95,9 +93,7 @@ services:
       - POSTGRES_USER=tandoor
       - POSTGRES_DB=tandoor
       # POSTGRES_PASSWORD arrives from .env and is shared with the app.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tandoor.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), not a role.
       test: ['CMD-SHELL', 'pg_isready -U tandoor -d tandoor']
@@ -132,9 +128,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=tandoor
       - POSTGRES_USER=tandoor
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/tandoor.env
     restart: "no"
 
 volumes:

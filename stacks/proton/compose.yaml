@@ -22,13 +22,14 @@
 # OPERATOR BOOTSTRAP — one interactive login, once per (re-keyed) volume:
 #   docker exec -it hydroxide /app/hydroxide auth idan@idanreed.com
 #     ... prints "Bridge password: <base64>" — shown ONCE, save it NOW
-#   sopsedit stacks/proton/.sops.env       # PROTON_BRIDGE_PASSWORD, PROTON_ACCOUNT
+#   sopsedit stacks/proton/secrets.sops.json   # PROTON_BRIDGE_PASSWORD, PROTON_ACCOUNT
+#   nrs-vm                                 # re-render the env, then push or Redeploy
 #   docker restart proton_export           # or wait for the next daily tick
 #   docker exec proton_export /sync        # first export on demand
 #
 # The state volume holds auth.json, encrypted with a key derived from that
 # bridge password, which hydroxide prints once and does not store. So the volume
-# alone is useless and .sops.env alone is useless; both together are the mailbox.
+# alone is useless and secrets.sops.json alone is useless; both together are the mailbox.
 
 services:
   # Bridge
@@ -74,7 +75,7 @@ services:
       - '127.0.0.1:10005:8080' # CardDAV
 
     # NO env_file, deliberately: this container consumes no environment, and
-    # putting the account password in .sops.env to feed the stock wrapper would
+    # putting the account password in secrets.sops.json to feed the stock wrapper would
     # store exactly what the interactive flow exists not to store.
 
     healthcheck:
@@ -119,9 +120,7 @@ services:
       hydroxide:
         condition: service_healthy
 
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/proton.env
 
     volumes:
       - ./mbsyncrc:/mbsyncrc:ro

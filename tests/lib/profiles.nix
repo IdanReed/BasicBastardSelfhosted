@@ -7,6 +7,11 @@
 
 { lib, testKeyFile }:
 
+let
+  fixtureStacks = map (lib.removeSuffix ".sops.json") (
+    builtins.attrNames (builtins.readDir ../fixtures/stacks)
+  );
+in
 {
   # Boot / hardware
 
@@ -40,8 +45,27 @@
   # sops-declared lint compares key sets instead.
   sopsFixture =
     fixture:
-    _: {
+    _:
+    lib.recursiveUpdate
+      # Services VM only (the host whose fixture this is; keyed on the argument
+      # because a module's shape cannot depend on `options` without recursing):
+      # every stack's env renders from its fixture JSON, through the real
+      # sops-nix templates and stack-env-publish.
+      (lib.optionalAttrs (baseNameOf fixture == "services-vm.sops.yaml") {
+        bbs.stackEnv = {
+          stacks = lib.mkForce (
+            lib.genAttrs fixtureStacks (
+              name:
+              if name == "komodo" || name == "forgejo" then ../.. + "/${name}" else ../../stacks + "/${name}"
+            )
+          );
+          sourceFor = lib.mkForce (name: ../fixtures/stacks + "/${name}.sops.json");
+        };
+      })
+    {
       sops.defaultSopsFile = lib.mkForce fixture;
+      # Both hosts: the cross-host values (secrets/shared.nix).
+      bbs.sharedSecrets.file = lib.mkForce ../fixtures/shared.sops.json;
 
       # Both hosts hardcode this path and populate it out of band (cloud-init
       # on Proxmox, --extra-files on Hetzner). Planting the key beats

@@ -62,9 +62,7 @@ services:
       # auth, so the service stays closed if a route is flipped or the outpost is
       # down. SilverBullet ignores X-Authentik-* headers, so this is two logins
       # permanently.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/silverbullet.env
     healthcheck:
       # The image ships this exact command with no interval/start_period, so a
       # slow first index reports unhealthy. Overridden, not replaced. /.ping is
@@ -124,9 +122,7 @@ services:
       # A down remote would otherwise publish once a minute forever.
       - GIT_SYNC_ALERT_COOLDOWN=3600
       # GIT_SYNC_REMOTE arrives from .env — it carries the Forgejo PAT.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/silverbullet.env
     healthcheck:
       # 🚨 PROVES THE LOOP IS ALIVE, NOT THAT SYNC WORKS: the heartbeat is
       # touched before any git command, so unreachable Forgejo / expired PAT /

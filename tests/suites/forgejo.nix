@@ -35,13 +35,13 @@ let
 
   seedSrv = pkgs.runCommand "srv-seed-forgejo" { } ''
     mkdir -p $out/stacks/forgejo
-    cp -r ${../../stacks/forgejo}/. $out/stacks/forgejo/
+    cp -r ${../../forgejo}/. $out/stacks/forgejo/
     chmod -R u+w $out/stacks/forgejo
     # A working-tree copy can capture a developer's locally-decrypted
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/forgejo/.env
     # The fixture replaces the real .sops.env (production recipient).
-    cp ${../fixtures/forgejo.sops.env} $out/stacks/forgejo/.sops.env
+    ln -s /run/stack-env/forgejo.env $out/stacks/forgejo/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -80,8 +80,11 @@ pkgs.testers.runNixOSTest {
         # bootstrap-komodo chain and Komodo itself — checks.services covers
         # the chain, checks.gitops covers Komodo driving THIS forgejo.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The new stack-git-sync timer would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
         # decrypt-sops-envs.service `requires = srv.mount`; without a real
         # mount unit it never starts. tmpfs gives a genuine .mount unit, and
@@ -115,13 +118,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         # Populate /srv before anything reads it; on the real host
-        # stack-git-sync plays this role.
+        # forgejo.service runs the same files from the store.
         systemd.services.seed-srv = {
           description = "Seed /srv with the forgejo stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";

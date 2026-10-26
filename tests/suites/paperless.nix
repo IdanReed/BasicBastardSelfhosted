@@ -52,7 +52,7 @@ let
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
   ];
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
   # machine, a store copy here. ONLY the paperless stack is seeded — the other
   # stacks are the light suite's job — plus /srv/komodo, because
   # bootstrap-komodo runs unconditionally at boot and `docker compose up`
@@ -61,7 +61,6 @@ let
   seedSrv = pkgs.runCommand "srv-seed-paperless" { } ''
     mkdir -p $out/komodo $out/stacks/paperless
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     cp -r ${../../stacks/paperless}/. $out/stacks/paperless/
     chmod -R u+w $out/stacks/paperless
@@ -69,7 +68,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/paperless/.env
     rm -f $out/stacks/paperless/.sops.env.example
-    cp ${../fixtures/paperless.sops.env} $out/stacks/paperless/.sops.env
+    ln -s /run/stack-env/paperless.env $out/stacks/paperless/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -107,8 +106,12 @@ pkgs.testers.runNixOSTest {
             images = stackImages;
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
-          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
-          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
+          # Komodo runs here, Forgejo does not: the fleet-sync bootstrap would try
+          # to clone (gitops.nix covers it), and forgejo.service has no image.
+          {
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         # decrypt-sops-envs.service and bootstrap-komodo.service both
@@ -155,8 +158,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -206,8 +207,8 @@ pkgs.testers.runNixOSTest {
         # Requires+After it, so komodo up proves the decrypt pass ran.
         services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/paperless/.env")
-        mode = services_vm.succeed("stat -c '%a' /srv/stacks/paperless/.env").strip()
-        assert mode == "600", f"/srv/stacks/paperless/.env is mode {mode}, expected 600"
+        mode = services_vm.succeed("stat -L -c '%a' /srv/stacks/paperless/.env").strip()
+        assert mode == "400", f"/srv/stacks/paperless/.env is mode {mode}, expected 400"
         # The key the end-to-end auth check depends on. Checking it here means
         # a later token failure points at Paperless, not at decryption.
         services_vm.succeed(

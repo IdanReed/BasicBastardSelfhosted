@@ -5,12 +5,12 @@
 # Tools -> Import data -> File format "Bitwarden (json)".
 #
 # One item per key, named <name>.<KEY>: <name> is the stack/host directory for
-# .sops.env and secrets.sops.yaml (stacks/media/.sops.env -> media,
-# nixos-de/secrets.sops.yaml -> nixos-de) and the file stem otherwise
-# (nixos/renovate.sops.env -> renovate, secrets-recovery.sops.yaml ->
+# secrets.sops.json and secrets.sops.yaml (stacks/media/secrets.sops.json ->
+# media, nixos-de/secrets.sops.yaml -> nixos-de) and the file stem otherwise
+# (secrets/shared.sops.json -> shared, secrets-recovery.sops.yaml ->
 # secrets-recovery). Nested YAML keys join with `/`, matching their sops-nix
-# secret names (nixos-de.ssh/github). The password is the decrypted value with
-# the dotenv single-quote convention (ledger #30) stripped. Multi-line values
+# secret names (nixos-de.ssh/github). A legacy dotenv value has its
+# single-quote convention (ledger #30) stripped. Multi-line values
 # (ssh keys, PEM) are copied into the notes too: Bitwarden's password field is
 # single-line and drops the newlines if the item is ever edited. Empty values
 # and changeme placeholders are skipped and listed on stderr.
@@ -48,7 +48,7 @@ else
   while IFS= read -r f; do
     [[ ${f##*/} == .sops.yaml ]] && continue  # sops config, not a secret file
     FILES+=("$ROOT/$f")
-  done < <(git -C "$ROOT" ls-files -- '*.sops.env' '*.sops.yaml' ':!:tests/')
+  done < <(git -C "$ROOT" ls-files -- '*.sops.env' '*.sops.yaml' '*.sops.json' ':!:tests/')
 fi
 ((${#FILES[@]})) || die "no sops files found"
 
@@ -64,8 +64,8 @@ fi
 name_of() { # sops file path -> item-name prefix
   local base=${1##*/} dir
   case $base in
-    .sops.env|secrets.sops.yaml) dir=${1%/*}; echo "${dir##*/}";;
-    *) base=${base%.sops.env}; echo "${base%.sops.yaml}";;
+    .sops.env|secrets.sops.yaml|secrets.sops.json) dir=${1%/*}; echo "${dir##*/}";;
+    *) base=${base%.sops.env}; base=${base%.sops.json}; echo "${base%.sops.yaml}";;
   esac
 }
 

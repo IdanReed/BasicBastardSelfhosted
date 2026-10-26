@@ -9,7 +9,7 @@
 #
 # Backup: everything is under /mnt/fast/wealthfolio (bind of /data) —
 # wealthfolio.db plus secrets.json, which is only useful with WF_SECRET_KEY from
-# .sops.env. backup-prepare.sh needs exactly one line:
+# secrets.sops.json. backup-prepare.sh needs exactly one line:
 #   sqlite_backup wealthfolio /mnt/fast/wealthfolio/wealthfolio.db
 # sqlite_backup returns 0 for a MISSING source, so the suite pins the real path.
 
@@ -48,7 +48,7 @@ services:
       # suite's plain-http loopback login still works.
       - WF_COOKIE_SECURE=auto
       # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from .env; the rotation
-      # rules and the 🚨 $-quoting trap on the Argon2 hash are in .sops.env.example.
+      # rules and the 🚨 $-quoting trap on the Argon2 hash are in secrets.example.env.
       #
       # OIDC ships OFF, and OFF is load-bearing
       # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server — the
@@ -58,9 +58,7 @@ services:
       # WF_OIDC_REDIRECT_URL (.../api/v1/auth/oidc/callback) +
       # WF_OIDC_ALLOWED_EMAILS, which is fail-closed — empty without an explicit
       # WF_OIDC_ALLOW_ANY=true refuses to boot.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/wealthfolio.env
     healthcheck:
       # /api/v1/healthz is a STATIC "ok", but the Axum server only binds AFTER
       # its embedded migrations, so 200 does mean a live listener over a migrated

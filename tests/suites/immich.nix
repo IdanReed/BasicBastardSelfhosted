@@ -80,13 +80,12 @@ let
     images."python_3_13-alpine" # immich-init (+ the suite's ML /ping probe)
   ];
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
   # machine, a store copy here. Only the immich stack is seeded — the other
   # stacks are the light suite's job — plus /srv/komodo for bootstrap-komodo.
   seedSrv = pkgs.runCommand "srv-seed-immich" { } ''
     mkdir -p $out/komodo $out/stacks/immich
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     cp -r ${../../stacks/immich}/. $out/stacks/immich/
     chmod -R u+w $out/stacks/immich
@@ -94,7 +93,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/immich/.env
     rm -f $out/stacks/immich/.sops.env.example
-    cp ${../fixtures/immich.sops.env} $out/stacks/immich/.sops.env
+    ln -s /run/stack-env/immich.env $out/stacks/immich/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -132,8 +131,12 @@ pkgs.testers.runNixOSTest {
             images = stackImages;
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
-          # stack-git-sync timer would fail its clone each tick (no Forgejo here).
-          { systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ]; }
+          # Komodo runs here, Forgejo does not: the fleet-sync bootstrap would try
+          # to clone (gitops.nix covers it), and forgejo.service has no image.
+          {
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
+          }
         ];
 
         # Migrations + thumbnail jobs + ML import on the sized profile's 2
@@ -188,14 +191,12 @@ pkgs.testers.runNixOSTest {
         ];
 
         # Populate /srv before anything reads it — the stand-in for
-        # stack-git-sync having already run. Re-runs on every boot (tmpfs /srv),
+        # Komodo's clone having already run. Re-runs on every boot (tmpfs /srv),
         # which the reboot subtest depends on.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -279,14 +280,14 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
+    with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_for_unit("bootstrap-komodo.service")
         services_vm.succeed("test -s /srv/stacks/immich/.env")
         stat = services_vm.succeed(
-            "stat -c '%a %u:%g' /srv/stacks/immich/.env"
+            "stat -L -c '%a %u:%g' /srv/stacks/immich/.env"
         ).strip()
-        assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
+        assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # The keys everything below depends on: a later failure then points
         # at the service, not at decryption.
         for k in ["DB_PASSWORD", "POSTGRES_PASSWORD",

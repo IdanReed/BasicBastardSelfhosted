@@ -166,7 +166,7 @@ let
       -f lavfi -i anullsrc=r=44100:cl=mono -t 1 -c:a flac -f flac "$out"
   '';
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
   # machine, a store copy here. Only the books stack — bootstrap-komodo is
   # masked, so /srv/komodo is not needed.
   seedSrv = pkgs.runCommand "srv-seed-books" { } ''
@@ -177,7 +177,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/books/.env
     rm -f $out/stacks/books/.sops.env.example
-    cp ${../fixtures/books.sops.env} $out/stacks/books/.sops.env
+    ln -s /run/stack-env/books.env $out/stacks/books/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -224,8 +224,11 @@ pkgs.testers.runNixOSTest {
         # decrypt-sops-envs -> docker-network-homelab -> bootstrap-komodo
         # chain — is what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
         # Migrations plus two scans on the sized profile's 2 cores make every
         # healthcheck window a coin toss; 4 keeps it sane.
@@ -286,14 +289,12 @@ pkgs.testers.runNixOSTest {
         ];
 
         # Populate /srv before anything reads it — the stand-in for
-        # stack-git-sync having already run. Re-runs on every boot (tmpfs /srv),
+        # Komodo's clone having already run. Re-runs on every boot (tmpfs /srv),
         # which the reboot subtest depends on.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -306,8 +307,8 @@ pkgs.testers.runNixOSTest {
             # read-only), but it sets every regular file to 0644 — and this is
             # the first stack with a file that MUST be executable: shelfmark
             # execs post-download.sh directly, so a 0644 copy fails with exit
-            # 126 and every download would be marked Error. stack-git-sync
-            # delivers the git mode on the real host; restore it here.
+            # 126 and every download would be marked Error. Komodo's git clone
+            # keeps the git mode on the real host; restore it here.
             chmod 0755 /srv/stacks/books/post-download.sh
             chown -R 1000:1000 /srv/stacks
           '';
@@ -443,7 +444,7 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # §6.1 boot chain + decrypt: sops fixture -> 0600 .env owned 1000:1000
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
+    with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         # Transient oneshot on a minutely timer, so wait_for_unit would race
@@ -452,9 +453,9 @@ pkgs.testers.runNixOSTest {
             "test -s /srv/stacks/books/.env", timeout=120
         )
         stat = services_vm.succeed(
-            "stat -c '%a %u:%g' /srv/stacks/books/.env"
+            "stat -L -c '%a %u:%g' /srv/stacks/books/.env"
         ).strip()
-        assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
+        assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # The keys everything below depends on: a later failure then points at
         # the service, not at decryption. The two OIDC keys are asserted
         # PRESENT AND EMPTY — that is the shipping state this suite pins.

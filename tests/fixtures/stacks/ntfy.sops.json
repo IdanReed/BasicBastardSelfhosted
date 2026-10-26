@@ -1,0 +1,17 @@
+{
+	"NTFY_SMTP_SENDER_ADDR": "ENC[AES256_GCM,data:eUZWIdD7H5aLes+V5DaNKg==,iv:zEfWaNAl3q7R75yt7NOUb63TWDh7MOp5Lp3lHrGyBEs=,tag:Nbretan+Jl2zU3sgbWx6xQ==,type:str]",
+	"NTFY_SMTP_SENDER_USER": "ENC[AES256_GCM,data:hGSQjw==,iv:WFqS1argZ2KgBoHc2hHO5Gw8plIo4lBGg47uoYRwF90=,tag:om32TXRtRyNGoPyem/f3zQ==,type:str]",
+	"NTFY_SMTP_SENDER_PASS": "ENC[AES256_GCM,data:5z0MGA==,iv:U/0HB/UlH7BCLL1c9a/T2W4nbZDJFxDKBWKmcrIwgVQ=,tag:LXwG1GgelfKXbNMcAqC7eg==,type:str]",
+	"sops": {
+		"age": [
+			{
+				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j",
+				"enc": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBtTkUvOGg1VlVLcDB0UEVD\nVW5JYk92RURUY29VbDFoTVg4bVVJTGdCcTNRCktQdFZsL05Gc0hTeDU4WmhQMGpD\nMm1MTnZIdEJmb21Yb0VtR1JxTlkzQ28KLS0tIGpHUEVOZllsK2QxZ0hjZGNtZWRH\nWGRmV3VlNzg3UnRScTFUaWpxQUFpR1UK7qK3Q4OCTmIG2MRozcfXtnQHg3Ugq0xx\nSrJepyDISPyBg602fjZWZPjMQxlxygo+Z3CKdHGL7dR3wVCmlfe8uw==\n-----END AGE ENCRYPTED FILE-----\n"
+			}
+		],
+		"lastmodified": "2026-10-26T21:02:51Z",
+		"mac": "ENC[AES256_GCM,data:G7EP6n9iim4RKfTpD7ME4LCNaexD7He//1nGp2HtHqC63/uyybEqBMSJvkPqwDtq5FPjIOTEa+Q1c5wQICsSGIkZI0qiGS7p8F3Ztnrvp6xvZ7DRo+lFxOG49hP1ACwXn2XHn6l1b8nyhKztP6xBfOC3Ox2SaDn84MaxEcAeNrA=,iv:EfwyQvAu+/Cv6ffEyMxrycjKK9wOS3M2EDpbxSfTW6w=,tag:eP8LulREEk7pROmnk7ZTRw==,type:str]",
+		"unencrypted_suffix": "_unencrypted",
+		"version": "3.12.1"
+	}
+}

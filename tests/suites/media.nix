@@ -136,7 +136,7 @@ let
     }} -d $out
   '';
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
   # machine, a store copy here. Only the media stack is seeded — the other
   # stacks are the light suite's job; komodo is masked, so /srv/komodo is not
   # needed.
@@ -148,7 +148,7 @@ let
     # plaintext .env (gitignored on purpose) in the world-readable store.
     rm -f $out/stacks/media/.env
     rm -f $out/stacks/media/.sops.env.example
-    cp ${../fixtures/media.sops.env} $out/stacks/media/.sops.env
+    ln -s /run/stack-env/media.env $out/stacks/media/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -190,10 +190,13 @@ pkgs.testers.runNixOSTest {
           })
           {
             # Keep the deploy plane out of the boot path — media does not test
-            # it, and its containers starve the quarantine-inode timing. The
-            # stack-git-sync timer would also fail its clone (no Forgejo here).
+            # it, and its containers starve the quarantine-inode timing.
             systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+            # Komodo's sync bootstrap Requires the masked unit and would pull it
+            # back in; Forgejo runs from the host too, and only the forgejo and
+            # gitops suites load its image.
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
           }
         ];
 
@@ -277,13 +280,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         # Populate /srv before anything reads it — the stand-in for
-        # stack-git-sync having already run.
+        # Komodo's clone having already run.
         systemd.services.seed-srv = {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -413,16 +414,16 @@ pkgs.testers.runNixOSTest {
     # -----------------------------------------------------------------------
     # Boot chain: sops fixture -> decrypted .env -> homelab network -> stack
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs produced a 0600 .env owned by uid 1000 (the /srv/stacks world)"):
+    with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("docker-network-homelab.service")
         # Komodo is masked here, so decrypt runs via its minutely timer, not
         # bootstrap-komodo's Requires — wait the .env out (mk-stack-suite pattern).
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_until_succeeds("test -s /srv/stacks/media/.env", timeout=90)
         stat = services_vm.succeed(
-            "stat -c '%a %u:%g' /srv/stacks/media/.env"
+            "stat -L -c '%a %u:%g' /srv/stacks/media/.env"
         ).strip()
-        assert stat == "600 1000:1000", f".env is {stat}, expected 600 1000:1000"
+        assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # The keys everything below depends on: a later API failure then
         # points at the service, not at decryption.
         for k in ["RADARR__AUTH__APIKEY", "QBIT_WEBUI_PASSWORD_PBKDF2",

@@ -1,0 +1,16 @@
+{
+	"PROTON_ACCOUNT": "ENC[AES256_GCM,data:Va/gaAYvH8Dp++/aBvTq8PR2Lhq/vfxFe2HOPKcwUObfmzgCBgXRxUOu8czAFA==,iv:u4lb64BqwxxMlzNX3j3NExSC/kYtKTE3xfzWQGxtWWM=,tag:BS9e5dXXkRzyc916zcTWQQ==,type:str]",
+	"PROTON_BRIDGE_PASSWORD": "ENC[AES256_GCM,data:dmWEuBvcqf9LPZ4ED5LptwCunHaO1KTyKX6DDAuJhw==,iv:GhjNhh6gqW48HFpw4N4azqiwdurxT+YoM7loXmx/AiI=,tag:hBORMyq7fqwssjr8p2LNgg==,type:str]",
+	"sops": {
+		"age": [
+			{
+				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j",
+				"enc": "-----BEGIN AGE ENCRYPTED FILE-----\nYWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBqY2VIcDdjYzA5RW5zeTlF\nKzgzT29EZStYRHh4Qm1RNlZmSjRVdlZDQ2pvCkduOVg4Wjl0MlpJa2R2SWdPMTN6\nRmtYbzR4Z3BtbDBVZGpmMUswcHM4ZHMKLS0tIDgydmw5S0k2ZUI1VUJiQ2Z3UWI4\ncy9yR2dSbXNCTnIrSmlSbFFXMm5ua3cKi4apmqWNcF8+P0HR9By8MVpOo95VauVx\nOLQpIT3+e8inVUJiO1QZsVO5SFsndyb3PpNOGTkT5P9rQXwGh7Rykw==\n-----END AGE ENCRYPTED FILE-----\n"
+			}
+		],
+		"lastmodified": "2026-10-26T21:02:52Z",
+		"mac": "ENC[AES256_GCM,data:UVPBYIRRfNHaPfkEZRtA7CvCW9UtJF3+dXnWrIihbKCrEmW/6N8opgetghLROYwPvDcGpOV0G17w06s9Ykwle052NTURTaIfrUKJ+KxN7ReKiWsQzpc/SrIjv2ebuL5OaLNbKNM2SjP2h2mCKundEeP+3A4Ks/r0ycwd/nJaBLc=,iv:qnZTtCjjN33jv55ilKoKt/fpsMh57kq5F+EMshZ+hPM=,tag:YNU4nxM2wyNAGOQFxX9rfQ==,type:str]",
+		"unencrypted_suffix": "_unencrypted",
+		"version": "3.12.1"
+	}
+}

@@ -1,9 +1,10 @@
-# Services VM: the sops-decrypt -> docker-network -> Komodo boot chain, plus
-# the stacks themselves behind Caddy.
+# Services VM: the stack-env -> docker-network -> Komodo boot chain, plus the
+# stacks themselves behind Caddy.
 #
 # Genuinely under test:
-#   - decrypt-sops-envs.service turning .sops.env into .env, with modes, and
-#     its ordering against srv.mount
+#   - sops-nix rendering every stack's env from its fixture JSON (plus the
+#     shared file), and stack-env-publish copying them root-only into
+#     /run/stack-env, ordered before Komodo
 #   - docker-network-homelab ordering before bootstrap-komodo (containers on
 #     the shared network cannot resolve each other otherwise)
 #   - bootstrap-komodo bringing Komodo Core up on 127.0.0.1:10000, OFFLINE,
@@ -33,10 +34,10 @@
 }:
 
 let
-  # Seeded into /srv/stacks so decrypt-sops-envs.service processes them.
+  # Seeded into /srv/stacks (their envs render from tests/fixtures/stacks).
   # backrest is seeded but not started: its image is multi-GB and lives in the
-  # heavy suite, but its fixture carries the bcrypt value with '$' in it, which
-  # is what makes the quoting assertion below real rather than decorative.
+  # heavy suite, but its fixture carries a value with '$' in it, which is what
+  # makes the quoting assertion below real rather than decorative.
   seededStacks = [
     "ntfy"
     "util"
@@ -92,21 +93,20 @@ let
         PY
       '';
 
-  # Seeds /srv the way the real host gets it: stack-git-sync on the live
-  # machine, a store copy here. Fixture .sops.env files stand in for the real
-  # encrypted ones, so decrypt-sops-envs.service is exercised for real.
+  # Seeds /srv the way the real host gets it: Komodo's clone on the live
+  # machine, a store copy here. The .env symlink stands in for Komodo's
+  # --env-file so compose interpolation reads the rendered env.
   seedSrv = pkgs.runCommand "srv-seed" { } ''
     mkdir -p $out/komodo $out/stacks
     cp ${../../komodo/compose.yaml} $out/komodo/compose.yaml
-    cp ${../fixtures/komodo.sops.env} $out/komodo/.sops.env
 
     ${lib.concatMapStringsSep "\n" (s: ''
       mkdir -p $out/stacks/${s}
       cp -r ${../../stacks + "/${s}"}/. $out/stacks/${s}/
       chmod -R u+w $out/stacks/${s}
       rm -f $out/stacks/${s}/.sops.env.example
-      ${lib.optionalString (builtins.pathExists (../fixtures + "/${s}.sops.env")) ''
-        cp ${../fixtures + "/${s}.sops.env"} $out/stacks/${s}/.sops.env
+      ${lib.optionalString (builtins.pathExists (../fixtures/stacks + "/${s}.sops.json")) ''
+        ln -s /run/stack-env/${s}.env $out/stacks/${s}/.env
       ''}
     '') seededStacks}
 
@@ -144,19 +144,17 @@ pkgs.testers.runNixOSTest {
             beforeUnits = [ "bootstrap-komodo.service" ];
           })
           {
-            # stack-git-sync polls Forgejo, which is NOT running in this suite
-            # (its own delivery loop is the gitops suite's job). Left armed it
-            # would fail its clone every tick and ntfy-alert, tripping the
-            # no-failed-units sweep. Take only its TRIGGER out; the unit is
-            # unchanged. (gitops.nix exercises the real sync.)
-            systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+            # Komodo runs here, Forgejo does not: the fleet-sync bootstrap would
+            # try to clone (gitops.nix covers it), and forgejo.service has no image.
+            systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+            systemd.services.forgejo.wantedBy = lib.mkForce [ ];
           }
         ];
 
-        # decrypt-sops-envs.service and bootstrap-komodo.service both
-        # `requires = srv.mount`. Without a real mount unit at /srv they would
-        # fail to start, and the ordering this suite exists to check would
-        # never be exercised. tmpfs gives a genuine .mount unit.
+        # bootstrap-komodo.service `requires = srv.mount`. Without a real mount
+        # unit at /srv it would fail to start, and the ordering this suite
+        # exists to check would never be exercised. tmpfs gives a genuine
+        # .mount unit.
         virtualisation.fileSystems = {
           "/srv" = {
             device = "tmpfs";
@@ -201,8 +199,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -240,27 +236,40 @@ pkgs.testers.runNixOSTest {
     import json
 
     start_all()
-    # decrypt-sops-envs is a transient oneshot now (the timer must be able to
-    # re-fire it); bootstrap-komodo Requires+After it, so the compose being
-    # brought up IS the proof the decrypt pass succeeded. (bootstrap-komodo is
-    # `up -d`, not `--wait`, so Core readiness is polled separately below.)
+    # bootstrap-komodo Requires+After stack-env-publish, so the compose being
+    # brought up IS the proof the stack envs were published. (bootstrap-komodo
+    # is `up -d`, not `--wait`, so Core readiness is polled separately below.)
     services_vm.wait_for_unit("bootstrap-komodo.service")
 
     # -----------------------------------------------------------------------
-    # Secret decryption
+    # Stack environments
     # -----------------------------------------------------------------------
-    with subtest("decrypt-sops-envs turns every .sops.env into a 0600 .env"):
-        # util is deliberately absent: it has no secrets, so no .sops.env and
-        # therefore no .env. Its compose file declares no env_file either — the
-        # env-file-coverage lint is what keeps those two facts consistent.
-        for path in ["/srv/komodo/.env",
-                     "/srv/stacks/ntfy/.env",
-                     "/srv/stacks/caddy/.env"]:
+    with subtest("every stack's env is rendered and published root-only"):
+        # util is deliberately absent: it has no secrets, so no
+        # secrets.sops.json and therefore no env. Its compose file declares no
+        # env_file either — the env-file-coverage lint keeps the two consistent.
+        for name in ["komodo", "ntfy", "caddy"]:
+            path = f"/run/stack-env/{name}.env"
             services_vm.succeed(f"test -s {path}")
-            mode = services_vm.succeed(f"stat -c '%a' {path}").strip()
-            assert mode == "600", f"{path} is mode {mode}, expected 600"
+            mode = services_vm.succeed(f"stat -c '%a %U' {path}").strip()
+            assert mode == "400 root", f"{path} is {mode}, expected 400 root"
+            # A copy, never a symlink: containers mount /run/stack-env, and a
+            # link into /run/secrets.d would dangle after the next switch.
+            services_vm.fail(f"test -L {path}")
+        dmode = services_vm.succeed("stat -c '%a %U' /run/stack-env").strip()
+        assert dmode == "700 root", f"/run/stack-env is {dmode}, expected 700 root"
 
-        services_vm.fail("test -e /srv/stacks/util/.env")
+        services_vm.fail("test -e /run/stack-env/util.env")
+
+    with subtest("a value built in env.nix renders from the shared file"):
+        # caddy's VLOGS_INGEST_TOKEN is not stored in its own secrets: env.nix
+        # reads it from secrets/shared.sops.json, the same value the VPS log
+        # shipper presents. The rendered line must carry the shared value.
+        shared = services_vm.succeed("cat /run/secrets/VLOGS_INGEST_TOKEN").strip()
+        line = services_vm.succeed(
+            "grep '^VLOGS_INGEST_TOKEN=' /run/stack-env/caddy.env").strip()
+        assert line == f"VLOGS_INGEST_TOKEN='{shared}'", \
+            "caddy's rendered token is not the shared value"
 
     with subtest("the sops-managed backup SSH keys land where consumers look"):
         # BACKUP_VPS_SSH_KEY: custom sops path -> a symlink into
@@ -283,18 +292,15 @@ pkgs.testers.runNixOSTest {
             mode = services_vm.succeed(f"stat -L -c '%a %U' {path}").strip()
             assert mode == "600 root", f"{path} is {mode}, expected 600 root"
 
-    with subtest("values containing '$' survive decryption intact"):
-        # CLAUDE.md warns that these must be single-quoted or the
-        # decrypt-and-source path expands them. Verified against a bcrypt-shaped
-        # fixture value rather than left as folklore.
-        # The '$'-carrier moved to RESTIC_PASSWORD when the bcrypt became
-        # base64 (finding 6: backrest decodes passwordBcrypt, so the hash is
-        # stored encoded and no longer contains '$').
+    with subtest("values containing '$' render single-quoted and intact"):
+        # Compose interpolates env-file values (ledger #30), so the template
+        # single-quotes every value. Verified against a '$'-bearing fixture
+        # value rather than left as folklore.
         line = services_vm.succeed(
-            "grep '^RESTIC_PASSWORD=' /srv/stacks/backrest/.env"
+            "grep '^RESTIC_PASSWORD=' /run/stack-env/backrest.env"
         ).strip()
-        assert "te$t_re$tic_pa$$word" in line, (
-            f"the '$'-bearing value did not survive decryption: {line!r}"
+        assert line == "RESTIC_PASSWORD='te$t_re$tic_pa$$word'", (
+            f"the '$'-bearing value did not render intact: {line!r}"
         )
 
     # -----------------------------------------------------------------------
@@ -364,10 +370,10 @@ pkgs.testers.runNixOSTest {
         outsider.fail("curl -sf --max-time 5 http://services-vm:10000/ -o /dev/null")
 
     with subtest("invariant #1: the age key never entered Periphery"):
-        # The whole point of host-side decrypt + files_on_host: Periphery runs
-        # `docker compose up` in a directory where .env already exists; it must
-        # never see the age key or Komodo's sops material. Read host-side via
-        # docker inspect — Periphery is distroless, so no in-container `env`.
+        # The whole point of host-side rendering: Periphery runs `docker compose
+        # up` against envs sops-nix already rendered; it must never see the age
+        # key or Komodo's sops material. Read host-side via docker inspect —
+        # Periphery is distroless, so no in-container `env`.
         env = services_vm.succeed(
             "docker inspect komodo_periphery --format '{{json .Config.Env}}'"
         )
@@ -385,7 +391,7 @@ pkgs.testers.runNixOSTest {
     # Stacks
     # -----------------------------------------------------------------------
     # On the real host Komodo brings these up from /srv/stacks. Driving compose
-    # directly tests the compose files, the decrypted env and the network,
+    # directly tests the compose files, the rendered env and the network,
     # without depending on Komodo's scheduler.
     with subtest("every light stack starts and reports healthy"):
         for stack in ${builtins.toJSON startedStacks}:
@@ -593,46 +599,21 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("systemctl reset-failed backup-prepare.service")
 
     # -----------------------------------------------------------------------
-    # A stack delivered AFTER boot gets its secrets without a reboot
+    # A rotated secret reaches the published env on switch
     # -----------------------------------------------------------------------
-    # The gap that used to be a known issue: stack-git-sync delivers .sops.env
-    # at runtime, the old boot-only oneshot never decrypted it, and compose
-    # started with unset variables. A minutely timer re-runs the (make-style,
-    # idempotent) decrypt now — this subtest plays the part of the git sync
-    # and waits out one tick.
-    with subtest("a runtime-synced stack gets its .env within a timer tick"):
-        services_vm.succeed("systemctl is-active decrypt-sops-envs.timer")
-        services_vm.succeed(
-            "mkdir -p /srv/stacks/latestack && "
-            "cp /srv/stacks/ntfy/.sops.env /srv/stacks/latestack/.sops.env"
-        )
-        # 150s: the unit pins AccuracySec=1s (nixos/modules/secrets.nix), so
-        # the worst case is one ~60s tick + the decrypt itself; the slack on
-        # top keeps a slow VM from flaking. If that AccuracySec ever reverts
-        # to systemd's 1min default a tick can slip ~120s — the
-        # timer-accuracy lint holds the pin.
-        services_vm.wait_until_succeeds(
-            "test -s /srv/stacks/latestack/.env", timeout=150
-        )
-        mode = services_vm.succeed("stat -c '%a' /srv/stacks/latestack/.env").strip()
-        assert mode == "600", f"late .env is mode {mode}"
-        # The decrypt runs as root and chowns to 1000:1000 — the /srv/stacks
-        # ownership world (finding #10). Periphery runs as root and would read
-        # a root-owned .env too, so 1000 no longer strictly binds, but decrypt
-        # preserves it anyway; the owner check pins that it is not left root.
-        owner = services_vm.succeed(
-            "stat -c '%u:%g' /srv/stacks/latestack/.env").strip()
-        assert owner == "1000:1000", \
-            f"late .env is owned {owner}, expected 1000:1000 (/srv/stacks world)"
-
-        # And no mtime churn for everyone else: a tick that changes nothing
-        # must rewrite nothing (compose watches these files). %y, not %Y:
-        # nanosecond precision, so a rewrite landing in the same second as
-        # the before-read cannot hide.
-        before = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
-        services_vm.succeed("systemctl start decrypt-sops-envs.service")
-        after = services_vm.succeed("stat -c '%y' /srv/stacks/ntfy/.env").strip()
-        assert before == after, "an unchanged .env was rewritten by a re-run"
+    # sops-nix restarts stack-env-publish whenever a template's content
+    # changes; the publish must replace the file (new inode, by rename) and
+    # leave unchanged stacks byte-identical.
+    with subtest("re-publishing rewrites by rename and drops a stale stack"):
+        services_vm.succeed("install -m 0400 /dev/null /run/stack-env/gone.env")
+        ino_before = services_vm.succeed("stat -c '%i' /run/stack-env/ntfy.env").strip()
+        body_before = services_vm.succeed("sha256sum /run/stack-env/ntfy.env")
+        services_vm.succeed("systemctl restart stack-env-publish.service")
+        services_vm.fail("test -e /run/stack-env/gone.env")
+        ino_after = services_vm.succeed("stat -c '%i' /run/stack-env/ntfy.env").strip()
+        assert ino_before != ino_after, "publish rewrote ntfy.env in place, not by rename"
+        assert body_before == services_vm.succeed("sha256sum /run/stack-env/ntfy.env"), \
+            "an unchanged stack's env changed on re-publish"
 
     # -----------------------------------------------------------------------
     # SSH auth surface
@@ -684,8 +665,7 @@ pkgs.testers.runNixOSTest {
         # silent failure backup-staleness-check exists to catch. Checked
         # post-reboot because that is when wantedBy wiring shows its truth.
         for timer in ["backup-prepare.timer",
-                      "backup-staleness-check.timer",
-                      "decrypt-sops-envs.timer"]:
+                      "backup-staleness-check.timer"]:
             services_vm.succeed(f"systemctl is-active {timer}")
             # list-timers prints '-' in NEXT for an armed-but-never-elapsing
             # timer, so demand a real next elapse, not just active state.

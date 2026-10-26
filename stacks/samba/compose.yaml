@@ -35,9 +35,7 @@ services:
       # Parent of the per-user private dirs, read-only — samba-init stats
       # /personal/<user> to enforce the uid contract (each is <uid>:1000).
       - /mnt/slow/samba/personal:/personal:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/samba.env
     command: ["/bin/sh", "/init.sh"]
     restart: "no"
 
@@ -81,11 +79,7 @@ services:
       # config.yml does not set them. samba-init refuses to start without it.
       # ⚠ Never write `${SAMBA_*:?...}` here: `:?` aborts the whole stack on
       # a deploy that races the decrypt.
-    # Long form: a deploy can race the first host-side decrypt, and the plain
-    # form aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/samba.env
     # The image's own healthcheck is kept: a real SMB3 round trip.
     # 🚨 But an ANONYMOUS one — it proves smbd speaks SMB3 on loopback, not
     # that any user can authenticate, so a failed `smbpasswd -a -s` leaves it

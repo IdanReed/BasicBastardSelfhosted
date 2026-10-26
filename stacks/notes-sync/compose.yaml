@@ -48,9 +48,7 @@ services:
       # rotation invalidates every tablet enrolment, and unset is worse: config.go
       # generates random bytes and carries on, so the NEXT restart silently
       # invalidates every token with no error anywhere.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/notes-sync.env
     healthcheck:
       # FROM-scratch image: no shell, curl or wget, so an HTTP probe is
       # impossible from inside. This CLI verb runs before the server starts —
@@ -92,9 +90,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/notes-sync.env
     restart: "no"
 
   # Syncthing
@@ -144,9 +140,7 @@ services:
       #
       # The four egress switches are set by notes-sync-init over the REST API:
       # they live in config.xml, not the environment.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/notes-sync.env
     # NO healthcheck stanza: the builtin is a real HTTP probe of
     # /rest/noauth/health. Folder sync state is the suite's job.
     restart: unless-stopped
@@ -169,7 +163,5 @@ services:
       # login is create-or-authenticate, so the user store must be inspected
       # before logging in.
       - /mnt/fast/rmfakecloud/data:/rmdata:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/notes-sync.env
     restart: "no"

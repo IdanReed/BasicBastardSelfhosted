@@ -17,9 +17,7 @@ services:
     volumes:
       - ./beszel-init.sh:/init.sh:ro
       - /mnt/fast/beszel:/beszel_data
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/beszel.env
     command: ["/bin/sh", "/init.sh"]
     # One-shot: `on-failure` would retry a genuine misconfiguration forever.
     restart: "no"
@@ -40,9 +38,7 @@ services:
     environment:
       - TZ=America/Chicago
       - APP_URL=https://beszel.svc.idanreed.com
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/beszel.env
     healthcheck:
       # `/beszel health` short-circuits on argv before the app is built, so it
       # never opens the database — it proves the listener and nothing else.
@@ -67,9 +63,7 @@ services:
         condition: service_healthy
     volumes:
       - ./beszel-role.sh:/init/beszel-role.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/beszel.env
     restart: "no"
 
   # Agent
@@ -104,9 +98,7 @@ services:
       # empty value). Container stats are not worth a second root-equivalent
       # container; the fleet's design is exactly one.
       - DOCKER_HOST=
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/beszel.env
     healthcheck:
       # 🚨 A LIAR, kept only because it catches a wedged process: `/agent health`
       # stats a file the connection manager touches every 90s whether or not it

@@ -81,7 +81,7 @@ let
     # still be captured by cp -r into the world-readable store.
     rm -f $out/stacks/actual/.env
     rm -f $out/stacks/actual/.sops.env.example $out/stacks/actual/.sops.env
-    cp ${../fixtures/actual.sops.env} $out/stacks/actual/.sops.env
+    ln -s /run/stack-env/actual.env $out/stacks/actual/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -113,8 +113,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         virtualisation.emptyDiskImages = [ 2048 ];
@@ -148,8 +151,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the actual stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -204,12 +205,12 @@ pkgs.testers.runNixOSTest {
 
     start_all()
 
-    with subtest("the fixture .sops.env decrypted to a 0600 .env"):
+    with subtest("the fixture rendered to a root-only stack env"):
         services_vm.wait_for_unit("multi-user.target")
         services_vm.wait_for_unit("docker-network-homelab.service")
         services_vm.wait_until_succeeds("test -s /srv/stacks/actual/.env", timeout=120)
-        stat = services_vm.succeed("stat -c '%a %u:%g' /srv/stacks/actual/.env").strip()
-        assert stat == "600 1000:1000", f".env is {stat}"
+        stat = services_vm.succeed("stat -L -c '%a %u:%g' /srv/stacks/actual/.env").strip()
+        assert stat == "400 0:0", f".env is {stat}"
         for k in ["ACTUAL_INIT_PASSWORD", "ACTUAL_OPENID_CLIENT_ID",
                   "ACTUAL_OPENID_CLIENT_SECRET"]:
             services_vm.succeed(f"grep -q '^{k}=.' /srv/stacks/actual/.env")

@@ -126,22 +126,25 @@ let
 
   # /srv seed
 
-  fixture = ../fixtures + "/${stack}.sops.env";
+  # A stack has secrets iff it has a fixture: the fixture set mirrors the real
+  # one (the stack-env-drift lint pins their key sets together).
+  fixture = ../fixtures/stacks + "/${stack}.sops.json";
   hasFixture = builtins.pathExists fixture;
 
-  # The real .sops.env is encrypted to the production recipient, so it is
-  # dropped and the fixture stands in — decrypt-sops-envs then runs the real
-  # sops CLI against it and the decrypt path is still exercised for real.
+  # The stack directory as the host gets it: compose.yaml plus its read-only
+  # bind sources. Its environment is rendered from the fixture by the REAL
+  # sops-nix templates and stack-env-publish (profiles.sopsFixture), into
+  # /run/stack-env/<stack>.env. The .env symlink stands in for Komodo's
+  # --env-file, so `${VAR}` interpolation in compose.yaml sees the same file.
   seedSrv = pkgs.runCommand "srv-seed-${stack}" { } ''
     mkdir -p $out/stacks/${stack}
     cp -r ${composeDir}/. $out/stacks/${stack}/
     chmod -R u+w $out/stacks/${stack}
-    # The working-tree cp -r can capture a developer's locally-decrypted
-    # plaintext .env (gitignored on purpose) in the world-readable store.
-    rm -f $out/stacks/${stack}/.env
-    rm -f $out/stacks/${stack}/.sops.env.example $out/stacks/${stack}/.sops.env
+    # The working-tree cp -r can capture a developer's stray plaintext .env
+    # (gitignored on purpose) in the world-readable store.
+    rm -f $out/stacks/${stack}/.env $out/stacks/${stack}/secrets.sops.json
     ${lib.optionalString hasFixture ''
-      cp ${fixture} $out/stacks/${stack}/.sops.env
+      ln -s /run/stack-env/${stack}.env $out/stacks/${stack}/.env
     ''}
   '';
 in
@@ -176,15 +179,18 @@ pkgs.testers.runNixOSTest {
 
         # Keep the deploy plane out of the boot path: its images and bootstrap
         # ordering dominate this suite's runtime. Coverage lost — the
-        # decrypt-sops-envs -> docker-network-homelab -> bootstrap-komodo
+        # stack-env-publish -> docker-network-homelab -> bootstrap-komodo
         # chain and Komodo itself — is exactly what checks.services covers.
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # stack-git-sync would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
-        # decrypt-sops-envs.service `requires = srv.mount`; without a real
-        # mount unit it never starts. tmpfs gives a genuine .mount unit, and
-        # /mnt/{fast,slow} back whatever volume roots the compose file names.
+        # bootstrap-komodo `requires = srv.mount`; tmpfs gives a genuine .mount
+        # unit, and /mnt/{fast,slow} back whatever volume roots the compose
+        # file names.
         virtualisation.fileSystems = {
           "/srv" = {
             device = "tmpfs";
@@ -209,14 +215,12 @@ pkgs.testers.runNixOSTest {
         ]
         ++ checkedMntRules;
 
-        # Populate /srv before decrypt-sops-envs reads it; on the real host
-        # stack-git-sync plays this role.
+        # Populate /srv with the stack directory; on the real host Komodo's
+        # clone plays this role.
         systemd.services.seed-srv = {
           description = "Seed /srv with the ${stack} stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -255,8 +259,8 @@ pkgs.testers.runNixOSTest {
              "docker compose -f /srv/stacks/${stack}/compose.yaml -p ${stack} ps -a || true"),
             ("compose logs",
              "docker compose -f /srv/stacks/${stack}/compose.yaml -p ${stack} logs --tail=100 || true"),
-            ("decrypt-sops-envs journal",
-             "journalctl -u decrypt-sops-envs --no-pager -o cat | tail -20"),
+            ("stack-env-publish journal",
+             "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("docker journal",
              "journalctl -u docker --no-pager -o cat | tail -30"),
         ]:
@@ -273,28 +277,33 @@ pkgs.testers.runNixOSTest {
     # The waits live inside the try so a boot-chain failure still gets a
     # journal dump instead of a bare stack trace.
     try:
-        services_vm.wait_for_unit("multi-user.target")
+        try:
+            # 600s: the production NIC name (ens18) is absent here and its
+            # device job times out at ~300s before multi-user settles.
+            services_vm.wait_for_unit("multi-user.target", timeout=600)
+        except Exception:
+            # Boot never settled: name the job holding it before failing.
+            print(services_vm.execute(
+                "systemctl list-jobs --no-pager; systemctl --failed --no-pager"
+            )[1])
+            raise
         if has_fixture:
-            # A transient oneshot (a minutely timer re-fires it), so
-            # wait_for_unit would race its inactive-after-success state; the
-            # artifact is the synchronisation point. 120s = two timer ticks.
-            services_vm.wait_until_succeeds(
-                "test -s /srv/stacks/${stack}/.env", timeout=120
-            )
+            services_vm.wait_for_unit("stack-env-publish.service")
         # The compose files attach to the external 'homelab' network; its
         # unit is wantedBy multi-user.target independently of the masked
         # bootstrap-komodo (it requires only docker.service).
         services_vm.wait_for_unit("docker-network-homelab.service")
 
         if has_fixture:
-            with subtest("the fixture .sops.env decrypted to a 0600 .env"):
-                # Real sops against the fixture: a stack whose .env is missing
-                # or world-readable is a deploy failure before compose starts.
-                services_vm.succeed("test -s /srv/stacks/${stack}/.env")
+            with subtest("the fixture rendered to a root-only /run/stack-env file"):
+                # Real sops-nix against the fixture: a stack whose env is
+                # missing or readable beyond root is a deploy failure before
+                # compose starts.
+                services_vm.succeed("test -s /run/stack-env/${stack}.env")
                 mode = services_vm.succeed(
-                    "stat -c '%a' /srv/stacks/${stack}/.env"
+                    "stat -c '%a %U' /run/stack-env/${stack}.env"
                 ).strip()
-                assert mode == "600", f"expected mode 600, got {mode}"
+                assert mode == "400 root", f"expected '400 root', got {mode!r}"
 
         with subtest("docker compose up --wait succeeds"):
             services_vm.succeed(

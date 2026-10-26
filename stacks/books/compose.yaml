@@ -202,11 +202,7 @@ services:
       # JWT_SECRET_KEY arrives from .env: without it the token secret is
       # generated into the database, so it cannot be rotated and a restore
       # from nothing invalidates every session.
-    # Long form: a deploy can race the host-side decrypt, and the plain form
-    # aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/books.env
     healthcheck:
       # The image ships no healthcheck and has NO curl (only busybox wget), so
       # a curl-based probe fails 100% of the time and reads as an app failure.
@@ -237,9 +233,7 @@ services:
       - ./kavita-config-init.sh:/init/kavita-config-init.sh:ro
       - ./appsettings.json.template:/template/appsettings.json.template:ro
       - /mnt/fast/kavita/config:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/books.env
     restart: "no"
 
   # Seeding
@@ -258,7 +252,5 @@ services:
         condition: service_healthy
     volumes:
       - ./books-init.sh:/init/books-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/books.env
     restart: "no"

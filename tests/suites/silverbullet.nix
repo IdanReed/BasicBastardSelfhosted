@@ -66,12 +66,14 @@ let
   seedSrv = pkgs.runCommand "srv-seed-silverbullet" { } ''
     for s in silverbullet forgejo ntfy; do
       mkdir -p $out/stacks/$s
-      cp -r ${../../stacks}/$s/. $out/stacks/$s/
+      # forgejo/ sits at the repo root (the host runs it, not Komodo).
+      if [ $s = forgejo ]; then src=${../../forgejo}; else src=${../../stacks}/$s; fi
+      cp -r $src/. $out/stacks/$s/
       chmod -R u+w $out/stacks/$s
-      rm -f $out/stacks/$s/.env $out/stacks/$s/.sops.env.example $out/stacks/$s/.sops.env
+      rm -f $out/stacks/$s/.env $out/stacks/$s/secrets.sops.json
     done
-    cp ${../fixtures/silverbullet.sops.env} $out/stacks/silverbullet/.sops.env
-    cp ${../fixtures/ntfy.sops.env} $out/stacks/ntfy/.sops.env
+    ln -s /run/stack-env/silverbullet.env $out/stacks/silverbullet/.env
+    ln -s /run/stack-env/ntfy.env $out/stacks/ntfy/.env
   '';
 
   # Real ownership rows for all three stacks (space and forgejo are
@@ -114,10 +116,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The Forgejo here serves the WIKI mirror, not the compose repo —
-        # stack-git-sync would still fail its clone (no BasicBastardSelfhosted
-        # repo) every tick.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
         virtualisation.cores = lib.mkForce 2;
 
         virtualisation.emptyDiskImages = [ 8192 ];
@@ -146,8 +149,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv from the repo (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";

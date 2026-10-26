@@ -75,9 +75,7 @@ services:
       # default) `ensure_secret` GENERATES one into the bind mount, invisible to
       # sops — and it derives the password salt and signs every confirm-scheme
       # link, so a restore from anything but a byte-exact copy locks everyone out.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/docspace.env
     healthcheck:
       # The baked check greps supervisorctl for FATAL|BACKOFF — no HTTP, no
       # database, and STARTING counts as healthy. This probes the portal's API.
@@ -116,9 +114,7 @@ services:
       - JWT_HEADER=AuthorizationJwt
       - JWT_IN_BODY=true
       # JWT_SECRET arrives from .env and must equal DOCUMENT_SERVER_JWT_SECRET.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/docspace.env
     healthcheck:
       # 🚨 /healthcheck returns 200 with a body of `true` or `false`, so a
       # status-code probe is green on a broken converter.
@@ -146,9 +142,7 @@ services:
       - MYSQL_DATABASE=docspace
       - MYSQL_USER=docspace
       # MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD arrive from .env.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/docspace.env
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 --silent']
       interval: 10s
@@ -169,7 +163,5 @@ services:
         condition: service_healthy
     volumes:
       - ./docspace-init.sh:/init/docspace-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/docspace.env
     restart: "no"

@@ -47,9 +47,7 @@ services:
       - PAPERLESS_ACCOUNT_ALLOW_SIGNUPS=false
       - USERMAP_UID=1000
       - USERMAP_GID=1000
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/paperless.env
     restart: unless-stopped
 
   db:
@@ -62,11 +60,9 @@ services:
       - POSTGRES_USER=paperless
       # POSTGRES_PASSWORD arrives from .env and must equal PAPERLESS_DBPASS.
       # 🚨 initdb applies it on FIRST start only — an already-initialised
-      # cluster keeps its old password whatever this file says (.sops.env.example
+      # cluster keeps its old password whatever this file says (secrets.example.env
       # has the ALTER USER one-liner).
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/paperless.env
     restart: unless-stopped
 
   redis:

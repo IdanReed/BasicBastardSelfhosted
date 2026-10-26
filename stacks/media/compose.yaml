@@ -33,11 +33,7 @@ services:
       # Only runs when .env sets VPN_PORT_FORWARDING=on. {{PORTS}} is
       # gluetun's v3.39+ placeholder; needs WebUI\LocalHostAuth=false.
       - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'''
-    # Long form throughout this file: a deploy can race the host-side decrypt,
-    # and the plain form aborts the whole stack when .env is absent.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     # No healthcheck stanza: the image's own dials through the tunnel, so VPN
     # down = unhealthy with the firewall still up (the kill-switch condition).
     restart: unless-stopped
@@ -119,9 +115,7 @@ services:
         echo "qbit-init: seeded $$conf"
     volumes:
       - /mnt/fast/qbittorrent/config:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
   qbittorrent:
@@ -273,9 +267,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./jellyfin-init.sh:/init/jellyfin-init.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
   # Arrs
@@ -298,9 +290,7 @@ services:
       - TZ=America/Chicago
       - RADARR__AUTH__METHOD=External
       - RADARR__AUTH__REQUIRED=Enabled
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:7878/ping >/dev/null']
       interval: 30s
@@ -323,9 +313,7 @@ services:
       - TZ=America/Chicago
       - SONARR__AUTH__METHOD=External
       - SONARR__AUTH__REQUIRED=Enabled
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:8989/ping >/dev/null']
       interval: 30s
@@ -349,9 +337,7 @@ services:
       - TZ=America/Chicago
       - PROWLARR__AUTH__METHOD=External
       - PROWLARR__AUTH__REQUIRED=Enabled
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:9696/ping >/dev/null']
       interval: 30s
@@ -372,9 +358,7 @@ services:
       - ./seerr-init.sh:/init/seerr-init.sh:ro
       - ./seerr-settings.json:/template/settings.json:ro
       - /mnt/fast/seerr/config:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
   seerr:
@@ -417,9 +401,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./seerr-bootstrap.sh:/init/seerr-bootstrap.sh:ro
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
   # Subtitles
@@ -434,9 +416,7 @@ services:
     volumes:
       - ./bazarr-config-init.sh:/init/bazarr-config-init.sh:ro
       - /mnt/fast/bazarr/config:/config
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
   bazarr:
@@ -477,9 +457,7 @@ services:
       - TZ=America/Chicago
       - AUTH=on
       # PROFILARR_API_KEY (>=32 chars) arrives from .env below.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     healthcheck:
       # Toolset not pinned down (python base): try curl, wget, then python.
       # Any 2xx/3xx on the SPA root is up.
@@ -604,9 +582,7 @@ services:
       - ./media-init.sh:/init/media-init.sh:ro
       # For the /data skeleton (mkdir + chown 1000:1000).
       - /mnt/slow/data:/data
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/media.env
     restart: "no"
 
 networks:

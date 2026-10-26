@@ -64,45 +64,15 @@ in
     restartUnits = [ "authentik.service" ];
   };
 
-  # Each OIDC client secret has a twin in the app's own stack .sops.env
-  # (secrets-gen/manifest.yaml draws one value into both). Rotate = both sops
-  # files + a VPS switch + re-up the stack; a mismatch 401s at token exchange,
-  # silently. Outline is the one with no local accounts, so for it a mismatch
-  # is a total lockout rather than a degraded login path.
+  # The app OIDC client secrets and the per-user login passwords come from
+  # secrets/shared.sops.json (secrets/shared.nix declares them): the services
+  # VM renders the SAME value into each app's env, so the two sides cannot
+  # drift. Rotate = edit the shared file, switch both hosts, push.
   sops.secrets = {
     PG_PASS = { };
     AUTHENTIK_SECRET_KEY = { };
 
     HEADSCALE_OIDC_CLIENT_SECRET = { };
-    IMMICH_OIDC_CLIENT_SECRET = { };
-    OUTLINE_OIDC_CLIENT_SECRET = { };
-    JELLYFIN_OIDC_CLIENT_SECRET = { };
-    KAVITA_OIDC_CLIENT_SECRET = { };
-    ABS_OIDC_CLIENT_SECRET = { };
-    PAPERLESS_OIDC_CLIENT_SECRET = { };
-    BOOKSTACK_OIDC_CLIENT_SECRET = { };
-    HOMEBOX_OIDC_CLIENT_SECRET = { };
-    KARAKEEP_OIDC_CLIENT_SECRET = { };
-    DAWARICH_OIDC_CLIENT_SECRET = { };
-    TANDOOR_OIDC_CLIENT_SECRET = { };
-    MEALIE_OIDC_CLIENT_SECRET = { };
-    VAULTWARDEN_OIDC_CLIENT_SECRET = { };
-    GHOSTFOLIO_OIDC_CLIENT_SECRET = { };
-    ACTUAL_OPENID_CLIENT_SECRET = { };
-    WEALTHFOLIO_OIDC_CLIENT_SECRET = { };
-    EXCALIDRAW_OIDC_CLIENT_SECRET = { };
-    FORGEJO_OIDC_CLIENT_SECRET = { };
-
-    # Per-user login passwords, re-asserted by headscale-oidc.yaml on every
-    # apply. Hand-set human-memorable values; copy_only twins to Windmill +
-    # Samba.
-    IDAN_INITIAL_PASSWORD = { };
-    ALONDRA_INITIAL_PASSWORD = { };
-    CALE_INITIAL_PASSWORD = { };
-    ZACH_INITIAL_PASSWORD = { };
-    RYLAN_INITIAL_PASSWORD = { };
-    CAMERON_INITIAL_PASSWORD = { };
-    JUSTIN_INITIAL_PASSWORD = { };
 
     # Without these nobody can log in at all: the blueprint's users have no
     # credential and no SMTP is configured for a reset link. The worker

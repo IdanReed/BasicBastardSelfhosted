@@ -75,9 +75,7 @@ services:
       # ⚠ An unset SECRET_KEY is nearly invisible: the image falls back to a
       # fresh random key per restart with only a warnings.warn, and the symptom
       # is "everyone is logged out after every restart".
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/wger.env
     healthcheck:
       # Upstream's own liveness probe — it does not touch the database. The
       # 300s start period is real: first boot migrates and loads 872 exercise
@@ -127,9 +125,7 @@ services:
       - POSTGRES_USER=wger
       - POSTGRES_DB=wger
       # POSTGRES_PASSWORD arrives from .env, shared with DJANGO_DB_PASSWORD.
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/wger.env
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wger -d wger']
       interval: 10s
@@ -179,9 +175,7 @@ services:
       - DJANGO_DB_PORT=5432
       # Required for settings to import at all — see the app service.
       - DJANGO_DEBUG=False
-    env_file:
-      - path: .env
-        required: false
+    env_file: /run/stack-env/wger.env
     restart: "no"
 
 volumes:

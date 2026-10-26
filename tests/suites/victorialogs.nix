@@ -74,7 +74,7 @@ let
     chmod -R u+w $out/stacks/logging
     rm -f $out/stacks/logging/.env
     rm -f $out/stacks/logging/.sops.env $out/stacks/logging/.sops.env.example
-    cp ${../fixtures/logging.sops.env} $out/stacks/logging/.sops.env
+    ln -s /run/stack-env/logging.env $out/stacks/logging/.env
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -106,8 +106,11 @@ pkgs.testers.runNixOSTest {
         ];
 
         systemd.services.bootstrap-komodo.wantedBy = lib.mkForce [ ];
-        # The stack-git-sync timer would fail its clone every tick with no Forgejo here.
-        systemd.timers.stack-git-sync.wantedBy = lib.mkForce [ ];
+        # Komodo's sync bootstrap Requires the masked unit and would pull it
+        # back in; Forgejo runs from the host too, and only the forgejo and
+        # gitops suites load its image.
+        systemd.services.komodo-sync-bootstrap.wantedBy = lib.mkForce [ ];
+        systemd.services.forgejo.wantedBy = lib.mkForce [ ];
 
         virtualisation.fileSystems = {
           "/srv" = {
@@ -148,8 +151,6 @@ pkgs.testers.runNixOSTest {
           description = "Seed /srv with the logging stack (test only)";
           after = [ "srv.mount" ];
           requires = [ "srv.mount" ];
-          before = [ "decrypt-sops-envs.service" ];
-          requiredBy = [ "decrypt-sops-envs.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
@@ -193,7 +194,7 @@ pkgs.testers.runNixOSTest {
             ("compose ps", f"{COMPOSE} ps -a || true"),
             ("compose logs", f"{COMPOSE} logs --tail=100 || true"),
             ("decrypt-sops-envs journal",
-             "journalctl -u decrypt-sops-envs --no-pager -o cat | tail -20"),
+             "journalctl -u stack-env-publish --no-pager -o cat | tail -20"),
             ("docker journal",
              "journalctl -u docker --no-pager -o cat | tail -30"),
         ]:
