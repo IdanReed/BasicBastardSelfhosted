@@ -89,24 +89,12 @@ let
       # modules, cloud-init + qemuGuest defaults, / by-label.
       "${nixpkgs}/nixos/modules/virtualisation/proxmox-image.nix"
 
-      # nixos/flake.nix's inline image-extras module, replicated verbatim.
-      # It overlaps proxmox-image.nix on several options with equal values —
-      # the same overlap the real image build merges, kept here so a drift
-      # between the two (flake edited, module bumped) fails this suite's
-      # eval exactly like it would fail the flake's.
-      {
-        services.cloud-init = {
-          enable = true;
-          network.enable = true;
-        };
-        services.qemuGuest.enable = true;
-        boot.growPartition = true;
-        fileSystems."/" = {
-          device = "/dev/disk/by-label/nixos";
-          fsType = "ext4";
-          autoResize = true;
-        };
-      }
+      # The shipped image-extras module itself (the root flake's
+      # packages.proxmox-image imports the same file). It overlaps
+      # proxmox-image.nix on several options with equal values — the same
+      # overlap the real image build merges, so a drift between the two fails
+      # this suite's eval exactly like it would fail the flake's.
+      ../../nixos/proxmox-image.nix
 
       # Fixture-file half of profiles.sopsFixture (see header for why the
       # key-planting half must not come along).

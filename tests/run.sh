@@ -107,7 +107,7 @@ case "$TARGET" in
       # leak here — only committed placeholders match.
       pending=$(git -C "$root" grep -lE 'changeme_' -- 'stacks/**/.sops.env.example' 'headscale-vps/**/*.example' 2>/dev/null || true)
       [ -n "$pending" ] && { echo "  .sops.env still on placeholders (fill before deploy):"; echo "$pending" | sed 's/^/    /'; } || echo "  .sops.env placeholders: none flagged"
-      nulls=$(git -C "$root" grep -n '= null' -- 'nixos-de/ssh-pubkeys.nix' 2>/dev/null || true)
+      nulls=$(git -C "$root" grep -n '= null' -- 'ssh-pubkeys.nix' 2>/dev/null || true)
       [ -n "$nulls" ] && { echo "  ssh-pubkeys.nix null entries (generate keypairs before deploy):"; echo "$nulls" | sed 's/^/    /'; } || echo "  ssh-pubkeys null entries: none"
       # An exemption a lint accepts but nobody has actually ruled on — today
       # auth-coverage-required's unauthenticated vhosts. Green build, open
@@ -140,14 +140,14 @@ case "$TARGET" in
     ;;
 
   proxmox)
-    # A flake build, not a tests attr: the image recipe lives in nixos/flake.nix.
-    exec nix build ./nixos#proxmox-image --no-link --print-build-logs
+    # A flake build, not a tests attr: the image recipe lives in the root flake.
+    exec nix build .#proxmox-image --no-link --print-build-logs
     ;;
 
   all)
     nix-build tests "${NIX_ARGS[@]}" -A all --no-out-link
     # The image build gate rides along: "all" should mean all.
-    exec nix build ./nixos#proxmox-image --no-link --print-build-logs
+    exec nix build .#proxmox-image --no-link --print-build-logs
     ;;
 
   *)

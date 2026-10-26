@@ -1,8 +1,7 @@
 { pkgs, lib, ... }:
 
 let
-  # Copy of nixos-de/ssh-pubkeys.nix; the ssh-pubkey-parity lint guards drift.
-  sshPubkeys = import ./ssh-pubkeys.nix;
+  sshPubkeys = import ../ssh-pubkeys.nix;
 
   # Online resize after growing a disk in Proxmox. A binary, not a shell
   # alias: `sudo grow-disk` is the documented usage and sudo never sees an

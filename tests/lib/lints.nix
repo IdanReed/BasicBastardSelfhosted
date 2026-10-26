@@ -13,9 +13,6 @@
   # stubbed — see default.nix). Needed because the VM suites replace the
   # hardware config, so its tmpfiles rules are otherwise never evaluated.
   servicesFullConfig,
-  # The relative-path module list default.nix evaluates for the VPS, for
-  # cross-checking against headscale-vps/flake.nix (module-list-parity).
-  vpsModuleFiles,
   images,
   # The ServerNotes checkout (a sibling repo, so not reachable through `repo`).
   # Passed in rather than hardcoded so a linked git worktree can point at the
@@ -1010,56 +1007,6 @@ in
       PY
     '';
 
-  # The harness pins its sources from headscale-vps/flake.lock, so every input
-  # the two locks SHARE must agree — not just nixpkgs. Resolved through each
-  # lock's root inputs mapping: a node LABEL is not an input name (`follows`
-  # and duplicates yield "nixpkgs_2"), so labels can compare the wrong node.
-  flake-input-parity =
-    mkLint "flake-input-parity" ''
-      ${py} - <<'PY'
-      import json, sys
-
-      locks = {
-          "headscale-vps": "${(repo + "/headscale-vps/flake.lock")}",
-          "nixos":         "${(repo + "/nixos/flake.lock")}",
-      }
-
-      # Both flakes commit their lock, so a missing one is a broken checkout.
-      data = {host: json.load(open(path)) for host, path in locks.items()}
-
-      def root_inputs(lock):
-          return lock["nodes"][lock["root"]]["inputs"]
-
-      def rev(lock, name):
-          label = root_inputs(lock)[name]
-          if not isinstance(label, str):
-              # A list is a follows-path; top-level inputs are plain labels.
-              sys.exit(f"root input {name!r} is a follows path — lock shape "
-                       f"unsupported by this lint")
-          return lock["nodes"][label]["locked"]["rev"]
-
-      common = sorted(set.intersection(
-          *(set(root_inputs(l)) for l in data.values())))
-
-      errs = []
-      for name in common:
-          revs = {host: rev(lock, name) for host, lock in data.items()}
-          if len(set(revs.values())) > 1:
-              detail = ", ".join(f"{h}={r[:12]}" for h, r in revs.items())
-              errs.append(f"input '{name}' drifted: {detail}")
-
-      if errs:
-          print("flake input drift between the host locks:", file=sys.stderr)
-          for e in errs:
-              print("  - " + e, file=sys.stderr)
-          print("The harness pins from headscale-vps, so the nixos host is "
-                "tested against different inputs than it is built with.",
-                file=sys.stderr)
-          sys.exit(1)
-      print(f"flake input parity OK ({', '.join(common)})")
-      PY
-    '';
-
   # Three strings must agree or the authentik jail reads zero journal lines
   # FOREVER while fail2ban-client still lists it active: the compose journald
   # tag, the jail's journalmatch, and the filter file's. No suite sees it.
@@ -1390,44 +1337,10 @@ in
       PY
     '';
 
-  # default.nix hand-mirrors the VPS module list (the harness is not a flake),
-  # so a module added to the flake alone is deployed yet invisible to every
-  # lint. disk-config.nix is excluded by the regex on purpose — it needs
-  # disko's module and diskoTest covers it. nixos/ has no list to drift.
-  module-list-parity =
-    mkLint "module-list-parity" ''
-      ${py} - <<'PY'
-      import json, re, sys
-
-      flake = open("${(repo + "/headscale-vps/flake.nix")}").read()
-      in_flake = set(re.findall(
-          r"\./((?:configuration|modules/[A-Za-z0-9_.-]+)\.nix)", flake))
-      evaluated = set(json.loads(${builtins.toJSON (builtins.toJSON vpsModuleFiles)}))
-
-      errs = []
-      for m in sorted(in_flake - evaluated):
-          errs.append(f"{m} is deployed by headscale-vps/flake.nix but not in "
-                      f"tests/default.nix's vpsModuleFiles — every lint is "
-                      f"blind to whatever it configures")
-      for m in sorted(evaluated - in_flake):
-          errs.append(f"{m} is evaluated by tests/default.nix but not "
-                      f"deployed by headscale-vps/flake.nix — the lints "
-                      f"assert a config the host does not run")
-
-      if errs:
-          print("module list drift (tests/default.nix vs "
-                "headscale-vps/flake.nix):", file=sys.stderr)
-          for e in errs:
-              print("  - " + e, file=sys.stderr)
-          sys.exit(1)
-      print(f"module list parity OK ({len(evaluated)} modules)")
-      PY
-    '';
-
-  # nixos-de/ssh-pubkeys.nix is canonical; the other two flakes carry
-  # byte-identical copies because a flake cannot reference paths outside its
-  # root. A drifted copy silently authorises a stale key on the next deploy of
-  # the other host. Bytes, not attrset equality: the comments are contract too.
+  # The root ssh-pubkeys.nix is canonical; nixos-de/ keeps a byte-identical
+  # copy because its flake cannot reference paths outside its root. A drifted
+  # copy silently authorises a stale key on the next desktop deploy. Bytes, not
+  # attrset equality: the comments are contract too.
   ssh-pubkey-parity =
     let
       readOrNull = f: if builtins.pathExists (repo + "/${f}") then builtins.readFile (repo + "/${f}") else null;
@@ -1436,9 +1349,8 @@ in
         name = f;
         text = readOrNull f;
       }) [
+        "ssh-pubkeys.nix"
         "nixos-de/ssh-pubkeys.nix"
-        "nixos/ssh-pubkeys.nix"
-        "headscale-vps/ssh-pubkeys.nix"
       ];
     in
     mkLint "ssh-pubkey-parity" ''
@@ -1451,8 +1363,8 @@ in
       errs = []
       for c in copies:
           if c["text"] is None:
-              errs.append(f"{c['name']} does not exist — every flake must "
-                          f"carry its byte-identical copy of the identity "
+              errs.append(f"{c['name']} does not exist — the desktop flake "
+                          f"must carry a byte-identical copy of the identity "
                           f"list (canonical: {canonical['name']})")
       if canonical["text"] is not None:
           for c in copies[1:]:

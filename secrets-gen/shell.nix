@@ -1,5 +1,5 @@
 # Devshell for sops-gen: every generator dependency, hermetically.
-# nixpkgs pinned from headscale-vps/flake.lock via tests/lib/sources.nix —
+# nixpkgs pinned from the root flake.lock via tests/lib/sources.nix —
 # same trick as tests/, and deliberately not a flake for the same reason
 # (flakes only see git-tracked files).
 #
@@ -8,7 +8,7 @@
   system ? builtins.currentSystem,
 }:
 let
-  sources = import ../tests/lib/sources.nix { lockFile = ../headscale-vps/flake.lock; };
+  sources = import ../tests/lib/sources.nix { lockFile = ../flake.lock; };
   pkgs = import sources.nixpkgs { inherit system; };
 in
 pkgs.mkShell {

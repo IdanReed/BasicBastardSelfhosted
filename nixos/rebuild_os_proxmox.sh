@@ -15,7 +15,8 @@ BUILD_IMAGE="${2:-}"
 
 if [[ "$BUILD_IMAGE" == "--build" ]]; then
     echo "> Building NixOS Proxmox image..."
-    nix build .#proxmox-image
+    # The image recipe lives in the repo-root flake; the out-link stays here.
+    nix build ..#proxmox-image
 fi
 
 # The image name carries the nixpkgs version (vzdump-qemu-nixos-<ver>.vma.zst),
@@ -25,7 +26,7 @@ IMAGE_PATH=$(ls ./result/vzdump-qemu-*.vma.zst 2>/dev/null | head -1 || true)
 
 if [[ -z "$IMAGE_PATH" || ! -f "$IMAGE_PATH" ]]; then
     echo "> Error: no vzdump-qemu-*.vma.zst under ./result/"
-    echo "> Run with --build flag or build manually with: nix build .#proxmox-image"
+    echo "> Run with --build flag or build manually with: nix build ..#proxmox-image"
     exit 1
 fi
 

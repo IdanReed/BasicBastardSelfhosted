@@ -3,9 +3,9 @@
 #
 # Deliberately NOT a flake: flakes only see git-tracked files, so every edit to
 # an in-progress module would need a `git add` before it could be tested, and
-# path inputs would need a re-lock. nixpkgs is pinned from
-# headscale-vps/flake.lock instead (lib/sources.nix), so the suites evaluate
-# against exactly the nixpkgs the hosts are built with.
+# path inputs would need a re-lock. nixpkgs is pinned from the root
+# flake.lock instead (lib/sources.nix), so the suites evaluate against exactly
+# the nixpkgs the hosts are built with.
 
 {
   system ? builtins.currentSystem,
@@ -20,7 +20,7 @@
 }:
 
 let
-  sources = import ./lib/sources.nix { lockFile = ../headscale-vps/flake.lock; };
+  sources = import ./lib/sources.nix { lockFile = ../flake.lock; };
 
   pkgs = import sources.nixpkgs { inherit system; };
   inherit (pkgs) lib;
@@ -53,19 +53,12 @@ let
       ];
     }).config;
 
-  # Mirrored by hand from headscale-vps/flake.nix, which the harness cannot
-  # import. Keep these as relative-path strings: module-list-parity compares
-  # them against the flake's text verbatim. disk-config.nix is deliberately
-  # absent — it needs disko's module, and diskoTest covers it.
-  vpsModuleFiles = [
-    "configuration.nix"
-    "modules/caddy.nix"
-    "modules/headscale.nix"
-    "modules/authentik.nix"
-    "modules/log-shipper.nix"
+  # The same module set the root flake deploys (headscale-vps/host.nix), so the
+  # lints cannot evaluate a config the host does not run.
+  vpsConfig = evalHost [
+    sopsModule
+    ../headscale-vps/host.nix
   ];
-
-  vpsConfig = evalHost ([ sopsModule ] ++ map (f: ../headscale-vps + "/${f}") vpsModuleFiles);
 
   servicesConfig = evalHost [
     sopsModule
@@ -117,7 +110,6 @@ let
       vpsConfig
       servicesConfig
       servicesFullConfig
-      vpsModuleFiles
       images
       serverNotes
       ;

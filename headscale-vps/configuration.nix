@@ -1,8 +1,7 @@
 { config, pkgs, lib, modulesPath, ... }:
 
 let
-  # Byte-identical copy of nixos-de/ssh-pubkeys.nix; ssh-pubkey-parity lints it.
-  sshPubkeys = import ./ssh-pubkeys.nix;
+  sshPubkeys = import ../ssh-pubkeys.nix;
 in
 {
   # Hetzner Cloud is KVM: without virtio in stage 1 the boot hangs waiting for

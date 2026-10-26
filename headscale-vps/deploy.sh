@@ -86,7 +86,7 @@ fi
 # Pinned: this runs locally with the age master key staged and as root on the
 # target, so a floating ref would hand upstream's default branch both.
 nix run github:nix-community/nixos-anywhere/1.13.0 -- \
-    --flake ".#headscale-vps" \
+    --flake "..#headscale-vps" \
     --extra-files "$EXTRA_FILES_DIR" \
     "root@$VPS_IP"
 
@@ -106,5 +106,5 @@ echo "  sudo systemctl status authentik"
 echo "  sudo journalctl -u headscale -f"
 echo ""
 echo "For config-only updates (no reinstall):"
-echo "  nixos-rebuild switch --target-host idan@$VPS_IP --use-remote-sudo --flake .#headscale-vps"
+echo "  nixos-rebuild switch --target-host idan@$VPS_IP --use-remote-sudo --flake ..#headscale-vps"
 echo ""

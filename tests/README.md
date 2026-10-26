@@ -56,11 +56,9 @@ could be tested — and if the host directories were path inputs, every edit
 would also need a re-lock. Plain Nix has neither problem: relative paths just
 work and iteration is instant.
 
-`nixpkgs` is pinned from `headscale-vps/flake.lock` (see `lib/sources.nix`), so
-the suites evaluate against exactly the nixpkgs the hosts are built with. The
-`flake-input-parity` lint fails if `nixos/flake.lock` drifts from it, because a
-suite testing against a different nixpkgs than the host is built with is a
-green light that means nothing.
+`nixpkgs` is pinned from the root `flake.lock` (see `lib/sources.nix`) — the
+one lock both servers are built from — so the suites evaluate against exactly
+the nixpkgs the hosts are built with.
 
 ## Layout
 

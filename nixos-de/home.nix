@@ -60,7 +60,7 @@
     shellAliases =
       let
         flakeDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/nixos-de";
-        vpsDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/headscale-vps";
+        serverDir = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted";
         myAliases = {
           ".." = "cd ..";
           "..." = "cd ../..";
@@ -74,8 +74,10 @@
           nrs = "sudo nixos-rebuild switch --flake ${flakeDir}#desktop";
           nrb = "sudo nixos-rebuild build --flake ${flakeDir}#desktop";
           # No local sudo: the build is user-side, privilege is remote.
-          "nrs-vps" = "nixos-rebuild switch --flake ${vpsDir}#headscale-vps --target-host idan@vps --use-remote-sudo";
-          "nrb-vps" = "nixos-rebuild build --flake ${vpsDir}#headscale-vps";
+          "nrs-vps" = "nixos-rebuild switch --flake ${serverDir}#headscale-vps --target-host idan@vps --use-remote-sudo";
+          "nrb-vps" = "nixos-rebuild build --flake ${serverDir}#headscale-vps";
+          "nrs-vm" = "nixos-rebuild switch --flake ${serverDir}#services-vm --target-host idan@10.0.0.3 --use-remote-sudo";
+          "nrb-vm" = "nixos-rebuild build --flake ${serverDir}#services-vm";
           # deploy [stack…] — gate -> push -> nrs-vps -> sync+decrypt ->
           # redeploy -> verify. Superset of `redeploy`; see the script header.
           deploy = "${config.home.homeDirectory}/local/projects/server/BasicBastardSelfhosted/deploy";

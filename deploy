@@ -92,7 +92,7 @@ fi
 
 if [[ $FORCE_VPS -eq 1 ]] || printf '%s\n' "$CHANGED" | grep -q '^headscale-vps/'; then
   say "headscale-vps changed -> nrs-vps (Authentik / headscale / ACL)"
-  nixos-rebuild switch --flake "$REPO/headscale-vps#headscale-vps" \
+  nixos-rebuild switch --flake "$REPO#headscale-vps" \
     --target-host idan@vps --use-remote-sudo
 fi
 
@@ -102,7 +102,7 @@ fi
 # exactly this shape (the sync unit normalises file modes during the sync).
 if [[ $FORCE_VM -eq 1 ]] || printf '%s\n' "$CHANGED" | grep -q '^nixos/'; then
   say "nixos/ changed -> services-VM OS rebuild (git-sync / decrypt / komodo-bootstrap units)"
-  nixos-rebuild switch --flake "$REPO/nixos#services-vm" \
+  nixos-rebuild switch --flake "$REPO#services-vm" \
     --target-host "$VM" --use-remote-sudo
 fi
 

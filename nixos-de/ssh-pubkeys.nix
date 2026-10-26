@@ -1,7 +1,6 @@
-# SSH public keys by identity name. CANONICAL COPY: nixos-de/ssh-pubkeys.nix;
-# nixos/ and headscale-vps/ carry byte-identical copies because a flake
-# cannot reference paths outside its own root. The ssh-pubkey-parity lint
-# fails the harness if the three copies drift.
+# SSH public keys by identity name — the one copy both servers import (the
+# root flake sees the whole repo). nixos-de/ keeps a byte-identical copy until
+# the desktop joins the root flake; the ssh-pubkey-parity lint fails on drift.
 #
 # null = keypair not generated yet. Consumers filter nulls, so an unfilled
 # entry means "no access granted" rather than an eval failure; the lint
