@@ -2160,10 +2160,18 @@ in
     mkLint "komodo-sync-coverage" ''
       ${py} - <<'PY'
       import json, re, sys, tomllib
+      import yaml
 
       stacks = json.loads(${builtins.toJSON (builtins.toJSON stackInfo)})
       import os
       syncdir = "${repo + "/komodo/sync"}"
+      # A filtered copy: a developer's local plaintext .env must never reach
+      # the world-readable store.
+      stacksdir = "${builtins.path {
+        path = repo + "/stacks";
+        name = "stacks-sans-env";
+        filter = p: _: baseNameOf p != ".env";
+      }}"
       declared = tomllib.load(open(f"{syncdir}/stacks.toml", "rb")).get("stack", [])
       fleet = tomllib.load(open("${repo + "/komodo/fleet.toml"}", "rb"))
       errs = []
@@ -2214,7 +2222,9 @@ in
               errs.append(f"{n}: config.environment is set — Komodo would write its own env "
                           f"file; secrets come only from /run/stack-env/{n}.env")
           env = c.get("additional_env_files", [])
-          files = {f["path"]: f.get("requires") for f in c.get("config_files", [])}
+          secret_paths = {"secrets.sops.json", "../../secrets/shared.sops.json"}
+          files = {f["path"]: f.get("requires") for f in c.get("config_files", [])
+                   if f["path"] in secret_paths}
           if s["hasEnv"]:
               if env != [{"path": f"/run/stack-env/{n}.env", "track": False}]:
                   errs.append(f"{n}: additional_env_files must be exactly "
@@ -2230,7 +2240,39 @@ in
               if not s["readsShared"] and shared is not None:
                   errs.append(f"{n}: tracks the shared file but its env.nix never reads it")
           elif env or files:
-              errs.append(f"{n}: has no secrets, so no additional_env_files/config_files")
+              errs.append(f"{n}: has no secrets, so no additional_env_files or secrets config_files")
+
+          # Every repo file a service bind-mounts is tracked as Restart for its
+          # consumers: an untracked file never counts as a change (the push
+          # deploys nothing), and `up -d` alone never re-binds a single-file
+          # mount — a restart re-binds by path.
+          want_cf = {}
+          comp = yaml.safe_load(open(f"{stacksdir}/{n}/compose.yaml"))
+          for svc, sd in (comp.get("services") or {}).items():
+              for v in sd.get("volumes") or []:
+                  src = v.split(":")[0] if isinstance(v, str) else (
+                      v.get("source") if v.get("type", "bind") == "bind" else None)
+                  if not src or not src.startswith("./"):
+                      continue
+                  rel = os.path.normpath(src[2:])
+                  full = f"{stacksdir}/{n}/{rel}"
+                  paths = ([os.path.relpath(os.path.join(d, f), f"{stacksdir}/{n}")
+                            for d, _, fs in os.walk(full) for f in fs]
+                           if os.path.isdir(full) else [rel])
+                  for pth in paths:
+                      want_cf.setdefault(pth, set()).add(svc)
+          have_cf = {f["path"]: f for f in c.get("config_files", []) if f["path"] not in secret_paths}
+          for pth in sorted(set(want_cf) - set(have_cf)):
+              errs.append(f"{n}: {pth} is bind-mounted by {sorted(want_cf[pth])} but not in "
+                          f"config_files — add {{ path = \"{pth}\", services = "
+                          f"{json.dumps(sorted(want_cf[pth]))}, requires = \"Restart\" }}")
+          for pth in sorted(set(have_cf) - set(want_cf)):
+              errs.append(f"{n}: config_files tracks {pth}, which nothing bind-mounts")
+          for pth in sorted(set(want_cf) & set(have_cf)):
+              f = have_cf[pth]
+              if f.get("requires") != "Restart" or sorted(f.get("services", [])) != sorted(want_cf[pth]):
+                  errs.append(f"{n}: {pth} must be requires = \"Restart\" with services = "
+                              f"{json.dumps(sorted(want_cf[pth]))}")
 
       syncs = {s["name"]: s for s in fleet.get("resource_sync", [])}
       procs = {p["name"]: p for p in fleet.get("procedure", [])}

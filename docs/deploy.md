@@ -57,6 +57,13 @@ The servers are one flake at the repo root; the desktop keeps its own in
   or (for an app reading it) `secrets/shared.sops.json` changed is redeployed;
   `docker compose up -d` then recreates only the containers whose config or
   environment changed.
+- Every repo file a service bind-mounts (a Caddyfile, an init script, a
+  template) is a `config_files` entry with `requires = "Restart"` for the
+  services that mount it — the `komodo-sync-coverage` lint derives the list
+  from `compose.yaml` and prints any missing line. A push that changes only
+  such a file restarts its consumers, which re-binds the new file. One push
+  that changes both `compose.yaml` and such a file deploys only the services
+  whose definition changed: restart the file's consumers from the UI.
 - **Removing a stack's block destroys it** (`compose down`) and unregisters it —
   the sync runs in delete mode, scoped by `match_tags = ["gitops"]`: every block
   in `komodo/sync/` carries the tag, and nothing untagged is ever touched (Core's

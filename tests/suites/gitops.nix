@@ -69,7 +69,10 @@ let
     run_directory = "stacks/ntfy"
     file_paths = ["compose.yaml"]
     additional_env_files = [{ path = "/run/stack-env/ntfy.env", track = false }]
-    config_files = [{ path = "secrets.sops.json", requires = "Redeploy" }]
+    config_files = [
+      { path = "secrets.sops.json", requires = "Redeploy" },
+      { path = "greeting.txt", services = ["gitops-test"], requires = "Restart" },
+    ]
     auto_pull = false
   '';
 
@@ -83,6 +86,9 @@ let
           command: ["sleep", "infinity"]
           # The host-rendered env, by path — the same line every stack has.
           env_file: /run/stack-env/ntfy.env
+          # A single-file bind of a repo file, the shape a Caddyfile has.
+          volumes:
+            - ./greeting.txt:/greeting:ro
           labels:
             revision: "${revision}"
           restart: unless-stopped
@@ -95,6 +101,7 @@ let
     mkdir -p $out/komodo/sync $out/stacks/ntfy
     cp ${testStacksToml} $out/komodo/sync/stacks.toml
     cp ${compose "one"} $out/stacks/ntfy/compose.yaml
+    echo hello > $out/stacks/ntfy/greeting.txt
     cp ${../fixtures/stacks/ntfy.sops.json} $out/stacks/ntfy/secrets.sops.json
   '';
 in
@@ -445,6 +452,24 @@ pkgs.testers.runNixOSTest {
         except Exception:
             diag("compose redeploy")
             raise
+
+    with subtest("a change to ONLY a bind-mounted file restarts its consumer"):
+        # Untracked, it would never count as a change; tracked as Restart,
+        # Komodo pulls and restarts the service, which re-binds by path (git
+        # replaced the file, so the old mount still shows the old inode).
+        started = services_vm.succeed(
+            "docker inspect -f '{{.State.StartedAt}}' gitops_test").strip()
+        services_vm.succeed("echo goodbye > /root/work/stacks/ntfy/greeting.txt")
+        push("change only the greeting")
+        try:
+            services_vm.wait_until_succeeds(
+                "docker exec gitops_test cat /greeting | grep -qx goodbye", timeout=300)
+        except Exception:
+            diag("config-file restart")
+            raise
+        now = services_vm.succeed(
+            "docker inspect -f '{{.State.StartedAt}}' gitops_test").strip()
+        assert now != started, "the consumer was not restarted"
 
     with subtest("a secrets change redeploys with the re-rendered value"):
         started = services_vm.succeed(
