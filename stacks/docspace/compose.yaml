@@ -130,6 +130,10 @@ services:
   # container_name and MYSQL_USER are load-bearing for backup-prepare.sh.
   docspace_db:
     image: mysql:8.4.6
+    # MariaDB/MySQL need longer than docker's 10 s default to stop cleanly. Killed
+    # mid-close, MariaDB leaves tc.log with its first byte garbled (it marks the
+    # file before deleting it) and the next start aborts: "Bad magic header in tc log".
+    stop_grace_period: 2m
     container_name: docspace_db
     user: mysql
     # expose, not publish: nothing outside the compose network needs it.

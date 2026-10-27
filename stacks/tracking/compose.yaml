@@ -114,6 +114,10 @@ services:
     # NOT `mariadb:lts` or `latest`: both resolve to 12.3.3, not the 11.4 LTS
     # line — the `lts` tag is mistagged upstream. Pin the patch version.
     image: mariadb:11.8.9
+    # MariaDB/MySQL need longer than docker's 10 s default to stop cleanly. Killed
+    # mid-close, MariaDB leaves tc.log with its first byte garbled (it marks the
+    # file before deleting it) and the next start aborts: "Bad magic header in tc log".
+    stop_grace_period: 2m
     container_name: bookstack_db
     volumes:
       - /mnt/fast/bookstack/db:/var/lib/mysql
