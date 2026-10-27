@@ -36,9 +36,9 @@ the stack in Komodo's UI.
 |---|---|---|
 | Services VM (Proxmox, `10.0.0.3`) | `.#services-vm` | OS, Komodo, Forgejo and every stack env: `nrs-vm`. Stacks: `git push forgejo main` |
 | Headscale VPS (Hetzner) | `.#headscale-vps` | `nrs-vps` — reads the **local** flake, no git, no checkout on the host |
-| Desktop | `nixos-de/` `.#desktop`, `homeConfigurations.idan` | `nrs` (system) · `hms` (home) |
+| Desktop | `.#desktop`, `homeConfigurations.idan` | `nrs` (system) · `hms` (home) |
 
-The servers are one flake at the repo root; the desktop keeps its own in
+One flake at the repo root builds all three; the desktop's modules live in
 `nixos-de/`.
 
 ---
