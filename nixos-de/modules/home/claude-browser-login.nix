@@ -32,7 +32,7 @@ let
 
       case "''${1:-}" in
         --revoke)
-          on_vps "sudo docker exec authentik_server ak shell -c \"from authentik.core.models import Token, TokenIntents; q = Token.objects.filter(intent=TokenIntents.INTENT_RECOVERY, user__username='idan'); n = q.count(); q.delete(); print(f'deleted {n} recovery token(s) for idan')\""
+          on_vps "sudo docker exec authentik_server ak shell -c \"from authentik.core.models import Token, TokenIntents; q = Token.objects.filter(intent=TokenIntents.INTENT_RECOVERY, user__username='idan'); n = q.count(); q.delete(); print(f'deleted {n} recovery token(s) for idan')\" 2>/dev/null | tail -1"
           exit 0
           ;;
         "") ;;
@@ -43,7 +43,7 @@ let
       esac
 
       # The link never reaches stdout: it goes straight into the server's stdin.
-      path=$(on_vps "sudo docker exec authentik_server ak create_recovery_key 1 idan" \
+      path=$(on_vps "sudo docker exec authentik_server ak create_recovery_key 1 idan 2>/dev/null" \
         | grep -o '/recovery/use-token/[^[:space:]]*' | head -1 || true)
       if [ -z "$path" ]; then
         echo "claude-browser-login: no recovery link in ak's output" >&2
