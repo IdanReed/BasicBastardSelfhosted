@@ -23,6 +23,18 @@ in
     # Without an explicit tag docker labels every stream with the truncated
     # container id, which changes on each `docker compose up`.
     daemon.settings = {
+      # Docker's default pools give each network a whole /16 (172.17-31) or a
+      # /20 (192.168): about 31 networks in all, and the fleet needs one per
+      # stack plus homelab, Komodo and Forgejo — a fresh host ran out ("all
+      # predefined address pools have been fully subnetted"). /24s out of
+      # 172.16.0.0/12 give 4096, clear of the LAN (10.0.0.0/24, 10.0.1.0/24)
+      # and the tailnet (100.64.0.0/10). Existing networks keep their subnets.
+      default-address-pools = [
+        {
+          base = "172.16.0.0/12";
+          size = 24;
+        }
+      ];
       log-driver = "journald";
       log-opts = {
         tag = "{{.Name}}";
