@@ -138,8 +138,12 @@ in
     systemd.services.stack-env-publish = {
       description = "Publish rendered stack environments to /run/stack-env";
       wantedBy = [ "multi-user.target" ];
-      # Komodo's own compose reads its environment from here at boot.
-      before = [ "bootstrap-komodo.service" ];
+      # Komodo's own compose reads its environment from here at boot — and
+      # BEFORE docker: dockerd restarts its containers as it starts, and a bind
+      # mount whose source file does not exist yet makes docker create a
+      # DIRECTORY there (Core's komodo-core.config.toml), which the publish
+      # below would then move the real file into.
+      before = [ "bootstrap-komodo.service" "docker.service" ];
 
       serviceConfig = {
         Type = "oneshot";
@@ -160,6 +164,13 @@ in
         for f in "$src"/*; do
           [ -f "$f" ] || continue
           n=$(basename "$f")
+          # A directory where a file belongs is docker's bind-mount placeholder
+          # (empty by construction); replace it, and say so — the container
+          # that mounted it needs a restart to see the file.
+          if [ -d "$dst/$n" ]; then
+            rmdir "$dst/$n"
+            echo "stack-env-publish: replaced docker's placeholder directory $dst/$n — restart its container" >&2
+          fi
           install -m 0400 "$f" "$dst/.$n.tmp"
           mv -f "$dst/.$n.tmp" "$dst/$n"
         done

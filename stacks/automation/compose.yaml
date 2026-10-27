@@ -60,7 +60,7 @@ services:
       # rewritten on a version change with no try/except.
       - /mnt/fast/homeassistant:/config
       # Read-only-safe: HA's only write path to this file is dead code behind
-      # a pre-0.92 version check. Secrets reach it as `!env_var` from .env
+      # a pre-0.92 version check. Secrets reach it as `!env_var` from the stack env
       # rather than a secrets.yaml, which would write decrypted secrets into
       # /config and duplicate the host's decrypt job.
       - ./configuration.yaml:/config/configuration.yaml:ro
@@ -230,7 +230,7 @@ services:
 
   # Onboarding
   #
-  # Four REST steps with the owner account from .env; see automation-init.sh
+  # Four REST steps with the owner account from the stack env; see automation-init.sh
   # for the two idempotence regimes.
   automation-init:
     image: python:3.13-alpine

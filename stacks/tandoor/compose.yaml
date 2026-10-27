@@ -36,7 +36,7 @@ services:
       - tandoor_staticfiles:/opt/recipes/staticfiles
     environment:
       - TZ=America/Chicago
-      # The five that must not be in .env — see this service's header.
+      # The five that must not be in the stack env — see this service's header.
       - DB_ENGINE=django.db.backends.postgresql
       - POSTGRES_HOST=tandoor_db
       - POSTGRES_PORT=5432
@@ -62,7 +62,7 @@ services:
       # allauth's default, pinned so a future change cannot silently close it.
       # ⚠ REMOTE_USER_AUTH must NEVER be set — it removes /setup/.
       - SOCIALACCOUNT_AUTO_SIGNUP=1
-      # POSTGRES_PASSWORD, SECRET_KEY and TANDOOR_OIDC_CLIENT_SECRET arrive from .env.
+      # POSTGRES_PASSWORD, SECRET_KEY and TANDOOR_OIDC_CLIENT_SECRET arrive from the stack env.
       # ⚠ An unset SECRET_KEY does NOT crash: settings.py falls back to the
       # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a
       # [WARNING], so every session cookie is signed with a public constant key
@@ -92,7 +92,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=tandoor
       - POSTGRES_DB=tandoor
-      # POSTGRES_PASSWORD arrives from .env and is shared with the app.
+      # POSTGRES_PASSWORD arrives from the stack env and is shared with the app.
     env_file: /run/stack-env/tandoor.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), not a role.

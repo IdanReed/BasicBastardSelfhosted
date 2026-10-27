@@ -54,7 +54,7 @@ services:
       # ⚠ OIDC_USER_GROUP / OIDC_ADMIN_GROUP left UNSET: the feature refuses to
       # start if either is set while OIDC_GROUPS_CLAIM resolves to nothing, and
       # the standard scopes carry no groups.
-      # OIDC_CLIENT_SECRET arrives from .env.
+      # OIDC_CLIENT_SECRET arrives from the stack env.
       - OIDC_AUTH_ENABLED=true
       - OIDC_PROVIDER_NAME=Authentik
       - OIDC_CONFIGURATION_URL=https://auth.idanreed.com/application/o/mealie/.well-known/openid-configuration
@@ -92,6 +92,6 @@ services:
     entrypoint: ['/usr/local/bin/python3', '/init/mealie-init.py']
     environment:
       - MEALIE_BASE_URL=http://mealie:9000
-      # MEALIE_ADMIN_USER / _EMAIL / _PASSWORD arrive from .env.
+      # MEALIE_ADMIN_USER / _EMAIL / _PASSWORD arrive from the stack env.
     env_file: /run/stack-env/mealie.env
     restart: "no"

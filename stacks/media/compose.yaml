@@ -5,7 +5,7 @@
 # Invariants other files depend on:
 #   - x265 is ENFORCED; media-init.sh re-scores profiles and Profilarr may
 #     only sync Dictionarry (never trash-pcd).
-#   - Everything provider-specific about the VPN comes from .env — gluetun is
+#   - Everything provider-specific about the VPN comes from the stack env — gluetun is
 #     handed the whole decrypted file.
 #   - /mnt/slow is ONE filesystem so *arr imports are hardlinks; scan-
 #     downloads.sh quarantines by inode because of it.
@@ -79,7 +79,7 @@ services:
           # stop qbittorrent, rm the conf, up -d.
           if ! grep -qF "$$QBIT_WEBUI_PASSWORD_PBKDF2" "$$conf"; then
             echo "qbit-init: WARN: the stored WebUI password does NOT match" >&2
-            echo "qbit-init: WARN: QBIT_WEBUI_PASSWORD_PBKDF2 in .env — a sops" >&2
+            echo "qbit-init: WARN: QBIT_WEBUI_PASSWORD_PBKDF2 in the stack env — a sops" >&2
             echo "qbit-init: WARN: rotation cannot reach a seed-once file. See" >&2
             echo "qbit-init: WARN: docs/for-shame.md (qBittorrent) for the repair." >&2
           fi
@@ -456,7 +456,7 @@ services:
     environment:
       - TZ=America/Chicago
       - AUTH=on
-      # PROFILARR_API_KEY (>=32 chars) arrives from .env below.
+      # PROFILARR_API_KEY (>=32 chars) arrives from the stack env below.
     env_file: /run/stack-env/media.env
     healthcheck:
       # Toolset not pinned down (python base): try curl, wget, then python.

@@ -43,7 +43,7 @@ services:
       # warning every start. A browser on the plain-http loopback publish cannot
       # then hold a session — fine, init and the suite use the bearer token.
       - RM_HTTPS_COOKIE=true
-      # JWT_SECRET_KEY arrives from .env.
+      # JWT_SECRET_KEY arrives from the stack env.
       # 🚨 NEVER ROTATE IT, and never let it go unset. It signs device tokens —
       # rotation invalidates every tablet enrolment, and unset is worse: config.go
       # generates random bytes and carries on, so the NEXT restart silently
@@ -132,7 +132,7 @@ services:
       # The baked healthcheck hardcodes 127.0.0.1:8384, but ProbeFreePorts()
       # will MOVE the GUI on first run if 8384 looks taken.
       - STNOPORTPROBING=1
-      # STGUIAPIKEY, ST_GUI_USER and ST_GUI_PASSWORD arrive from .env.
+      # STGUIAPIKEY, ST_GUI_USER and ST_GUI_PASSWORD arrive from the stack env.
       # ⚠ The API key is a FULL-ADMIN credential that bypasses GUI auth, so the
       # Caddy vhost must never forward an attacker-supplied X-API-Key. It does
       # NOT override the random key `generate` wrote into config.xml — either is

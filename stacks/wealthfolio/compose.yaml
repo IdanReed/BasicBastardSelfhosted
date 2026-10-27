@@ -47,14 +47,14 @@ services:
       # X-Forwarded-Proto is https, so production cookies are Secure and the
       # suite's plain-http loopback login still works.
       - WF_COOKIE_SECURE=auto
-      # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from .env; the rotation
+      # WF_SECRET_KEY and WF_AUTH_PASSWORD_HASH arrive from the stack env; the rotation
       # rules and the 🚨 $-quoting trap on the Argon2 hash are in secrets.example.env.
       #
       # OIDC ships OFF, and OFF is load-bearing
       # 🚨 Discovery runs ONCE AT STARTUP and a failure PANICS the server — the
       # Ghostfolio trap with no escape hatch. Enabled, every `docker compose up`
       # would depend on a cross-tailnet call to the VPS. If taken knowingly:
-      # WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret via .env) +
+      # WF_OIDC_ISSUER_URL + WF_OIDC_CLIENT_ID (+ secret via the stack env) +
       # WF_OIDC_REDIRECT_URL (.../api/v1/auth/oidc/callback) +
       # WF_OIDC_ALLOWED_EMAILS, which is fail-closed — empty without an explicit
       # WF_OIDC_ALLOW_ANY=true refuses to boot.

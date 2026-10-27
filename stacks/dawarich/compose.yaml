@@ -79,7 +79,7 @@ services:
       - OIDC_REDIRECT_URI=https://dawarich.svc.idanreed.com/users/auth/openid_connect/callback
       - OIDC_PROVIDER_NAME=Authentik
       #
-      # SECRET_KEY_BASE and DATABASE_PASSWORD arrive from .env.
+      # SECRET_KEY_BASE and DATABASE_PASSWORD arrive from the stack env.
       # 🚨 SECRET_KEY_BASE MUST NEVER ROTATE: the ActiveRecord encryption keys
       # are derived from it, so rotation makes every encrypted attribute
       # undecryptable — and Geocoding::Config only logs a warning, so the damage
@@ -184,7 +184,7 @@ services:
       - DATABASE_USERNAME=dawarich
       - REDIS_URL=redis://dawarich_redis:6379
       # DAWARICH_ADMIN_EMAIL/_PASSWORD, SECRET_KEY_BASE and DATABASE_PASSWORD
-      # arrive from .env. SECRET_KEY_BASE is required even here — the OTP keys
+      # arrive from the stack env. SECRET_KEY_BASE is required even here — the OTP keys
       # are derived from it and application.rb raises without them.
     env_file: /run/stack-env/dawarich.env
     restart: "no"
@@ -207,7 +207,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=dawarich
       - POSTGRES_DB=dawarich
-      # POSTGRES_PASSWORD arrives from .env and must match DATABASE_PASSWORD.
+      # POSTGRES_PASSWORD arrives from the stack env and must match DATABASE_PASSWORD.
     env_file: /run/stack-env/dawarich.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not

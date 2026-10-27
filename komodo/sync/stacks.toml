@@ -1,5 +1,6 @@
 # Every stack Komodo deploys: one block per stacks/<name>, all the same shape
 # (the komodo-sync-coverage lint holds the fixed fields and the coverage).
+# `webhook_enabled = false`: the one deploy entry point is `apply`'s webhook.
 # `tags = ["gitops"]` is what puts a block in the `fleet` sync's reach
 # (match_tags, komodo/fleet.toml): an untagged block is silently ignored.
 #
@@ -33,6 +34,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/actual"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/actual.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -52,6 +54,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/automation"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/automation.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -76,6 +79,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/backrest"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/backrest.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -97,6 +101,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/beszel"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/beszel.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -117,6 +122,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/books"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/books.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -139,6 +145,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/caddy"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/caddy.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -158,6 +165,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/dawarich"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/dawarich.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -177,6 +185,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/docspace"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/docspace.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -195,6 +204,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/excalidraw"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/excalidraw.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -214,6 +224,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/firefly"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/firefly.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -231,6 +242,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/gatus"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 config_files = [
   { path = "gatus.yaml", services = ["gatus"], requires = "Restart" },
 ]
@@ -247,6 +259,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/ghostfolio"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/ghostfolio.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -265,6 +278,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/immich"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/immich.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -285,6 +299,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/logging"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/logging.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -306,6 +321,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/mealie"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/mealie.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -325,6 +341,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/media"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/media.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -351,6 +368,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/notes-sync"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/notes-sync.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -369,6 +387,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/ntfy"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/ntfy.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -387,6 +406,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/outline"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/outline.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -405,6 +425,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/owl"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 
 [[stack]]
 name = "paperless"
@@ -418,6 +439,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/paperless"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/paperless.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -436,6 +458,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/proton"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/proton.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -454,6 +477,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/samba"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/samba.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -474,6 +498,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/silverbullet"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/silverbullet.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -492,6 +517,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/tandoor"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/tandoor.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -511,6 +537,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/tracking"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/tracking.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -531,6 +558,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/util"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 config_files = [
   { path = "glance.yml", services = ["glance"], requires = "Restart" },
 ]
@@ -547,6 +575,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/vaultwarden"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/vaultwarden.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -565,6 +594,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/wealthfolio"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/wealthfolio.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -583,6 +613,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/wger"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/wger.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
@@ -602,6 +633,7 @@ repo = "idan/BasicBastardSelfhosted"
 branch = "main"
 run_directory = "stacks/windmill"
 file_paths = ["compose.yaml"]
+webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/windmill.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },

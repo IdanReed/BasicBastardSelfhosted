@@ -74,7 +74,7 @@ services:
       - AVAHI_ENABLE=0
       - WSDD2_ENABLE=0
       # SAMBA_INTERFACES is host-specific (runtime tailnet address, differing
-      # NIC names) so it comes from .env, not a literal here. It emits BOTH
+      # NIC names) so it comes from the stack env, not a literal here. It emits BOTH
       # `interfaces = …` and `bind interfaces only = yes`, which is why
       # config.yml does not set them. samba-init refuses to start without it.
       # ⚠ Never write `${SAMBA_*:?...}` here: `:?` aborts the whole stack on

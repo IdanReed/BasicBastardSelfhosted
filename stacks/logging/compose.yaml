@@ -175,7 +175,7 @@ services:
       # Turning it back on means an Authentik carve-out for /api/live/*.
       - GF_LIVE_MAX_CONNECTIONS=0
 
-      # GF_SECURITY_ADMIN_USER/PASSWORD come from .env. Read ONLY on first
+      # GF_SECURITY_ADMIN_USER/PASSWORD come from the stack env. Read ONLY on first
       # start; changing them later needs `grafana-cli admin
       # reset-admin-password` or a wiped grafana.db.
 

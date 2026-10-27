@@ -43,7 +43,7 @@ services:
       - REDIS_HOSTNAME=redis
       - TZ=America/Chicago
       - IMMICH_CONFIG_FILE=/config/immich.json
-      # DB_PASSWORD arrives from .env.
+      # DB_PASSWORD arrives from the stack env.
     env_file: /run/stack-env/immich.env
     healthcheck:
       # The image's own test is kept (it probes the server this container
@@ -79,7 +79,7 @@ services:
       - POSTGRES_USER=immich
       - POSTGRES_DB=immich
       - POSTGRES_INITDB_ARGS=--data-checksums
-      # POSTGRES_PASSWORD arrives from .env and must equal DB_PASSWORD — two
+      # POSTGRES_PASSWORD arrives from the stack env and must equal DB_PASSWORD — two
       # names because the two images read different vars.
     env_file: /run/stack-env/immich.env
     # Postgres wants more than docker's 64mb default for parallel workers.

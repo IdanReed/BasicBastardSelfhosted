@@ -104,7 +104,7 @@ services:
       - PORT=8080
       # keyv = scene blobs in Postgres, chosen over S3/MinIO so this stack has
       # one stateful store and one dump line.
-      # 🚨 STORAGE_URI (from .env) must point at the excalidraw_storage database,
+      # 🚨 STORAGE_URI (from the stack env) must point at the excalidraw_storage database,
       # NOT at `excalidraw` — see keyv-init.sql. And it must be SET at all: unset,
       # the api logs one WARN and stores scenes in process memory.
       - STORAGE_BACKEND=keyv
@@ -124,7 +124,7 @@ services:
       - SUPERADMIN_EMAILS=admin@idanreed.com
       # OIDC
       # Ready but OFF (empty issuer = local auth only). Turning it on needs an
-      # Authentik provider plus, in .env, OIDC_ISSUER_URL / OIDC_CLIENT_ID /
+      # Authentik provider plus, in the stack env, OIDC_ISSUER_URL / OIDC_CLIENT_ID /
       # OIDC_CLIENT_SECRET / OIDC_CALLBACK_URL (.../api/v2/auth/callback) — and
       # a key-set change, so the stack-env-drift lint applies.
       # Discovery is boot-safe (measured: the suite with an unreachable issuer
@@ -165,7 +165,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=excalidraw
       - POSTGRES_DB=excalidraw
-      # POSTGRES_PASSWORD arrives from .env and must match the password embedded
+      # POSTGRES_PASSWORD arrives from the stack env and must match the password embedded
       # in STORAGE_URI.
     env_file: /run/stack-env/excalidraw.env
     healthcheck:

@@ -48,7 +48,7 @@ services:
       # used nowhere here, and one without the other yields workers that fail to
       # start jobs.
       #
-      # DATABASE_URL and SUPERADMIN_SECRET arrive from .env.
+      # DATABASE_URL and SUPERADMIN_SECRET arrive from the stack env.
     env_file: /run/stack-env/windmill.env
     healthcheck:
       # /api/health/status, NOT /api/version, which answers from the binary and
@@ -84,7 +84,7 @@ services:
       # named groups.
       - WORKER_GROUP=default
       - RUST_LOG=info
-      # DATABASE_URL arrives from .env.
+      # DATABASE_URL arrives from the stack env.
     env_file: /run/stack-env/windmill.env
     healthcheck:
       # No HTTP listener, and a `pgrep` probe would be a lie that `up --wait`
@@ -95,7 +95,7 @@ services:
 
   # Database
   # ⚠ Upstream's compose uses POSTGRES_USER=postgres; renaming it here is a
-  # deliberate deviation that DATABASE_URL in .env and the healthcheck must both
+  # deliberate deviation that DATABASE_URL in the stack env and the healthcheck must both
   # follow. Stay on 17: postgres:18-alpine moved PGDATA.
   windmill_db:
     image: postgres:17.9-alpine
@@ -107,7 +107,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=windmill
       - POSTGRES_DB=windmill
-      # POSTGRES_PASSWORD arrives from .env and must match DATABASE_URL's.
+      # POSTGRES_PASSWORD arrives from the stack env and must match DATABASE_URL's.
     env_file: /run/stack-env/windmill.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), not a role.

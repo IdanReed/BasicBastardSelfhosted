@@ -71,7 +71,7 @@ services:
       # on client IP, so a wrong count locks everyone out after a few typos.
       - AXES_IPWARE_PROXY_COUNT=2
       - NUMBER_OF_PROXIES=2
-      # SECRET_KEY and DJANGO_DB_PASSWORD arrive from .env.
+      # SECRET_KEY and DJANGO_DB_PASSWORD arrive from the stack env.
       # ⚠ An unset SECRET_KEY is nearly invisible: the image falls back to a
       # fresh random key per restart with only a warnings.warn, and the symptom
       # is "everyone is logged out after every restart".
@@ -124,7 +124,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=wger
       - POSTGRES_DB=wger
-      # POSTGRES_PASSWORD arrives from .env, shared with DJANGO_DB_PASSWORD.
+      # POSTGRES_PASSWORD arrives from the stack env, shared with DJANGO_DB_PASSWORD.
     env_file: /run/stack-env/wger.env
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wger -d wger']

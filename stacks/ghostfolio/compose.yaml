@@ -44,7 +44,7 @@ services:
       # envalid declares it `str({ default: '' })` and ioredis sends no AUTH for
       # a falsy password.
       #
-      # ACCESS_TOKEN_SALT and JWT_SECRET_KEY arrive from .env and are both HARD
+      # ACCESS_TOKEN_SALT and JWT_SECRET_KEY arrive from the stack env and are both HARD
       # boot requirements (bare `str()`, no default). ACCESS_TOKEN_SALT must
       # NEVER be rotated once users exist: it salts the hash of every security
       # token, the only credential a Ghostfolio account has.
@@ -56,7 +56,7 @@ services:
       # entirely (verified in-source), so boot never contacts the VPS — that is
       # what makes enabling it safe here (unlike wealthfolio, which has no such
       # hatch). ENABLE_FEATURE_AUTH_TOKEN stays default-true as the fallback.
-      # OIDC_CLIENT_SECRET arrives from .env; the blueprint registers
+      # OIDC_CLIENT_SECRET arrives from the stack env; the blueprint registers
       # /api/auth/oidc/callback.
       - ENABLE_FEATURE_AUTH_OIDC=true
       - OIDC_ISSUER=https://auth.idanreed.com/application/o/ghostfolio/
@@ -92,7 +92,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=ghostfolio
       - POSTGRES_DB=ghostfolio
-      # POSTGRES_PASSWORD arrives from .env — the same value DATABASE_URL
+      # POSTGRES_PASSWORD arrives from the stack env — the same value DATABASE_URL
       # interpolates above.
     env_file: /run/stack-env/ghostfolio.env
     healthcheck:

@@ -199,7 +199,7 @@ services:
       - METADATA_PATH=/metadata
       - SOURCE=docker
       - TZ=America/Chicago
-      # JWT_SECRET_KEY arrives from .env: without it the token secret is
+      # JWT_SECRET_KEY arrives from the stack env: without it the token secret is
       # generated into the database, so it cannot be rotated and a restore
       # from nothing invalidates every session.
     env_file: /run/stack-env/books.env

@@ -70,7 +70,7 @@ services:
       - JDBC_PARAMETERS=allowPublicKeyRetrieval=true&useSSL=false
       # APP_CORE_MACHINEKEY, SPRING_APPLICATION_ENCRYPTION_SECRET,
       # DOCUMENT_SERVER_JWT_SECRET, MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD all
-      # arrive from .env.
+      # arrive from the stack env.
       # 🚨 APP_CORE_MACHINEKEY must be set explicitly. Left empty (upstream's
       # default) `ensure_secret` GENERATES one into the bind mount, invisible to
       # sops — and it derives the password salt and signs every confirm-scheme
@@ -113,7 +113,7 @@ services:
       # portal's DOCUMENT_SERVER_JWT_* settings.
       - JWT_HEADER=AuthorizationJwt
       - JWT_IN_BODY=true
-      # JWT_SECRET arrives from .env and must equal DOCUMENT_SERVER_JWT_SECRET.
+      # JWT_SECRET arrives from the stack env and must equal DOCUMENT_SERVER_JWT_SECRET.
     env_file: /run/stack-env/docspace.env
     healthcheck:
       # 🚨 /healthcheck returns 200 with a body of `true` or `false`, so a
@@ -141,7 +141,7 @@ services:
       - TZ=America/Chicago
       - MYSQL_DATABASE=docspace
       - MYSQL_USER=docspace
-      # MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD arrive from .env.
+      # MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD arrive from the stack env.
     env_file: /run/stack-env/docspace.env
     healthcheck:
       test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 --silent']

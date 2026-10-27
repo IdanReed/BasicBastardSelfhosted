@@ -1264,6 +1264,10 @@ in
       if not any(f[0].lower().startswith("d") for f in komodo):
           errs.append("no tmpfiles 'd' rule creates /srv/komodo — Periphery's "
                       "clone root bind mount has no source on first boot")
+      # Every clone's .git/config carries the komodo bot's token in its remote URL.
+      if any(f[0].lower().startswith("d") and f[2] != "0700" for f in komodo):
+          errs.append("/srv/komodo must be 0700 root: every clone's .git/config "
+                      "holds the Forgejo bot token in its remote URL")
       if any(r.split()[1] == "/srv/stacks" for r in rules if len(r.split()) >= 2):
           errs.append("a tmpfiles rule still names /srv/stacks — nothing "
                       "delivers there any more (Komodo clones to /srv/komodo)")
@@ -2216,6 +2220,9 @@ in
           for k, v in fixed.items():
               if c.get(k) != v:
                   errs.append(f"{n}: config.{k} is {c.get(k)!r}, must be {v!r}")
+          if c.get("webhook_enabled", True):
+              errs.append(f"{n}: webhook_enabled must be false — the one deploy "
+                          f"entry point is the apply procedure's webhook")
           if c.get("run_directory") != f"stacks/{n}":
               errs.append(f"{n}: run_directory must be 'stacks/{n}'")
           if c.get("environment"):

@@ -57,7 +57,7 @@ services:
       - DB_PORT=3306
       - DB_DATABASE=bookstack
       - DB_USERNAME=bookstack
-      # APP_KEY and DB_PASSWORD arrive from .env. A MISSING APP_KEY makes the
+      # APP_KEY and DB_PASSWORD arrive from the stack env. A MISSING APP_KEY makes the
       # init script `sleep infinity` — running forever with no crash to alert
       # on, which is what the healthcheck below catches.
       #
@@ -172,7 +172,7 @@ services:
       - HBOX_OIDC_CLIENT_ID=homebox
       - HBOX_OIDC_CLIENT_SECRET=${HOMEBOX_OIDC_CLIENT_SECRET:-}
       - HBOX_OIDC_SCOPE=openid profile email
-      # HBOX_AUTH_API_KEY_PEPPER arrives from .env and is REQUIRED — boot
+      # HBOX_AUTH_API_KEY_PEPPER arrives from the stack env and is REQUIRED — boot
       # refuses under 32 bytes, and it is absent from every compose example
       # online.
     env_file: /run/stack-env/tracking.env
@@ -237,7 +237,7 @@ services:
       # instead of minting a second non-admin account. Safe because Authentik
       # is the only IdP and it verifies emails.
       - OAUTH_ALLOW_DANGEROUS_EMAIL_ACCOUNT_LINKING=true
-      # NEXTAUTH_SECRET and MEILI_MASTER_KEY arrive from .env.
+      # NEXTAUTH_SECRET and MEILI_MASTER_KEY arrive from the stack env.
     env_file: /run/stack-env/tracking.env
     # NO healthcheck stanza: the image's builtin is already correct, and
     # liveness is all it can prove — DB and Meili are the suite's job.

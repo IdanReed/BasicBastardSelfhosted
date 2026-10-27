@@ -87,7 +87,7 @@ services:
       - ENABLE_EXTERNAL_RATES=false
       - SEND_ERROR_MESSAGE=false
       - MAIL_MAILER=log
-      # APP_KEY, DB_PASSWORD and STATIC_CRON_TOKEN arrive from .env.
+      # APP_KEY, DB_PASSWORD and STATIC_CRON_TOKEN arrive from the stack env.
       # ⚠ APP_KEY must be EXACTLY 32 characters (or `base64:` + 32 bytes). A
       # wrong length fails as "Auth driver [remote_user_guard] ... is not
       # defined": the encrypter fails during config resolution and guard
@@ -119,7 +119,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=firefly
       - POSTGRES_DB=firefly
-      # POSTGRES_PASSWORD arrives from .env and must match DB_PASSWORD.
+      # POSTGRES_PASSWORD arrives from the stack env and must match DB_PASSWORD.
     env_file: /run/stack-env/firefly.env
     healthcheck:
       # -U is required: pg_isready defaults to the OS user (root), which is not
@@ -173,11 +173,11 @@ services:
       # deliberately UNSET: they turn on unauthenticated POST endpoints gated
       # only by AUTO_IMPORT_SECRET, on a service that already has no auth.
       #
-      # FIREFLY_III_ACCESS_TOKEN arrives from .env and must be minted by hand
+      # FIREFLY_III_ACCESS_TOKEN arrives from the stack env and must be minted by hand
       # once — there is no CLI or API path to it.
       #
       # SimpleFIN: configured but NOT scheduled, and that is the point.
-      # SIMPLEFIN_TOKEN (from .env) is a base64 CLAIM URL that the Bridge
+      # SIMPLEFIN_TOKEN (from the stack env) is a base64 CLAIM URL that the Bridge
       # invalidates on first use; the resulting access URL lands in the
       # importer's downloadable Configuration JSON, which is session state
       # because this service has no volume. Scheduling it would need a volume,

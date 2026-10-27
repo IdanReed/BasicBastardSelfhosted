@@ -68,7 +68,7 @@
   systemd.tmpfiles.rules = [
     # Periphery's root: each Komodo git stack is cloned under stacks/<name>.
     # Root-owned — Periphery runs as root and clones as root.
-    "d /srv/komodo 0755 root root -"
+    "d /srv/komodo 0700 root root -"
     # Bind SOURCE for the /var/lib/docker mount above — the daemon's own
     # storage. 0711: it needs traverse, nothing else needs to list it.
     "d /mnt/fast/docker 0711 root root -"

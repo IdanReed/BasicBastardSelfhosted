@@ -70,7 +70,7 @@ services:
       - OIDC_DISPLAY_NAME=Authentik
       - OIDC_USERNAME_CLAIM=preferred_username
       - OIDC_SCOPES=openid profile email
-      # OIDC_CLIENT_SECRET, SECRET_KEY and UTILS_SECRET arrive from .env.
+      # OIDC_CLIENT_SECRET, SECRET_KEY and UTILS_SECRET arrive from the stack env.
       #
       # FORCE_HTTPS stays default (true): `/` 301s a plain-http request, but
       # /_health answers 200 regardless, so the healthcheck and Gatus keep
@@ -102,7 +102,7 @@ services:
       - TZ=America/Chicago
       - POSTGRES_USER=outline
       - POSTGRES_DB=outline
-      # POSTGRES_PASSWORD arrives from .env; outline's DATABASE_URL is built
+      # POSTGRES_PASSWORD arrives from the stack env; outline's DATABASE_URL is built
       # from it.
     env_file: /run/stack-env/outline.env
     healthcheck:

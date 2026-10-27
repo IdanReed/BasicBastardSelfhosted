@@ -23,7 +23,7 @@ services:
       - PAPERLESS_DBHOST=db
       - PAPERLESS_DBUSER=paperless
       # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_USER/_PASSWORD and PAPERLESS_DBPASS
-      # arrive from .env.
+      # arrive from the stack env.
       - PAPERLESS_TIKA_ENABLED=1
       - PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000
       - PAPERLESS_TIKA_ENDPOINT=http://tika:9998
@@ -58,7 +58,7 @@ services:
     environment:
       - POSTGRES_DB=paperless
       - POSTGRES_USER=paperless
-      # POSTGRES_PASSWORD arrives from .env and must equal PAPERLESS_DBPASS.
+      # POSTGRES_PASSWORD arrives from the stack env and must equal PAPERLESS_DBPASS.
       # 🚨 initdb applies it on FIRST start only — an already-initialised
       # cluster keeps its old password whatever this file says (secrets.example.env
       # has the ALTER USER one-liner).
