@@ -13,9 +13,16 @@ can see that window.
 ## Before the first app
 
 1. `browser_navigate` to `https://auth.idanreed.com` and take a snapshot.
-2. If it shows a login form, **stop and ask the operator to log in as `idan`
-   in the browser window** (password + TOTP). Never type Authentik
-   credentials, never ask for them in chat, never log in as `akadmin`.
+2. If it shows a login form, run `claude-browser-login` (allow-listed). It
+   mints an Authentik recovery link for `idan` on the VPS and prints only a
+   loopback URL that redirects to it once: `browser_navigate` there, confirm
+   the snapshot lands in Authentik's user interface, then run
+   `claude-browser-login --revoke` — and again until it reports `deleted 0`.
+   Never read the link itself (no `browser_network_requests` during it).
+   If the command is unavailable or refused, **stop and ask the operator to
+   log in as `idan` in the browser window** (password + TOTP). Never type
+   Authentik credentials, never ask for them in chat, never log in as
+   `akadmin`.
 3. The session persists in the profile, so every `*.svc.idanreed.com` app's
    "Sign in with Authentik" completes without further prompts.
 

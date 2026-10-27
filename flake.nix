@@ -210,6 +210,7 @@
           ./nixos-de/modules/home/ssh-identities.nix
           ./nixos-de/modules/home/work-vpn.nix
           ./nixos-de/modules/home/herdr.nix
+          ./nixos-de/modules/home/claude-browser-login.nix
         ];
       };
 
