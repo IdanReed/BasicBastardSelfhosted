@@ -401,18 +401,15 @@ is a *loud deploy failure* by design rather than a silent drift.
 - Additionally make `sopsgen rotate` print a post-run report naming targets whose consumers are seed-once.
 **Recommendation:** all three. The current wording is the kind of thing that gets trusted during an incident.
 
-#### D-27 Two unwired secret knobs
+#### D-27 An unwired secret knob
 **Area** Secrets/Stacks · **Raised by** stacks-a (requests to the sops lane) · **Severity/effort** Low / S
-**Context:** `stacks/automation/.sops.env.example` carries `FRIGATE_CAM_EXAMPLE`, referenced by no compose file
-or config — it is a template placeholder documented in `stacks/automation/frigate.yaml`'s camera example and it
-pins `cameras: {}` in the suite. `stacks/samba/samba-init.sh` reads `SAMBA_SHARE_GID` with a default of 1000, but
-the variable is in no example file and nothing sets it. Both must move across `.sops.env` + `.example` + fixture
-together or `stack-env-drift` goes red.
+**Context:** `stacks/samba/samba-init.sh` reads `SAMBA_SHARE_GID` with a default of 1000, but the variable is in
+no example file and nothing sets it. Adding it means moving `.sops.env` + `.example` + fixture together or
+`stack-env-drift` goes red.
 **Options:**
-- Keep both and say so in the example comments.
-- Drop `SAMBA_SHARE_GID`'s indirection (hardcode 1000) and keep `FRIGATE_CAM_EXAMPLE` as documented template.
-- Drop both.
-**Recommendation:** keep `FRIGATE_CAM_EXAMPLE` with a comment; add `SAMBA_SHARE_GID` to the example as a documented override, or drop the indirection — either is fine, but decide.
+- Add `SAMBA_SHARE_GID` to the example as a documented override.
+- Drop the indirection and hardcode 1000.
+**Recommendation:** drop the indirection — it is in no env file, so this is a script-only edit.
 
 ### Stacks
 

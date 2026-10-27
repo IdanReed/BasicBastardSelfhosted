@@ -51,9 +51,10 @@
 #     tested config differs from the deployed config in exactly the block
 #     that fails hardest if it is wrong. Subtest 14 is the drift guard for
 #     the part that can be checked.
-#   - **Real cameras.** No RTSP sources exist here, so the stack runs with
-#     `cameras: {}` — which Frigate fully supports, and which is also its own
-#     first-run config. Object detection, recording and snapshots are all out
+#   - **Real cameras.** The production camera block runs verbatim, pointed at
+#     LAN addresses that do not exist here: go2rtc's dial fails and ffmpeg
+#     retries. That proves the camera config validates (subtest 7) and
+#     nothing more — streams, detection, recording and snapshots are all out
 #     of reach.
 #   - Hardware transcode, the IoT VLAN, and any real device.
 #   - Home Assistant's OIDC: deferred in the stack itself (its custom

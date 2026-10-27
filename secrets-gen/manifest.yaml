@@ -490,10 +490,14 @@ secrets:
     class: generate
     recipe: hex:48
     targets: [{ file: stacks/automation/secrets.sops.json, key: MQTT_HEALTHCHECK_PASSWORD }]
-  - name: automation/FRIGATE_CAM_EXAMPLE
+  - name: automation/FRIGATE_REOLINK_USER
+    class: config
+    note: "the login shared by both Reolink cameras"
+    targets: [{ file: stacks/automation/secrets.sops.json, key: FRIGATE_REOLINK_USER }]
+  - name: automation/FRIGATE_REOLINK_PASSWORD
     class: pull
-    note: "camera credentials"
-    targets: [{ file: stacks/automation/secrets.sops.json, key: FRIGATE_CAM_EXAMPLE }]
+    note: "set on the cameras in the Reolink app; letters and digits only"
+    targets: [{ file: stacks/automation/secrets.sops.json, key: FRIGATE_REOLINK_PASSWORD }]
 
   - name: backrest/RESTIC_PASSWORD
     class: generate

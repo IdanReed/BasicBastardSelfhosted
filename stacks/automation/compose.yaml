@@ -169,9 +169,10 @@ services:
     tmpfs:
       # In-flight recording segments, kept off the slow tier.
       - /tmp/cache:size=512m
-    # Upstream's per-camera formula is (w*h*1.5*20 + 270480)/1048576 MB plus
-    # 40MB for logs — roughly three 720p cameras here. Recompute when the real
-    # camera set is known.
+    # Upstream's per-camera formula is (w*h*1.5*20 + 270480)/1048576 MB at the
+    # DETECT resolution, plus 40MB for logs: the two Reolinks detecting on
+    # their sub streams need well under 100MB. Recompute when adding a camera
+    # or moving detect to a main stream.
     shm_size: '256mb'
     environment:
       - TZ=America/Chicago

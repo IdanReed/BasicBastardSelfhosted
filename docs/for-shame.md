@@ -61,6 +61,7 @@ offers no non-browser / non-DB path to it.
 | **Excalidraw / Wealthfolio** | OIDC is staged but shipped OFF; enabling it is an operator flip | Both panic or misbehave against an unavailable issuer, so the repo ships them off | One-shot (compose edit) |
 | **Audiobookshelf / Dawarich** | Ensure your Authentik email == the seeded admin email **before** the first SSO login | Auto-register matches by email; a mismatch mints a second account to merge | Ordering constraint (one-shot) |
 | **Paperless-ngx** | Grant admin/staff in `/admin` if the SSO user needs it | The superuser-group env var first exists in 3.1.0; the compose pins 2.20, where it is silently ignored | Yes — Paperless DB |
+| **Frigate** | Per camera: set the admin password and enable HTTP in the Reolink app; reserve its IP on OPNsense | Camera settings live on the device, and the HTTP API that could flip them is itself one of the services that ships off | Yes — on the camera (a factory reset undoes it) |
 | **Samba** | *(not a chore — a why)* users authenticate with a local username/password | Built `--without-ldap --without-ads`, so OIDC/AD is not achievable. Credentials are seeded declaratively | n/a |
 
 ---
@@ -431,6 +432,19 @@ Two apps look like members of this family and are not:
   app doing display-name group matching will pick it up.
 
 ---
+
+### Frigate — camera-side setup for each Reolink
+
+- **(b) The step:** in the Reolink app, finish the first-run setup (the `admin`
+  password, the same letters-and-digits value as `FRIGATE_REOLINK_PASSWORD`), then
+  Settings → Network → Advanced → Server Settings: enable **HTTP**, RTSP and
+  RTMP. On OPNsense, add a DHCP static mapping for the camera's MAC at the
+  address `frigate.yaml` names.
+- **(c) Why not declarative:** the settings live in the camera's firmware.
+  Reolink's HTTP API could set the ports, but current firmware ships with HTTP
+  off and the password unset, so the first touch has to be the app (port 9000).
+- **(d) Survives recreate:** yes — stored on the camera; a factory reset undoes
+  it.
 
 ## Template for adding a new entry
 

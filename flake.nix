@@ -31,6 +31,11 @@
     # Desktop
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # Same branch, separate lock: packages newer than the desktop pin (herdr).
+    # Does not follow `nixpkgs-unstable` on purpose — following would make it
+    # the same revision. Remove after the next `nfu` lands past 2026-10.
+    nixpkgs-fresh.url = "github:NixOS/nixpkgs/nixos-unstable";
+
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -108,6 +113,7 @@
           noctalia-greeter
           zen-browser
           handy
+          nixpkgs-fresh
           ;
         nixpkgs = nixpkgs-unstable;
         disko = inputs.disko-unstable;
@@ -203,6 +209,7 @@
           ./nixos-de/modules/home/excalidraw.nix
           ./nixos-de/modules/home/ssh-identities.nix
           ./nixos-de/modules/home/work-vpn.nix
+          ./nixos-de/modules/home/herdr.nix
         ];
       };
 

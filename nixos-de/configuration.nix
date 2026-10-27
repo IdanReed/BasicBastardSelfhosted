@@ -205,6 +205,9 @@
       noto-fonts
       noto-fonts-cjk-sans
       noto-fonts-color-emoji
+      # Consolas (plus Calibri, Cambria, Candara, Constantia, Corbel) — unfree,
+      # fetched from Microsoft's PowerPoint Viewer installer.
+      vista-fonts
     ];
   };
 

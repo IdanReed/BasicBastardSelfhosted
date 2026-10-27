@@ -83,7 +83,7 @@
           hmb = "home-manager build --flake ${serverDir}#idan";
           # The desktop's inputs only: the root flake also pins the servers'
           # (nixos-25.11), which move deliberately, with the test harness.
-          nfu = "nix flake update --flake ${serverDir} nixpkgs-unstable home-manager stylix nixvim niri noctalia noctalia-greeter zen-browser handy disko-unstable sops-nix-unstable";
+          nfu = "nix flake update --flake ${serverDir} nixpkgs-unstable home-manager stylix nixvim niri noctalia noctalia-greeter zen-browser handy nixpkgs-fresh disko-unstable sops-nix-unstable";
           ngc = "sudo nix-collect-garbage -d";
           ccupdate = "nix profile upgrade claude-code-nix";
         };
@@ -254,8 +254,8 @@
     remmina
     freerdp
     spotify
-    sioyek
     mpris-timer
+    anki
   ];
 
   # nixpkgs' mpris-timer desktop entry Execs "play-timer", which it does not ship
@@ -265,6 +265,17 @@
     icon = "io.github.efogdev.mpris-timer";
     terminal = false;
     categories = [ "Utility" ];
+  };
+
+  # Keep the j/k reading ruler at the screen centre: scroll as soon as it
+  # passes the centre (threshold 1 = centre) and land it back there (fraction
+  # 0 = centre). The defaults (0.25 / 0.75) jump most of a screen at the bottom.
+  programs.sioyek = {
+    enable = true;
+    config = {
+      visual_mark_next_page_threshold = "1.0";
+      visual_mark_next_page_fraction = "0.0";
+    };
   };
 
   # Shadows nixpkgs' sioyek.desktop so xdg-open (Zed, yazi, nautilus) gets the

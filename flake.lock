@@ -372,6 +372,22 @@
         "type": "github"
       }
     },
+    "de_nixpkgs-fresh": {
+      "locked": {
+        "lastModified": 1792773339,
+        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "de_nixpkgs-lib": {
       "locked": {
         "lastModified": 1769909678,
@@ -880,17 +896,18 @@
     "root": {
       "inputs": {
         "disko": "disko",
-        "nixos-generators": "nixos-generators",
-        "nixpkgs": "nixpkgs",
-        "sops-nix": "sops-nix",
         "disko-unstable": "de_disko",
         "handy": "de_handy",
         "home-manager": "de_home-manager",
         "niri": "de_niri",
+        "nixos-generators": "nixos-generators",
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-fresh": "de_nixpkgs-fresh",
         "nixpkgs-unstable": "de_nixpkgs_2",
         "nixvim": "de_nixvim",
         "noctalia": "de_noctalia",
         "noctalia-greeter": "de_noctalia-greeter",
+        "sops-nix": "sops-nix",
         "sops-nix-unstable": "de_sops-nix",
         "stylix": "de_stylix",
         "zen-browser": "de_zen-browser"

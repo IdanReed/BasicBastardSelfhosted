@@ -31,20 +31,45 @@ detectors:
     type: cpu
     num_threads: 3
 
-# Operator-supplied. An empty map is explicitly supported, so the stack
-# deploys and runs with no cameras rather than refusing to start.
+detect:
+  # Defaults to FALSE since 0.14 — without this the cameras record and never
+  # detect anything. Runs on the CPU detector above.
+  enabled: true
+
+# Both cameras read go2rtc's restreams (below) rather than the camera: one
+# connection per camera stream however many consumers there are. Record from
+# main, detect on the sub stream — detecting on main would cost a decode of
+# the full-resolution stream per camera, and shm_size is sized for sub.
 #
-# Each camera looks like:
-#   front_door:
-#     ffmpeg:
-#       inputs:
-#         - path: "{FRIGATE_CAM_FRONT_DOOR}"     # rtsp://user:pass@ip:554/...
-#           roles: [detect, record]
-#     detect: {width: 1920, height: 1080, fps: 5}
-# Put the RTSP URL (which contains credentials) in secrets.sops.json as
-# FRIGATE_CAM_<NAME>; the substitution above covers camera input paths.
-# Adding cameras means recomputing shm_size — see the compose file.
-cameras: {}
+# Camera IPs are DHCP reservations on OPNsense; a camera that moves address
+# silently records nothing.
+cameras:
+  cam_a:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/cam_a
+          input_args: preset-rtsp-restream
+          roles: [record]
+        - path: rtsp://127.0.0.1:8554/cam_a_sub
+          input_args: preset-rtsp-restream
+          roles: [detect]
+    live:
+      streams:
+        Main: cam_a
+        Sub: cam_a_sub
+  cam_b:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/cam_b
+          input_args: preset-rtsp-restream
+          roles: [record]
+        - path: rtsp://127.0.0.1:8554/cam_b_sub
+          input_args: preset-rtsp-restream
+          roles: [detect]
+    live:
+      streams:
+        Main: cam_b
+        Sub: cam_b_sub
 
 record:
   # Defaults to FALSE, and easy to miss because the pre-0.17 schema expressed
@@ -69,6 +94,26 @@ telemetry:
   version_check: false
 
 go2rtc:
+  # Reolink over http-flv on the camera's HTTP port — upstream's recommendation
+  # for models up to 5MP, where Reolink's RTSP server smears and stutters.
+  # Requires HTTP enabled on the camera (Network -> Advanced -> Server
+  # Settings), which ships OFF on current firmware.
+  #
+  # Credentials are SINGLE-brace {FRIGATE_*} again: Frigate's go2rtc
+  # create_config.py str.format()s every stream item over the FRIGATE_
+  # environment, and DROPS an item whose variable is unset rather than
+  # failing. They land in a URL query string, so the password must be
+  # letters and digits only — and go2rtc logs a failing stream's URL
+  # verbatim, so the camera password reaches the journal and VictoriaLogs.
+  streams:
+    cam_a:
+      - "ffmpeg:http://10.0.0.9/flv?port=1935&app=bcs&stream=channel0_main.bcs&user={FRIGATE_REOLINK_USER}&password={FRIGATE_REOLINK_PASSWORD}#video=copy#audio=copy#audio=opus"
+    cam_a_sub:
+      - "ffmpeg:http://10.0.0.9/flv?port=1935&app=bcs&stream=channel0_ext.bcs&user={FRIGATE_REOLINK_USER}&password={FRIGATE_REOLINK_PASSWORD}"
+    cam_b:
+      - "ffmpeg:http://10.0.0.94/flv?port=1935&app=bcs&stream=channel0_main.bcs&user={FRIGATE_REOLINK_USER}&password={FRIGATE_REOLINK_PASSWORD}#video=copy#audio=copy#audio=opus"
+    cam_b_sub:
+      - "ffmpeg:http://10.0.0.94/flv?port=1935&app=bcs&stream=channel0_ext.bcs&user={FRIGATE_REOLINK_USER}&password={FRIGATE_REOLINK_PASSWORD}"
   webrtc:
     # Explicitly empty: left unset, Frigate appends a STUN candidate that
     # resolves against stun.l.google.com — egress for a feature nothing uses.
@@ -93,11 +138,12 @@ proxy:
     role: x-authentik-groups
     # NOT optional: without it Frigate grants admin only to a user whose
     # group list literally contains "admin", so the deployment is permanently
-    # read-only — its own login is disabled above. The named group has to
-    # exist in Authentik.
+    # read-only — its own login is disabled above. `Admin` is the fleet admin
+    # group, declared in headscale-vps/authentik/blueprints/custom/
+    # headscale-oidc.yaml; the match is case-sensitive.
     role_map:
       admin:
-        - frigate-admins
+        - Admin
   # Authentik joins group values with `|` and Frigate defaults to `,`. A
   # mismatch does NOT error — it silently collapses every user to
   # default_role.
