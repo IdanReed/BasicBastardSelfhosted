@@ -58,7 +58,7 @@ fi
 echo "> AGE key found: $AGE_KEY_FILE"
 
 echo "> Testing SSH connection to $SSH_TARGET..."
-if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
+if ! ssh -n -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
     echo "Error: Cannot SSH to $SSH_TARGET"
     echo ""
     echo "Ensure:"
