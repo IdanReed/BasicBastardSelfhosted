@@ -3,13 +3,23 @@
 # DESTRUCTIVE: nixos-anywhere WIPES the target and installs NixOS.
 # The AGE key is injected via --extra-files so sops-nix can decrypt at boot.
 #
-# Usage: ./deploy.sh <VPS_IP>
+# Usage: ./deploy.sh [user@]<VPS_IP>
+#
+#   root@ (the default) — a fresh box in Hetzner rescue mode (§7).
+#   idan@ — a reinstall over this config (handbook §0.4 mode B): root login is
+#   off, nixos-anywhere kexecs through passwordless sudo, and the kexec
+#   installer takes /etc/ssh/authorized_keys.d/$SUDO_USER as root's keys and
+#   keeps the host keys. NixOS has no kernel lockdown, so no rescue mode.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VPS_IP="${1:?Usage: $0 <VPS_IP>}"
+TARGET="${1:?Usage: $0 [user@]<VPS_IP>}"
+case "$TARGET" in
+    *@*) SSH_TARGET="$TARGET"; VPS_IP="${TARGET#*@}" ;;
+    *)   SSH_TARGET="root@$TARGET"; VPS_IP="$TARGET" ;;
+esac
 AGE_KEY_FILE="../sops_age_key.txt"
 EXTRA_FILES_DIR=$(mktemp -d)
 trap 'rm -rf "$EXTRA_FILES_DIR"' EXIT
@@ -47,9 +57,9 @@ fi
 
 echo "> AGE key found: $AGE_KEY_FILE"
 
-echo "> Testing SSH connection to $VPS_IP..."
-if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "root@$VPS_IP" "echo ok" &>/dev/null; then
-    echo "Error: Cannot SSH to root@$VPS_IP"
+echo "> Testing SSH connection to $SSH_TARGET..."
+if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" "echo ok" &>/dev/null; then
+    echo "Error: Cannot SSH to $SSH_TARGET"
     echo ""
     echo "Ensure:"
     echo "  1. VPS is running"
@@ -88,7 +98,7 @@ fi
 nix run github:nix-community/nixos-anywhere/1.13.0 -- \
     --flake "..#headscale-vps" \
     --extra-files "$EXTRA_FILES_DIR" \
-    "root@$VPS_IP"
+    "$SSH_TARGET"
 
 echo ""
 echo "=== Deployment Complete ==="
