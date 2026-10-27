@@ -16,6 +16,11 @@
   # it stage-1 cannot see root. The scsi modules cover the sda/sdb/sdc data
   # disks. kvm-intel is for nested virt, which the Forgejo runner's VM suites
   # need.
+  # The guest agent, as in the image (proxmox-image.nix): the VM's Proxmox
+  # config has `agent: 1`, so `qm shutdown` asks the AGENT — without it the
+  # request never reaches the guest and the shutdown times out.
+  services.qemuGuest.enable = true;
+
   boot.initrd.availableKernelModules = [ "ata_piix" "uhci_hcd" "virtio_pci" "virtio_blk" "virtio_scsi" "sd_mod" "sr_mod" ];
   boot.initrd.kernelModules = [ ];
   boot.kernelModules = [ "kvm-intel" ];
