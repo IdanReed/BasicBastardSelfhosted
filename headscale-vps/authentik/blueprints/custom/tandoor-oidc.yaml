@@ -25,6 +25,10 @@ entries:
       client_id: tandoor
       client_secret: !Env TANDOOR_OIDC_CLIENT_SECRET
       redirect_uris:
+        # allauth's OpenID Connect provider path (Tandoor 2.x); the second is
+        # the older social-provider path, kept so a downgrade still logs in.
+        - url: "https://tandoor.svc.idanreed.com/accounts/oidc/authentik/login/callback/"
+          matching_mode: strict
         - url: "https://tandoor.svc.idanreed.com/accounts/authentik/login/callback/"
           matching_mode: strict
       property_mappings:

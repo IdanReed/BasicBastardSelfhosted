@@ -32,6 +32,9 @@ services:
       # Explicit: the published port above is a separate file's decision, and a
       # silent upstream change would be a 502 with a healthy container.
       - PORT=3333
+      # The OIDC callback is built from this; unset, Ghostfolio sends its bind
+      # address (http://0.0.0.0:3333/...) and Authentik refuses the redirect.
+      - ROOT_URL=https://ghostfolio.svc.idanreed.com
       # Assembled from POSTGRES_PASSWORD so the password exists in exactly ONE
       # key of secrets.sops.json (interpolated from the stack env, which Komodo
       # passes with --env-file). connect_timeout

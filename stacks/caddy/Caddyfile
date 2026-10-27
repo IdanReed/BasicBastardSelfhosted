@@ -597,7 +597,10 @@
 		# DISABLE_ADMIN_TOKEN exists for exactly this arrangement and is
 		# deliberately NOT set: with both, a forward-auth outage still leaves
 		# the token and a leaked token still needs an Authentik session.
-		@vaultwarden-admin path /admin*
+		# The outpost's own path rides along: Authentik's return trip lands on
+		# /outpost.goauthentik.io/callback, which only a forward_auth'd request
+		# completes — outside the matcher it falls through to Vaultwarden (404).
+		@vaultwarden-admin path /admin* /outpost.goauthentik.io/*
 		handle @vaultwarden-admin {
 			import protected
 			reverse_proxy localhost:10400
