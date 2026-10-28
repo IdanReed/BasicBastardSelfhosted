@@ -9,14 +9,6 @@
 
 {
   system ? builtins.currentSystem,
-  # ServerNotes is a SIBLING repo, so a linked git worktree has no copy beside
-  # it and the lints reading _overview.md fail at eval — taking every other
-  # lint with them, since checks.lints forces the whole set. Overridable, not
-  # conditional: silently skipping the inventory lints in exactly the trees
-  # where in-progress work happens is worse than naming a path.
-  #   nix-build tests -A checks.lints --arg serverNotes /path/to/ServerNotes
-  # A path, not a string: the store copy is what keeps evaluation pure.
-  serverNotes ? ../../ServerNotes,
 }:
 
 let
@@ -111,7 +103,6 @@ let
       servicesConfig
       servicesFullConfig
       images
-      serverNotes
       ;
     # Keys only; laziness keeps this from forcing any suite derivation.
     suiteNames = builtins.attrNames suites;

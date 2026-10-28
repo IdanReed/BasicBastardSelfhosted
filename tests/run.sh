@@ -52,14 +52,7 @@ cd "$(dirname "$0")/.."
 
 TARGET="${1:-lints}"
 
-# ServerNotes is a sibling repo, so ../ServerNotes does not exist inside a
-# linked git worktree and the lints that read _overview.md cannot evaluate
-# there. Point at the main checkout instead:
-#   SERVER_NOTES=~/local/projects/server/ServerNotes ./tests/run.sh
 NIX_ARGS=()
-if [ -n "${SERVER_NOTES:-}" ]; then
-  NIX_ARGS+=(--arg serverNotes "$SERVER_NOTES")
-fi
 
 case "$TARGET" in
   debug)

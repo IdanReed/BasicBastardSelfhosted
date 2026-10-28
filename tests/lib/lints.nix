@@ -14,10 +14,6 @@
   # hardware config, so its tmpfiles rules are otherwise never evaluated.
   servicesFullConfig,
   images,
-  # The ServerNotes checkout (a sibling repo, so not reachable through `repo`).
-  # Passed in rather than hardcoded so a linked git worktree can point at the
-  # main checkout instead of failing to evaluate — see tests/default.nix.
-  serverNotes,
   # attrNames of default.nix's `suites`, for run-sh-suite-parity (keys only —
   # laziness keeps this from forcing any suite derivation).
   suiteNames,
@@ -34,7 +30,7 @@ let
 
   # A path, not a string: only the one file is copied to the store, and a
   # string argument cannot smuggle an out-of-store path into a lint.
-  overviewMd = serverNotes + "/designs/_overview.md";
+  overviewMd = repo + "/docs/services.md";
 
   # Discovered rather than listed, so a new stack is covered by existing.
   stackNames = lib.attrNames (
@@ -898,7 +894,7 @@ in
           cells = [c.strip() for c in line.strip().strip("|").split("|")]
           if len(cells) >= 5 and cells[3].strip("* ") == "FwdAuth":
               if norm(cells[0]) not in protected_labels:
-                  print(f"WARN: _overview row '{cells[0]}' is marked FwdAuth "
+                  print(f"WARN: services.md row '{cells[0]}' is marked FwdAuth "
                         f"but no Caddy route imports protected for it yet "
                         f"(roadmap, not drift)")
 
@@ -992,7 +988,7 @@ in
       PY
     '';
 
-  # _overview.md is the authoritative inventory, kept in sync BY HAND: every
+  # docs/services.md is the authoritative inventory, kept in sync BY HAND: every
   # published port needs a row, and a row that pins a tag must match the
   # compose. One-directional — a row without a stack is the roadmap.
   overview-sync =
@@ -1039,19 +1035,19 @@ in
               hits = inv_ports.get(port)
               if not hits:
                   errs.append(f"{c['stack']}: publishes {port} but "
-                              f"_overview.md has no row with that port")
+                              f"docs/services.md has no row with that port")
                   continue
               # Tag agreement, when the row pins one.
               for r in hits:
                   if ":" in r["image"]:
                       if r["image"] not in text:
                           errs.append(
-                              f"{c['stack']}: _overview row '{r['name']}' pins "
+                              f"{c['stack']}: services.md row '{r['name']}' pins "
                               f"image {r['image']!r} but the compose file does "
                               f"not contain it")
 
       if errs:
-          print("Inventory drift (_overview.md vs compose):", file=sys.stderr)
+          print("Inventory drift (docs/services.md vs compose):", file=sys.stderr)
           for e in errs:
               print("  - " + e, file=sys.stderr)
           sys.exit(1)
@@ -1421,7 +1417,7 @@ in
               "this is the only lever. The exposure argument is unusually easy "
               "here: with DISABLE_SSH=true the agent has NO listener at all — "
               "it is outbound-only, dialling the hub's loopback publish over a "
-              "websocket — which is why _overview's port cell for the agent "
+              "websocket — which is why docs/services.md's port cell for the agent "
               "row is `--` and 10453 was released. The hub itself is bridged "
               "and published 127.0.0.1:10452 like everything else.",
           ("silverbullet", "silverbullet_gitsync"):
@@ -1837,7 +1833,7 @@ in
       PY
     '';
 
-  # An _overview.md row claiming FwdAuth must have a Caddy handle that imports
+  # An docs/services.md row claiming FwdAuth must have a Caddy handle that imports
   # `protected` — the Auth cell is the only written record of intended posture
   # and it has been wrong three times. The reverse direction is overview-sync's
   # job and the blueprint half is forward-auth-coverage's.
@@ -1869,7 +1865,7 @@ in
           "auth-column-parity found no protected bentopdf pilot on 10401 — the "
           "Caddyfile parser has rotted; fix it before trusting this lint")
 
-      # --- _overview rows --------------------------------------------------
+      # --- services.md rows --------------------------------------------------
       errs, warns, checked = [], [], 0
       for line in overview.splitlines():
           cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -1891,7 +1887,7 @@ in
               continue
           if not hit["protected"]:
               errs.append(
-                  f"{name!r} is marked FwdAuth in _overview.md but the Caddy "
+                  f"{name!r} is marked FwdAuth in docs/services.md but the Caddy "
                   f"handle for {hit['host']} does not `import protected` — the "
                   f"inventory claims an authentication that is not there.")
 
