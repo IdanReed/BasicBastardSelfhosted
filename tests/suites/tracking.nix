@@ -1,7 +1,7 @@
 # Tracking suite (heavy): bookstack + its MariaDB, homebox, and karakeep with
 # its meilisearch and chrome sidecars. One of THREE stacks in the 10300-10349
-# range (annex §1) — firefly and dawarich are separate compose projects with
-# their own suites.
+# range — firefly and dawarich are separate compose projects with their own
+# suites.
 #
 # Hand-written because mk-stack-suite asserts every container is `running`
 # (tracking-init is a restart:"no" oneshot) and because three of the builtin

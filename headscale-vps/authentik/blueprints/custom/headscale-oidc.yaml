@@ -21,6 +21,31 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
+  # Discovery applies blueprints in no fixed order. These four create what
+  # the entries below !Find, and the MFA stage they override; applying them
+  # first makes a fresh install converge in one pass instead of erroring
+  # until a retry.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Authentication flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider authorization flow (implicit consent)
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Provider invalidation flow
+      required: true
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: System - OAuth2 Provider - Scopes
+      required: true
+
   - model: authentik_core.group
     id: headscale-users-group
     state: present

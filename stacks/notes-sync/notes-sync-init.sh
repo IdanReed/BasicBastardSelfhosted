@@ -1,5 +1,5 @@
 #!/bin/sh
-# Headless first-run for the notes-sync stack (annex §3).
+# Headless first-run for the notes-sync stack.
 #
 # rmfakecloud has NO provisioning API: the first login CREATES the admin,
 # unauthenticated, so this container's real job is to get there first. Syncthing

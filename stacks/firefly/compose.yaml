@@ -1,6 +1,4 @@
 # Firefly III + data importer — personal finance (10303, 10305).
-# Design: ServerNotes/designs/custom-finance.md and
-# service-tracking-stack-research.md (the annex).
 #
 # 🚨 THE ONLY STACK WHOSE AUTHENTICATION IS ENTIRELY OUTSIDE ITSELF. Firefly has
 # no OIDC at v6.6.6, so forward auth is the only SSO path — and remote_user_guard
@@ -182,7 +180,7 @@ services:
       # importer's downloadable Configuration JSON, which is session state
       # because this service has no volume. Scheduling it would need a volume,
       # an unauthenticated POST endpoint and a plaintext file that reads every
-      # linked bank account — an OPERATOR decision, see ServerNotes/designs/_todo.md.
+      # linked bank account — an OPERATOR decision, not a config change.
       # The SIMPLEFIN_* tuning knobs stay unset; config/simplefin.php defaults
       # them all.
     env_file: /run/stack-env/firefly.env

@@ -2,8 +2,7 @@
 # kavita, shelfmark, audiobookshelf, plus the two oneshots
 # (kavita-config-init, books-init). Hand-written because mk-stack-suite's
 # generic all-containers-running assertion cannot pass a stack with
-# restart:"no" oneshots (its header says so). Annex §6 of
-# ServerNotes/designs/service-ebook-stack-research.md is the assertion spec.
+# restart:"no" oneshots (its header says so).
 #
 # Genuinely under test:
 #   - the sops-nix render of the stack env (root-only, 0400), and env threading
@@ -13,7 +12,7 @@
 #     sops -> /run/stack-env -> env_file chain
 #   - kavita-config-init's MERGE-style render contract: it owns only the keys
 #     the template declares, preserves everything else in the file, is a no-op
-#     on re-run, and — the point of the whole exercise (annex §0.5) — the
+#     on re-run, and — the point of the whole exercise — the
 #     TokenKey it seeded is STILL there after Kavita has started and had every
 #     chance to rewrite the file. Kavita swallows write failures silently, so
 #     "the placeholder key is not in play" is a thing that has to be asserted,
@@ -25,7 +24,7 @@
 #     links root instead of registering a second user of the same name
 #   - headless seeding of BOTH apps in one oneshot, idempotent under Komodo
 #     redeploys (books-init's CHANGE: contract), including the two
-#     audiobookshelf hazards the annex flags: /init is guarded by GET /status
+#     audiobookshelf hazards: /init is guarded by GET /status
 #     (a second POST returns 500, a malformed one kills the server), and an
 #     empty password would silently create a passwordless root
 #   - a real EPUB and a real audio file indexed offline: both apps'
@@ -38,8 +37,8 @@
 #   - the :ro library mounts really being sufficient — the tree is byte-identical
 #     after both apps have scanned it (the difference between a :ro and a :rw
 #     line in the compose file, so it gets measured rather than reasoned)
-#   - the audiobook hand-off, books half (Option C,
-#     ServerNotes/designs/audiobook-acquisition.md): /mnt/slow/books/drop is a
+#   - the audiobook hand-off, books half (the media stack promotes clean
+#     audiobook downloads into the drop): /mnt/slow/books/drop is a
 #     SECOND FOLDER of the Audiobooks library, an audiobook that appears there
 #     becomes a library item, the library carries the scan cron that is the
 #     only thing watching it, and this stack still has no QBITTORRENT_*
@@ -58,7 +57,7 @@
 #     precisely so the reboot subtest asserts data durability — the databases,
 #     the rendered appsettings.json and the indexed book must all come back
 #
-# Documented egress gaps (a green run covers NONE of these — annex §6):
+# Documented egress gaps (a green run covers NONE of these):
 #   - every Anna's Archive search and download, and the Cloudflare-bypass
 #     browser path. Shelfmark is asserted to come up healthy and stay healthy
 #     with zero egress (which is real: its Chromium is baked in at build time,
@@ -281,7 +280,7 @@ pkgs.testers.runNixOSTest {
           "d /mnt/slow/books 0755 1000 1000 -"
           "d /mnt/slow/books/library 0755 1000 1000 -"
           "d /mnt/slow/books/audiobooks 0755 1000 1000 -"
-          # The media stack's audiobook hand-off (Option C). Written by
+          # The media stack's audiobook hand-off. Written by
           # stacks/media's clamav-scanner, read :ro here as a second folder
           # of the Audiobooks library — this suite stands in for the writer.
           "d /mnt/slow/books/drop 0755 1000 1000 -"
@@ -441,7 +440,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # §6.1 boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
+    # boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
@@ -467,7 +466,7 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("seed-library.service")
 
     # -----------------------------------------------------------------------
-    # §6.2 config render: template + secrets -> /kavita/config/appsettings.json
+    # config render: template + secrets -> /kavita/config/appsettings.json
     # -----------------------------------------------------------------------
     with subtest("kavita-config-init renders appsettings.json (0600, merged)"):
         try:
@@ -505,7 +504,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.3 the stack comes up
+    # the stack comes up
     # -----------------------------------------------------------------------
     with subtest("compose brings up kavita, shelfmark and audiobookshelf"):
         # books-init is NOT in the --wait set: compose's --wait reports failure
@@ -566,14 +565,14 @@ pkgs.testers.runNixOSTest {
             assert code == "0", f"{name} exited {code}, expected 0"
 
     # -----------------------------------------------------------------------
-    # §6.4 the seeded TokenKey survived Kavita starting
+    # the seeded TokenKey survived Kavita starting
     # -----------------------------------------------------------------------
     with subtest("kavita did not overwrite the seeded TokenKey"):
-        # THE regression test for annex §0.5. Kavita's EnsureJwtTokenKey runs
-        # at startup and every writer of this file swallows its exceptions, so
-        # a read-only mount (or any other write failure) leaves the server
-        # signing JWTs with the placeholder key that ships in the public repo
-        # — with no crash and no log line. The only way to know is to look.
+        # THE regression test for the placeholder TokenKey. Kavita's
+        # EnsureJwtTokenKey runs at startup and every writer of this file
+        # swallows its exceptions, so a read-only mount (or any other write
+        # failure) leaves the server signing JWTs with the placeholder key that
+        # ships in the public repo — with no crash and no log line. The only way to know is to look.
         conf = json.loads(services_vm.succeed(f"cat {CONF}"))
         assert conf["TokenKey"] == TOKEN_KEY, (
             f"TokenKey after startup is {conf['TokenKey']!r} — kavita "
@@ -581,7 +580,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.5 admin seeds: fixture credentials log in
+    # admin seeds: fixture credentials log in
     # -----------------------------------------------------------------------
     with subtest("both seeded admins log in with the fixture credentials"):
         dto = curl(KAVITA, "/api/Account/login", "POST",
@@ -605,12 +604,12 @@ pkgs.testers.runNixOSTest {
     abs_auth = {"Authorization": f"Bearer {abs_token}"}
 
     # -----------------------------------------------------------------------
-    # §6.6 the passwordless-root guard
+    # the passwordless-root guard
     # -----------------------------------------------------------------------
     with subtest("an empty audiobookshelf password does not log in"):
         # A .env variable that failed to interpolate would have made POST
         # /init create a passwordless root user with a 200 response and only a
-        # warning in the log (annex §3.3), and audiobookshelf's local strategy
+        # warning in the log, and audiobookshelf's local strategy
         # then APPROVES a login whose submitted password is also empty. So
         # this assertion is only meaningful next to the previous subtest,
         # where the fixture password succeeded: together they say the account
@@ -622,7 +621,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.7 both libraries index their test content, offline
+    # both libraries index their test content, offline
     # -----------------------------------------------------------------------
     with subtest("kavita indexes the seeded EPUB"):
         # The library was created and scanned by books-init; a scan is
@@ -658,8 +657,7 @@ pkgs.testers.runNixOSTest {
             raise
 
     with subtest("the media stack's drop directory is a folder of that library"):
-        # The books half of Option C
-        # (ServerNotes/designs/audiobook-acquisition.md). Everything the
+        # The books half of the audiobook hand-off. Everything the
         # media stack needs from this stack is right here: a path, declared
         # as a library folder. No network path, no download tree mounted, no
         # QBITTORRENT_* variable anywhere in the stack — asserted below.
@@ -745,8 +743,8 @@ pkgs.testers.runNixOSTest {
         )
 
     with subtest("the books stack cannot reach the media stack's download client"):
-        # The decision, asserted rather than commented: Option C was chosen
-        # over Shelfmark-drives-qBittorrent, so a QBITTORRENT_* variable or a
+        # The decision, asserted rather than commented: the drop hand-off was
+        # chosen over Shelfmark-drives-qBittorrent, so a QBITTORRENT_* variable or a
         # mount of the media download tree appearing in this stack is a
         # reversal of it and must fail here.
         compose = services_vm.succeed("cat /srv/stacks/books/compose.yaml")
@@ -759,7 +757,7 @@ pkgs.testers.runNixOSTest {
             l for l in compose.splitlines() if not l.strip().startswith("#")
         )
         assert "QBITTORRENT_" not in body.upper(), (
-            "the books stack declares a QBITTORRENT_* variable — Option C is "
+            "the books stack declares a QBITTORRENT_* variable — the hand-off is "
             "'no cross-stack path to the download client'"
         )
         assert "/mnt/slow/data" not in body, (
@@ -767,7 +765,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.8/§6.9 OPDS end to end + the KOReader auth leg
+    # OPDS end to end + the KOReader auth leg
     # -----------------------------------------------------------------------
     with subtest("the OPDS feed answers and contains the indexed book"):
         # Every Kavita user is created with a system auth key named 'opds', so
@@ -808,7 +806,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.10 the OIDC-on contract
+    # the OIDC-on contract
     # -----------------------------------------------------------------------
     with subtest("both apps report OIDC on, with local login kept"):
         # Kavita's public, unauthenticated view of its own OIDC state.
@@ -845,7 +843,7 @@ pkgs.testers.runNixOSTest {
             )
 
     # -----------------------------------------------------------------------
-    # §6.11 the :ro library mounts really are sufficient
+    # the :ro library mounts really are sufficient
     # -----------------------------------------------------------------------
     with subtest("neither library app wrote into its library tree"):
         # Both apps have now scanned. If either needed write access, the
@@ -871,7 +869,7 @@ pkgs.testers.runNixOSTest {
             )
 
     # -----------------------------------------------------------------------
-    # §6.12 shelfmark's post-download hook
+    # shelfmark's post-download hook
     # -----------------------------------------------------------------------
     def run_hook(target, extra_env=""):
         # Invoked EXACTLY the way shelfmark invokes it: the script execed
@@ -915,7 +913,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.13/§6.14 loopback positives and the off-host negatives
+    # loopback positives and the off-host negatives
     # -----------------------------------------------------------------------
     with subtest("published ports answer on loopback and nowhere else"):
         # Positive control FIRST (immich precedent): without it, a node-naming
@@ -941,7 +939,7 @@ pkgs.testers.runNixOSTest {
             assert ports in ("{}", "null"), f"{name} publishes {ports}"
 
     # -----------------------------------------------------------------------
-    # §6.15 the backup contract backup-prepare.sh hardcodes
+    # the backup contract backup-prepare.sh hardcodes
     # -----------------------------------------------------------------------
     with subtest("the SQLite paths backup-prepare.sh dumps exist and dump"):
         # Same `.backup` call the script makes (WAL-safe, unlike a raw copy).
@@ -969,7 +967,7 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("test -s /tmp/shelfmark.sqlite")
 
     # -----------------------------------------------------------------------
-    # §6.16 idempotence under redeploys
+    # idempotence under redeploys
     # -----------------------------------------------------------------------
     with subtest("re-running both oneshots is a no-op"):
         for service, container in [("kavita-config-init", "books_config_init"),
@@ -987,7 +985,7 @@ pkgs.testers.runNixOSTest {
             )
 
     # -----------------------------------------------------------------------
-    # §6.17 reboot survival on persistent storage
+    # reboot survival on persistent storage
     # -----------------------------------------------------------------------
     with subtest("the stack returns after a reboot with its data intact"):
         # shutdown() + start(), NOT reboot(): the driver runs qemu with

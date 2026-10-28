@@ -1,198 +1,78 @@
-# Backrest — restic backups to Hetzner Storage Box
+# Backrest — restic to a Hetzner Storage Box
 
-Daily encrypted, deduplicated backups of everything except re-downloadable
-media. Backrest provides scheduling and a browse/restore UI on top of restic.
+Nightly encrypted, deduplicated backups of everything except re-downloadable
+media, with a browse/restore UI at `https://backrest.svc.idanreed.com`
+(forward auth in front of Backrest's own login). The schedule, the routine
+check and the restore drill are in
+[docs/deploy.md](../../docs/deploy.md#backups-and-the-restore-drill); the
+one-time setup is [docs/bring-up.md](../../docs/bring-up.md) §16.
 
 ## What backs up what
 
-| Layer | Runs where | Does what |
+| Layer | Runs | Does |
 |---|---|---|
-| `backup-prepare.service` (02:45) | **host**, `nixos/backup-prepare.sh` | Postgres/MySQL/SQLite dumps into `/mnt/fast/_dumps`, and pulls VPS state into `/mnt/fast/_vps` |
-| `fast-volume` plan (03:00) | Backrest container | `/mnt/fast` → restic |
-| `slow-volume-selective` plan (04:00) | Backrest container | books, photos (immich originals; thumbs/encoded-video excluded — regenerable), samba → restic |
+| `backup-prepare.service`, 02:45 | on the host (`nixos/backup-prepare.sh`) | Postgres/MariaDB/SQLite dumps into `/mnt/fast/_dumps`; pulls the VPS's Authentik dump and headscale state into `/mnt/fast/_vps` |
+| `fast-volume`, 03:00 | Backrest | `/mnt/fast` → restic |
+| `slow-volume-selective`, 04:00 | Backrest | the `/mnt/slow` directories listed in `config.template.json` (books, photos without thumbnails or encoded video, the mail archive) → restic |
 
-Dumps run on the host, not as a Backrest hook. The Backrest image has neither
-the docker CLI nor `sqlite3`, `/mnt/fast` is mounted read-only inside it, and
-the hook the original design specified was registered `ON_ERROR_CANCEL` — so
-its guaranteed failure would have cancelled every snapshot.
+- **Dumps run on the host, not as a Backrest hook.** The Backrest image has
+  neither the docker CLI nor `sqlite3`, and mounts `/mnt/fast` read-only.
+- **`**/pgdata/**` is excluded.** A file copy of a running Postgres cluster is
+  torn; the dumps are the backup.
+- **Signals:** errors go to ntfy (shoutrrr over the `homelab` network);
+  `fast-volume` success pings `DEADMAN_URL` (healthchecks.io), so a backup that
+  stopped running is caught by its absence. Success is otherwise silent.
 
-Live database directories (`**/pgdata/**`) are **excluded**. A file-level copy
-of a running Postgres cluster is torn and generally not restorable; the logical
-dumps are what get backed up.
+## Setup rules
 
-## One-time setup
-
-These are the steps that cannot live in git.
-
-### 1. Storage Box + sub-account
-
-Order a Hetzner Storage Box (BX11 1 TB is enough to start). In the console:
-
-- Create a **sub-account** scoped to its own directory. Restic authenticates
-  with full write access to whatever it can see; a sub-account limits the blast
-  radius.
-- **Enable snapshots** (daily, keep 7–14). This is the single highest-value
-  control here and it is a checkbox.
-
-  Restic over SFTP has no append-only mode (that needs `rest-server`), so a
-  compromised or malfunctioning services VM can run `restic forget --prune`, or
-  encrypt itself, and take the backups with it. Storage Box snapshots are what
-  make that recoverable.
-
-### 2. SSH key
-
-**Sops-managed** (see CLAUDE.md "SSH identities") — do NOT `ssh-keygen`
-directly into `/var/lib/backup/`: sops-nix and a tmpfiles `C+` rule own both
-paths there and will **overwrite a hand-made key on the next boot or
-switch**, orphaning whatever public half you already authorised.
-
-Generate locally, then put each half where it belongs:
-
-```bash
-ssh-keygen -t ed25519 -N "" -f /tmp/storagebox_ed25519
-# private half -> BACKUP_STORAGEBOX_SSH_KEY in nixos/secrets.sops.yaml:
-sopsedit nixos/secrets.sops.yaml       # paste as a YAML block scalar
-# public half -> the backup-storagebox entry in all three ssh-pubkeys.nix
-# copies, and authorised on the box:
-ssh-copy-id -p 23 -i /tmp/storagebox_ed25519.pub \
-    uXXXXXX@uXXXXXX.your-storagebox.de
-shred -u /tmp/storagebox_ed25519*
-```
-
-Then fill in `uXXXXXX` in `ssh_config`. The key materialises on the host at
-`/var/lib/backup/storagebox_ed25519` (a real file re-copied from
-`/run/secrets` each boot, because both containers bind-mount that exact path
-and a symlink into `/run/secrets` would dangle inside them). `config-init`
-refuses to seed — and Backrest will not start — while the key is missing **or
-still the `changeme_` placeholder**, rather than coming up and failing every
-backup on ssh auth.
-
-Each container gets only what it reads: `config-init` mounts the single key
-file (not `/var/lib/backup`, which also holds `vps_ed25519` — the
-passwordless-sudo identity for the public VPS).
-
-### 2b. The host key is pinned
-
-`ssh_config` sets `StrictHostKeyChecking yes` against the committed
-`known_hosts`, mounted read-only at `/etc/ssh/ssh_known_hosts`. There is no
-trust-on-first-use step to perform and no prompt to answer; a changed host key
-fails the backup loudly.
-
-The three keys are Hetzner's, shared by all Storage Boxes, verified against
-the fingerprints Hetzner publishes at
-<https://docs.hetzner.com/storage/storage-box/general/#ssh-host-keys>. To
-re-check at any time: `ssh-keygen -l -f known_hosts` and compare. **A mismatch
-is not a rotation until that docs page says so** — see the file's header.
-
-### 3. VPS backup key
-
-`backup-prepare.sh` pulls the Authentik identity database and the Headscale
-node database + private keys over the tailnet. Nothing else backs up the VPS.
-
-Same sops flow (`sopsedit`): private half → `BACKUP_VPS_SSH_KEY` in
-`nixos/secrets.sops.yaml` (sops-nix symlinks it to
-`/var/lib/backup/vps_ed25519`), public half → the `backup-vps` entry in the
-three `ssh-pubkeys.nix` copies — the VPS authorises it from there, no
-`ssh-copy-id` needed once deployed.
-
-Until the real value is in, `backup-prepare.service` warns (missing **or**
-`changeme_` placeholder) and exits non-zero, which trips `OnFailure=` → Ntfy.
-That is deliberate: a missing VPS backup should be noisy, not silent.
-
-### 4. Secrets
-
-`sopsgen apply` fills `secrets.sops.json` from `secrets.example.env`; set
-hand-picked values with `sopsedit stacks/backrest/secrets.sops.json`, then
-`nrs-vm`. The admin password goes in as **base64 of the bcrypt hash** (see the
-generate command in the example) — Backrest base64-decodes `passwordBcrypt`
-before comparing, so a raw bcrypt can never log in. A `$` in a value (e.g. a
-generated `RESTIC_PASSWORD`) needs nothing: the rendered env single-quotes
-every value.
-
-`config-init` refuses to seed `config.json` if **any** value it substitutes is
-empty *or still contains `changeme`*. `config.json` is written exactly once
-and Backrest owns it from then on, so a placeholder seeded now is permanent.
-
-### 5. Dead-man's switch
-
-Set `DEADMAN_URL` to a healthchecks.io check (or equivalent) **before first
-deploy** — `config-init` will not seed a `config.json` containing the
-`hc-ping.com/changeme-uuid` placeholder, because a hook that 404s is
-indistinguishable from a working one (`ON_ERROR_IGNORE`) and this is the only
-external signal in the fleet. The hook is
-`actionHealthchecks`, so delivery is healthchecks-style: success pings the
-URL, failure pings `<URL>/fail` — richer than the old bare POST. This is the only
-thing that catches *absence* — a backup that stopped running produces no
-failure notification, because nothing runs to fail. Success notifications train
-you to ignore them; absence detection does not.
-
-## Offline recovery artifact
-
-The one part of this system with no digital redundancy, by design. If it is
-lost, the backups are unreadable and nothing else matters.
-
-It must contain:
-
-1. The **age private key** (`sops_age_key.txt`) — decrypts every sops file in the repo.
-2. The **restic repository password** — decrypts the backup repository.
-3. **Storage Box credentials** — sub-account username, password, hostname.
-
-Store it *outside this infrastructure*: printed and filed, or on an encrypted
-USB kept off-site, plus a copy in a password manager you do **not** self-host.
-
-Do not store these only in Vaultwarden. Vaultwarden runs here, and its backup
-is encrypted with exactly these credentials — the circular dependency means a
-total loss of this host would leave you unable to decrypt the backup of the
-thing holding the keys. The same trap as storing your TOTP seeds in the
-password manager that TOTP protects.
-
-Disaster recovery therefore starts at step 0: retrieve this artifact.
+- **The Storage Box** has a sub-account scoped to its own directory, and box
+  snapshots on (daily, keep 7–14). restic over SFTP has no append-only mode, so
+  a compromised VM could `forget --prune` the repo; the box's snapshots are
+  what make that recoverable.
+- **The SSH key is a sops value** (`BACKUP_STORAGEBOX_SSH_KEY` in
+  `nixos/secrets.sops.yaml`; public half `backup-storagebox` in
+  `ssh-pubkeys.nix`, authorised on the sub-account). A tmpfiles `C+` rule
+  copies it to `/var/lib/backup/storagebox_ed25519` — a real file, because the
+  containers bind-mount that path and a symlink into `/run/secrets` would
+  dangle inside them — **only when the file is absent**: a hand-made key there
+  shadows the sops value until deleted. Never `ssh-keygen` into
+  `/var/lib/backup/`.
+- **The host key is pinned.** `ssh_config` sets `StrictHostKeyChecking yes`
+  against the committed `known_hosts` (Hetzner's keys, shared by every Storage
+  Box, checked with `ssh-keygen -l -f known_hosts` against the fingerprints
+  Hetzner publishes). A mismatch is not a rotation until Hetzner's docs say so.
+- **`config-init` seeds `config.json` exactly once** and refuses to while the
+  key is missing or a placeholder, the sub-account name in `ssh_config` is
+  unedited, or any substituted value is empty or contains `changeme` — a
+  placeholder seeded once would be permanent. After the seed, Backrest owns
+  the file: a plan change in `config.template.json` reaches a live host only if
+  it is also made in the UI.
+- **The admin password is base64 of a bcrypt** (`BACKREST_ADMIN_PASSWORD_BCRYPT`,
+  drawn from idan's password by `sopsgen`). Backrest base64-decodes
+  `passwordBcrypt` before comparing, so a raw bcrypt never logs in.
+- **The VPS pull key** (`BACKUP_VPS_SSH_KEY`, symlinked to
+  `/var/lib/backup/vps_ed25519`) is authorised on the VPS from
+  `ssh-pubkeys.nix`. While it is missing or a placeholder, `backup-prepare`
+  fails loudly (`OnFailure` → ntfy).
+- Each container mounts only the key it reads: `config-init` gets the Storage
+  Box key file, never `/var/lib/backup` (which also holds the VPS key).
 
 ## Restore
 
-### Via the UI
-
-`https://backrest.svc.idanreed.com` → repository → Browse Snapshots → restore.
-
-### Database restore
-
-Restores come from the dumps in `/mnt/fast/_dumps`, not from `pgdata`:
+The full-host restore is [docs/bring-up.md](../../docs/bring-up.md)
+Appendix A; the VPS's Authentik database goes into a virgin cluster as in
+§0.4. One database from a snapshot:
 
 ```bash
-# 1. Restore the dump
-docker exec -it backrest restic -r sftp:storagebox:/home/restic \
-    restore latest --target /tmp/restore --include /mnt/fast/_dumps/paperless.sql
-
-# 2. Stop the app, keep the database up
-docker stop paperless
-
-# 3. Load it
-docker exec -i paperless_db psql -U paperless < \
-    /tmp/restore/mnt/fast/_dumps/paperless.sql
-
-# 4. Start
+docker exec backrest restic -r sftp:storagebox:/home/restic \
+  restore <snapshot-id> --target /tmp/restore --include /mnt/fast/_dumps/paperless.sql
+docker cp backrest:/tmp/restore/mnt/fast/_dumps/paperless.sql /tmp/paperless.sql
+docker stop paperless                                  # keep paperless_db up
+docker exec -i paperless_db psql -U paperless < /tmp/paperless.sql
 docker start paperless
 ```
 
-### VPS restore
-
-```bash
-# Authentik identity database
-docker exec -i authentik_db psql -U authentik < _vps/authentik.sql
-
-# Headscale: stop the service, restore state, start it. The private keys
-# matter as much as the database — without noise_private.key every client
-# must re-authenticate.
-sudo systemctl stop headscale
-sudo rsync -a _vps/headscale/ /var/lib/headscale/
-sudo chown -R headscale:headscale /var/lib/headscale
-sudo systemctl start headscale
-```
-
-### Verify restores actually work
-
-`checkPolicy` runs `restic check --read-data-subset 5%` monthly, which proves
-the repository is readable. It does **not** prove a dump is loadable. Test a
-real restore of Paperless and Vaultwarden into a scratch container at least
-once, and again after any major version bump — an untested restore is a
-hypothesis, not a backup.
+`checkPolicy` runs `restic check --read-data-subset 5%` monthly: it proves the
+repository is readable, not that a dump loads. The drill in
+[docs/deploy.md](../../docs/deploy.md#backups-and-the-restore-drill) is the
+control for that.

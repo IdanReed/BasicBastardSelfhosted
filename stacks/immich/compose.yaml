@@ -1,6 +1,5 @@
-# Immich — photo management (Data range, port 10102). Design:
-# ServerNotes/designs/service-immich-stack-research.md (the annex, which
-# corrects core-oidc.md); _overview.md owns the port/auth row.
+# Immich — photo management (Data range, port 10102).
+# docs/services.md owns the port/auth row.
 #
 #   - Only immich-server publishes. The ML API, postgres and valkey are
 #     compose-internal: ML is unauthenticated and the API serves every

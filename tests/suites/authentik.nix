@@ -835,6 +835,11 @@ pkgs.testers.runNixOSTest {
                   timeout=180,
               )
           except Exception:
+              print(headscale_vps.succeed(
+                  f"{CURL} '{API}/stages/authenticator/validate/' "
+                  "| jq -c '[.results[] | {name, not_configured_action, "
+                  "device_classes, configuration_stages}]'"
+              ))
               authentik_diag()
               raise
 
@@ -1032,6 +1037,7 @@ pkgs.testers.runNixOSTest {
               line = [l for l in out.splitlines() if l.startswith("JSON")][-1]
               return json.loads(line[4:])
 
+          st = None
           try:
               deadline = time.time() + 300
               while True:
@@ -1054,6 +1060,15 @@ pkgs.testers.runNixOSTest {
               for slug in ["windmill-sso", "wger-sso"]:
                   assert slug not in st["bound"], f"{slug} must stay open to all users"
           except Exception:
+              # The instance status says only "error"; a re-apply prints the
+              # importer's own validation log, which names the entry and field.
+              for path in sorted(k for k, v in (st or {}).get("bp", {}).items()
+                                 if v != "successful"):
+                  print(f"=== ak apply_blueprint {path} ===")
+                  print(headscale_vps.execute(
+                      f"docker exec authentik_worker ak apply_blueprint "
+                      f"/blueprints/{path} 2>&1 | tail -40"
+                  )[1])
               authentik_diag()
               raise
 

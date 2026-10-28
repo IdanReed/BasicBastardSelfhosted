@@ -1,5 +1,4 @@
-# Mealie (10352). EVALUATION stack — the Tandoor side-by-side
-# (ServerNotes/designs/service-bakeoff.md item 6).
+# Mealie (10352). EVALUATION stack — the Tandoor side-by-side.
 #
 # Backup: no _db container and no pg_dumpall entry. The database is
 # /mnt/fast/mealie/mealie.db, covered by backup-prepare.sh's sqlite_backup.

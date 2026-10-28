@@ -1,5 +1,5 @@
 # sops-gen manifest — every managed secret across all sops files.
-# Schema: README.md. Inventory source: ServerNotes/designs/sops-keygen.md.
+# Schema: README.md. The bring-up-ordered inventory: docs/bring-up.md §4.
 #
 # Recipe units: hex:N = N hex CHARS (openssl rand -hex N/2);
 #               base64:N = N random BYTES, base64-encoded.
@@ -235,7 +235,7 @@ secrets:
     class: derived
     recipe: ssh-ed25519
     note: "desktop -> Forgejo git-over-ssh via ProxyJump arcane-vm (identity in nixos-de/ssh-identities.nix); no ssh-pubkeys.nix entry — not a host authorizedKey (gatech precedent)"
-    reminder: "paste the PUBLIC half into the Forgejo user Settings -> SSH keys at deploy-handbook §6"
+    reminder: "paste the PUBLIC half into the Forgejo user Settings -> SSH keys at docs/bring-up.md §11 step 2"
     targets: [{ file: nixos-de/secrets.sops.yaml, key: ssh/forgejo, part: private }]
   - name: de/workvpn
     class: config

@@ -4,7 +4,7 @@
 Fills every `generate`- and `derived`-class entry in `manifest.yaml`, refuses the
 `pull`-class ones (they are minted elsewhere), and never overwrites real
 committed key material. The inventory grouped by bring-up step is
-`ServerNotes/designs/deploy-handbook.md` §4.
+[`docs/bring-up.md`](../docs/bring-up.md) §4.
 
 A value is stored ONCE, so most entries have a single target. Cross-host values
 live in `secrets/shared.sops.json`; values built from others (a URL around a
@@ -42,13 +42,14 @@ SOPS_AGE_KEY="$(sudo cat /var/lib/sops-nix/sops_age_key.txt)" secrets-gen/sops-g
 - **pull-class hard-refuses generation** — a fabricated TAILSCALE_AUTH_KEY
   would pass the `changeme_*` deploy guard and 401 silently later. They are
   reported as "missing, add by hand" with the how-to note.
-- **Twins** (same-file pairs, URL-embedded passwords, cross-host OIDC): one
-  draw per entry, rendered into every target in one pass. If one side is
-  already real, that value is *propagated*, never redrawn; `copy_only`
-  entries (immich OIDC) never fresh-draw at all.
+- **Twins** (a password and its hashes): one draw per entry, rendered into
+  every target in one pass. If one target is already real, that value is
+  *propagated*, never redrawn; `copy_only` entries (`user/idan`) never draw
+  at all.
 - All writes go through `sops set --value-stdin` / `sops encrypt` — recipient
   from `.sops.yaml`, plaintext never on argv, scratch in tmpfs and shredded.
-  Dotenv values containing `$` are single-quoted automatically (ledger #30).
+  Dotenv values containing `$` are single-quoted automatically
+  (`tests/README.md`, rule #30).
 
 ## sort
 

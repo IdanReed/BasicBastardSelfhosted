@@ -2,8 +2,7 @@
 # including the heavies (authentik, backrest, paperless, rotation, gitops,
 # forwardauth, disko, proxmox-boot, every stackCheck) plus the Proxmox VMA
 # image build gate that `all` tacks on. This is the tier that catches
-# cross-suite regressions the PR trio misses (LONGRUN's sweeps repeatedly
-# earned their keep exactly this way).
+# cross-suite regressions the PR trio misses.
 #
 # RUNNER ASSUMPTION: same as suites.yml — self-hosted NixOS runner, labels
 # nix + kvm (see lints.yml for the full contract, and

@@ -11,9 +11,6 @@
 #      would pass on a stack that is doing nothing at all. Subtest 7 is the
 #      only thing standing between that and a green run.
 #
-# Annex §6 of ServerNotes/designs/service-automation-stack-research.md is the
-# assertion spec.
-#
 # Genuinely under test:
 #   - the sops-nix render of the stack env (root-only, 0400), and env threading
 #     END TO END: the MQTT credentials and the HA owner exist only in the
@@ -318,7 +315,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # §6.1 boot chain + decrypt
+    # boot chain + decrypt
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("multi-user.target")
@@ -337,7 +334,7 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("load-test-images.service")
 
     # -----------------------------------------------------------------------
-    # §6.2 the broker's password file
+    # the broker's password file
     # -----------------------------------------------------------------------
     with subtest("mosquitto-init renders a sha512-pbkdf2 password file"):
         try:
@@ -364,7 +361,7 @@ pkgs.testers.runNixOSTest {
         assert "argon2" not in passwd, "password file used argon2id"
 
     # -----------------------------------------------------------------------
-    # §6.3 the Home Assistant storage config
+    # the Home Assistant storage config
     # -----------------------------------------------------------------------
     with subtest("ha-config-init pre-seeds .storage/http"):
         try:
@@ -394,7 +391,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.6 the stack comes up
+    # the stack comes up
     # -----------------------------------------------------------------------
     with subtest("compose brings up home assistant, mosquitto and frigate"):
         # automation-init is NOT in the --wait set: compose reports failure for
@@ -412,7 +409,7 @@ pkgs.testers.runNixOSTest {
             raise
 
     # -----------------------------------------------------------------------
-    # §6.4 THE five-minute-revert regression test
+    # THE five-minute-revert regression test
     # -----------------------------------------------------------------------
     with subtest("home assistant loaded the STABLE http config, not a pending one"):
         # Since 2026.8.0 a `pending` http config is a five-minute trial that
@@ -430,7 +427,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.5 a proxied request actually works
+    # a proxied request actually works
     # -----------------------------------------------------------------------
     with subtest("a request carrying X-Forwarded-For is accepted"):
         # The storage config is NOT re-validated on load, so a malformed
@@ -450,7 +447,7 @@ pkgs.testers.runNixOSTest {
         ), "HA logged the reverse-proxy misconfiguration error"
 
     # -----------------------------------------------------------------------
-    # §6.7 THE Frigate safe-mode gate
+    # THE Frigate safe-mode gate
     # -----------------------------------------------------------------------
     with subtest("frigate is running its real config, not safe mode"):
         # Without this the whole Frigate half of the suite passes on a totally
@@ -482,7 +479,7 @@ pkgs.testers.runNixOSTest {
             assert exit_code == "0", f"{name} exited {exit_code}, expected 0"
 
     # -----------------------------------------------------------------------
-    # §6.9 headless onboarding
+    # headless onboarding
     # -----------------------------------------------------------------------
     with subtest("automation-init onboards home assistant"):
         try:
@@ -538,7 +535,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.10 the MQTT round trip — the reason the stack exists
+    # the MQTT round trip — the reason the stack exists
     # -----------------------------------------------------------------------
     with subtest("MQTT round trip with authentication on"):
         # Publish as frigate, receive as homeassistant — both fixture
@@ -617,7 +614,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.12 publishing posture
+    # publishing posture
     # -----------------------------------------------------------------------
     with subtest("published ports answer on loopback and nowhere else"):
         # Positive control first: without it a node-naming regression makes
@@ -641,7 +638,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.14 the guarded Coral stanza (media's /dev/dri drift-guard pattern)
+    # the guarded Coral stanza (media's /dev/dri drift-guard pattern)
     # -----------------------------------------------------------------------
     with subtest("the guarded Coral stanza exists and degrades in a VM"):
         # The TPU is untestable here, but losing the stanza silently would
@@ -658,7 +655,7 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed("docker exec frigate test -d /dev/bus/usb")
 
     # -----------------------------------------------------------------------
-    # §6.13 the backup contract
+    # the backup contract
     # -----------------------------------------------------------------------
     with subtest("the SQLite paths backup-prepare.sh dumps exist and dump"):
         for name, src in [
@@ -672,7 +669,7 @@ pkgs.testers.runNixOSTest {
             services_vm.succeed(f"test -s /tmp/{name}.sqlite")
 
     # -----------------------------------------------------------------------
-    # §6.15 idempotence under redeploys
+    # idempotence under redeploys
     # -----------------------------------------------------------------------
     with subtest("re-running the oneshots is a no-op"):
         # mosquitto-init is deliberately ABSENT from this list: mosquitto_passwd
@@ -697,7 +694,7 @@ pkgs.testers.runNixOSTest {
             )
 
     # -----------------------------------------------------------------------
-    # §6.16 reboot survival on persistent storage
+    # reboot survival on persistent storage
     # -----------------------------------------------------------------------
     with subtest("the stack returns after a reboot with its data intact"):
         # shutdown() + start(), NOT reboot(): the driver runs qemu with

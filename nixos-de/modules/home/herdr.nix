@@ -1,8 +1,8 @@
 { inputs, pkgs, ... }:
 
 # herdr — agent multiplexer (tmux alternative with a server per machine, a
-# thin SSH client and per-pane working/blocked state for Claude Code). Trial
-# for the dev-env design (~/local/projects/server/dev-mgmt-research.md §3).
+# thin SSH client and per-pane working/blocked state for Claude Code). On
+# trial for isolated dev environments.
 #
 # Comes from the `nixpkgs-fresh` input, not `pkgs`: the locked nixpkgs predates
 # the package and the locked home-manager has no `programs.herdr` module. Once

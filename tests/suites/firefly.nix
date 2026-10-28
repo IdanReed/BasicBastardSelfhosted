@@ -1,6 +1,6 @@
 # Firefly III suite (heavy): the core app, its Postgres, and the data
-# importer. One of THREE stacks in the 10300-10349 range (annex §1) —
-# tracking and dawarich are separate compose projects with their own suites.
+# importer. One of THREE stacks in the 10300-10349 range — tracking and
+# dawarich are separate compose projects with their own suites.
 #
 # Hand-written because this is the only stack in the fleet whose
 # AUTHENTICATION IS ENTIRELY OUTSIDE ITSELF, and the things worth asserting

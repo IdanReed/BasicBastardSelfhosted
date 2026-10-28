@@ -1,5 +1,4 @@
 # Vaultwarden — Bitwarden-compatible password vault (10400).
-# Design: ServerNotes/designs/service-util-stack-research.md.
 #
 # Its own stack rather than part of stacks/util: the deploy plane deploys per
 # project (an IT-Tools bump would restart the password manager), stack-env-drift

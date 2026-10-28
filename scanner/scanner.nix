@@ -1,14 +1,14 @@
 # Minimal NixOS config for the external-security-test scanner box.
 #
 # Imported by nixos-infect through NIXOS_IMPORT=./scanner.nix — see
-# scanner/README.md and ServerNotes/designs/security-external-testing.md.
+# scanner/README.md.
 # This box reproduces an ATTACKER OUTSIDE THE TAILNET: it owns no trust, joins
 # no tailnet (phases 1-4), and only runs recon/enumeration against targets the
 # operator owns.
 #
 # Public-safe by construction: tools + one throwaway pubkey, no targets and no
-# secrets. The private target list ships separately and never lands in this
-# (public-mirrored) repo — ServerNotes/secrets/scanner-targets.sops.yaml.
+# secrets. The private target list ships separately (provision.sh) and never
+# lands in this (public-mirrored) repo.
 #
 # This is NOT the desktop (nixos-de/); it is a deliberately minimal, throwaway
 # host. Destroy the Vultr instance when the run is done.
@@ -40,7 +40,7 @@
   networking.firewall.allowedTCPPorts = [ 22 ];
 
   environment.systemPackages = with pkgs; [
-    # Scanner toolkit — matches ServerNotes security-external-testing.md Setup 5.
+    # Scanner toolkit — recon and enumeration only.
     nmap # host/port/service discovery (-sS, -sV, -sC)
     testssl # TLS/SSL posture
     nuclei # templated vuln/misconfig checks (fetches templates on first run)

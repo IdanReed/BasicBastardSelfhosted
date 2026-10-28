@@ -5,11 +5,13 @@
 #
 # Usage: ./deploy.sh [user@]<VPS_IP>
 #
-#   root@ (the default) — a fresh box in Hetzner rescue mode (§7).
-#   idan@ — a reinstall over this config (handbook §0.4 mode B): root login is
-#   off, nixos-anywhere kexecs through passwordless sudo, and the kexec
-#   installer takes /etc/ssh/authorized_keys.d/$SUDO_USER as root's keys and
-#   keeps the host keys. NixOS has no kernel lockdown, so no rescue mode.
+#   root@ (the default) — a fresh box in Hetzner rescue mode
+#   (docs/bring-up.md §7).
+#   idan@ — a reinstall over this config (docs/bring-up.md §0.4, mode B):
+#   root login is off, nixos-anywhere kexecs through passwordless sudo, and
+#   the kexec installer takes /etc/ssh/authorized_keys.d/$SUDO_USER as root's
+#   keys and keeps the host keys. NixOS has no kernel lockdown, so no rescue
+#   mode.
 
 set -euo pipefail
 

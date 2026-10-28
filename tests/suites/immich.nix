@@ -2,8 +2,7 @@
 # machine-learning, postgres (VectorChord), valkey, plus the two oneshots
 # (immich-config-init, immich-init). Hand-written because mk-stack-suite's
 # generic all-containers-running assertion cannot pass a stack with
-# restart:"no" oneshots (its header says so). Annex §6 of
-# ServerNotes/designs/service-immich-stack-research.md is the assertion spec.
+# restart:"no" oneshots (its header says so).
 #
 # Genuinely under test:
 #   - the sops-nix render of the stack env (root-only, 0400), and env threading
@@ -11,7 +10,7 @@
 #     credentials exist only in the encrypted fixtures, so a working login + a
 #     rendered immich.json carrying the fixture secret prove the whole
 #     sops -> /run/stack-env -> env_file chain
-#   - immich-config-init's MAKE-STYLE render contract (annex §3 rotation
+#   - immich-config-init's MAKE-STYLE render contract (the rotation
 #     coupling): renders exactly the template with ONLY the secret
 #     substituted, 0600, no-op on re-run, REWRITES on a rotated secret
 #     (tmpfile+rename — unlike qbit-init's touch-once), and restores when the
@@ -19,7 +18,7 @@
 #   - the full first boot: schema migrations + vchord/vector extension
 #     creation inside the healthcheck budget, admin seeded headlessly
 #     (POST /api/auth/admin-sign-up), idempotent under Komodo redeploys
-#   - the v3 API shapes the annex warns about (§0.4/§0.7): multipart upload
+#   - the v3 API shapes that break v2-era clients: multipart upload
 #     with assetData/fileCreatedAt/fileModifiedAt only (no deviceId), API
 #     keys minted with a `permissions` array
 #   - thumbnails WITHOUT ML: generation is a server-side job (sharp/ffmpeg),
@@ -29,7 +28,7 @@
 #     HTTP server answers (/ping probed from the compose network) — model
 #     presence is NOT part of health; a smart search errors without taking
 #     the server down
-#   - loopback-only publishing for 10102 and the §2 "must NOT publish" list
+#   - loopback-only publishing for 10102 and the "must NOT publish" list
 #     (ml :3003 is an unauthenticated inference API, postgres :5432,
 #     valkey :6379) — asserted from another host AND via docker port
 #   - the backup contract backup-prepare.sh hardcodes: container immich_db,
@@ -40,14 +39,14 @@
 #     rendered config must all come back and the uploaded asset stay
 #     retrievable
 #
-# Documented egress gaps (a green run covers NONE of these — annex §6):
+# Documented egress gaps (a green run covers NONE of these):
 #   - ML model download and every inference RESULT: smart-search hits, facial
 #     recognition, duplicate detection, OCR. Offline the models can never
 #     arrive from Hugging Face; the accepted state is healthy ML + failing
 #     inference jobs, and that is exactly what is asserted.
 #   - the live OIDC browser flow (redirect -> Authentik -> callback) and the
 #     mobile app.immich:///oauth-callback handoff — doubly uncoverable since
-#     v3 requires secure (https) requests for OAuth (annex §0.6) and the
+#     v3 requires secure (https) requests for OAuth and the
 #     suite speaks plain HTTP on loopback. Only the offline config contract
 #     is asserted (features flags, issuer/clientId/secret in immich.json).
 #   - map tiles and Immich's new-version check (both dial out).
@@ -179,7 +178,7 @@ pkgs.testers.runNixOSTest {
           # Immich bind-mount roots — the SAME set production declares in
           # hardware-configuration.nix; keep the two lists in sync by hand.
           # root:root ON PURPOSE: the immich images have no PUID/PGID and run
-          # as root (annex §2/§7.5 — non-root mode deliberately not used),
+          # as root (non-root mode deliberately not used),
           # postgres chowns pgdata itself, and config-init writes the 0600
           # immich.json as root. The seerr uid-1000 class (finding #14) does
           # not apply.
@@ -279,7 +278,7 @@ pkgs.testers.runNixOSTest {
     start_all()
 
     # -----------------------------------------------------------------------
-    # §6.1 boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
+    # boot chain: sops fixture -> /run/stack-env (0400 root) -> .env
     # -----------------------------------------------------------------------
     with subtest("the stack env rendered root-only (0400) and reaches the stack dir"):
         services_vm.wait_for_unit("docker-network-homelab.service")
@@ -300,7 +299,7 @@ pkgs.testers.runNixOSTest {
     services_vm.wait_for_unit("load-test-images.service")
 
     # -----------------------------------------------------------------------
-    # §6.2 config render: template + secret -> /config/immich.json
+    # config render: template + secret -> /config/immich.json
     # -----------------------------------------------------------------------
     with subtest("immich-config-init renders immich.json (0600, valid, exact)"):
         try:
@@ -329,7 +328,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.3 the stack comes up (first boot: migrations + extension creation)
+    # the stack comes up (first boot: migrations + extension creation)
     # -----------------------------------------------------------------------
     with subtest("docker compose brings up server, ml, db and valkey healthy"):
         # immich-init is NOT in the --wait set: compose's --wait reports
@@ -367,7 +366,7 @@ pkgs.testers.runNixOSTest {
     with subtest("every container is in its contract state"):
         # ML "healthy" here means ITS OWN HTTP server answers (the image's
         # builtin healthcheck) — models can never arrive offline and are NOT
-        # part of health, by design (annex §6 preamble).
+        # part of health, by design.
         for name in ["immich_server", "immich_machine_learning",
                      "immich_db", "immich_redis"]:
             h = services_vm.succeed(
@@ -392,7 +391,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.4 version endpoint == the compose pin (image-bump drift guard)
+    # version endpoint == the compose pin (image-bump drift guard)
     # -----------------------------------------------------------------------
     with subtest("/api/server/version equals the compose pin"):
         services_vm.succeed(
@@ -412,7 +411,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.5 admin seed: fixture credentials log in; re-run is a no-op
+    # admin seed: fixture credentials log in; re-run is a no-op
     # -----------------------------------------------------------------------
     with subtest("the seeded admin logs in with the fixture credentials"):
         login = api("auth/login", "POST",
@@ -441,7 +440,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.6 API key mint — the v3 permission-scoped headless path
+    # API key mint — the v3 permission-scoped headless path
     # -----------------------------------------------------------------------
     with subtest("an api key with permissions:[all] mints and authenticates"):
         minted = api("api-keys", "POST",
@@ -453,10 +452,10 @@ pkgs.testers.runNixOSTest {
         assert me.get("email") == ADMIN_EMAIL, f"users/me via key: {me!r}"
 
     # -----------------------------------------------------------------------
-    # §6.7 upload -> asset pipeline (v3 multipart shape, no deviceId)
+    # upload -> asset pipeline (v3 multipart shape, no deviceId)
     # -----------------------------------------------------------------------
     with subtest("a multipart upload lands and is listed"):
-        # 1x1 PNG, fixed bytes; fields per annex §0.4 — deviceId/deviceAssetId
+        # 1x1 PNG, fixed bytes; v3 multipart fields — deviceId/deviceAssetId
         # were REMOVED in v3.0.0, cargo-culting them must not be needed.
         png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
                    "AAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
@@ -484,7 +483,7 @@ pkgs.testers.runNixOSTest {
         assert asset_id in ids, f"metadata search missed the asset: {ids!r}"
 
     # -----------------------------------------------------------------------
-    # §6.8 thumbnails WITHOUT ML (server-side sharp/ffmpeg job)
+    # thumbnails WITHOUT ML (server-side sharp/ffmpeg job)
     # -----------------------------------------------------------------------
     with subtest("the thumbnail generates with no ML models available"):
         try:
@@ -504,7 +503,7 @@ pkgs.testers.runNixOSTest {
             raise
 
     # -----------------------------------------------------------------------
-    # §6.9 ML degrade contract: inference fails, the server does not
+    # ML degrade contract: inference fails, the server does not
     # -----------------------------------------------------------------------
     with subtest("a smart search errors without killing the server"):
         # ML is up but modelless (and cannot download — no egress): the
@@ -528,7 +527,7 @@ pkgs.testers.runNixOSTest {
         assert h == "healthy", f"server is {h!r} after the failed smart search"
 
     # -----------------------------------------------------------------------
-    # §6.10 OIDC config contract, offline
+    # OIDC config contract, offline
     # -----------------------------------------------------------------------
     with subtest("the server advertises oauth from the rendered config file"):
         feats = json.loads(services_vm.succeed(
@@ -544,7 +543,7 @@ pkgs.testers.runNixOSTest {
         assert conf.get("oauthButtonText") == "Login with Authentik", (
             f"oauthButtonText: {conf.get('oauthButtonText')!r}"
         )
-        # The rendered file carries the annex §3 identity (the oidc-contract
+        # The rendered file carries the OIDC identity (the oidc-contract
         # lint ties these same values to the Authentik blueprint).
         issuer = services_vm.succeed(f"jq -r .oauth.issuerUrl {CONF}").strip()
         assert issuer == "https://auth.idanreed.com/application/o/immich/", (
@@ -557,10 +556,10 @@ pkgs.testers.runNixOSTest {
     # config-init is MAKE-STYLE: rotation reaches the rendered file
     # -----------------------------------------------------------------------
     with subtest("config-init re-run is a no-op; a rotated secret re-renders"):
-        # (annex §3 rotation coupling — the reason this is NOT qbit-init's
+        # (The rotation coupling — the reason this is NOT qbit-init's
         # touch-once.) Only the rendered FILE is asserted here: the running
         # immich-server keeps its startup-loaded config, so pickup after a
-        # rotation relies on the production re-up (compose header / annex §3)
+        # rotation relies on the production re-up (compose header)
         # — the server is deliberately not restarted in this subtest.
         # Re-run with the unchanged env: no change.
         out = services_vm.succeed("docker start -a immich_config_init 2>&1")
@@ -591,7 +590,7 @@ pkgs.testers.runNixOSTest {
         assert cur == OIDC_SECRET, f"restored clientSecret: {cur!r}"
 
     # -----------------------------------------------------------------------
-    # §6.11 the vector extensions really exist (migrations created them)
+    # the vector extensions really exist (migrations created them)
     # -----------------------------------------------------------------------
     with subtest("postgres carries the vchord and vector extensions"):
         ext = services_vm.succeed(
@@ -602,7 +601,7 @@ pkgs.testers.runNixOSTest {
             assert extname in ext, f"extension {extname!r} missing: {ext!r}"
 
     # -----------------------------------------------------------------------
-    # §6.14 backup contract: the exact names backup-prepare.sh hardcodes
+    # backup contract: the exact names backup-prepare.sh hardcodes
     # -----------------------------------------------------------------------
     with subtest("backup-prepare's immich leg produces a real dump"):
         # The literal loop body from nixos/backup-prepare.sh (svc=immich):
@@ -625,7 +624,7 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.12 + §6.13 publishing: loopback positive, VLAN + publish negatives
+    # publishing: loopback positive, VLAN + publish negatives
     # -----------------------------------------------------------------------
     with subtest("10102 answers on loopback"):
         services_vm.succeed(
@@ -639,14 +638,14 @@ pkgs.testers.runNixOSTest {
         outsider.succeed("nc -z -w 5 services-vm 22")
         for port in [10102, 3003, 5432, 6379]:
             outsider.fail(f"nc -z -w 5 services-vm {port}")
-        # And the §2 "must NOT publish" list holds even on loopback: zero
+        # And the "must NOT publish" list holds even on loopback: zero
         # host port mappings at all for the internal three.
         for name in ["immich_machine_learning", "immich_db", "immich_redis"]:
             ports = services_vm.succeed(f"docker port {name}").strip()
             assert ports == "", f"{name} publishes ports: {ports!r}"
 
     # -----------------------------------------------------------------------
-    # §6.15 reboot survival: durability across the persistent /mnt disk
+    # reboot survival: durability across the persistent /mnt disk
     # -----------------------------------------------------------------------
     with subtest("the stack returns after a reboot with the asset intact"):
         services_vm.shutdown()

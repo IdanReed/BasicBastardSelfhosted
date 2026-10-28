@@ -24,9 +24,9 @@ mqtt:
 
 detectors:
   # INTERIM: CPU. The target accelerator is the Arc A380 via OpenVINO, gated
-  # on the passthrough in ServerNotes/designs/arc-a380-passthrough.md; until
-  # then this keeps frigate healthy instead of crash-looping on an absent
-  # edgetpu. Fine for a few cameras, not for many.
+  # on passing the GPU through to the services VM (it needs a Proxmox
+  # upgrade first); until then this keeps frigate healthy instead of
+  # crash-looping on an absent edgetpu. Fine for a few cameras, not for many.
   cpu1:
     type: cpu
     num_threads: 3
