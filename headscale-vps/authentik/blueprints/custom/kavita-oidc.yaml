@@ -3,6 +3,14 @@
 # route. client_secret travels sops -> modules/authentik.nix template ->
 # worker env -> !Env below; the app reads the SAME value from
 # secrets/shared.sops.json through its env.nix. The shared blueprint conventions are documented in headscale-oidc.yaml.
+#
+# Kavita's roles come from here: books-init turns on syncUserSettings, and
+# Kavita then REPLACES an OIDC account's roles and library access with this
+# `roles` claim on every login and token refresh (the default admin, the
+# local idan, is exempt). Kavita refuses to create an account whose claim
+# carries neither Login nor Admin. A library a user should see is a
+# `library-<name>` entry; Books is the one books-init creates — a new library
+# needs its entry here. A role change invalidates that user's OPDS URL.
 version: 1
 metadata:
   name: kavita-oidc
@@ -10,6 +18,22 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
+  # Kavita requests the `roles` scope and reads the claim from the id_token
+  # (include_claims_in_id_token is on by default).
+  - model: authentik_providers_oauth2.scopemapping
+    id: kavita-roles-mapping
+    state: present
+    identifiers:
+      name: kavita-roles
+    attrs:
+      scope_name: roles
+      description: "Kavita roles and library access"
+      expression: |
+        roles = ["Login", "Download", "Bookmark", "library-Books"]
+        if ak_is_group_member(request.user, name="Admin"):
+            roles.append("Admin")
+        return {"roles": roles}
+
   - model: authentik_providers_oauth2.oauth2provider
     id: kavita-provider
     state: present
@@ -33,6 +57,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !KeyOf kavita-roles-mapping
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
 
   - model: authentik_core.application

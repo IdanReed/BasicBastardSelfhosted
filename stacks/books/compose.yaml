@@ -108,11 +108,11 @@ services:
       # (protected) snippet in stacks/caddy/Caddyfile copies.
       - AUTH_METHOD=proxy
       - PROXY_AUTH_USER_HEADER=X-authentik-username
-      # Inert on its own — group-based admin detection also needs
-      # PROXY_AUTH_ADMIN_GROUP_NAME, left empty. Admin today comes from
-      # shelfmark's fallback (the first proxy-auth user it sees); set the
-      # group name before a second human exists.
+      # Admin is Authentik's Admin group, re-derived from the groups header
+      # on every request (pipe-separated, as the outpost sends it). Without a
+      # group name shelfmark makes EVERY new proxy user an admin.
       - PROXY_AUTH_ADMIN_GROUP_HEADER=X-authentik-groups
+      - PROXY_AUTH_ADMIN_GROUP_NAME=Admin
       # --- paths ------------------------------------------------------------
       - CONFIG_DIR=/config
       - TMP_DIR=/tmp/shelfmark

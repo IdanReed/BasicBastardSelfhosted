@@ -183,18 +183,24 @@ else:
             sys.exit(f"books-init: FATAL: kavita library create HTTP "
                      f"{e.code}: {body}")
 
-# Two DB-only settings, one whole-DTO round trip (GET -> mutate -> POST). The
+# Three DB-only settings, one whole-DTO round trip (GET -> mutate -> POST). The
 # masked secret in oidcConfig survives it — the update path recognises the
 # asterisk string and restores the stored value.
 #
 #   allowStatCollection            seeded ON with a daily job; nothing else
 #                                  here needs egress.
-#   oidcConfig.provisionAccounts   the one OIDC field with no appsettings.json
-#                                  path (Seed.SetOidcSettingsFromDisk copies
+#   oidcConfig.provisionAccounts   OIDC fields with no appsettings.json path
+#   oidcConfig.syncUserSettings    (Seed.SetOidcSettingsFromDisk copies
 #                                  exactly Authority/ClientId/Secret/
-#                                  CustomScopes), so it is a DB write or
-#                                  nothing. Without it OIDC login works and no
-#                                  account is ever created.
+#                                  CustomScopes), so each is a DB write or
+#                                  nothing. Without provisionAccounts OIDC
+#                                  login works and no account is ever
+#                                  created; without syncUserSettings an
+#                                  OIDC account gets DefaultRoles (none, so
+#                                  it is disabled). With it, roles and
+#                                  library access come from the `roles`
+#                                  claim (kavita-oidc.yaml) on every login:
+#                                  Admin-group members are Kavita admins.
 #
 # 🚨 NEVER mutate oidcConfig.authority from here. Both hazards — ClearOidcIds()
 # wiping every user's OIDC link, and the discovery-document fetch that cannot
@@ -223,11 +229,16 @@ try:
         # would be a CHANGE line with no effect.
         log("kavita OIDC not configured (empty authority) - leaving "
             "provisionAccounts alone")
-    elif not oidc.get("provisionAccounts"):
-        oidc["provisionAccounts"] = True
-        wanted.append("OIDC provisionAccounts enabled")
     else:
-        log("kavita OIDC provisionAccounts already on - no change")
+        for key in ("provisionAccounts", "syncUserSettings"):
+            if key not in oidc:
+                log(f"kavita oidcConfig carries no {key} key "
+                    "(renamed upstream?) - skipping")
+            elif not oidc[key]:
+                oidc[key] = True
+                wanted.append(f"OIDC {key} enabled")
+            else:
+                log(f"kavita OIDC {key} already on - no change")
 
     if wanted:
         call(f"{KAVITA}/api/Settings", "POST", settings, kv_auth)

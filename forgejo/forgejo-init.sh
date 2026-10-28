@@ -9,6 +9,11 @@
 # Idempotent: every mutation logs "forgejo-init: CHANGE:"; a second run logs
 # none. The secret is re-asserted each run so a rotation propagates.
 #
+# Site admin follows Authentik's Admin group: Forgejo reads the `groups` claim
+# (the profile scope) on every OAuth sign-in and sets is_admin to "member of
+# Admin" — promoting idan, demoting anyone else who signs in through
+# Authentik. Local-password logins and the komodo bot are untouched.
+#
 # ACCEPTED: --secret puts FORGEJO_OIDC_CLIENT_SECRET on argv, which is
 # host-visible in /proc/<pid>/cmdline for the life of the command, on every
 # deploy. cmd/admin_auth_oauth.go defines `secret` as a plain StringFlag — no
@@ -53,10 +58,12 @@ if [ -z "$id" ]; then
     --key forgejo \
     --secret "$SECRET" \
     --auto-discover-url "$DISCOVERY" \
-    --scopes "openid profile email"
+    --scopes "openid profile email" \
+    --group-claim-name groups \
+    --admin-group Admin
   log "CHANGE: created OAuth2 auth source '$NAME' (client_id forgejo)"
 else
-  # Re-assert secret + discovery so a rotation lands; no CHANGE line on a no-op.
+  # Re-assert every field so a rotation lands; no CHANGE line on a no-op.
   fj admin auth update-oauth \
     --id "$id" \
     --name "$NAME" \
@@ -64,8 +71,10 @@ else
     --key forgejo \
     --secret "$SECRET" \
     --auto-discover-url "$DISCOVERY" \
-    --scopes "openid profile email"
-  log "auth source '$NAME' present (id $id) — secret + discovery re-asserted"
+    --scopes "openid profile email" \
+    --group-claim-name groups \
+    --admin-group Admin
+  log "auth source '$NAME' present (id $id) — secret, discovery and admin group re-asserted"
 fi
 
 log "done"

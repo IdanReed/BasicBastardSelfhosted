@@ -827,9 +827,10 @@ pkgs.testers.runNixOSTest {
         assert status.get("isInit") is True, f"abs status: {status!r}"
 
     with subtest("books-init's whole-DTO settings round trip"):
-        # The two DB-only settings it owns: stat collection off, and
-        # provisionAccounts on (the provider is registered, so SSO users are
-        # created on first login rather than refused).
+        # The DB-only settings it owns: stat collection off, provisionAccounts
+        # on (the provider is registered, so SSO users are created on first
+        # login rather than refused), and syncUserSettings on (their roles,
+        # Admin included, come from Authentik's `roles` claim).
         settings = curl(KAVITA, "/api/Settings", "GET", None, kv_auth)
         assert settings.get("allowStatCollection") is False, (
             f"kavita stat collection is {settings.get('allowStatCollection')!r}"
@@ -838,10 +839,10 @@ pkgs.testers.runNixOSTest {
         assert isinstance(oidc_cfg, dict), (
             f"kavita settings carry no oidcConfig object: {settings!r}"
         )
-        assert oidc_cfg.get("provisionAccounts") is True, (
-            f"oidcConfig.provisionAccounts is not true (renamed upstream?): "
-            f"{oidc_cfg!r}"
-        )
+        for key in ("provisionAccounts", "syncUserSettings"):
+            assert oidc_cfg.get(key) is True, (
+                f"oidcConfig.{key} is not true (renamed upstream?): {oidc_cfg!r}"
+            )
 
     # -----------------------------------------------------------------------
     # §6.11 the :ro library mounts really are sufficient

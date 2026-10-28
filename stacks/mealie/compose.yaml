@@ -51,9 +51,11 @@ services:
       # (ALLOW_PASSWORD_LOGIN default true). Auto-provision matches existing
       # users by email; both signup flags default to these values and are pinned
       # so the intent is legible.
-      # ⚠ OIDC_USER_GROUP / OIDC_ADMIN_GROUP left UNSET: the feature refuses to
-      # start if either is set while OIDC_GROUPS_CLAIM resolves to nothing, and
-      # the standard scopes carry no groups.
+      # Admin follows Authentik's Admin group: the `profile` scope carries
+      # `groups`, and Mealie re-derives `admin` from it on EVERY OIDC login —
+      # promoting a member, demoting anyone else, so leaving Admin demotes
+      # idan's account on his next SSO login. OIDC_USER_GROUP stays unset:
+      # every Authentik user may sign in.
       # OIDC_CLIENT_SECRET arrives from the stack env.
       - OIDC_AUTH_ENABLED=true
       - OIDC_PROVIDER_NAME=Authentik
@@ -61,6 +63,8 @@ services:
       - OIDC_CLIENT_ID=mealie
       - OIDC_SIGNUP_ENABLED=true
       - OIDC_USER_CLAIM=email
+      - OIDC_GROUPS_CLAIM=groups
+      - OIDC_ADMIN_GROUP=Admin
     env_file: /run/stack-env/mealie.env
     healthcheck:
       # The baked probe is honest (/api/app/about runs a real query against the
