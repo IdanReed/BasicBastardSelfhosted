@@ -124,6 +124,12 @@ services:
       WGER_OIDC_CLIENT_SECRET: ${WGER_OIDC_CLIENT_SECRET:?wger oidc client secret required}
       BESZEL_OIDC_CLIENT_SECRET: ${BESZEL_OIDC_CLIENT_SECRET:?beszel oidc client secret required}
       CLEANUPARR_OIDC_CLIENT_SECRET: ${CLEANUPARR_OIDC_CLIENT_SECRET:?cleanuparr oidc client secret required}
+      GRIST_OIDC_CLIENT_SECRET: ${GRIST_OIDC_CLIENT_SECRET:?grist oidc client secret required}
+      PENPOT_OIDC_CLIENT_SECRET: ${PENPOT_OIDC_CLIENT_SECRET:?penpot oidc client secret required}
+      # The LDAP outpost (it runs on the services VM, next to Jellyfin): the
+      # read-only bind account's password and the outpost's API token.
+      JELLYFIN_LDAP_BIND_PASSWORD: ${JELLYFIN_LDAP_BIND_PASSWORD:?jellyfin ldap bind password required}
+      LDAP_OUTPOST_TOKEN: ${LDAP_OUTPOST_TOKEN:?ldap outpost token required}
       # Per-user login passwords, consumed by !Env in headscale-oidc.yaml.
       IDAN_INITIAL_PASSWORD: ${IDAN_INITIAL_PASSWORD:?idan initial password required}
       ALONDRA_INITIAL_PASSWORD: ${ALONDRA_INITIAL_PASSWORD:?alondra initial password required}

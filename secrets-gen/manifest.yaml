@@ -155,6 +155,30 @@ secrets:
     note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
     targets:
       - { file: secrets/shared.sops.json, key: CLEANUPARR_OIDC_CLIENT_SECRET }
+  - name: grist/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: GRIST_OIDC_CLIENT_SECRET }
+  - name: penpot/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: PENPOT_OIDC_CLIENT_SECRET }
+  - name: jellyfin/ldap-bind
+    class: generate
+    recipe: hex:64
+    note: "the read-only LDAP search account Jellyfin binds as; Authentik sets it (blueprint), the media stack reads it"
+    targets:
+      - { file: secrets/shared.sops.json, key: JELLYFIN_LDAP_BIND_PASSWORD }
+  - name: authentik/ldap-outpost-token
+    class: generate
+    recipe: hex:64
+    note: "API token of the LDAP outpost on the services VM; Authentik creates it (blueprint), the outpost container presents it"
+    targets:
+      - { file: secrets/shared.sops.json, key: LDAP_OUTPOST_TOKEN }
   - name: immich/oidc
     class: generate
     recipe: hex:64
