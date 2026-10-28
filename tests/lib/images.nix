@@ -218,6 +218,14 @@
     finalImageName = "ghcr.io/ferretdb/postgres-documentdb";
     finalImageTag = "17-0.107.0-ferretdb-2.7.0";
   };
+  "ghcr_io_goauthentik_ldap_2026_8_5" = {
+    composeRef = "ghcr.io/goauthentik/ldap:2026.8.5";
+    imageName = "ghcr.io/goauthentik/ldap";
+    imageDigest = "sha256:4c75bd27918418d2d6fbbfe4581bbd5a199fe38942d24559c4483edd64a1ea87";
+    hash = "sha256-6zlBssu0WMTrZafxyCTDPYjgn+fCdM+kwPrPBbNazRA=";
+    finalImageName = "ghcr.io/goauthentik/ldap";
+    finalImageTag = "2026.8.5";
+  };
   "ghcr_io_goauthentik_server_2026_8_5" = {
     composeRef = "ghcr.io/goauthentik/server:2026.8.5";
     imageName = "ghcr.io/goauthentik/server";

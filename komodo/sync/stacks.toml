@@ -288,6 +288,25 @@ config_files = [
 ]
 
 [[stack]]
+name = "ldap"
+tags = ["gitops"]
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/ldap"
+file_paths = ["compose.yaml"]
+webhook_enabled = false
+additional_env_files = [{ path = "/run/stack-env/ldap.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
 name = "logging"
 tags = ["gitops"]
 [stack.config]
@@ -349,8 +368,10 @@ config_files = [
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "bazarr-config-init.sh", services = ["bazarr-config-init"], requires = "Restart" },
   { path = "cleanuparr-init.sh", services = ["cleanuparr-init"], requires = "Restart" },
+  { path = "jellyfin-config-init.sh", services = ["jellyfin-config-init"], requires = "Restart" },
   { path = "jellyfin-encoding.xml", services = ["jellyfin-config-init"], requires = "Restart" },
   { path = "jellyfin-init.sh", services = ["jellyfin-init"], requires = "Restart" },
+  { path = "jellyfin-ldap.json", services = ["jellyfin-config-init", "jellyfin-init"], requires = "Restart" },
   { path = "media-init.sh", services = ["media-init"], requires = "Restart" },
   { path = "scan-downloads.sh", services = ["clamav-scanner"], requires = "Restart" },
   { path = "seerr-bootstrap.sh", services = ["seerr-bootstrap"], requires = "Restart" },
