@@ -252,5 +252,9 @@ services:
         condition: service_healthy
     volumes:
       - ./books-init.sh:/init/books-init.sh:ro
+    environment:
+      # Authentik's email for idan: audiobookshelf links the first SSO login
+      # to root by it (authOpenIDMatchExistingBy=email).
+      - ABS_ADMIN_EMAIL=idan@idanreed.com
     env_file: /run/stack-env/books.env
     restart: "no"

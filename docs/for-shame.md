@@ -59,7 +59,7 @@ offers no non-browser / non-DB path to it.
 | **Syncthing** | Add each peer by device ID, from **both** sides | Deliberate: no device is pre-seeded, so nothing can pair itself | Yes — Syncthing config |
 | **SilverBullet** | Create the private Forgejo mirror repo and a `write:repository` PAT, embed both in `GIT_SYNC_REMOTE` | The stack creates neither, by design | Yes — the `secrets.sops.json` value |
 | **Excalidraw / Wealthfolio** | OIDC is staged but shipped OFF; enabling it is an operator flip | Both panic or misbehave against an unavailable issuer, so the repo ships them off | One-shot (compose edit) |
-| **Audiobookshelf / Dawarich** | Ensure your Authentik email == the seeded admin email **before** the first SSO login; Dawarich then asks once for that account's password to link it | Auto-register matches by email; a mismatch mints a second account to merge. Dawarich 1.14 links an SSO identity to an existing account only after a password confirmation | Ordering constraint (one-shot) |
+| **Dawarich** | Ensure your Authentik email == `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; Dawarich then asks once for that account's password to link it | Auto-register matches by email; a mismatch mints a second account to merge. Dawarich 1.14 links an SSO identity to an existing account only after a password confirmation | Ordering constraint (one-shot) |
 | **Paperless-ngx** | Grant admin/staff in `/admin` if the SSO user needs it | The superuser-group env var first exists in 3.1.0; the compose pins 2.20, where it is silently ignored | Yes — Paperless DB |
 | **Frigate** | Per camera: set the admin password and enable HTTP in the Reolink app; reserve its IP on OPNsense | Camera settings live on the device, and the HTTP API that could flip them is itself one of the services that ships off | Yes — on the camera (a factory reset undoes it) |
 | **Samba** | *(not a chore — a why)* users authenticate with a local username/password | Built `--without-ldap --without-ads`, so OIDC/AD is not achievable. Credentials are seeded declaratively | n/a |
@@ -372,16 +372,25 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   judgement call rather than a chore.
 - **(d) One-shot:** a compose edit.
 
-### Audiobookshelf / Dawarich — email must match the seeded admin
+### Dawarich — email must match the seeded admin
 
 - **(b) The step:** before your first SSO login, ensure your **Authentik email
-  equals the seeded local admin's email** (`DAWARICH_ADMIN_EMAIL` for Dawarich;
-  the seeded local admin for Audiobookshelf).
+  equals `DAWARICH_ADMIN_EMAIL`**. Dawarich then asks once for that account's
+  password to link the SSO identity.
 - **(c) Why not declarative:** auto-register matches by email. A mismatch is not
   an error — it silently mints a *second* account you then have to merge. The
   seeding is declarative; the email parity is an operator ordering constraint.
-- **(d) One-shot:** effectively an ordering act at first login; a break-glass local
-  login exists (ABS: `…/login/?autoLaunch=0`).
+- **(d) One-shot:** effectively an ordering act at first login.
+
+Audiobookshelf has the same trap and no chore: `books-init` gives root
+`ABS_ADMIN_EMAIL` (`stacks/books/compose.yaml`) before it switches OIDC on, so
+the first SSO login links root. If root ever lacks the email when someone signs
+in, Audiobookshelf registers a second, passwordless user with root's username,
+and `POST /login` by that username can then resolve to it — `books_init` fails
+with `login HTTP 401`. Fix: stop `audiobookshelf`, back up
+`/mnt/fast/audiobookshelf/config/absdatabase.sqlite`, delete the `type = 'user'`
+duplicate with `PRAGMA foreign_keys = ON` (its rows cascade), start it, and let
+`books-init` set the email. Break-glass local login: `…/login/?autoLaunch=0`.
 
 ### Paperless-ngx — grant staff/admin if needed
 

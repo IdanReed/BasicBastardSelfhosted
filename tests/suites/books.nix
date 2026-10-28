@@ -18,10 +18,11 @@
 #     chance to rewrite the file. Kavita swallows write failures silently, so
 #     "the placeholder key is not in play" is a thing that has to be asserted,
 #     not assumed.
-#   - the OIDC-READY-BUT-OFF shipping state (annex §8.4): with both client
-#     secrets empty, Kavita must report OIDC disabled and audiobookshelf must
-#     advertise local auth only — i.e. the off state is deliberate and
-#     complete, not a half-configured login page that 500s
+#   - the OIDC-ON shipping state: both client secrets come from the shared
+#     secrets file, so Kavita registers its provider (Authority + Secret on
+#     disk, provisionAccounts on) and audiobookshelf advertises local AND
+#     openid, with root already carrying the SSO email so the first SSO login
+#     links root instead of registering a second user of the same name
 #   - headless seeding of BOTH apps in one oneshot, idempotent under Komodo
 #     redeploys (books-init's CHANGE: contract), including the two
 #     audiobookshelf hazards the annex flags: /init is guarded by GET /status
@@ -455,13 +456,12 @@ pkgs.testers.runNixOSTest {
         ).strip()
         assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
         # The keys everything below depends on: a later failure then points at
-        # the service, not at decryption. The two OIDC keys are asserted
-        # PRESENT AND EMPTY — that is the shipping state this suite pins.
+        # the service, not at decryption. The two OIDC client secrets arrive
+        # from the shared file (stacks/books/env.nix), non-empty.
         for k in ["KAVITA_TOKEN_KEY", "KAVITA_ADMIN_USER", "ABS_ADMIN_USER",
-                  "JWT_SECRET_KEY"]:
+                  "JWT_SECRET_KEY", "KAVITA_OIDC_CLIENT_SECRET",
+                  "ABS_OIDC_CLIENT_SECRET"]:
             services_vm.succeed(f"grep -q '^{k}=.' /srv/stacks/books/.env")
-        for k in ["KAVITA_OIDC_CLIENT_SECRET", "ABS_OIDC_CLIENT_SECRET"]:
-            services_vm.succeed(f"grep -qx '{k}=' /srv/stacks/books/.env")
 
     services_vm.wait_for_unit("load-test-images.service")
     services_vm.wait_for_unit("seed-library.service")
@@ -492,19 +492,16 @@ pkgs.testers.runNixOSTest {
         assert conf["BaseUrl"] == "/", f"BaseUrl is {conf['BaseUrl']!r}"
         oidc = conf["OpenIdConnectSettings"]
         assert oidc["ClientId"] == "kavita", f"ClientId is {oidc['ClientId']!r}"
-        # ...and with no client secret BOTH the secret and the authority must
-        # be empty. Kavita computes "is OIDC enabled" two different ways — the
-        # disk side wants Authority+ClientId+Secret, the DB side (which the
-        # login path consults) wants only Authority — so an authority with no
-        # secret is a genuinely half-configured state, not an off one. The
-        # config-init blanks it for exactly that reason.
+        # ...and with the shared client secret present, the provider is
+        # registered: Secret filled in, Authority kept. (config-init blanks
+        # the Authority only when the Secret is empty — Kavita's two
+        # "enabled" computations disagree on that half-configured state.)
         # NB: never write a bare pair of single quotes anywhere in this
         # script — it is the terminator of a Nix indented string, and it ends
         # the whole testScript mid-expression at EVAL time.
-        assert oidc["Secret"] == "", f"Secret is {oidc['Secret']!r}, expected empty"
-        assert oidc["Authority"] == "", (
-            f"Authority is {oidc['Authority']!r} with an empty Secret — the "
-            f"DB-side Enabled getter would read that as OIDC being live"
+        assert oidc["Secret"], "Secret is empty, expected the shared client secret"
+        assert oidc["Authority"] == "https://auth.idanreed.com/application/o/kavita/", (
+            f"Authority is {oidc['Authority']!r}"
         )
 
     # -----------------------------------------------------------------------
@@ -541,14 +538,19 @@ pkgs.testers.runNixOSTest {
         # (media-init's CHANGE: contract), for each of the four seeds.
         for expected in ["CHANGE: kavita admin", "CHANGE: kavita library",
                          "CHANGE: audiobookshelf root user",
+                         "CHANGE: audiobookshelf root user test_abs_admin email set",
                          "CHANGE: audiobookshelf library"]:
             assert expected in seed_log, (
                 f"books-init logged no {expected!r} line:\n{seed_log}"
             )
-        # And with an empty client secret it must have left OIDC alone rather
-        # than PATCHing a broken configuration in.
-        assert "leaving audiobookshelf on local auth" in seed_log, (
-            f"books-init did not take the OIDC-off path:\n{seed_log}"
+        # With the shared client secret present it configures OIDC, and only
+        # after root has the SSO email (ordering checked by line position).
+        assert "CHANGE: audiobookshelf OIDC configured" in seed_log, (
+            f"books-init did not configure audiobookshelf OIDC:\n{seed_log}"
+        )
+        assert (seed_log.index("email set to")
+                < seed_log.index("CHANGE: audiobookshelf OIDC configured")), (
+            f"books-init enabled OIDC before root had its email:\n{seed_log}"
         )
 
     with subtest("every container is in its contract state"):
@@ -592,6 +594,12 @@ pkgs.testers.runNixOSTest {
                      {"username": ABS_USER, "password": ABS_PASS})
         abs_token = (login.get("user") or {}).get("accessToken")
         assert abs_token, f"abs login returned no accessToken: {login!r}"
+        # Root carries the SSO email before OIDC can ever be enabled, so the
+        # first SSO login links root instead of registering a second `idan`.
+        root_email = (login.get("user") or {}).get("email")
+        assert root_email == "idan@idanreed.com", (
+            f"abs root email is {root_email!r}, expected the SSO email"
+        )
 
     kv_auth = {"x-api-key": kavita_key}
     abs_auth = {"Authorization": f"Bearer {abs_token}"}
@@ -800,29 +808,28 @@ pkgs.testers.runNixOSTest {
         )
 
     # -----------------------------------------------------------------------
-    # §6.10 the OIDC-ready-but-OFF contract
+    # §6.10 the OIDC-on contract
     # -----------------------------------------------------------------------
-    with subtest("both apps report OIDC off, deliberately"):
+    with subtest("both apps report OIDC on, with local login kept"):
         # Kavita's public, unauthenticated view of its own OIDC state.
         pub = curl(KAVITA, "/api/Settings/oidc")
-        assert pub.get("enabled") is False, (
-            f"kavita reports OIDC {pub!r} — with an empty Secret the computed "
-            f"Enabled getter must be false"
+        assert pub.get("enabled") is True, (
+            f"kavita reports OIDC {pub!r} — Authority, ClientId and Secret are "
+            f"all on disk, so the computed Enabled getter must be true"
         )
-        # Audiobookshelf's: 'openid' must NOT be advertised, because a login
-        # button that cannot complete is worse than no button.
+        # Audiobookshelf's: openid advertised, and local kept — dropping it
+        # kills POST /login, which books-init and break-glass logins need.
         status = curl(ABS, "/status")
-        assert status.get("authMethods") == ["local"], (
-            f"abs advertises {status.get('authMethods')!r}, expected ['local']"
+        assert sorted(status.get("authMethods") or []) == ["local", "openid"], (
+            f"abs advertises {status.get('authMethods')!r}, "
+            f"expected local + openid"
         )
         assert status.get("isInit") is True, f"abs status: {status!r}"
 
     with subtest("books-init's whole-DTO settings round trip"):
-        # The two DB-only settings it owns. provisionAccounts cannot be
-        # asserted TRUE here: the fixture ships no OIDC secret, so
-        # kavita-config-init blanks the authority and books-init deliberately
-        # leaves the flag alone. What IS asserted is that the field exists (a
-        # rename upstream surfaces here) and that the guard fired.
+        # The two DB-only settings it owns: stat collection off, and
+        # provisionAccounts on (the provider is registered, so SSO users are
+        # created on first login rather than refused).
         settings = curl(KAVITA, "/api/Settings", "GET", None, kv_auth)
         assert settings.get("allowStatCollection") is False, (
             f"kavita stat collection is {settings.get('allowStatCollection')!r}"
@@ -831,13 +838,9 @@ pkgs.testers.runNixOSTest {
         assert isinstance(oidc_cfg, dict), (
             f"kavita settings carry no oidcConfig object: {settings!r}"
         )
-        assert "provisionAccounts" in oidc_cfg, (
-            f"oidcConfig has no provisionAccounts key (renamed upstream?): "
+        assert oidc_cfg.get("provisionAccounts") is True, (
+            f"oidcConfig.provisionAccounts is not true (renamed upstream?): "
             f"{oidc_cfg!r}"
-        )
-        init_log = services_vm.succeed("docker logs books_init 2>&1")
-        assert "OIDC not configured (empty authority)" in init_log, (
-            f"books-init did not take the OIDC-off branch:\n{init_log[-2000:]}"
         )
 
     # -----------------------------------------------------------------------

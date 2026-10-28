@@ -296,12 +296,36 @@ try:
     _, login = call(f"{ABS}/login", "POST", {"username": abs_user,
                                              "password": abs_password})
 except urllib.error.HTTPError as e:
-    sys.exit(f"books-init: FATAL: audiobookshelf login HTTP {e.code}: {detail(e)}")
+    hint = ""
+    if e.code == 401:
+        hint = (f" — if an SSO login auto-registered a second user named "
+                f"{abs_user!r} (root had no email), /login resolves to that "
+                f"passwordless row: delete it (docs/for-shame.md)")
+    sys.exit(f"books-init: FATAL: audiobookshelf login HTTP {e.code}: "
+             f"{detail(e)}{hint}")
 
 token = ((login or {}).get("user") or {}).get("accessToken")
 if not token:
     sys.exit("books-init: FATAL: audiobookshelf login returned no accessToken")
 abs_auth = {"Authorization": f"Bearer {token}"}
+
+# Root needs the operator's SSO email BEFORE OIDC is switched on below.
+# authOpenIDMatchExistingBy=email links the first SSO login to the account
+# that carries the email; with none, audiobookshelf auto-registers a second
+# user with the SAME username (type `user`, no password), and from then on
+# POST /login by username can resolve to that row — this script's own login
+# 401s on every deploy.
+abs_email = os.environ.get("ABS_ADMIN_EMAIL", "")
+me = (login or {}).get("user") or {}
+if not abs_email:
+    log("ABS_ADMIN_EMAIL empty - root keeps no email, so an SSO login "
+        "would register a second user instead of linking root")
+elif me.get("email") != abs_email:
+    call(f"{ABS}/api/users/{me.get('id')}", "PATCH", {"email": abs_email},
+         abs_auth)
+    change(f"audiobookshelf root user {abs_user} email set to {abs_email}")
+else:
+    log("audiobookshelf root email already set - no change")
 
 # /audiobooks is the curated tree; /drop is the media stack's hand-off, and
 # registering it as a library FOLDER rather than a staging area is deliberate
