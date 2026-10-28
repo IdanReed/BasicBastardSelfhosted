@@ -5,8 +5,10 @@
 # SUPERADMIN_SECRET presented as a bearer token authenticates against the
 # ordinary API without ever using `changeme`.
 #
-# Roster: idan is the super_admin, the other six are regular instance users.
-# Each password is a copy_only twin of that user's Authentik password.
+# Roster: idan is the super_admin, with his one password (IDAN_INITIAL_PASSWORD,
+# the same value Authentik sets). Windmill runs arbitrary code, so nobody else
+# gets an account by default: an invited user is added as one roster line on
+# login_type 'authentik', which needs no password of theirs.
 #
 # SSO: the published CE image is built with the private OAuth code (`ce` pulls
 # in `private` + `oauth2`; only the SOURCE build's oauth2_oss.rs stub returns
@@ -19,8 +21,9 @@
 # different login type"), and password login only accepts login_type
 # 'password'. Each roster entry therefore names its login type: idan stays
 # 'password' as the UI break-glass superadmin (and the suite logs in with it);
-# the rest are 'authentik' and have no Windmill password at all. Repair for a
-# locked-out SSO account: change its entry back to "password" and redeploy.
+# SSO entries are 'authentik' and are created with a random password that
+# nothing ever uses. Repair for a locked-out SSO account: give its entry a
+# password env and "password", and redeploy.
 #
 # Every mutation logs "windmill-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must log ZERO change lines.
@@ -29,6 +32,7 @@ set -eu
 python3 - <<'PY'
 import json
 import os
+import secrets
 import sys
 import time
 import urllib.error
@@ -44,18 +48,14 @@ SSO_PROVIDER = "authentik"
 SSO_ISSUER = "https://auth.idanreed.com"
 SSO_CLIENT_ID = "windmill"
 
-# (email, password_env, super_admin, login_type). A create is a no-op for an
-# existing account, so an already-provisioned user keeps whatever password they
-# have; login_type is re-asserted every run. The emails are the Authentik
-# accounts' (headscale-oidc.yaml), which is what SSO matches on.
+# (email, password_env, super_admin, login_type). password_env is None for an
+# SSO entry. A create is a no-op for an existing account, so an
+# already-provisioned user keeps whatever password they have; login_type is
+# re-asserted every run. The email is the Authentik account's, which is what
+# SSO matches on — an invited user's is the one fixed in their invitation:
+#     ("them@example.com", None, False, SSO_PROVIDER),
 USERS = [
-    ("idan@idanreed.com",               "IDAN_INITIAL_PASSWORD",    True,  "password"),
-    ("apcalondraperezcortez@gmail.com", "ALONDRA_INITIAL_PASSWORD", False, SSO_PROVIDER),
-    ("calethim@gmail.com",              "CALE_INITIAL_PASSWORD",    False, SSO_PROVIDER),
-    ("zach@hayzak.com",                 "ZACH_INITIAL_PASSWORD",    False, SSO_PROVIDER),
-    ("rylankasitz@gmail.com",           "RYLAN_INITIAL_PASSWORD",   False, SSO_PROVIDER),
-    ("camos3434@gmail.com",             "CAMERON_INITIAL_PASSWORD", False, SSO_PROVIDER),
-    ("justindanita@gmail.com",          "JUSTIN_INITIAL_PASSWORD",  False, SSO_PROVIDER),
+    ("idan@idanreed.com", "IDAN_INITIAL_PASSWORD", True, "password"),
 ]
 
 
@@ -118,9 +118,15 @@ for email, pw_env, is_super, login_type in USERS:
         fatal(f"roster email must not be {DEFAULT_ADMIN}")
     if login_type not in ("password", SSO_PROVIDER):
         fatal(f"{email}: login_type must be 'password' or '{SSO_PROVIDER}'")
-    pw = env(pw_env)
-    if len(pw) < 12:
-        fatal(f"{pw_env} must be at least 12 characters")
+    if pw_env is None:
+        if login_type == "password":
+            fatal(f"{email}: a 'password' login needs a password env")
+        # Never usable: password login refuses an SSO account.
+        pw = secrets.token_urlsafe(32)
+    else:
+        pw = env(pw_env)
+        if len(pw) < 12:
+            fatal(f"{pw_env} must be at least 12 characters")
     roster.append((email, pw, is_super, login_type))
 if not any(s and lt == "password" for _, _, s, lt in roster):
     # Without one password superadmin the UI has no way in while Authentik is

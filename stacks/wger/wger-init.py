@@ -11,7 +11,9 @@
 # var, so the SocialApp row is written here. Social SIGNUP is closed
 # (ALLOW_REGISTRATION=False closes allauth's social signup too), so login works
 # only for an account that already exists with the Authentik email, and the
-# roster below seeds those accounts. `admin` stays the password break-glass.
+# roster below seeds those accounts: idan as a superuser, and an invited user
+# by one line with the email fixed in their invitation. `admin` stays the
+# password break-glass.
 #
 # Every mutation prints "wger-init: CHANGE: ...". A second run must print
 # ZERO change lines.
@@ -35,16 +37,10 @@ SSO_SERVER_URL = (
     "https://auth.idanreed.com/application/o/wger-sso/.well-known/openid-configuration"
 )
 
-# (username, email, superuser) — the Authentik accounts (headscale-oidc.yaml);
-# the email is what allauth matches on. superuser applies at creation only.
+# (username, email, superuser) — the Authentik accounts; the email is what
+# allauth matches on. superuser applies at creation only.
 USERS = [
-    ("idan",    "idan@idanreed.com",               True),
-    ("alondra", "apcalondraperezcortez@gmail.com", False),
-    ("cale",    "calethim@gmail.com",              False),
-    ("zach",    "zach@hayzak.com",                 False),
-    ("rylan",   "rylankasitz@gmail.com",           False),
-    ("cameron", "camos3434@gmail.com",             False),
-    ("justin",  "justindanita@gmail.com",          False),
+    ("idan", "idan@idanreed.com", True),
 ]
 
 

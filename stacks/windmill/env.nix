@@ -10,12 +10,7 @@
   # writes it into the `oauths` instance setting.
   WINDMILL_OIDC_CLIENT_SECRET = shared "WINDMILL_OIDC_CLIENT_SECRET";
 
-  # The same per-user passwords Authentik sets; windmill-init creates the users.
+  # idan's one password, the same value Authentik sets; windmill-init creates
+  # him as the password-login superadmin.
   IDAN_INITIAL_PASSWORD = shared "IDAN_INITIAL_PASSWORD";
-  ALONDRA_INITIAL_PASSWORD = shared "ALONDRA_INITIAL_PASSWORD";
-  CALE_INITIAL_PASSWORD = shared "CALE_INITIAL_PASSWORD";
-  ZACH_INITIAL_PASSWORD = shared "ZACH_INITIAL_PASSWORD";
-  RYLAN_INITIAL_PASSWORD = shared "RYLAN_INITIAL_PASSWORD";
-  CAMERON_INITIAL_PASSWORD = shared "CAMERON_INITIAL_PASSWORD";
-  JUSTIN_INITIAL_PASSWORD = shared "JUSTIN_INITIAL_PASSWORD";
 }

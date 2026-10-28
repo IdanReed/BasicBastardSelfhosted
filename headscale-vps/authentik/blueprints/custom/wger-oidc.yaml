@@ -12,8 +12,8 @@
 # types, and the application slug "wger" already holds the proxy provider (an
 # application has one provider).
 #
-# Every roster user gets a Wger account (wger-init.py), so the policy stays
-# open like every other per-user application's.
+# Only wger-init.py's roster has a Wger account (social signup is closed), so
+# the policy stays open like every other per-user application's.
 version: 1
 metadata:
   name: wger-oidc

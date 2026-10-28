@@ -12,8 +12,8 @@
 # unique across types, and the application slug "windmill" already holds the
 # proxy provider (an application has one provider).
 #
-# Every roster user has a Windmill account, so the policy stays open like
-# every other per-user application's.
+# Only windmill-init.sh's roster has a Windmill account (SSO never creates
+# one), so the policy stays open like every other per-user application's.
 version: 1
 metadata:
   name: windmill-oidc
