@@ -72,6 +72,7 @@ are plaintext; no private key is needed).
 | `lib/profiles.nix` | The test-only overrides, each with the coverage it costs |
 | `lib/lints.nix` | Structural contract checks against production values |
 | `lib/mk-stack-suite.nix` | The generic per-stack suite, derived from a compose file |
+| `lib/machine-names.nix` | Names each test VM after its hostname (`services_vm`, `headscale_vps`), not its `nodes` key; added to every `runNixOSTest` |
 | `suites/*.nix` | The hand-written VM suites |
 | `fixtures/` | Fake secrets encrypted to the throwaway key: `stacks/<name>.sops.json`, `shared.sops.json`, the hosts' `*.sops.yaml`, `secrets-recovery.sops.yaml` |
 | `keys/` | Throwaway keypairs, committed on purpose (below) |

@@ -79,12 +79,27 @@ let
     }
   ];
 
+  # The suites' pkgs: every runNixOSTest also gets ./lib/machine-names.nix, so
+  # a VM is addressed by its hostname whatever its `nodes` key is.
+  suitePkgs = pkgs // {
+    testers = pkgs.testers // {
+      runNixOSTest =
+        test:
+        pkgs.testers.runNixOSTest {
+          imports = [
+            test
+            ./lib/machine-names.nix
+          ];
+        };
+    };
+  };
+
   callSuite =
     path: args:
     import path (
       {
+        pkgs = suitePkgs;
         inherit
-          pkgs
           lib
           images
           profiles
@@ -162,8 +177,8 @@ let
   # One fast suite per stack, for iterating on a single stack without booting
   # everything else: nix-build tests -A stackChecks.<name>
   mkStackSuite = import ./lib/mk-stack-suite.nix {
+    pkgs = suitePkgs;
     inherit
-      pkgs
       lib
       images
       profiles
