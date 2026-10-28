@@ -45,8 +45,9 @@ theme:
 # Glance allows at most 3 columns and requires 1 or 2 of them to be `full`, so
 # the only legal shapes are small-full-small, small-full and full-full.
 pages:
-  # Home — things a person opens on purpose. The *arr suite is on Admin: it is
-  # how the library gets filled, not how it gets used.
+  # Home — things a person opens on purpose, grouped by what they are for.
+  # The *arr suite is on Admin: it is how the library gets filled, not how it
+  # gets used.
   - name: Home
     slug: home
     columns:
@@ -57,8 +58,13 @@ pages:
             timezones:
               - timezone: America/Chicago
                 label: Home
+          - type: calendar
+            first-day-of-week: monday
 
-          # A LINK, not a check (rule 1) — Gatus owns uptime.
+      - size: full
+        widgets:
+          # First, so a glance at the page starts with whether things are up.
+          # LINKS, not checks (rule 1) — Gatus owns uptime.
           - type: bookmarks
             groups:
               - title: Status
@@ -68,8 +74,6 @@ pages:
                   - title: Beszel
                     url: https://beszel.svc.idanreed.com
 
-      - size: full
-        widgets:
           - type: bookmarks
             groups:
               - title: Media
@@ -78,76 +82,68 @@ pages:
                     url: https://jellyfin.svc.idanreed.com
                   - title: Seerr
                     url: https://seerr.svc.idanreed.com
-
-              - title: Books
-                links:
-                  - title: Kavita ✅
+                  - title: Immich
+                    url: https://immich.svc.idanreed.com
+                  - title: Kavita
                     url: https://kavita.svc.idanreed.com
-                  - title: Audiobookshelf ✅
+                  - title: Audiobookshelf
                     url: https://audiobookshelf.svc.idanreed.com
                   - title: Shelfmark
                     url: https://shelfmark.svc.idanreed.com
 
-              - title: Home
+              - title: Documents & notes
+                links:
+                  - title: Paperless
+                    url: https://paperless.svc.idanreed.com
+                  - title: Outline
+                    url: https://outline.svc.idanreed.com
+                  - title: BookStack
+                    url: https://bookstack.svc.idanreed.com
+                  - title: SilverBullet
+                    url: https://silverbullet.svc.idanreed.com
+                  - title: Karakeep
+                    url: https://karakeep.svc.idanreed.com
+                  - title: DocSpace
+                    url: https://docspace.svc.idanreed.com
+                  - title: rmfakecloud
+                    url: https://rmfakecloud.svc.idanreed.com
+
+              # The Firefly DATA IMPORTER is on Admin — separate hostname,
+              # separate Authentik application.
+              - title: Finance
+                links:
+                  - title: Firefly III
+                    url: https://firefly.svc.idanreed.com
+                  - title: Actual Budget
+                    url: https://actual.svc.idanreed.com
+                  - title: Ghostfolio
+                    url: https://ghostfolio.svc.idanreed.com
+                  - title: Wealthfolio
+                    url: https://wealthfolio.svc.idanreed.com
+                  - title: Owl
+                    url: https://owl.svc.idanreed.com
+
+              - title: Home & tracking
                 links:
                   - title: Home Assistant
                     url: https://homeassistant.svc.idanreed.com
                   - title: Frigate
                     url: https://frigate.svc.idanreed.com
-
-              - title: Personal
-                links:
-                  - title: Immich ✅
-                    url: https://immich.svc.idanreed.com
-                  - title: Paperless ✅
-                    url: https://paperless.svc.idanreed.com
-                  - title: Vaultwarden
-                    url: https://vaultwarden.svc.idanreed.com
-                  - title: Dawarich ✅
+                  - title: Dawarich
                     url: https://dawarich.svc.idanreed.com
-                  - title: rmfakecloud
-                    url: https://rmfakecloud.svc.idanreed.com
-                  - title: Syncthing
-                    url: https://syncthing.svc.idanreed.com
-
-              - title: Notes and Inventory
-                links:
-                  - title: BookStack ✅
-                    url: https://bookstack.svc.idanreed.com
-                  - title: Homebox ✅
+                  - title: Homebox
                     url: https://homebox.svc.idanreed.com
-                  - title: Karakeep ✅
-                    url: https://karakeep.svc.idanreed.com
-                  - title: Outline ✅
-                    url: https://outline.svc.idanreed.com
-                  - title: SilverBullet
-                    url: https://silverbullet.svc.idanreed.com
-
-              # The Firefly DATA IMPORTER is on Admin — separate hostname,
-              # separate Authentik application.
-              - title: Money and Health
-                links:
-                  - title: Firefly III
-                    url: https://firefly.svc.idanreed.com
-                  - title: Ghostfolio ✅
-                    url: https://ghostfolio.svc.idanreed.com
-                  - title: Wealthfolio
-                    url: https://wealthfolio.svc.idanreed.com
-                  - title: Actual Budget
-                    url: https://actual.svc.idanreed.com
-                  - title: Owl
-                    url: https://owl.svc.idanreed.com
-                  - title: Tandoor ✅
+                  - title: Tandoor
                     url: https://tandoor.svc.idanreed.com
                   - title: Mealie
                     url: https://mealie.svc.idanreed.com
                   - title: wger
                     url: https://wger.svc.idanreed.com
 
-              - title: Documents and Tools
+              - title: Tools
                 links:
-                  - title: DocSpace
-                    url: https://docspace.svc.idanreed.com
+                  - title: Vaultwarden
+                    url: https://vaultwarden.svc.idanreed.com
                   - title: Excalidraw
                     url: https://excalidraw.svc.idanreed.com
                   - title: BentoPDF
@@ -156,11 +152,8 @@ pages:
                     url: https://mazanoke.svc.idanreed.com
                   - title: IT-Tools
                     url: https://it-tools.svc.idanreed.com
-
-      - size: small
-        widgets:
-          - type: calendar
-            first-day-of-week: monday
+                  - title: Syncthing
+                    url: https://syncthing.svc.idanreed.com
 
   # Admin — things you open when something needs tending. Not a privilege tier
   # (rule 3).
