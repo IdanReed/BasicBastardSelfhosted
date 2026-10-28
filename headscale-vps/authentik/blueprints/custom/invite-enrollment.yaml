@@ -1,0 +1,252 @@
+# Invitation-only enrollment: the one way an account other than idan comes to
+# exist. The operator mints a single-use invitation with the username and
+# email fixed (headscale-vps/invite.sh); the link opens this flow, which
+# refuses to run without one. Shared blueprint conventions are documented in
+# headscale-oidc.yaml.
+#
+# What the invitee does: confirm the fixed username and email, give a name and
+# a password, set up TOTP, and lands logged in — an internal user in
+# headscale-users, the group every fleet user sits in.
+#
+# 🚨 The email is an identity, not a contact field: apps link an Authentik
+# login to an existing local account BY EMAIL (Forgejo, Wger, Audiobookshelf,
+# ...), so a self-chosen address could sign in as someone else's account.
+# Hence the username and email prompts are read-only. The prompt stage
+# re-asserts a read-only field's server-side value whatever the browser
+# posts, and the invitation stage puts fixed_data into that value — so the
+# invitation's address is the only one that can be written. The tenant's
+# default_user_change_email / default_user_change_username stay false (the
+# shipped default; the authentik suite pins it) so it cannot be edited later
+# either.
+#
+# The flow is NOT the brand's enrollment flow, so the login page offers no
+# sign-up link; only an invitation link reaches it. A single-use invitation is
+# consumed the moment the link is opened (upstream deletes it in the
+# invitation stage), so an abandoned enrollment needs a new invitation.
+version: 1
+metadata:
+  name: invite-enrollment
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # headscale-users and the TOTP setup stage are declared in headscale-oidc;
+  # applying it first means the !Finds below resolve on a fresh install
+  # instead of failing this file until a retry.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: headscale-oidc
+      required: true
+
+  - model: authentik_flows.flow
+    id: invite-enrollment-flow
+    state: present
+    identifiers:
+      slug: invite-enrollment
+    attrs:
+      name: Invitation enrollment
+      title: Create your account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  # continue_flow_without_invitation false is the whole gate: without a valid,
+  # unexpired invitation for THIS flow the stage denies and nothing after it
+  # runs.
+  - model: authentik_stages_invitation.invitationstage
+    id: invite-enrollment-invitation-stage
+    state: present
+    identifiers:
+      name: invite-enrollment-invitation
+    attrs:
+      continue_flow_without_invitation: false
+
+  # Prompts
+  # text_read_only, not username/email: those types are editable, and an
+  # edited value would replace the invitation's.
+  - model: authentik_stages_prompt.prompt
+    id: invite-enrollment-field-username
+    state: present
+    identifiers:
+      name: invite-enrollment-field-username
+    attrs:
+      field_key: username
+      label: Username
+      type: text_read_only
+      required: true
+      sub_text: "Set by your invitation."
+      order: 0
+
+  - model: authentik_stages_prompt.prompt
+    id: invite-enrollment-field-email
+    state: present
+    identifiers:
+      name: invite-enrollment-field-email
+    attrs:
+      field_key: email
+      label: Email
+      type: text_read_only
+      required: true
+      sub_text: "Set by your invitation."
+      order: 1
+
+  # Editable; prefilled when the invitation carries a name.
+  - model: authentik_stages_prompt.prompt
+    id: invite-enrollment-field-name
+    state: present
+    identifiers:
+      name: invite-enrollment-field-name
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Name
+      order: 2
+
+  - model: authentik_stages_prompt.prompt
+    id: invite-enrollment-field-password
+    state: present
+    identifiers:
+      name: invite-enrollment-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      order: 3
+
+  # Two password fields on one prompt stage must match (upstream checks it).
+  - model: authentik_stages_prompt.prompt
+    id: invite-enrollment-field-password-repeat
+    state: present
+    identifiers:
+      name: invite-enrollment-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      order: 4
+
+  # An invitation made in the admin UI without fixed_data would leave the
+  # read-only fields empty; refuse it with a message instead of a bare write
+  # failure.
+  - model: authentik_policies_expression.expressionpolicy
+    id: invite-enrollment-fixed-identity-policy
+    state: present
+    identifiers:
+      name: invite-enrollment-fixed-identity
+    attrs:
+      expression: |
+        prompt = request.context.get("prompt_data", {})
+        if prompt.get("username") and prompt.get("email"):
+            return True
+        ak_message("This invitation has no username and email. Ask for a new link.")
+        return False
+
+  # Same floor windmill-init holds idan's password to.
+  - model: authentik_policies_password.passwordpolicy
+    id: invite-enrollment-password-policy
+    state: present
+    identifiers:
+      name: invite-enrollment-password
+    attrs:
+      password_field: password
+      check_static_rules: true
+      length_min: 12
+      error_message: "Use at least 12 characters."
+
+  - model: authentik_stages_prompt.promptstage
+    id: invite-enrollment-prompt-stage
+    state: present
+    identifiers:
+      name: invite-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf invite-enrollment-field-username
+        - !KeyOf invite-enrollment-field-email
+        - !KeyOf invite-enrollment-field-name
+        - !KeyOf invite-enrollment-field-password
+        - !KeyOf invite-enrollment-field-password-repeat
+      validation_policies:
+        - !KeyOf invite-enrollment-fixed-identity-policy
+        - !KeyOf invite-enrollment-password-policy
+
+  # Internal, under users/ like idan, and in headscale-users.
+  - model: authentik_stages_user_write.userwritestage
+    id: invite-enrollment-write-stage
+    state: present
+    identifiers:
+      name: invite-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      user_type: internal
+      user_path_template: users
+      create_users_as_inactive: false
+      create_users_group: !Find [authentik_core.group, [name, headscale-users]]
+
+  # MFA before the session exists: the user is written but not logged in until
+  # a TOTP device is confirmed, so no enrolled account ever holds a session
+  # without one. Same settings as the login flow's validation stage
+  # (headscale-oidc.yaml) and the same setup stage, so the device it creates
+  # is the one every later login asks for. A stage of its own rather than a
+  # second binding of the built-in one, so the two flows cannot drift through
+  # an upstream change to the built-in stage.
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    id: invite-enrollment-mfa-stage
+    state: present
+    identifiers:
+      name: invite-enrollment-mfa
+    attrs:
+      not_configured_action: configure
+      device_classes:
+        - totp
+        - webauthn
+        - static
+      configuration_stages:
+        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, headscale-totp-setup]]
+
+  - model: authentik_stages_user_login.userloginstage
+    id: invite-enrollment-login-stage
+    state: present
+    identifiers:
+      name: invite-enrollment-login
+
+  # Bindings
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf invite-enrollment-flow
+      stage: !KeyOf invite-enrollment-invitation-stage
+      order: 10
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf invite-enrollment-flow
+      stage: !KeyOf invite-enrollment-prompt-stage
+      order: 20
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf invite-enrollment-flow
+      stage: !KeyOf invite-enrollment-write-stage
+      order: 30
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf invite-enrollment-flow
+      stage: !KeyOf invite-enrollment-mfa-stage
+      order: 40
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf invite-enrollment-flow
+      stage: !KeyOf invite-enrollment-login-stage
+      order: 100

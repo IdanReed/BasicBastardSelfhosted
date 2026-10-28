@@ -1,8 +1,10 @@
 # Override the built-in OAuth "email" scope mapping so it emits
 # `email_verified: true` for any account that has an email address. Authentik's
 # default hardcodes false in this version, and strict OIDC clients (Kavita)
-# refuse login on it. There is no open enrollment here — users are admin-defined
-# — so every account's email is operator-vouched.
+# refuse login on it. There is no open enrollment here: idan is declared, and
+# everyone else enrolls through an invitation whose email the operator fixes
+# and the invitee cannot edit (invite-enrollment.yaml) — so every account's
+# email is operator-vouched.
 #
 # Matched by `managed` identifier, so this is a partial update of the single
 # built-in mapping: every provider's `!Find [scopemapping, [scope_name, email]]`

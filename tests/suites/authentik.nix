@@ -26,6 +26,15 @@
 #     nothing else ever compares the two ends.
 #   - OIDC discovery end to end: headscale restarted after Authentik is
 #     healthy sets up its OIDC provider through Caddy over verified TLS.
+#   - Accounts: idan is the one declared user and an Authentik superuser; the
+#     six retired names are absent, and the never-logged-in guard on those
+#     entries spares an invited account with the same name. invite-enrollment
+#     refuses to run without an invitation; invite.sh's own API calls mint a
+#     single-use 7-day invitation with the identity fixed; and that invitation
+#     enrolls a user end to end through the flow executor — the fixed username
+#     and email win over a tampered POST, the password policy bites, TOTP is
+#     set up before the session exists, the user lands in headscale-users —
+#     whose next login then asks for the TOTP device.
 #
 # The vps suite covers everything else about this host (firewall, ssh, tailnet,
 # ACME details); it stands in a nginx stub for :9000. This suite is the stub
@@ -49,6 +58,18 @@
 let
   headscaleHost = "headscale.idanreed.com";
   authHost = "auth.idanreed.com";
+
+  # invite.sh's remote half, byte for byte: the heredoc it pipes to the VPS.
+  # Run here as root against the real Authentik, so the API calls it makes are
+  # the ones under test.
+  inviteRemote = pkgs.writeText "invite-remote.sh" (
+    let
+      after = lib.elemAt (lib.splitString "<<'REMOTE'\n" (
+        builtins.readFile ../../headscale-vps/invite.sh
+      )) 1;
+    in
+    lib.head (lib.splitString "\nREMOTE\n" after)
+  );
 in
 pkgs.testers.runNixOSTest {
   name = "authentik";
@@ -154,8 +175,15 @@ pkgs.testers.runNixOSTest {
       ) (lib.splitString "\n" nodes.vps.sops.templates."authentik.env".content);
     in
     ''
+      import base64
+      import hashlib
+      import hmac
       import json
+      import shlex
+      import struct
       import time
+      import urllib.parse
+      from datetime import datetime, timedelta, timezone
 
       # Pebble's issuing root is fetched at runtime by profiles.pebbleTrust.
       # Never -k on these names: an unverified 200 would hide a wrong-name or
@@ -530,6 +558,261 @@ pkgs.testers.runNixOSTest {
           except Exception:
               authentik_diag()
               raise
+
+      # ---------------------------------------------------------------------
+      # (c5) Accounts: idan is declared, everyone else enrolls by invitation
+      # ---------------------------------------------------------------------
+      # Flows go through Caddy on the public name: the session cookie is scoped
+      # to AUTHENTIK_COOKIE_DOMAIN, so on 127.0.0.1 every request would start
+      # a fresh plan and a single-use invitation would be spent by the first
+      # one.
+      AKPUB = "https://${authHost}"
+      RETIRED = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
+      # One of the retired names on purpose: the enrolled account must survive
+      # the absent entries that delete the never-used one.
+      INVITEE = "cale"
+      INVITEE_EMAIL = "cale@example.com"
+      INVITEE_NAME = "Cale Invited"
+      INVITEE_PW = "invitee-test-password-not-secret"
+
+      def users_named(name):
+          out = json.loads(headscale_vps.succeed(
+              f"{CURL} '{API}/core/users/?username={name}'"))
+          return [u for u in out["results"] if u["username"] == name]
+
+      def apply_blueprint(name):
+          """Re-apply one blueprint and wait for the run to finish."""
+          out = json.loads(headscale_vps.succeed(
+              f"{CURL} '{API}/managed/blueprints/?name={name}'"))
+          inst = [i for i in out["results"] if i["name"] == name]
+          assert len(inst) == 1, f"blueprint instances named {name}: {inst}"
+          pk, before = inst[0]["pk"], inst[0]["last_applied"]
+          headscale_vps.succeed(
+              f"{CURL} -X POST '{API}/managed/blueprints/{pk}/apply/' >/dev/null")
+          headscale_vps.wait_until_succeeds(
+              f"{CURL} '{API}/managed/blueprints/{pk}/' | jq -e "
+              + shlex.quote(f'.last_applied != "{before}" and .status == "successful"'),
+              timeout=180,
+          )
+
+      def run_flow(jar, slug, query="", body=None):
+          """One flow-executor round trip; follows the executor's own redirects
+          to the next challenge, as the SPA does."""
+          cmd = (f"curl -sS {CA} --max-time 30 -L -c {jar} -b {jar} "
+                 "-H 'Accept: application/json'")
+          if body is not None:
+              cmd += (" -H 'Content-Type: application/json' -d "
+                      + shlex.quote(json.dumps(body)))
+          url = f"{AKPUB}/api/v3/flows/executor/{slug}/?query=" + urllib.parse.quote(query)
+          return json.loads(headscale_vps.succeed(f"{cmd} '{url}'"))
+
+      def totp_now(config_url):
+          """RFC 6238 code for the device's secret, at the VM's clock."""
+          secret = urllib.parse.parse_qs(urllib.parse.urlparse(config_url).query)["secret"][0]
+          key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+          now = int(headscale_vps.succeed("date +%s").strip())
+          digest = hmac.new(key, struct.pack(">Q", now // 30), hashlib.sha1).digest()
+          off = digest[-1] & 0x0F
+          code = (struct.unpack(">I", digest[off:off + 4])[0] & 0x7FFFFFFF) % 1000000
+          return f"{code:06d}"
+
+      def prompt_body(username, email, password):
+          return {"component": "ak-stage-prompt", "username": username,
+                  "email": email, "name": INVITEE_NAME,
+                  "password": password, "password_repeat": password}
+
+      with subtest("idan is the one declared user, an Authentik superuser; the retired six are gone"):
+          try:
+              headscale_vps.wait_until_succeeds(
+                  f"{CURL} '{API}/flows/instances/invite-enrollment/' >/dev/null",
+                  timeout=300,
+              )
+              # Caddy's certificate, for the flows below.
+              headscale_vps.wait_until_succeeds(
+                  f"curl -sf {CA} --max-time 10 {AKPUB}/api/v3/root/config/ >/dev/null",
+                  timeout=180,
+              )
+              idan = users_named("idan")
+              assert len(idan) == 1 and idan[0]["is_superuser"] is True, (
+                  f"idan is not an Authentik superuser (Admin group): {idan}")
+              for name in RETIRED:
+                  assert not users_named(name), f"retired account {name!r} exists"
+
+              # The absent entries act on a real account: a never-logged-in
+              # `zach` is deleted by the next apply.
+              headscale_vps.succeed(
+                  f"{CURL} -X POST -H 'Content-Type: application/json' -d "
+                  + shlex.quote(json.dumps({"username": "zach", "name": "Zach",
+                                            "path": "users"}))
+                  + f" '{API}/core/users/' >/dev/null")
+              assert users_named("zach")
+              apply_blueprint("headscale-oidc")
+              assert not users_named("zach"), "state: absent left zach in place"
+
+              # Invitee edits are refused later; this is the tenant half.
+              settings = json.loads(headscale_vps.succeed(f"{CURL} '{API}/admin/settings/'"))
+              assert settings["default_user_change_email"] is False, settings
+              assert settings["default_user_change_username"] is False, settings
+          except Exception:
+              authentik_diag()
+              raise
+
+      with subtest("invite-enrollment refuses to run without a valid invitation"):
+          fl = json.loads(headscale_vps.succeed(
+              f"{CURL} '{API}/flows/instances/invite-enrollment/'"))
+          assert fl["designation"] == "enrollment", fl
+          assert fl["authentication"] == "require_unauthenticated", fl
+          for query in ["", "itoken=00000000-0000-4000-8000-000000000000"]:
+              headscale_vps.succeed("rm -f /tmp/noinv.jar")
+              c = run_flow("/tmp/noinv.jar", "invite-enrollment", query)
+              assert c["component"] == "ak-stage-access-denied", (
+                  f"enrollment with query {query!r} reached {c['component']}: {c}")
+
+      with subtest("invite.sh mints a single-use 7-day invitation with the identity fixed"):
+          try:
+              out = headscale_vps.succeed(
+                  f"bash ${inviteRemote} {INVITEE} {INVITEE_EMAIL} {shlex.quote(INVITEE_NAME)}")
+              link = [l for l in out.split() if "itoken=" in l]
+              assert len(link) == 1, f"invite.sh printed no single link:\n{out}"
+              assert link[0].startswith(
+                  "https://${authHost}/if/flow/invite-enrollment/?itoken="), link
+              itoken = link[0].split("itoken=", 1)[1]
+
+              inv = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/stages/invitation/invitations/{itoken}/'"))
+              assert inv["single_use"] is True, inv
+              assert inv["flow_obj"]["slug"] == "invite-enrollment", inv
+              assert inv["fixed_data"] == {"username": INVITEE, "email": INVITEE_EMAIL,
+                                           "name": INVITEE_NAME}, inv["fixed_data"]
+              vm_now = datetime.fromtimestamp(
+                  int(headscale_vps.succeed("date +%s").strip()), timezone.utc)
+              left = datetime.fromisoformat(inv["expires"].replace("Z", "+00:00")) - vm_now
+              assert timedelta(days=7) - timedelta(minutes=10) < left <= timedelta(days=7), (
+                  f"invitation expires in {left}, not 7 days")
+
+              # A second run reprints the unused invitation instead of minting
+              # another.
+              again = headscale_vps.succeed(
+                  f"bash ${inviteRemote} {INVITEE} {INVITEE_EMAIL} {shlex.quote(INVITEE_NAME)}")
+              assert link[0] in again and "already has an unused invitation" in again, again
+
+              # An existing username, or an existing email in any case, is refused.
+              headscale_vps.fail("bash ${inviteRemote} idan someone@example.com Someone")
+              headscale_vps.fail("bash ${inviteRemote} someone IDAN@idanreed.com Someone")
+          except Exception:
+              authentik_diag()
+              raise
+
+      with subtest("an invitation without fixed_data cannot enroll anyone"):
+          # The read-only prompts hold whatever the invitation fixed — here,
+          # nothing — and a posted username/email never replaces it.
+          fl_pk = json.loads(headscale_vps.succeed(
+              f"{CURL} '{API}/flows/instances/invite-enrollment/'"))["pk"]
+          bare = json.loads(headscale_vps.succeed(
+              f"{CURL} -X POST -H 'Content-Type: application/json' -d "
+              + shlex.quote(json.dumps({"name": "bare", "flow": fl_pk,
+                                        "single_use": True, "fixed_data": {}}))
+              + f" '{API}/stages/invitation/invitations/'"))["pk"]
+          headscale_vps.succeed("rm -f /tmp/bare.jar")
+          c = run_flow("/tmp/bare.jar", "invite-enrollment", f"itoken={bare}")
+          assert c["component"] == "ak-stage-prompt", c
+          c = run_flow("/tmp/bare.jar", "invite-enrollment", f"itoken={bare}",
+                   prompt_body("mallory", "mallory@example.com", INVITEE_PW))
+          assert c["component"] == "ak-stage-prompt" and c.get("response_errors"), (
+              f"an empty invitation got past the prompt: {c}")
+          assert not users_named("mallory"), "an empty invitation created an account"
+
+      with subtest("the invitation enrolls a user end to end, with the fixed identity and TOTP"):
+          try:
+              jar = "/tmp/enroll.jar"
+              headscale_vps.succeed(f"rm -f {jar}")
+              query = f"itoken={itoken}"
+
+              c = run_flow(jar, "invite-enrollment", query)
+              assert c["component"] == "ak-stage-prompt", c
+              fields = {f["field_key"]: f for f in c["fields"]}
+              for key, want in [("username", INVITEE), ("email", INVITEE_EMAIL)]:
+                  assert fields[key]["type"] == "text_read_only", fields[key]
+                  assert fields[key]["initial_value"] == want, fields[key]
+              assert fields["name"]["initial_value"] == INVITEE_NAME, fields["name"]
+
+              # The password policy bites before anything is written.
+              c = run_flow(jar, "invite-enrollment", query,
+                       prompt_body(INVITEE, INVITEE_EMAIL, "short"))
+              assert c["component"] == "ak-stage-prompt" and c.get("response_errors"), c
+
+              # A tampered POST: another username, and idan's email. The
+              # invitation's values must be the ones written.
+              c = run_flow(jar, "invite-enrollment", query,
+                       prompt_body("mallory", "idan@idanreed.com", INVITEE_PW))
+              assert c["component"] == "ak-stage-authenticator-totp", (
+                  f"after the prompt the flow reached {c['component']}, not TOTP "
+                  f"setup: {c}")
+              # Written, but not logged in: no session before a device exists.
+              assert users_named(INVITEE), "the user write stage did not run"
+              whoami = headscale_vps.succeed(
+                  f"curl -s {CA} -o /dev/null -w '%{{http_code}}' -b {jar} "
+                  f"'{AKPUB}/api/v3/core/users/me/'"
+              ).strip()
+              assert whoami in ("401", "403"), (
+                  f"a session exists before TOTP setup (users/me/ answered {whoami})")
+
+              c = run_flow(jar, "invite-enrollment", query,
+                       {"component": "ak-stage-authenticator-totp",
+                        "code": totp_now(c["config_url"])})
+              assert c["component"] == "xak-flow-redirect", (
+                  f"enrollment did not finish after TOTP setup: {c}")
+              # The positive control for the 401/403 above: the same jar now
+              # carries a session, as the invitee.
+              me = json.loads(headscale_vps.succeed(
+                  f"curl -sf {CA} -b {jar} '{AKPUB}/api/v3/core/users/me/'"))
+              assert me["user"]["username"] == INVITEE, me
+
+              assert not users_named("mallory"), "the posted username was written"
+              u = users_named(INVITEE)
+              assert len(u) == 1, u
+              u = u[0]
+              assert u["email"] == INVITEE_EMAIL, f"email is {u['email']!r}"
+              assert u["name"] == INVITEE_NAME and u["type"] == "internal" \
+                  and u["path"] == "users" and u["is_active"], u
+              groups = sorted(g["name"] for g in u["groups_obj"])
+              assert groups == ["headscale-users"], f"{INVITEE} is in {groups}"
+              assert u["last_login"], "enrollment did not log the user in"
+              owners = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/core/users/?email=idan@idanreed.com'"))["results"]
+              assert [o["username"] for o in owners] == ["idan"], owners
+
+              devices = json.loads(headscale_vps.succeed(
+                  f"{CURL} '{API}/authenticators/admin/totp/'"))["results"]
+              mine = [d for d in devices if d["user"]["pk"] == u["pk"]]
+              assert len(mine) == 1 and mine[0]["confirmed"], devices
+
+              # Single use: the link is spent.
+              headscale_vps.succeed("rm -f /tmp/reuse.jar")
+              c = run_flow("/tmp/reuse.jar", "invite-enrollment", query)
+              assert c["component"] == "ak-stage-access-denied", c
+
+              # And the absent entry for `cale` does not touch it.
+              apply_blueprint("headscale-oidc")
+              assert users_named(INVITEE), "the absent entry deleted an enrolled account"
+          except Exception:
+              authentik_diag()
+              raise
+
+      with subtest("the enrolled user's login asks for the TOTP device"):
+          jar = "/tmp/login.jar"
+          headscale_vps.succeed(f"rm -f {jar}")
+          c = run_flow(jar, "default-authentication-flow")
+          assert c["component"] == "ak-stage-identification", c
+          c = run_flow(jar, "default-authentication-flow", body={
+              "component": "ak-stage-identification", "uid_field": INVITEE})
+          assert c["component"] == "ak-stage-password", c
+          c = run_flow(jar, "default-authentication-flow", body={
+              "component": "ak-stage-password", "password": INVITEE_PW})
+          assert c["component"] == "ak-stage-authenticator-validate", (
+              f"password login went to {c['component']} without asking for "
+              f"the TOTP device: {c}")
+          assert [d["device_class"] for d in c["device_challenges"]] == ["totp"], c
 
       # ---------------------------------------------------------------------
       # (f) The MFA override-by-name took effect
