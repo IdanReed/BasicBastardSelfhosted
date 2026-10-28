@@ -123,72 +123,7 @@ on the reason.
 
 ### Security
 
-- **D-01 — One age recipient for every host,** so root on the public VPS
-  decrypts the whole fleet. Option: per-host keys, the operator key a
-  recipient of everything (`sops updatekeys` over every file).
-  **Recommendation:** split, after the offline escrow (AS-16), with AS-18's
-  cleanup in the same pass.
-- **D-02 / AS-2 — ntfy is anonymous read-write.** Any tailnet peer, any
-  `homelab` container and any local uid can publish (and, with the SMTP
-  sender set, relay mail as `alerts@idanreed.com`) and read a week of
-  `notify-failure@` journal excerpts. Forward auth is not an option: the VPS
-  publishes through Caddy and a 302 would swallow the alert. Options:
-  deny-all plus tokens at every publisher and a read token for the phone; or
-  blank the three `NTFY_SMTP_*` values to drop the relay leg only.
-  **Recommendation:** blank SMTP now (no publisher sends `X-Email`) and turn
-  the `TODO: decide` in `auth-coverage-required` into an ACCEPTED reason; do
-  tokens together with D-05.
-- **D-03 — The VPS Caddy trusts `100.64.0.0/10` for forwarded headers.** Any
-  tailnet peer can forge `X-Forwarded-For`, which fail2ban's `authentik` jail
-  and the reputation policy both key on. **Recommendation:** narrow
-  `trusted_proxies` in `headscale-vps/modules/caddy.nix` to the services VM's
-  `/32` (`tailscale ip -4` on the VM first — a wrong value breaks every
-  forward-auth check), then check one forward-authed route.
-- **D-05 / AS-6 — The headscale ACL's tags are inert.** No node passes
-  `--advertise-tags`, so only the `idan@ → *:*` rule ever matches, and an
-  untagged node inherits it. Tags apply only at registration. Note that
-  `tag:server:443` is Caddy and fronts every vhost, so a guest rule needs a
-  per-vhost control in the Caddyfile first (AS-5). **Recommendation:**
-  `--advertise-tags=tag:server` in both autoconnect units at the next re-image
-  or before any guest node joins, whichever comes first.
-- **D-06 / AS-3 — The VPS backup key is root there.** `backup-prepare.sh`
-  reaches the VPS with `BACKUP_VPS_SSH_KEY` and runs `sudo docker exec`,
-  `sudo sqlite3` and `rsync --rsync-path='sudo rsync'`; `wheelNeedsPassword =
-  false`, so the key is root-equivalent on the public host. `restrict` is
-  applied. **Recommendation:** a forced command (`vps-backup-pull`) plus a
-  `security.sudo.extraRules` entry for its three calls; prove it with one real
-  nightly run (a failure pages through ntfy).
-- **D-07 — No container drops privileges.** Zero `no-new-privileges`,
-  `cap_drop` or `read_only` in the fleet, and the LinuxServer/s6 images break
-  under `no-new-privileges`. **Recommendation:** pilot `no-new-privileges` on
-  the internet-facing scrapers (`shelfmark`, `karakeep_chrome`), one
-  `./tests/run.sh stack`/suite run each.
-- **D-09 — CI runs workflow code on the production VM.** Jobs share loopback
-  with every stack's publish; the boundary is "who can open a PR", written
-  nowhere. **Recommendation:** record it in `nixos/modules/forgejo-runner.nix`'s
-  header and add `IPAddressDeny=localhost` to the runner unit (it reaches
-  Forgejo by the tailnet URL); verify with one `suites` run.
-- **D-11 — No patch cadence on the VPS.** No `autoUpgrade`, and Renovate never
-  merges. `autoUpgrade` against the committed lock applies nothing, and with
-  `--update-input` the host runs a lock that is not in git. **Recommendation:**
-  a monthly flake update of the server inputs, then `nrs-vps` and `nrs-vm`.
-- **D-12 — fail2ban can ban a tailnet device off SSH.** `ignoreip` is loopback
-  only and the `authentik` jail bans the forwarded client IP on all ports.
-  **Recommendation:** `services.fail2ban.ignoreIP` gains `100.64.0.0/10` and
-  `fd7a:115c:a1e0::/48`; the reputation policy still scores per user and IP.
-- **D-13 — Old workstation hostnames are in the GitHub mirror's history**
-  (the tree is clean). **Recommendation:** recreate the mirror from the
-  current tip; Forgejo's history stays.
-- **D-14 — Desktop container ports bypass its firewall** (`-p 8080:80` is
-  LAN-reachable). **Recommendation:** write the `127.0.0.1:PORT:PORT`
-  convention into `nixos-de/modules/nixos/containers.nix`.
-- **D-15 — `trustedInterfaces = [ "tailscale0" ]` on every host** exposes every
-  listening socket to the whole tailnet. Safe while every peer is owned.
-  **Recommendation:** per-port `networking.firewall.interfaces.tailscale0`
-  rules, in the same change as D-05.
-- **AS-16 — No off-host copy of the age key.** `secrets-recovery.sops.yaml` is
-  encrypted to the same key, so it is no escrow. **Operator:** write the
-  offline recovery artifact (`docs/bring-up.md` §5) — it gates any reset.
+Open security items are tracked privately, outside this public repo.
 
 ### Secrets
 
