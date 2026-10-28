@@ -7,6 +7,4 @@
   QBIT_WEBUI_PASSWORD = shared "IDAN_INITIAL_PASSWORD";
   # Idan's login.
   JELLYFIN_ADMIN_PASSWORD = shared "IDAN_INITIAL_PASSWORD";
-  # The Authentik client's secret, one value in secrets/shared.sops.json.
-  JELLYFIN_OIDC_CLIENT_SECRET = shared "JELLYFIN_OIDC_CLIENT_SECRET";
 }

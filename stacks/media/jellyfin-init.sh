@@ -1,7 +1,7 @@
 #!/bin/sh
-# jellyfin-init — headless first run: the setup wizard, the first admin, and
-# the two libraries. Runs in python:3.13-alpine as a oneshot once jellyfin is
-# healthy.
+# jellyfin-init — headless first run: the setup wizard, the first admin, the
+# other users, and the two libraries. Runs in python:3.13-alpine as a oneshot
+# once jellyfin is healthy.
 #
 # WHY IT WORKS: StartupController and LibraryStructureController both carry
 # [Authorize(Policy = FirstTimeSetupOrElevated)], and FirstTimeSetupHandler
@@ -50,9 +50,9 @@ def change(msg):
     print(f"jellyfin-init: CHANGE: {msg}", flush=True)
 
 
-def call(path, method="GET", body=None, token=None, timeout=120):
+def call(path, method="GET", body=None, token=None, timeout=120, auth=AUTH):
     data = None
-    headers = {"Authorization": AUTH + (f', Token="{token}"' if token else "")}
+    headers = {"Authorization": auth + (f', Token="{token}"' if token else "")}
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
@@ -82,6 +82,19 @@ if missing:
 USER = os.environ["JELLYFIN_ADMIN_USER"]
 PASSWORD = os.environ["JELLYFIN_ADMIN_PASSWORD"]
 SERVER_NAME = os.environ.get("JELLYFIN_SERVER_NAME", "jellyfin")
+
+# The other six users of the fleet roster (their Authentik usernames), each
+# seeded with the password Authentik sets for them, so one username/password
+# works in the web UI, on TV and mobile clients, and in Seerr (which signs in
+# with Jellyfin accounts). From media.jellyfin-users.env, which only this
+# service reads. Resolved up front so a missing one fails before any mutation.
+ROSTER = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
+ROSTER_PW = {u: os.environ.get(f"{u.upper()}_INITIAL_PASSWORD", "") for u in ROSTER}
+_no_pw = [u for u, pw in ROSTER_PW.items() if not pw]
+if _no_pw:
+    sys.exit(f"jellyfin-init: FATAL: no password for {', '.join(_no_pw)} — "
+             f"/run/stack-env/media.jellyfin-users.env is missing or "
+             f"incomplete (switch the host before the push)")
 
 # name -> (collectionType, container path). Both live inside the
 # /data/media:ro bind and are created by media-init's skeleton pass;
@@ -196,107 +209,64 @@ if not completed:
 else:
     log("startup wizard already completed - no change")
 
-# SSO-Auth plugin (installed by jellyfin-config-init) — the "authentik"
-# provider plus the login-page button. Best-effort like the install: a missing
-# plugin or an empty secret leaves jellyfin on local logins, never fails the
-# init (seerr-bootstrap gates on this exiting 0).
-PROVIDER = os.environ.get("JELLYFIN_SSO_PROVIDER", "authentik")
-OIDC_SECRET = os.environ.get("JELLYFIN_OIDC_CLIENT_SECRET", "")
-PUBLIC_URL = os.environ.get("JELLYFIN_PUBLIC_URL", "").rstrip("/")
-
-# Managed keys only; anything else in the stored config (CanonicalLinks — the
-# SSO-name -> user-id map) is carried over, because OID/Add REPLACES the whole
-# provider entry.
-SSO_CONFIG = {
-    "OidEndpoint": os.environ.get("JELLYFIN_OIDC_ENDPOINT", ""),
-    "OidClientId": os.environ.get("JELLYFIN_OIDC_CLIENT_ID", ""),
-    "OidSecret": OIDC_SECRET,
-    "Enabled": True,
-    # preferred_username is the Authentik username, so the `idan` login lands
-    # on the admin this script created (the plugin matches existing users by
-    # name). Changing it orphans every linked account.
-    "DefaultUsernameClaim": "preferred_username",
-    # Recomputed on every SSO login from the `groups` claim (profile scope):
-    # members of Admin are admins, headscale-users may log in at all.
-    "EnableAuthorization": True,
-    "RoleClaim": "groups",
-    "AdminRoles": ["Admin"],
-    "Roles": ["headscale-users"],
-    "EnableAllFolders": True,
-    "EnabledFolders": [],
-    "EnableFolderRoles": False,
-    "EnableLiveTv": False,
-    "EnableLiveTvManagement": False,
-    # The plugin prepends "openid profile"; null here renders empty scopes.
-    "OidScopes": ["email"],
-    # Behind Caddy jellyfin sees http; the callback must be https to match the
-    # blueprint's strict redirect_uri.
-    "SchemeOverride": "https",
-    # EMPTY on purpose: a DefaultProvider switches each SSO user's password
-    # provider, which would lock this script and seerr-bootstrap out of the
-    # admin's password login.
-    "DefaultProvider": "",
-}
-
-BUTTON = (
-    f'<form action="{PUBLIC_URL}/sso/OID/start/{PROVIDER}">'
-    '<button class="raised block emby-button button-submit">'
-    "Sign in with Authentik</button></form>"
-)
-BUTTON_CSS = (
-    "a.raised.emby-button { padding: 0.9em 1em; color: inherit !important; }\n"
-    ".disclaimerContainer { display: block; }"
-)
-
-
-def lower_keys(d):
-    return {str(k).lower(): v for k, v in (d or {}).items()}
-
-
-def same(a, b):
-    # The plugin round-trips "" and [] as null; treat all three as unset.
-    return (a if a not in ("", []) else None) == (b if b not in ("", []) else None)
-
-
-# By GUID (meta.json), not name: the loaded plugin reports "SSO-Auth" while
-# its manifest says "SSO Authentication". /Plugins prints ids without dashes.
-SSO_GUID = "505ce9d1d91642fa86ca673ef241d7df"
-_, plugins = call("/Plugins", token=token)
-sso = next((p for p in (plugins or [])
-            if str(p.get("Id", "")).replace("-", "").lower() == SSO_GUID), None)
-if not OIDC_SECRET:
-    log("JELLYFIN_OIDC_CLIENT_SECRET empty - leaving SSO unconfigured")
-elif sso is None or sso.get("Status") != "Active":
-    log(f"WARN: SSO-Auth plugin not active ({sso and sso.get('Status')!r}) - "
-        f"see jellyfin-config-init; leaving SSO unconfigured")
-else:
-    _, stored = call("/sso/OID/Get", token=token)
-    current = lower_keys((stored or {}).get(PROVIDER))
-    want = lower_keys(SSO_CONFIG)
-    if all(same(current.get(k), v) for k, v in want.items()):
-        log(f"SSO provider {PROVIDER!r} already configured - no change")
-    else:
-        body = dict(SSO_CONFIG)
-        if current.get("canonicallinks"):
-            body["CanonicalLinks"] = current["canonicallinks"]
+# Users, re-asserted like Authentik's own: an account that does not log in with
+# its password gets it set back, so Jellyfin and Authentik agree. Each probe
+# uses its own DeviceId — a login replaces any session of the same user and
+# device. A disabled account is an admin's decision and is left alone.
+_, users = call("/Users", token=token)
+by_name = {str(u.get("Name", "")).lower(): u for u in (users or [])}
+for name in ROSTER:
+    pw = ROSTER_PW[name]
+    probe = AUTH.replace('DeviceId="jellyfin-init"',
+                         f'DeviceId="jellyfin-init-{name}"')
+    user = by_name.get(name)
+    if user is None:
         try:
-            call(f"/sso/OID/Add/{PROVIDER}", "POST", body, token=token)
+            _, user = call("/Users/New", "POST",
+                           {"Name": name, "Password": pw}, token=token)
         except urllib.error.HTTPError as e:
-            sys.exit(f"jellyfin-init: FATAL: SSO OID/Add HTTP {e.code}: "
-                     f"{detail(e)}")
-        change(f"SSO provider {PROVIDER!r} configured "
-               f"({SSO_CONFIG['OidEndpoint']})")
-
-    _, branding = call("/System/Configuration/branding", token=token)
-    branding = branding or {}
-    if (branding.get("LoginDisclaimer") == BUTTON
-            and branding.get("CustomCss") == BUTTON_CSS):
-        log("login button already set - no change")
+            sys.exit(f"jellyfin-init: FATAL: creating user {name!r} HTTP "
+                     f"{e.code}: {detail(e)}")
+        policy = (user or {}).get("Policy") or {}
+        if policy.get("IsAdministrator") or not policy.get("EnableAllFolders"):
+            policy["IsAdministrator"] = False
+            policy["EnableAllFolders"] = True
+            call(f"/Users/{user['Id']}/Policy", "POST", policy, token=token)
+        change(f"user {name} created")
+        continue
+    if (user.get("Policy") or {}).get("IsDisabled"):
+        log(f"WARN: user {name} is disabled - leaving it alone")
+        continue
+    try:
+        _, session = call("/Users/AuthenticateByName", "POST",
+                          {"Username": name, "Pw": pw}, auth=probe)
+    except urllib.error.HTTPError as e:
+        if e.code != 401:
+            sys.exit(f"jellyfin-init: FATAL: probing user {name!r} HTTP "
+                     f"{e.code}: {detail(e)}")
+        call(f"/Users/Password?userId={user['Id']}", "POST",
+             {"NewPw": pw, "ResetPassword": False}, token=token)
+        change(f"user {name} password set to the Authentik one")
     else:
-        branding["LoginDisclaimer"] = BUTTON
-        branding["CustomCss"] = BUTTON_CSS
-        call("/System/Configuration/branding", "POST", branding, token=token)
-        change("login page: Sign in with Authentik button")
+        call("/Sessions/Logout", "POST",
+             token=(session or {}).get("AccessToken"), auth=probe)
+        log(f"user {name} already exists - no change")
+
+# No SSO: Jellyfin keeps its own logins (TV and mobile clients cannot follow
+# an OIDC redirect), and jellyfin-config-init removes an earlier SSO-Auth
+# install. What that plugin's setup left in the branding — the "Sign in with
+# Authentik" form and its CSS — is cleared here. Only that markup is touched:
+# a disclaimer set by hand stays.
+_, branding = call("/System/Configuration/branding", token=token)
+branding = branding or {}
+if "/sso/OID/start/" in (branding.get("LoginDisclaimer") or ""):
+    branding["LoginDisclaimer"] = ""
+    if "a.raised.emby-button" in (branding.get("CustomCss") or ""):
+        branding["CustomCss"] = ""
+    call("/System/Configuration/branding", "POST", branding, token=token)
+    change("login page: removed the Sign in with Authentik button")
+else:
+    log("no SSO login button - no change")
 
 log(f"done ({CHANGES} change(s))")
 PY

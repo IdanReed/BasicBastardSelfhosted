@@ -102,7 +102,6 @@ services:
       HEADSCALE_OIDC_CLIENT_SECRET: ${HEADSCALE_OIDC_CLIENT_SECRET:?oidc client secret required}
       IMMICH_OIDC_CLIENT_SECRET: ${IMMICH_OIDC_CLIENT_SECRET:?immich oidc client secret required}
       OUTLINE_OIDC_CLIENT_SECRET: ${OUTLINE_OIDC_CLIENT_SECRET:?outline oidc client secret required}
-      JELLYFIN_OIDC_CLIENT_SECRET: ${JELLYFIN_OIDC_CLIENT_SECRET:?jellyfin oidc client secret required}
       KAVITA_OIDC_CLIENT_SECRET: ${KAVITA_OIDC_CLIENT_SECRET:?kavita oidc client secret required}
       ABS_OIDC_CLIENT_SECRET: ${ABS_OIDC_CLIENT_SECRET:?audiobookshelf oidc client secret required}
       PAPERLESS_OIDC_CLIENT_SECRET: ${PAPERLESS_OIDC_CLIENT_SECRET:?paperless oidc client secret required}
@@ -118,6 +117,13 @@ services:
       WEALTHFOLIO_OIDC_CLIENT_SECRET: ${WEALTHFOLIO_OIDC_CLIENT_SECRET:?wealthfolio oidc client secret required}
       EXCALIDRAW_OIDC_CLIENT_SECRET: ${EXCALIDRAW_OIDC_CLIENT_SECRET:?excalidraw oidc client secret required}
       FORGEJO_OIDC_CLIENT_SECRET: ${FORGEJO_OIDC_CLIENT_SECRET:?forgejo oidc client secret required}
+      GRAFANA_OIDC_CLIENT_SECRET: ${GRAFANA_OIDC_CLIENT_SECRET:?grafana oidc client secret required}
+      PROFILARR_OIDC_CLIENT_SECRET: ${PROFILARR_OIDC_CLIENT_SECRET:?profilarr oidc client secret required}
+      KOMODO_OIDC_CLIENT_SECRET: ${KOMODO_OIDC_CLIENT_SECRET:?komodo oidc client secret required}
+      WINDMILL_OIDC_CLIENT_SECRET: ${WINDMILL_OIDC_CLIENT_SECRET:?windmill oidc client secret required}
+      WGER_OIDC_CLIENT_SECRET: ${WGER_OIDC_CLIENT_SECRET:?wger oidc client secret required}
+      BESZEL_OIDC_CLIENT_SECRET: ${BESZEL_OIDC_CLIENT_SECRET:?beszel oidc client secret required}
+      CLEANUPARR_OIDC_CLIENT_SECRET: ${CLEANUPARR_OIDC_CLIENT_SECRET:?cleanuparr oidc client secret required}
       # Per-user login passwords, consumed by !Env in headscale-oidc.yaml.
       IDAN_INITIAL_PASSWORD: ${IDAN_INITIAL_PASSWORD:?idan initial password required}
       ALONDRA_INITIAL_PASSWORD: ${ALONDRA_INITIAL_PASSWORD:?alondra initial password required}

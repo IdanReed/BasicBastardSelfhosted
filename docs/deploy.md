@@ -22,8 +22,9 @@ nrs-vm             # only if nixos/, forgejo/, komodo/ (not komodo/sync/), a sta
 git push forgejo main
 ```
 
-An `env.nix`-only change is the one the push does not deploy (`env.nix` is not
-a `config_files` entry): after `nrs-vm`, Deploy that stack in the Komodo UI.
+An `env.nix`-only change (or `env.<part>.nix`) is the one the push does not
+deploy (neither is a `config_files` entry): after `nrs-vm`, Deploy that stack in
+the Komodo UI.
 
 **Push is the deploy for stacks.** Forgejo's push webhook runs Komodo's `apply`
 procedure: it re-applies `komodo/sync/` (registering, updating or removing

@@ -14,6 +14,12 @@
 #
 # Compose reads /run/stack-env/<stack>.env twice: env_file (the containers'
 # environment) and --env-file (`${VAR}` interpolation in compose.yaml itself).
+#
+# An env.<part>.nix beside env.nix (same { secret, shared } interface) renders
+# to its own /run/stack-env/<stack>.<part>.env, which only the services that
+# list it in env_file read: values one service needs and the rest of the stack
+# must not see (media's jellyfin-init and the users' passwords). It is never an
+# interpolation source.
 { config, lib, ... }:
 
 let
@@ -79,12 +85,23 @@ let
           throw "stacks/${name}: ${concatStringsSep ", " clash} is both stored in secrets.sops.json and built in env.nix"
         else
           genAttrs keys secret // derived;
+      # Single-quoted: Compose interpolates env-file values, and a quoted value
+      # is taken literally, so a `$` in a password or hash survives.
+      render = v: concatStringsSep "\n" (mapAttrsToList (k: x: "${k}='${x}'") v) + "\n";
+      partRe = "env\\.([a-z0-9-]+)\\.nix";
+      partFiles = filterAttrs (
+        f: t: t == "regular" && builtins.match partRe f != null
+      ) (builtins.readDir dir);
     in
     {
       inherit file keys;
-      # Single-quoted: Compose interpolates env-file values, and a quoted value
-      # is taken literally, so a `$` in a password or hash survives.
-      content = concatStringsSep "\n" (mapAttrsToList (k: v: "${k}='${v}'") vars) + "\n";
+      content = render vars;
+      parts = lib.mapAttrs' (
+        f: _:
+        lib.nameValuePair (builtins.head (builtins.match partRe f)) (
+          render (import (dir + "/${f}") { inherit secret shared; })
+        )
+      ) partFiles;
     };
 
   envs = mapAttrs stackEnv stackDirs;
@@ -127,13 +144,24 @@ in
       ) envs
     );
 
-    sops.templates = lib.mapAttrs' (
-      name: env:
-      lib.nameValuePair "stacks/${name}.env" {
-        inherit (env) content;
-        restartUnits = [ "stack-env-publish.service" ];
-      }
-    ) envs;
+    sops.templates = lib.mkMerge (
+      mapAttrsToList (
+        name: env:
+        {
+          "stacks/${name}.env" = {
+            inherit (env) content;
+            restartUnits = [ "stack-env-publish.service" ];
+          };
+        }
+        // lib.mapAttrs' (
+          part: content:
+          lib.nameValuePair "stacks/${name}.${part}.env" {
+            inherit content;
+            restartUnits = [ "stack-env-publish.service" ];
+          }
+        ) env.parts
+      ) envs
+    );
 
     systemd.services.stack-env-publish = {
       description = "Publish rendered stack environments to /run/stack-env";

@@ -122,10 +122,9 @@ let
     images."python_3_13-alpine" # media-init + the jellyfin/seerr/bazarr sidecars
   ];
 
-  # The SSO-Auth plugin jellyfin-config-init would download, pre-seeded into
-  # the config volume (the suite is offline) — same pin as SSO_VERSION /
-  # SSO_SHA256 in stacks/media/compose.yaml; the init sees it and skips the
-  # download, exactly its steady state on the host.
+  # An SSO-Auth install from an earlier deploy (the last pinned release),
+  # pre-seeded into the config volume with a stored provider config, so the
+  # suite proves jellyfin-config-init removes both before jellyfin starts.
   ssoPlugin = pkgs.runCommand "jellyfin-sso-auth-4.0.0.4" {
     nativeBuildInputs = [ pkgs.unzip ];
   } ''
@@ -249,6 +248,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/jellyfin/cache 0755 root root -"
           "d /mnt/fast/jellyfin/config/plugins 0755 root root -"
           "C /mnt/fast/jellyfin/config/plugins/SSO-Auth_4.0.0.4 - - - - ${ssoPlugin}"
+          "d /mnt/fast/jellyfin/config/plugins/configurations 0755 root root -"
+          "f /mnt/fast/jellyfin/config/plugins/configurations/SSO-Auth.xml 0600 root root - <PluginConfiguration/>"
           "d /mnt/fast/radarr 0755 root root -"
           "d /mnt/fast/radarr/config 0755 root root -"
           "d /mnt/fast/sonarr 0755 root root -"
@@ -349,6 +350,9 @@ pkgs.testers.runNixOSTest {
     # token is appended once there is one.
     JF_AUTH = ('MediaBrowser Client="suite", Device="suite", '
                'DeviceId="media-suite", Version="1.0.0"')
+    # The seeded users and the shared fixture's password for each.
+    ROSTER = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
+    ROSTER_PW = {n: "test_" + n.upper() + "_initial_pw_not_secret" for n in ROSTER}
 
     ARRS = {
         "radarr": (10051, "v3", RKEY),
@@ -1282,10 +1286,13 @@ pkgs.testers.runNixOSTest {
             f"a jellyfin-init run against a seeded server was not a no-op:\n{out}"
         )
 
-    with subtest("SSO-Auth is active, its authentik provider and login button set"):
-        # jellyfin-config-init found the pre-seeded plugin (the host
-        # downloads the same pin once); jellyfin-init configured it. Nothing
-        # here talks to Authentik — discovery happens at click time.
+    with subtest("no SSO: the earlier plugin is gone and the login page has no button"):
+        # Jellyfin keeps its own logins (TV clients cannot follow an OIDC
+        # redirect). The pre-seeded SSO-Auth install and its config stand in
+        # for an earlier deploy; jellyfin-config-init removed both.
+        services_vm.fail("ls -d /mnt/fast/jellyfin/config/plugins/SSO-Auth_*")
+        services_vm.fail(
+            "test -e /mnt/fast/jellyfin/config/plugins/configurations/SSO-Auth.xml")
         auth = json.loads(services_vm.succeed(
             "curl -sf --max-time 30 -X POST "
             "-H 'Content-Type: application/json' "
@@ -1300,23 +1307,37 @@ pkgs.testers.runNixOSTest {
             f"curl -sf --max-time 30 {hdr} http://127.0.0.1:10050/Plugins"))
         sso = [p for p in plugins if str(p.get("Id", "")).replace("-", "").lower()
                == "505ce9d1d91642fa86ca673ef241d7df"]
-        assert sso and sso[0].get("Status") == "Active", (
-            f"SSO-Auth plugin not active: {plugins!r}")
-        oid = json.loads(services_vm.succeed(
-            f"curl -sf --max-time 30 {hdr} http://127.0.0.1:10050/sso/OID/Get"))
-        prov = {k.lower(): v for k, v in (oid.get("authentik") or {}).items()}
-        assert prov.get("oidclientid") == "jellyfin", f"sso config: {oid!r}"
-        assert prov.get("oidsecret") == "test_jellyfin_oidc_secret_not_secret", (
-            "the fixture's JELLYFIN_OIDC_CLIENT_SECRET did not reach the plugin")
-        assert prov.get("defaultusernameclaim") == "preferred_username", prov
-        assert prov.get("schemeoverride") == "https", prov
-        # Must stay empty, or SSO logins would switch the admin off password
-        # auth and lock jellyfin-init / seerr-bootstrap out.
-        assert not prov.get("defaultprovider"), prov
+        assert not sso, f"an SSO-Auth plugin is still loaded: {sso!r}"
         branding = json.loads(services_vm.succeed(
             "curl -sf --max-time 30 http://127.0.0.1:10050/Branding/Configuration"))
-        assert ("https://jellyfin.svc.idanreed.com/sso/OID/start/authentik"
-                in (branding.get("LoginDisclaimer") or "")), branding
+        assert "/sso/OID/" not in (branding.get("LoginDisclaimer") or ""), branding
+
+    with subtest("the other users have Jellyfin accounts with their Authentik passwords"):
+        # jellyfin-init seeded each from media.jellyfin-users.env — the
+        # shared fixture's per-user password, the same value Authentik sets.
+        for name in ROSTER:
+            dev = JF_AUTH.replace('DeviceId="media-suite"',
+                                  'DeviceId="media-suite-' + name + '"')
+            got = json.loads(services_vm.succeed(
+                "curl -sf --max-time 30 -X POST "
+                "-H 'Content-Type: application/json' "
+                + "-H " + shlex.quote("Authorization: " + dev) + " "
+                + "-d " + shlex.quote(json.dumps(
+                    {"Username": name, "Pw": ROSTER_PW[name]})) + " "
+                "http://127.0.0.1:10050/Users/AuthenticateByName"
+            ))
+            pol = (got.get("User") or {}).get("Policy") or {}
+            assert not pol.get("IsAdministrator"), f"{name} is an admin: {pol!r}"
+            assert pol.get("EnableAllFolders"), f"{name} sees no libraries: {pol!r}"
+        # Only jellyfin-init reads the users' passwords: no other media
+        # container's environment carries one.
+        for c in ["gluetun", "radarr", "sonarr", "prowlarr", "profilarr"]:
+            env = services_vm.succeed(
+                f"docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {c}")
+            assert "_INITIAL_PASSWORD=" not in env, f"{c} carries a user password"
+        assert "ALONDRA_INITIAL_PASSWORD=" in services_vm.succeed(
+            "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "
+            "media_jellyfin_init")
 
     with subtest("seerr is initialised, with the arrs and jellyfin linked"):
         # public.initialized is the first-run flag; /setup is the browser step
@@ -1354,6 +1375,18 @@ pkgs.testers.runNixOSTest {
             f"a seerr-bootstrap run against an initialised seerr changed "
             f"something:\n{out}"
         )
+
+    with subtest("a seeded user signs in to Seerr with their Jellyfin account"):
+        # Seerr's stable tag signs in with Jellyfin accounts; its defaults let
+        # a Jellyfin user it has not seen before in and create their account.
+        status = services_vm.succeed(
+            "curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "
+            "-H 'Content-Type: application/json' "
+            + "-d " + shlex.quote(json.dumps(
+                {"username": "alondra", "password": ROSTER_PW["alondra"]})) + " "
+            "http://127.0.0.1:10054/api/v1/auth/jellyfin"
+        ).strip()
+        assert status == "200", f"seerr sign-in for alondra: HTTP {status}"
 
     with subtest("bazarr loaded its seeded arr connections"):
         # Settles the annex §6 question: <config_dir>/config/config.yaml, with

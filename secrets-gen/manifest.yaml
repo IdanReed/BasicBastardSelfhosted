@@ -39,7 +39,7 @@ files:
   - { path: stacks/dawarich/secrets.sops.json, format: json, example: stacks/dawarich/secrets.example.env }
   - { path: stacks/docspace/secrets.sops.json, format: json, example: stacks/docspace/secrets.example.env }
   - { path: stacks/firefly/secrets.sops.json, format: json, example: stacks/firefly/secrets.example.env }
-  - { path: stacks/forgejo/secrets.sops.json, format: json, example: stacks/forgejo/secrets.example.env }
+  - { path: forgejo/secrets.sops.json, format: json, example: forgejo/secrets.example.env }
   - { path: stacks/ghostfolio/secrets.sops.json, format: json, example: stacks/ghostfolio/secrets.example.env }
   - { path: stacks/immich/secrets.sops.json, format: json, example: stacks/immich/secrets.example.env }
   - { path: stacks/logging/secrets.sops.json, format: json, example: stacks/logging/secrets.example.env }
@@ -114,6 +114,48 @@ secrets:
     note: "done; one key, two VPS-side consumers (native headscale + blueprint !Env)"
     targets: [{ file: headscale-vps/secrets.sops.yaml, key: HEADSCALE_OIDC_CLIENT_SECRET }]
   # OIDC cross-host twins (one value, both sides; xhost edge)
+  - name: grafana/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: GRAFANA_OIDC_CLIENT_SECRET }
+  - name: profilarr/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: PROFILARR_OIDC_CLIENT_SECRET }
+  - name: komodo/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: KOMODO_OIDC_CLIENT_SECRET }
+  - name: windmill/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: WINDMILL_OIDC_CLIENT_SECRET }
+  - name: wger/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: WGER_OIDC_CLIENT_SECRET }
+  - name: beszel/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: BESZEL_OIDC_CLIENT_SECRET }
+  - name: cleanuparr/oidc
+    class: generate
+    recipe: hex:64
+    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
+    targets:
+      - { file: secrets/shared.sops.json, key: CLEANUPARR_OIDC_CLIENT_SECRET }
   - name: immich/oidc
     class: generate
     recipe: hex:64
@@ -660,12 +702,6 @@ secrets:
     recipe: hex:64
     note: "compose hands it to seerr as API_KEY (forces main.apiKey on every load); the seerr-init/bootstrap sidecars read SEERR_API_KEY"
     targets: [{ file: stacks/media/secrets.sops.json, key: SEERR_API_KEY }]
-  - name: jellyfin/oidc
-    class: generate
-    recipe: hex:64
-    note: "one value in secrets/shared.sops.json; the VPS (Authentik / log shipper) and the services VM (the app's env.nix) both read it"
-    targets:
-      - { file: secrets/shared.sops.json, key: JELLYFIN_OIDC_CLIENT_SECRET }
   - name: media/BAZARR_API_KEY
     class: generate
     recipe: hex:32

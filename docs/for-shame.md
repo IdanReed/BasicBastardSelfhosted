@@ -134,24 +134,27 @@ hub is healthy. What is not declarative is the *timing*.
   host network), so forward auth is purely a browser concern.
 - **(d) Survives recreate:** n/a — it is every login.
 
-### Jellyfin — SSO through a plugin
+### Jellyfin — its own logins, seeded
 
 The setup wizard, the first admin and the libraries are all driven from the repo:
 `jellyfin-config-init` seeds `config/encoding.xml` before the first start, and
 `jellyfin-init` calls `/Startup/*` and `/Library/VirtualFolders`, both of which
-are anonymous while the wizard is open. Authentik SSO is declarative too:
+are anonymous while the wizard is open. Accounts are declarative too:
 
-- **(b) What runs:** `jellyfin-config-init` installs `9p4/jellyfin-plugin-sso`
-  (`SSO_VERSION` + `SSO_SHA256` in compose) before Jellyfin starts;
-  `jellyfin-init` then writes the `authentik` provider (`/sso/OID/Add`, keeping
-  the plugin's user links) and the login-page button (branding).
-- **(c) Why it is a caveat:** it is the fleet's one runtime download. It happens
-  once, is checksum-pinned, and a failure is a WARN — Jellyfin then starts
-  without the button. Bump version and sha256 together.
-- **(d) Survives recreate:** yes — `/mnt/fast/jellyfin/config/plugins`.
-- SSO usernames are Authentik's `preferred_username`, so the `idan` login is the
-  `JELLYFIN_ADMIN_USER` admin. Admin rights follow the Authentik `Admin` group,
-  logins need `headscale-users`. Native apps keep password or Quick Connect.
+- **(b) What runs:** `jellyfin-init` creates the other six users with the
+  password Authentik sets for each (from `/run/stack-env/media.jellyfin-users.env`,
+  rendered from `stacks/media/env.jellyfin-users.nix` and read by that one
+  service) and re-asserts it on every run, so Jellyfin and Authentik agree.
+  `jellyfin-config-init` removes any SSO-Auth plugin left by an earlier deploy.
+- **(c) Why no OIDC:** Jellyfin's TV and mobile clients cannot follow an OIDC
+  redirect, so an SSO plugin would only help the web UI. Seerr signs in with
+  these Jellyfin accounts. The heavier option, if ever wanted: Authentik's LDAP
+  outpost with `jellyfin-plugin-ldapauth`.
+- **(d) Survives recreate:** yes — the accounts live in `/mnt/fast/jellyfin/config`.
+- A friend's password change (`sopsedit secrets/shared.sops.json`) reaches
+  Jellyfin like every other consumer: `nrs-vm`, then the push — the shared file
+  is one of media's tracked config files, so `apply` redeploys media and
+  `jellyfin-init` re-asserts the new value.
 
 ⚠ **Do not run `sopsgen rotate user/idan` after Jellyfin's first deploy.**
 `JELLYFIN_ADMIN_PASSWORD` is a twin of idan's password, and Jellyfin has no

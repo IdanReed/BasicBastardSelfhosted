@@ -122,6 +122,15 @@ let
         exampleKeys = dotenvKeys (c.dir + "/secrets.example.env");
         fixtureKeys = jsonKeys (../fixtures/stacks + "/${c.stack}.sops.json");
         builtKeys = builtKeys c.dir;
+        # env.<part>.nix beside the compose: each renders its own
+        # /run/stack-env/<stack>.<part>.env (nixos/modules/stack-env.nix).
+        envParts = map (f: builtins.head (builtins.match "env\\.([a-z0-9-]+)\\.nix" f)) (
+          lib.attrNames (
+            lib.filterAttrs (
+              f: t: t == "regular" && builtins.match "env\\.([a-z0-9-]+)\\.nix" f != null
+            ) (builtins.readDir c.dir)
+          )
+        );
       }) composeFiles
     )
   );
@@ -351,53 +360,15 @@ in
                     f"{oenv.get('OIDC_LOGOUT_URI')!r} does not reference the "
                     f"blueprint's application slug {oslug!r}")
 
-        # --- Jellyfin: jellyfin-init env <-> jellyfin-oidc.yaml -------------
-        # The SSO-Auth plugin builds its callback as
-        # <scheme>://<host>/sso/OID/redirect/<provider>; jellyfin-init pins
-        # the scheme to https and the provider name from this env.
-        with open("${(repo + "/stacks/media/compose.yaml")}") as f:
-            mcomp = yaml.safe_load(f)
-        jenv = {}
-        for e in ((mcomp.get("services") or {}).get("jellyfin-init") or {}).get(
-                "environment") or []:
-            k, _, v = str(e).partition("=")
-            jenv[k] = v
-
+        # Jellyfin has no OIDC: jellyfin-oidc.yaml only marks the retired
+        # provider and application absent (state: absent, identifiers only).
         with open("${(repo + "/headscale-vps/authentik/blueprints/custom/jellyfin-oidc.yaml")}") as f:
             jdoc = yaml.load(f, Loose)
-
-        jprov = next((e for e in jdoc["entries"]
-                      if e["model"].endswith("oauth2provider")), None)
-        if jprov is None:
-            errs.append("jellyfin: no oauth2provider entry in jellyfin-oidc.yaml")
-        else:
-            jattrs = jprov["attrs"]
-            if jattrs["client_id"] != jenv.get("JELLYFIN_OIDC_CLIENT_ID"):
+        for e in jdoc["entries"]:
+            if e.get("state") != "absent" or e.get("attrs"):
                 errs.append(
-                    f"jellyfin: client_id mismatch: compose has "
-                    f"{jenv.get('JELLYFIN_OIDC_CLIENT_ID')!r}, blueprint has "
-                    f"{jattrs['client_id']!r}")
-            expected = (jenv.get("JELLYFIN_PUBLIC_URL", "").rstrip("/")
-                        + "/sso/OID/redirect/"
-                        + jenv.get("JELLYFIN_SSO_PROVIDER", ""))
-            juris = [u["url"] for u in jattrs["redirect_uris"]]
-            if expected not in juris:
-                errs.append(
-                    f"jellyfin: compose implies redirect_uri {expected!r}, "
-                    f"blueprint offers {juris!r} — strict matching, so this "
-                    f"is fatal at login")
-
-        japp = next((e for e in jdoc["entries"]
-                     if e["model"] == "authentik_core.application"), None)
-        if japp is None:
-            errs.append("jellyfin: no application entry in jellyfin-oidc.yaml")
-        else:
-            jslug = japp["identifiers"]["slug"]
-            if f"/application/o/{jslug}/" not in jenv.get("JELLYFIN_OIDC_ENDPOINT", ""):
-                errs.append(
-                    f"jellyfin: JELLYFIN_OIDC_ENDPOINT "
-                    f"{jenv.get('JELLYFIN_OIDC_ENDPOINT')!r} does not reference "
-                    f"the blueprint's application slug {jslug!r}")
+                    f"jellyfin-oidc.yaml: {e['model']} must be state: absent "
+                    f"with identifiers only — Jellyfin keeps its own logins")
 
         # --- !Env links: blueprint <-> worker env <-> sops template ---------
         # Loose resolves !Env to None, so the structural checks above are
@@ -676,19 +647,25 @@ in
     '';
 
   # A stack's env exists only where stack-env.nix renders one — the stack has a
-  # secrets.sops.json — and only at /run/stack-env/<stack>.env, so a compose
-  # naming any other env_file never starts on the host.
+  # secrets.sops.json — and only at /run/stack-env/<stack>.env, plus one
+  # /run/stack-env/<stack>.<part>.env per env.<part>.nix beside the compose, so
+  # a compose naming any other env_file never starts on the host.
   env-file-coverage =
     mkLint "env-file-coverage" ''
       ${py} - <<'PY'
-      import json, re, sys
+      import json, sys, yaml
 
       manifest = json.load(open("${manifest}"))
       errs, warns = [], []
 
+      def env_files(compose):
+          for svc in ((compose or {}).get("services") or {}).values():
+              ef = (svc or {}).get("env_file")
+              for e in ([ef] if isinstance(ef, (str, dict)) else (ef or [])):
+                  yield e["path"] if isinstance(e, dict) else e
+
       for c in manifest:
-          text = open(c["path"]).read()
-          refs = re.findall(r"^\s*env_file:\s*(\S.*)$", text, re.M)
+          refs = list(env_files(yaml.safe_load(open(c["path"]))))
           has_env = c["fixtureKeys"] is not None or c["hasSecrets"]
           if not refs:
               if has_env and c["stack"] != "authentik":
@@ -696,10 +673,12 @@ in
                                f"service reads them (no env_file)")
               continue
           want = f"/run/stack-env/{c['stack']}.env"
+          parts = {f"/run/stack-env/{c['stack']}.{p}.env" for p in c["envParts"]}
           for r in refs:
-              if r.strip() != want:
+              if r.strip() != want and r.strip() not in parts:
                   errs.append(f"{c['stack']}: env_file is {r.strip()!r}; it must "
-                              f"be {want} — the file stack-env-publish writes")
+                              f"be {want} (or a <stack>.<part>.env from an "
+                              f"env.<part>.nix) — the files stack-env-publish writes")
           if c["fixtureKeys"] is None:
               errs.append(f"{c['stack']}: env_file but no "
                           f"tests/fixtures/stacks/{c['stack']}.sops.json — the "
@@ -1979,6 +1958,10 @@ in
       # the em dash) is deliberate and still passes; run.sh deploy-check greps
       # for that marker and lists them for the operator.
       UNAUTHENTICATED_OK = {
+          "jellyfin.svc.idanreed.com":
+              "real accounts of its own (no OIDC on purpose: TV and mobile "
+              "clients cannot follow an OIDC redirect), and every native "
+              "client app would break on a forward-auth 302.",
           "seerr.svc.idanreed.com":
               "session auth against Jellyfin accounts; its mobile and API "
               "clients authenticate themselves.",
@@ -2156,9 +2139,16 @@ in
       stackInfo = map (n: {
         name = n;
         hasEnv = builtins.pathExists (../fixtures/stacks + "/${n}.sops.json");
-        readsShared =
-          builtins.pathExists (repo + "/stacks/${n}/env.nix")
-          && lib.hasInfix "shared \"" (builtins.readFile (repo + "/stacks/${n}/env.nix"));
+        # env.nix or any env.<part>.nix (nixos/modules/stack-env.nix).
+        readsShared = lib.any (
+          f: lib.hasInfix "shared \"" (builtins.readFile (repo + "/stacks/${n}/${f}"))
+        ) (
+          lib.attrNames (
+            lib.filterAttrs (
+              f: t: t == "regular" && builtins.match "env(\\.[a-z0-9-]+)?\\.nix" f != null
+            ) (builtins.readDir (repo + "/stacks/${n}"))
+          )
+        );
       }) stackNames;
     in
     mkLint "komodo-sync-coverage" ''

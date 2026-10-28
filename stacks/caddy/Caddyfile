@@ -188,9 +188,9 @@
 
 	@jellyfin host jellyfin.svc.idanreed.com
 	handle @jellyfin {
-		# Jellyfin's own login plus the SSO-Auth plugin's Authentik button
-		# (native OIDC, jellyfin-oidc.yaml). NO forward auth: it would break
-		# every native client app.
+		# Jellyfin's own logins, no OIDC: TV and mobile clients cannot follow
+		# an OIDC redirect. NO forward auth: it would break every native
+		# client app.
 		reverse_proxy localhost:10050
 	}
 
