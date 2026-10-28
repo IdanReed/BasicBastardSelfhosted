@@ -1,4 +1,4 @@
-# Headless first-run for Tandoor (annex §3.1). Fed to `manage.py shell` on
+# Headless first-run for Tandoor. Fed to `manage.py shell` on
 # stdin, so the ORM and settings are already loaded — this is not a standalone
 # program.
 #

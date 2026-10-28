@@ -7,12 +7,12 @@
 # the init's semantics, which the generic suite cannot see.
 #
 # Genuinely under test:
-#   - 🚨 **The headless bootstrap path the bake-off marked UNVERIFIED.**
-#     service-bakeoff.md flagged "first-run sets a password in-browser" and
-#     left POST /account/bootstrap as an unverified rumor. The source
-#     (app-account.js at v26.9.0) says it is real; this suite is what proves
-#     it against the shipped image: actual_init POSTs the fixture password,
-#     and a subsequent /account/login with that password must return a token.
+#   - 🚨 **The headless bootstrap path.** Actual's docs describe first-run
+#     as a password set in the browser; POST /account/bootstrap is the
+#     headless route. The source (app-account.js at v26.9.0) says it is real;
+#     this suite is what proves it against the shipped image: actual_init
+#     POSTs the fixture password, and a subsequent /account/login with that
+#     password must return a token.
 #     "Bootstrap returned ok" alone would also be true of a server that
 #     stored a mangled password — the login is the assertion that counts.
 #   - 🚨 **The server is never up-and-claimable.** Before init runs the

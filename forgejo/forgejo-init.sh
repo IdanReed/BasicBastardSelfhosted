@@ -14,7 +14,7 @@
 # deploy. cmd/admin_auth_oauth.go defines `secret` as a plain StringFlag — no
 # --secret-file, no EnvVars — so there is no alternative in this version, and
 # the CLI is the only declarative route (see above). Same tradeoff as
-# stacks/tracking/bookstack-admin-init.sh. arch-security / declarative E1.
+# stacks/tracking/bookstack-admin-init.sh; docs/decisions.md, accepted risks.
 set -eu
 
 export GITEA_WORK_DIR=/data

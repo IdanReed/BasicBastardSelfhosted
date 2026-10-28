@@ -1,7 +1,7 @@
 # Dawarich suite (heavy): the Rails app, its Sidekiq worker, PostGIS and
 # Redis, plus the rails-runner init container. One of THREE stacks in the
-# 10300-10349 range (annex §1) — tracking and firefly are separate compose
-# projects with their own suites.
+# 10300-10349 range — tracking and firefly are separate compose projects with
+# their own suites.
 #
 # Hand-written because mk-stack-suite asserts every container is `running`
 # (dawarich_init is a restart:"no" oneshot) and because the two failure modes
@@ -286,7 +286,7 @@ pkgs.testers.runNixOSTest {
             raise
 
     with subtest("the app reports healthy, which the https trap would prevent"):
-        # This is the assertion the whole §6 comment block exists for. If
+        # This is the assertion the compose file's https comment exists for. If
         # APPLICATION_PROTOCOL=https were set without the healthcheck carrying
         # X-Forwarded-Proto, the container would sit `unhealthy` forever and
         # the --wait above would already have failed — but assert it directly
@@ -337,8 +337,8 @@ pkgs.testers.runNixOSTest {
         code = curl("/api/v1/health", host="wrong.invalid", raw_status=True)
         assert code == 200, (
             f"/api/v1/health with a bogus Host returned {code}, expected 200 — "
-            "the exclusion documented in §6 no longer holds, so the health "
-            "endpoint may now be a valid hostname check after all."
+            "the exclusion documented in the compose file no longer holds, so "
+            "the health endpoint may now be a valid hostname check after all."
         )
 
     # -----------------------------------------------------------------------

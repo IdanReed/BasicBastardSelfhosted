@@ -1,5 +1,4 @@
 # Util — small browser tools (10401-10407).
-# Design: ServerNotes/designs/service-util-stack-research.md.
 #
 # Everything here is stateless, so NOTHING may ever acquire a `sqlite_backup`
 # line: the helper returns 0 for a MISSING source, making a speculative entry a

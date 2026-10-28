@@ -1,5 +1,4 @@
 # OnlyOffice DocSpace (10404).
-# Design: ServerNotes/designs/service-onlyoffice-stack-research.md.
 #
 # There is ONE image; the edition is chosen at RUNTIME by whether a licence file
 # is present, so this is Community permanently — unlicensed runs forever, the

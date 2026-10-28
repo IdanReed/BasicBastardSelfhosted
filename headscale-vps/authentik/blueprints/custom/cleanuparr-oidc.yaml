@@ -26,6 +26,14 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
+  # The Admin group bound below is declared in headscale-oidc; applying it
+  # first means the !Find resolves on a fresh install.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: headscale-oidc
+      required: true
+
   - model: authentik_providers_oauth2.oauth2provider
     id: cleanuparr-sso-provider
     state: present

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Headless first-run and SSO for OnlyOffice DocSpace, in two steps:
 #
-#   1. The setup wizard (annex §5): PUT /api/2.0/settings/wizard/complete.
+#   1. The setup wizard: PUT /api/2.0/settings/wizard/complete.
 #      Both things a script would normally lack are handed out by the
 #      UNAUTHENTICATED GET /api/2.0/settings, because the wizard page needs
 #      them before any account exists: `wizardToken` (populated only while the

@@ -1,5 +1,5 @@
 # Forgejo — the git ROOT for this homelab (10550 web, 10551 ssh).
-# Design: ServerNotes/designs/dev-forgejo.md. GitHub is only a push mirror.
+# GitHub is only a push mirror.
 #
 # NOT a Komodo stack: Komodo deploys every stack FROM this server, so it cannot
 # also be what brings it up. nixos/modules/forgejo.nix runs this file from the

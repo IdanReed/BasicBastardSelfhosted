@@ -4,17 +4,16 @@
 #
 #   ./provision.sh [IP]
 #
-# Targets: the private target list lives age-encrypted in ServerNotes and is
-# decrypted HERE (one sudo, like every other secret) and pushed to the box —
-# it never lands in this public-mirrored repo. Override the source path with
-# SCANNER_TARGETS_SOPS, or skip delivery with SKIP_TARGETS=1.
+# Targets: the private target list lives age-encrypted outside this repo and
+# is decrypted HERE (one sudo, like every other secret) and pushed to the box —
+# it never lands in this public-mirrored repo. Point SCANNER_TARGETS_SOPS at
+# the encrypted file (required), or skip delivery with SKIP_TARGETS=1.
 set -euo pipefail
 
 IP="${1:-149.28.124.97}"
 KEY="${SCANNER_SSH_KEY:-$HOME/.ssh/vultr_scanner}"
 REPO="${SCANNER_REPO:-https://github.com/IdanReed/BasicBastardSelfhosted.git}"
-here="$(cd "$(dirname "$0")" && pwd)"
-TARGETS_SOPS="${SCANNER_TARGETS_SOPS:-$here/../../ServerNotes/secrets/scanner-targets.sops.env}"
+TARGETS_SOPS="${SCANNER_TARGETS_SOPS:-}"
 AGE_KEY="${SOPS_AGE_KEY_FILE:-/var/lib/sops-nix/sops_age_key.txt}"
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
 SCP=(scp -i "$KEY" -o StrictHostKeyChecking=accept-new)
@@ -29,6 +28,10 @@ echo ">> clone the public repo on the box (as user idan)"
 "
 
 if [ "${SKIP_TARGETS:-0}" != "1" ]; then
+  if [ -z "$TARGETS_SOPS" ]; then
+    echo "provision.sh: set SCANNER_TARGETS_SOPS to the encrypted targets file (it lives outside this repo), or SKIP_TARGETS=1" >&2
+    exit 1
+  fi
   echo ">> decrypt private targets and push to the box (plaintext only on the box + a tmpfile)"
   tmp="$(mktemp)"; trap 'shred -u "$tmp" 2>/dev/null || rm -f "$tmp"' EXIT
   sudo env SOPS_AGE_KEY="$(sudo cat "$AGE_KEY")" \
@@ -39,17 +42,17 @@ else
   echo ">> SKIP_TARGETS=1 — not delivering targets.env"
 fi
 
-# The scanner brief (the goal doc) lives in the private ServerNotes repo, so it
-# does NOT come down with the public-repo clone. Deliver it into ~/scan/ where
-# the on-box agent reads it. Not a secret beyond the private IPs it names, which
-# the box already holds via targets.env.
-BRIEF_SRC="${SCANNER_BRIEF:-$here/../../ServerNotes/designs/security-external-testing.md}"
-if [ "${SKIP_BRIEF:-0}" != "1" ] && [ -f "$BRIEF_SRC" ]; then
+# The scanner brief (the goal doc) lives outside this public repo, so it does
+# NOT come down with the clone. SCANNER_BRIEF names it; it is delivered into
+# ~/scan/ where the on-box agent reads it. Not a secret beyond the private IPs
+# it names, which the box already holds via targets.env.
+BRIEF_SRC="${SCANNER_BRIEF:-}"
+if [ "${SKIP_BRIEF:-0}" != "1" ] && [ -n "$BRIEF_SRC" ] && [ -f "$BRIEF_SRC" ]; then
   echo ">> deliver the scanner brief -> ~/scan/brief.md"
   "${SSH[@]}" idan@"$IP" 'mkdir -p ~/scan && ln -sf ~/targets.env ~/scan/targets.env'
   "${SCP[@]}" "$BRIEF_SRC" idan@"$IP":/home/idan/scan/brief.md
 else
-  echo ">> SKIP_BRIEF or brief not found ($BRIEF_SRC) — not delivering brief"
+  echo ">> SKIP_BRIEF, SCANNER_BRIEF unset, or brief not found (${BRIEF_SRC:-unset}) — not delivering brief"
 fi
 
 echo ">> verify the toolkit is on PATH"

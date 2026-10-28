@@ -16,7 +16,7 @@
 # notify-failure@, firefly-cron, silverbullet's git sync, backrest's shoutrrr
 # hook, gatus, scan-downloads) plus a read token for the phone — and the VPS
 # publishes THROUGH Caddy, so forward-auth is not an option there: a 302 would
-# swallow the alert. See arch-security AS-2.
+# swallow the alert. See docs/decisions.md, AS-2.
 
 base-url: "https://ntfy.svc.idanreed.com"
 listen-http: ":80"

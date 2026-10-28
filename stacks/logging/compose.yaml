@@ -1,5 +1,4 @@
 # Logging — VictoriaLogs + Alloy + Grafana (Monitoring range, 10455/10456).
-# Design: ServerNotes/designs/service-monitoring-stack-research.md.
 #
 # 🚨 JOURNALD, NOT THE DOCKER SOCKET, and that is a hard rule: Alloy's
 # discovery.docker/loki.source.docker path (and every "read-only" socket
@@ -62,7 +61,7 @@ services:
       # dropping the publish costs gatus its liveness and ingest probes.
       # WIDER than Loki was: /insert/* means a local uid can also poison the
       # store, which is now where fail2ban and Authentik login_failed
-      # forensics land. arch-security AS-9.
+      # forensics land. docs/decisions.md, AS-9.
       - "127.0.0.1:10456:9428"
 
     # NO healthcheck stanza, and none is possible: the image is DISTROLESS —
