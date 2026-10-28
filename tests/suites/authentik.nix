@@ -598,7 +598,8 @@ pkgs.testers.runNixOSTest {
       # and a mis-bound policy is finding-#9-silent: the object exists, the API
       # shows it, and nothing gates. So this does not stop at "policy exists";
       # it walks policy -> policybinding -> flowstagebinding -> flow and pins
-      # the whole chain to default-authentication-flow.
+      # the whole chain to default-authentication-flow (and to the LDAP bind
+      # flow, which binds the same gate).
       with subtest("the login-hardening reputation policy exists"):
           # Exact-name selection, never results[0]: ?name= is fuzzy and other
           # policies share the DB.
@@ -614,7 +615,7 @@ pkgs.testers.runNixOSTest {
               authentik_diag()
               raise
 
-      with subtest("the reputation policy is bound to default-authentication-flow"):
+      with subtest("the reputation policy is bound to the web login and the LDAP bind flow"):
           try:
               # 1. reputation policy pk, by exact name.
               pols = json.loads(headscale_vps.succeed(
@@ -624,42 +625,49 @@ pkgs.testers.runNixOSTest {
               assert len(pol) == 1, f"policy count: {[p['name'] for p in pols['results']]}"
               policy_pk = pol[0]["pk"]
 
-              # 2. the policybinding that attaches it — filtered by THIS
-              # policy's pk, so it cannot resolve to some other policy's
-              # binding. Its target is a flowstagebinding uuid.
+              # 2. the policybindings that attach it — filtered by THIS
+              # policy's pk, so none can resolve to some other policy's
+              # binding. Each target is a flowstagebinding uuid: one in the
+              # web login (login-hardening.yaml), one in the LDAP bind flow
+              # (jellyfin-ldap.yaml), so LDAP is no way around the gate.
+              # The LDAP flow's file may apply after this point is reached;
+              # its flow and binding land in one transaction.
+              headscale_vps.wait_until_succeeds(
+                  f"{CURL} '{API}/flows/instances/ldap-bind/' >/dev/null",
+                  timeout=300)
               binds = json.loads(headscale_vps.succeed(
                   f"{CURL} '{API}/policies/bindings/?policy={policy_pk}'"
               ))
-              assert len(binds["results"]) == 1, (
-                  f"expected exactly one binding of login-reputation, got "
-                  f"{len(binds['results'])}"
-              )
-              fsb_pk = binds["results"][0]["target"]
-
-              # 3. the flowstagebinding itself: it must target the default
-              # authentication flow, sit at the conditional order, run the
-              # deny stage, and carry the evaluate_on_plan/re_evaluate pair
-              # that makes reputation re-check post-identification. Get either
-              # flag wrong and the policy runs at plan time with an anonymous
-              # user — check_username goes silently inert.
-              fsb = json.loads(headscale_vps.succeed(
-                  f"{CURL} '{API}/flows/bindings/{fsb_pk}/'"
-              ))
-              flow = json.loads(headscale_vps.succeed(
-                  f"{CURL} '{API}/flows/instances/default-authentication-flow/'"
-              ))
-              assert fsb["target"] == flow["pk"], (
-                  f"reputation deny stage is bound to flow {fsb['target']!r}, "
-                  f"not default-authentication-flow ({flow['pk']!r})"
-              )
-              assert fsb["stage_obj"]["name"] == "login-reputation-deny", (
-                  f"conditional binding runs the wrong stage: "
-                  f"{fsb['stage_obj']['name']!r}"
-              )
-              assert fsb["evaluate_on_plan"] is False, \
-                  "evaluate_on_plan must be false or check_username is inert"
-              assert fsb["re_evaluate_policies"] is True, \
-                  "re_evaluate_policies must be true or the deny never re-checks"
+              flows = {}
+              for slug in ["default-authentication-flow", "ldap-bind"]:
+                  flows[json.loads(headscale_vps.succeed(
+                      f"{CURL} '{API}/flows/instances/{slug}/'"
+                  ))["pk"]] = slug
+              bound = []
+              for b in binds["results"]:
+                  # 3. each flowstagebinding: it must sit in one of the two
+                  # flows, run the deny stage, and carry the evaluate_on_plan/
+                  # re_evaluate pair that makes reputation re-check after
+                  # identification. Get either flag wrong and the policy runs
+                  # at plan time with an anonymous user — check_username goes
+                  # silently inert.
+                  fsb = json.loads(headscale_vps.succeed(
+                      f"{CURL} '{API}/flows/bindings/{b['target']}/'"
+                  ))
+                  assert fsb["target"] in flows, (
+                      f"reputation deny stage is bound to an unexpected flow "
+                      f"{fsb['target']!r}")
+                  bound.append(flows[fsb["target"]])
+                  assert fsb["stage_obj"]["name"] == "login-reputation-deny", (
+                      f"conditional binding runs the wrong stage: "
+                      f"{fsb['stage_obj']['name']!r}"
+                  )
+                  assert fsb["evaluate_on_plan"] is False, \
+                      "evaluate_on_plan must be false or check_username is inert"
+                  assert fsb["re_evaluate_policies"] is True, \
+                      "re_evaluate_policies must be true or the deny never re-checks"
+              assert sorted(bound) == ["default-authentication-flow", "ldap-bind"], (
+                  f"login-reputation is bound in {sorted(bound)}")
           except Exception:
               authentik_diag()
               raise
