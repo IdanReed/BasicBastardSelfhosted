@@ -14,7 +14,7 @@ things that are specific to this host.
 
 ```
 Hetzner VPS (headscale-vps)
-├── NixOS 25.11
+├── NixOS 26.05
 ├── caddy.service       native systemd — the ONLY public listener, :80/:443
 │   ├── headscale.idanreed.com → 127.0.0.1:8080
 │   └── auth.idanreed.com      → 127.0.0.1:9000
@@ -137,10 +137,11 @@ present a different host key.
 
 **A node registers but can reach nothing.** It was registered under the wrong
 Authentik identity (a cached `akadmin` session), so the ACL's `idan@` does not
-cover it. `sudo headscale nodes move -i <id> -u <idan-id>` **then
-`sudo systemctl restart headscale`** — `nodes move` alone does not push
-recomputed packet filters to already-connected peers, so the node sits on a
-deny-all filter while `tailscale ping` still works.
+cover it. A node belongs to the user it registered under for good — headscale
+cannot move it — so delete it and register it again as `idan`:
+`sudo headscale nodes delete -i <id>`, then on the node
+`tailscale up --login-server=https://headscale.idanreed.com --force-reauth`
+(log in as idan) or `--authkey` with a key minted for idan's numeric user id.
 
 **Authentik failing** (`sudo systemctl status authentik`). The unit runs
 `docker compose up -d --wait`, so it stays `activating` until PostgreSQL and

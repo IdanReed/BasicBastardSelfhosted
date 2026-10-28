@@ -2138,11 +2138,36 @@ in
 
   # policy.hujson switches the tailnet to default-deny, so a policy headscale
   # refuses to load means nothing reaches anything.
+  #
+  # `policy check` is a frontend for a running server unless it is told to open
+  # the database itself, so the check runs against a throwaway sqlite in the
+  # build dir: the minimal config below is only what headscale needs to open
+  # one. No users exist there, and an unknown `user@` resolves to an empty set
+  # rather than an error, so this validates the policy's structure and rules,
+  # not its user references.
   headscale-policy =
     mkLintDrv "headscale-policy" { nativeBuildInputs = [ pkgs.headscale ]; } ''
+      export HOME=$PWD
       cp ${repo + "/headscale-vps/policy.hujson"} ./policy.hujson
+      cat > ./config.yaml <<'EOF'
+      server_url: http://127.0.0.1:8080
+      noise:
+        private_key_path: ./noise_private.key
+      database:
+        type: sqlite
+        sqlite:
+          path: ./db.sqlite
+      prefixes:
+        v4: 100.64.0.0/10
+        v6: fd7a:115c:a1e0::/48
+      dns:
+        magic_dns: false
+        override_local_dns: false
+      EOF
       echo "==> headscale version: $(headscale version 2>&1 | head -1)"
-      if headscale policy check --file ./policy.hujson; then
+      if headscale -c ./config.yaml policy check \
+           --bypass-grpc-and-access-database-directly --force \
+           --file ./policy.hujson; then
         echo "policy OK"
       else
         echo "headscale policy check failed" >&2

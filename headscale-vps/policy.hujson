@@ -6,8 +6,9 @@
 // are tagged, while giving guests somewhere to be constrained.
 //
 // "idan@" is the OIDC user headscale mints on first OIDC login. From-zero
-// bring-up registers servers under a throwaway `bootstrap` user first
-// (deploy-handbook §4), then moves them onto `idan` (§8.1).
+// bring-up registers servers under a throwaway `bootstrap` user first; once
+// idan exists they are deleted and re-registered with a preauth key minted for
+// idan's user id — headscale cannot move a node between users.
 // 🚨 NEVER name the bootstrap user `idan`: a second OIDC `idan` collides, the
 // ambiguous `idan@` resolves to NEITHER, and every node loses tailnet access.
 //

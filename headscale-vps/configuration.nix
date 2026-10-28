@@ -88,8 +88,6 @@ in
   # depend on the container runtime.
   virtualisation.docker = {
     enable = true;
-    # 25.11's default docker 28.x is marked insecure by nixpkgs.
-    package = pkgs.docker_29;
     autoPrune = {
       enable = true;
       dates = "weekly";

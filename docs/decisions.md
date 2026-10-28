@@ -236,7 +236,7 @@ production would not affect them.
 #### D-11 No patch cadence on the public host
 **Area** Security · **Raised by** arch-security (AS-15; open since security-review-2026-08-30) · **Severity/effort** Medium / S
 **Context:** `grep -rn autoUpgrade --include="*.nix"` returns nothing. `headscale-vps` runs sshd, Caddy and a
-kernel exposed to the internet plus Authentik/Postgres/Redis containers, pinned to `nixos-25.11`. Renovate opens
+kernel exposed to the internet plus Authentik/Postgres/Redis containers, pinned to `nixos-26.05`. Renovate opens
 PRs weekly and never merges by design, so image freshness is gated on the operator.
 **Options:**
 - `system.autoUpgrade` on the VPS with `allowReboot = false`, flake pinned to the branch — patches land, reboots stay manual.

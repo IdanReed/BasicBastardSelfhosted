@@ -11,7 +11,7 @@ set -euo pipefail
 
 IP="${1:-149.28.124.97}"
 KEY="${SCANNER_SSH_KEY:-$HOME/.ssh/vultr_scanner}"
-CHANNEL="${NIX_CHANNEL:-nixos-25.11}"
+CHANNEL="${NIX_CHANNEL:-nixos-26.05}"
 here="$(cd "$(dirname "$0")" && pwd)"
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
 SCP=(scp -i "$KEY" -o StrictHostKeyChecking=accept-new)

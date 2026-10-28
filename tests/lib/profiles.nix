@@ -128,8 +128,7 @@ in
           docker load -i ${t}
         '') tarballs;
 
-        # The host's own docker (pinned to 29.x — pkgs.docker is 28.x and
-        # marked insecure), not a second copy.
+        # The host's own docker, not a second copy.
         path = [ config.virtualisation.docker.package ];
       };
     };

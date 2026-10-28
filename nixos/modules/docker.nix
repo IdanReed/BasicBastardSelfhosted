@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, ... }:
 
 let
   docker = "${config.virtualisation.docker.package}/bin/docker";
@@ -6,8 +6,6 @@ in
 {
   virtualisation.docker = {
     enable = true;
-    # pkgs.docker is 28.x, marked insecure by nixpkgs — refuses to evaluate.
-    package = pkgs.docker_29;
     autoPrune = {
       enable = true;
       dates = "weekly";
