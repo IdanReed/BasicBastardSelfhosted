@@ -218,13 +218,13 @@
     finalImageName = "ghcr.io/ferretdb/postgres-documentdb";
     finalImageTag = "17-0.107.0-ferretdb-2.7.0";
   };
-  "ghcr_io_goauthentik_server_2026_5_6" = {
-    composeRef = "ghcr.io/goauthentik/server:2026.5.6";
+  "ghcr_io_goauthentik_server_2026_8_5" = {
+    composeRef = "ghcr.io/goauthentik/server:2026.8.5";
     imageName = "ghcr.io/goauthentik/server";
-    imageDigest = "sha256:ed120caf710ccf82ef0026f0bc74e51615bc95ebff228a7a2d6fc60c441c3868";
-    hash = "sha256-58hlqmnlLLaIz5S1EBHayHUOSoiQmULhe76jnAiNl/k=";
+    imageDigest = "sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5";
+    hash = "sha256-GoBImCTaa8tmuKh6LPdxn1tSyVDH6ks0dosfEw3tURk=";
     finalImageName = "ghcr.io/goauthentik/server";
-    finalImageTag = "2026.5.6";
+    finalImageTag = "2026.8.5";
   };
   "ghcr_io_home-assistant_home-assistant_2026_8_3" = {
     composeRef = "ghcr.io/home-assistant/home-assistant:2026.8.3";

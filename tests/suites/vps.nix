@@ -433,7 +433,7 @@ pkgs.testers.runNixOSTest {
 
       with subtest("the deployed filter still matches a real login_failed line"):
           # The drift alarm. The failregex was captured empirically against
-          # ghcr.io/goauthentik/server:2026.5.6; run the DEPLOYED filter
+          # ghcr.io/goauthentik/server:2026.8.5; run the DEPLOYED filter
           # (/etc/fail2ban/filter.d/authentik.conf) against that captured
           # sample and demand EXACTLY one hit. If an authentik upgrade changes
           # the login_failed log shape, the pin count drops to 0 and this

@@ -141,7 +141,7 @@ pkgs.testers.runNixOSTest {
           (profiles.loadImages {
             inherit pkgs;
             images = [
-              images."ghcr_io_goauthentik_server_2026_5_6"
+              images."ghcr_io_goauthentik_server_2026_8_5"
               images."postgres_16_13-alpine"
               images."redis_7_4-alpine"
             ];

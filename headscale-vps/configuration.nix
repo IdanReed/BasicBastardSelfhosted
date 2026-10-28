@@ -319,7 +319,7 @@ in
   # A sibling environment.etc file rather than the jail's `filter` option: the
   # module's INI generator mangles this file's comments. filter.d is a glob, so
   # siblings coexist. The regex was captured empirically against
-  # ghcr.io/goauthentik/server:2026.5.6; tests/suites/vps.nix re-runs
+  # ghcr.io/goauthentik/server:2026.8.5; tests/suites/vps.nix re-runs
   # fail2ban-regex over that sample plus negative controls.
   environment.etc."fail2ban/filter.d/authentik.conf".text = ''
     # authentik login_failed brute-force filter.
