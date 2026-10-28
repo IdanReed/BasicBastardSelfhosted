@@ -155,6 +155,7 @@ pkgs.testers.runNixOSTest {
     in
     ''
       import json
+      import time
 
       # Pebble's issuing root is fetched at runtime by profiles.pebbleTrust.
       # Never -k on these names: an unverified 200 would hide a wrong-name or
@@ -709,6 +710,69 @@ pkgs.testers.runNixOSTest {
               "spelling, and a mismatch (trailing slash included) fails token "
               "validation"
           )
+
+      # ---------------------------------------------------------------------
+      # Every custom blueprint applied — not only the three checked above.
+      # Authentik rolls a failing blueprint back and says so only in the
+      # worker log, so status is read from the BlueprintInstance rows, and
+      # the objects the OIDC wave added are checked by name.
+      # ---------------------------------------------------------------------
+      with subtest("every custom blueprint applied, with the -sso, SAML and Admin-binding objects"):
+          check = "\n".join([
+              "import json",
+              "from authentik.blueprints.models import BlueprintInstance",
+              "from authentik.core.models import Application",
+              "from authentik.providers.saml.models import SAMLProvider",
+              "from authentik.providers.proxy.models import ProxyProvider",
+              "from authentik.policies.models import PolicyBinding",
+              "bound = []",
+              "for b in PolicyBinding.objects.filter(group__name='Admin'):",
+              "    app = Application.objects.filter(pk=b.target.pk).first()",
+              "    if app: bound.append(app.slug)",
+              "print('JSON' + json.dumps({",
+              "    'bp': {i.path: i.status for i in BlueprintInstance.objects.filter(path__startswith='custom/')},",
+              "    'apps': sorted(Application.objects.values_list('slug', flat=True)),",
+              "    'saml': sorted(SAMLProvider.objects.values_list('name', flat=True)),",
+              "    'proxy': sorted(ProxyProvider.objects.values_list('name', flat=True)),",
+              "    'bound': sorted(bound)}))",
+          ])
+          headscale_vps.succeed(
+              "cat > /tmp/bpcheck.py <<'BPEOF'\n" + check + "\nBPEOF\n"
+              "docker cp /tmp/bpcheck.py authentik_worker:/tmp/bpcheck.py"
+          )
+
+          def bpstate():
+              out = headscale_vps.succeed(
+                  "docker exec authentik_worker ak shell -c "
+                  "\"exec(open('/tmp/bpcheck.py').read())\" 2>/dev/null"
+              )
+              line = [l for l in out.splitlines() if l.startswith("JSON")][-1]
+              return json.loads(line[4:])
+
+          try:
+              deadline = time.time() + 300
+              while True:
+                  st = bpstate()
+                  bad = {k: v for k, v in st["bp"].items() if v != "successful"}
+                  if not bad or time.time() > deadline:
+                      break
+                  time.sleep(10)
+              assert st["bp"] and not bad, f"custom blueprints not applied: {bad}"
+              for slug in ["grafana-sso", "komodo-sso", "profilarr-sso",
+                           "cleanuparr-sso", "beszel-sso", "windmill-sso",
+                           "wger-sso", "docspace", "backrest"]:
+                  assert slug in st["apps"], f"application {slug!r} missing: {st['apps']}"
+              assert "jellyfin" not in st["apps"], "the retired jellyfin application exists"
+              assert "docspace" in st["saml"], f"no docspace SAML provider: {st['saml']}"
+              assert "backrest" in st["proxy"], f"no backrest proxy provider: {st['proxy']}"
+              for slug in ["grafana-sso", "komodo-sso", "profilarr-sso",
+                           "cleanuparr-sso", "beszel-sso"]:
+                  assert slug in st["bound"], f"{slug} is not bound to Admin: {st['bound']}"
+              for slug in ["windmill-sso", "wger-sso"]:
+                  assert slug not in st["bound"], f"{slug} must stay open to all users"
+          except Exception:
+              authentik_diag()
+              raise
 
       with subtest("headscale sets up its OIDC provider against the live issuer"):
           # At first boot headscale raced Authentik and its OIDC setup failed
