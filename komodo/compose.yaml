@@ -8,8 +8,7 @@
 # The age key never enters this compose: sops-nix renders every stack's env on
 # the host at activation (nixos/modules/stack-env.nix) and Periphery only reads
 # the copies in /run/stack-env. That keeps the KEY out, not the PLAINTEXT —
-# Periphery is root and reads every deployed secret (arch-security AS-8). See
-# ServerNotes/designs/komodo-migration.md.
+# Periphery is root and reads every deployed secret (docs/decisions.md, AS-8).
 services:
   postgres:
     image: ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0

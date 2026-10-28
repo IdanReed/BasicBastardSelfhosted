@@ -1,5 +1,5 @@
 # Proton — mail bridge + automated mailbox export (10003 SMTP, 10004 IMAP,
-# 10005 CardDAV). Design: ServerNotes/designs/external-email.md.
+# 10005 CardDAV).
 #
 # NOT for ntfy's alert mail — that uses Proton's native SMTP submission tokens
 # and needs no bridge. This stack exists for the two things a submission token
@@ -14,8 +14,8 @@
 # mailbox). hydroxide's IMAP is upstream-flagged WIP, confined here to the
 # export sidecar and never interactive.
 #
-# 🚨 CalDAV is NOT POSSIBLE through any bridge, and external-email.md is wrong
-# about it: Proton serves no CalDAV or CardDAV endpoint of its own (only inbound
+# 🚨 CalDAV is NOT POSSIBLE through any bridge, whatever older notes claim:
+# Proton serves no CalDAV or CardDAV endpoint of its own (only inbound
 # calendar subscription), and neither bridge implements CalDAV. Contacts are the
 # exception — hydroxide's CardDAV on 10005 is real.
 #

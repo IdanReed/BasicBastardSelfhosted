@@ -5,10 +5,10 @@
 # that anything it produces can be restored. A backup nobody has restored is a
 # hypothesis.
 #
-# The companion document is ServerNotes/designs/core-disaster-recovery.md,
-# which covers the parts no VM can reach: the Proxmox re-image, the cloud-init
-# age-key injection, the Storage Box round trip, and the VPS rebuild. Those
-# stay a manual twice-yearly ritual. What is mechanised here is the chain from
+# The companion runbook is docs/bring-up.md (§0 and Appendix A), which covers
+# the parts no VM can reach: the Proxmox re-image, the cloud-init age-key
+# injection, the Storage Box round trip, and the VPS rebuild. Those stay a
+# manual twice-yearly ritual. What is mechanised here is the chain from
 # "a dump exists" to "the service works again", plus three properties the
 # runbook leans on.
 #
@@ -28,11 +28,11 @@
 #     the behaviour explicitly, so it can never be "fixed" without someone
 #     deciding to.
 #   - **`systemd-tmpfiles --create` reproduces declared ownership**, which is
-#     what step 1.3 of the runbook depends on after a partial restore. Several
+#     what the restore runbook depends on after a partial restore. Several
 #     services cannot fix a wrongly-owned tree themselves.
 #   - 🚨 **Vaultwarden regenerates `rsa_key.pem` SILENTLY when it is missing.**
-#     This is not a behaviour to celebrate — it is the reason §0.2 of the
-#     runbook exists. A restore that brings back `db.sqlite3` without that file
+#     This is not a behaviour to celebrate — it is the reason the runbook
+#     names rsa_key.pem. A restore that brings back `db.sqlite3` without that file
 #     produces a healthy-looking server that has logged out every client and
 #     will re-prompt 2FA. Pinned here so the runbook's claim is verified rather
 #     than asserted.
@@ -67,7 +67,8 @@
 #     With them goes the thing that actually matters on the day — the
 #     production `RESTIC_PASSWORD` is recoverable at all. A drill that reads
 #     the password out of the fixture cannot prove the operator can read the
-#     real one out of a burning building; that stays §0 of the runbook.
+#     real one out of a burning building; that stays the offline recovery
+#     artifact (docs/bring-up.md §5).
 #   - **MariaDB.** backup-prepare.sh's mysqldump branch is not exercised;
 #     bookstack's suite covers the dump side only.
 
@@ -240,7 +241,7 @@ pkgs.testers.runNixOSTest {
     PW = "/root/.restic-drill-pass"
     WRONG_PW = "/root/.restic-drill-wrong-pass"
     CACHE = "env RESTIC_CACHE_DIR=/var/cache/restic"
-    # The identity file that carries the whole point of §0.2 of the runbook,
+    # The identity file the restore runbook singles out,
     # used here as the canary: bytes that are NOT a database dump, whose loss
     # is invisible until every client is logged out.
     CANARY = f"{DATA}/rsa_key.pem"
@@ -382,9 +383,9 @@ pkgs.testers.runNixOSTest {
     # The runbook's other two load-bearing claims
     # -----------------------------------------------------------------------
     with subtest("systemd-tmpfiles --create reproduces declared ownership"):
-        # Step 1.3 of core-disaster-recovery.md depends on this: a partial
-        # restore can leave a directory with the wrong owner, and several
-        # services cannot fix that themselves (syncthing's chown is
+        # The restore runbook (docs/bring-up.md Appendix A) depends on this: a
+        # partial restore can leave a directory with the wrong owner, and
+        # several services cannot fix that themselves (syncthing's chown is
         # non-recursive and swallows its error; rmfakecloud has no entrypoint).
         before = sh("stat -c '%a %u:%g' /mnt/fast/_drill").strip()
         assert before == "750 1001:1001", f"declared rule did not apply: {before}"
@@ -398,8 +399,8 @@ pkgs.testers.runNixOSTest {
         )
 
     with subtest("🚨 Vaultwarden regenerates rsa_key.pem silently — the risk, pinned"):
-        # NOT a behaviour to celebrate. It is exactly why §0.2 of
-        # core-disaster-recovery.md lists rsa_key.pem: a restore that brings
+        # NOT a behaviour to celebrate. It is exactly why the restore runbook
+        # (docs/bring-up.md Appendix A) names rsa_key.pem: a restore that brings
         # back db.sqlite3 without it yields a server that looks perfectly
         # healthy and has logged out every client, re-prompting 2FA. If this
         # ever starts failing loudly instead, the runbook can be relaxed —
@@ -418,7 +419,7 @@ pkgs.testers.runNixOSTest {
         ).strip()
         assert health == "healthy", (
             f"vaultwarden is {health} after losing its signing key — if it now "
-            "fails loudly, core-disaster-recovery.md §0.2 can be relaxed"
+            "fails loudly, the rsa_key.pem warning in docs/bring-up.md Appendix A can be relaxed"
         )
         # The admin token still works, so nothing surfaces the loss at all.
         out = sh(
@@ -513,7 +514,7 @@ pkgs.testers.runNixOSTest {
     with subtest("the service starts on the RESTORED identity file"):
         # Byte-identity is necessary, not sufficient: restic restores mode and
         # ownership too, and a key the container cannot read produces exactly
-        # the silent regeneration §0.2 warns about. The test is whether
+        # the silent regeneration the runbook warns about. The test is whether
         # Vaultwarden comes up on this file and leaves it alone.
         restored = sh(f"sha256sum {CANARY} | cut -d' ' -f1").strip()
         sh(f"{VW} up -d --wait --wait-timeout 600")

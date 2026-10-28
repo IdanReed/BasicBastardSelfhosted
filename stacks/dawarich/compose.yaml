@@ -1,5 +1,4 @@
 # Dawarich — self-hosted location history (10304).
-# Design: ServerNotes/designs/service-tracking-stack-research.md (the annex §6).
 #
 # One of three stacks in the 10300-10349 range (with stacks/tracking and
 # stacks/firefly); the lints key on ports, not stack names.

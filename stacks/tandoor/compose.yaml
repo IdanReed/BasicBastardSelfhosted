@@ -1,5 +1,4 @@
 # Tandoor Recipes (10350).
-# Design: ServerNotes/designs/service-food-stack-research.md.
 #
 # SEPARATE FROM WGER — a real collision, not tidiness: both are Django apps
 # reading the BARE names `SECRET_KEY` and `POSTGRES_PASSWORD`, and `env_file`

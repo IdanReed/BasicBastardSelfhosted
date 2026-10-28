@@ -1,6 +1,5 @@
 # Beszel — host and container resource monitoring (10452). Gatus answers "is it
 # up"; this answers "is /mnt/fast about to fill".
-# Design: ServerNotes/designs/service-monitoring-stack-research.md §5.
 #
 # The one-shot init means the generic `./tests/run.sh stack beszel` harness
 # cannot be used (it asserts every container is running) — tests/suites/beszel.nix

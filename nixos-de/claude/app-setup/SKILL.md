@@ -1,6 +1,6 @@
 ---
 name: app-setup
-description: Drive a fleet app's web UI through the `browser` MCP (Playwright) to do a per-app setup step that has no env/API knob — OIDC toggles, first-run wizards, admin settings, minting a token. Use when a step in oidc-rollout.md, for-shame.md or decisions.md says "in the UI". Not for anything a compose env var, blueprint or API call can do — those belong in the repo.
+description: Drive a fleet app's web UI through the `browser` MCP (Playwright) to do a per-app setup step that has no env/API knob — OIDC toggles, first-run wizards, admin settings, minting a token. Use when a step in docs/for-shame.md or docs/decisions.md says "in the UI". Not for anything a compose env var, blueprint or API call can do — those belong in the repo.
 ---
 
 # Per-app UI setup through the browser MCP
@@ -30,12 +30,12 @@ can see that window.
 
 The repo is the source of truth — do not improvise a setup step.
 
-- `ServerNotes/designs/oidc-rollout.md` — per-app OIDC UI steps (Kavita
-  `Provision Accounts`, Actual's OIDC flip, …)
-- `BasicBastardSelfhosted/docs/for-shame.md` — every residual manual step
-- `BasicBastardSelfhosted/docs/decisions.md` (review branch) — some items are
-  decisions, not steps: a `D-nn` item needs the operator's answer first
-- `ServerNotes/designs/_overview.md` — the app's URL (`<service>.svc.idanreed.com`)
+- `BasicBastardSelfhosted/docs/for-shame.md` — every residual manual step,
+  per-app OIDC UI steps included (Actual's first OIDC login, …)
+- `BasicBastardSelfhosted/docs/decisions.md` — the open operator decisions:
+  an item listed there needs the operator's answer before any click
+- `BasicBastardSelfhosted/docs/services.md` — the app's row (its URL is
+  `<service>.svc.idanreed.com`)
 
 If a step could be done declaratively (env var, blueprint, init container,
 API call from a oneshot), say so and propose the repo change instead — a UI
@@ -66,4 +66,4 @@ click is the fallback, not the default.
 
 Record the outcome in the doc the step came from (tick it off, or move it
 out of `for-shame.md` when it is gone for good) — as a rule, not a log entry.
-Dates and incident notes go in `ServerNotes/designs/deploy-status.md` only.
+Dates and incident notes do not go in this repo.

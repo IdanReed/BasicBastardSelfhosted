@@ -1,5 +1,5 @@
 # Paperless-ngx — document management (10100).
-# _overview.md owns the port/auth row.
+# docs/services.md owns the port/auth row.
 
 services:
   paperless:

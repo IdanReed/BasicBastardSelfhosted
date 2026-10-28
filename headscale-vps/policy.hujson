@@ -7,7 +7,7 @@
 //
 // "idan@" is the OIDC user headscale mints on first OIDC login. From-zero
 // bring-up registers servers under a throwaway `bootstrap` user first
-// (deploy-handbook §4), then moves them onto `idan` (§8.1).
+// (docs/bring-up.md §8), then moves them onto `idan` (§14 step 4).
 // 🚨 NEVER name the bootstrap user `idan`: a second OIDC `idan` collides, the
 // ambiguous `idan@` resolves to NEITHER, and every node loses tailnet access.
 //
@@ -47,7 +47,7 @@
     // (docs/for-shame.md). A headscale ACL is layer 3; it cannot say "these
     // vhosts only". Before the first guest node exists, the per-vhost control
     // must land in stacks/caddy/Caddyfile (import protected, or a
-    // `not remote_ip <guest-range>` guard). See arch-security AS-5/AS-6.
+    // `not remote_ip <guest-range>` guard). See docs/decisions.md, AS-5/AS-6.
     {
       "action": "accept",
       "src": ["tag:guest"],

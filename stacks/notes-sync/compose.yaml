@@ -1,6 +1,4 @@
 # Notes/Sync — rmfakecloud + Syncthing (10200, 10201, 22000).
-# Design: ServerNotes/designs/service-notes-sync-stack-research.md (the annex)
-# and custom-remarkable-notes.md.
 #
 # Backup: no dump and no sqlite_backup line, deliberately. rmfakecloud has no
 # database (YAML users, blob notebooks — the /mnt/fast include set covers it);

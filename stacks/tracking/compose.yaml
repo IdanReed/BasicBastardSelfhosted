@@ -1,7 +1,5 @@
 # Tracking — Bookstack + Homebox + Karakeep (Tracking range, ports
-# 10300-10302). Design:
-# ServerNotes/designs/service-tracking-stack-research.md; _overview.md owns
-# the port/auth rows.
+# 10300-10302). docs/services.md owns the port/auth rows.
 #
 # ONE OF THREE STACKS IN THE TRACKING RANGE: Firefly III and Dawarich are
 # separate projects, because thirteen containers do not fit the generic

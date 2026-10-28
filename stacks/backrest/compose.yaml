@@ -1,6 +1,5 @@
 # Backrest — restic orchestrator + browse/restore UI.
-# Design: ServerNotes/designs/core-backups.md; the deviations from it below
-# are each a trap someone will otherwise "fix" back.
+# Each choice below is a trap someone will otherwise "fix" back.
 #
 #   - No db-dump.sh command hook: dumps run on the HOST
 #     (nixos/backup-prepare.sh). This image has neither the docker CLI nor

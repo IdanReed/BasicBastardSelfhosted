@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 #
-# Headless first-run for Dawarich (annex §3). `rails runner` is the only route:
+# Headless first-run for Dawarich. `rails runner` is the only route:
 # db/seeds.rb creates demo@dawarich.app / safepassword as an ACTIVE ADMIN on
 # every boot with an empty user table, there is no env var or rake task to
 # change it, and /api/v1/auth/register only creates non-admins.

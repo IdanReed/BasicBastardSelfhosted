@@ -1,6 +1,5 @@
-# Books — ebooks + audiobooks (Books range, ports 10150-10152). Design:
-# ServerNotes/designs/service-ebook-stack-research.md (the annex, which
-# corrects service-ebook-stack.md); _overview.md owns the port/auth rows.
+# Books — ebooks + audiobooks (Books range, ports 10150-10152).
+# docs/services.md owns the port/auth rows.
 #
 #   - TWO library trees on purpose: /mnt/slow/books/library for ebooks and
 #     /mnt/slow/books/audiobooks for audiobooks, plus /mnt/slow/books/drop,
@@ -10,10 +9,10 @@
 #     slow-volume-selective plan already includes — keep them there.
 #   - SHELFMARK FEEDS THE EBOOK TREE ONLY, by upstream limit rather than
 #     choice: its Direct Download source declares supported_content_types
-#     ["ebook"]. Audiobooks are acquired by the media stack instead
-#     (ServerNotes/designs/audiobook-acquisition.md), so nothing here mounts
-#     the download tree or names a QBITTORRENT_* variable — the books suite
-#     asserts that.
+#     ["ebook"]. Audiobooks are acquired by the media stack instead (it
+#     promotes clean audiobook downloads into /mnt/slow/books/drop), so
+#     nothing here mounts the download tree or names a QBITTORRENT_*
+#     variable — the books suite asserts that.
 #   - Auth: kavita and audiobookshelf drive their own OIDC, shipping
 #     ready-and-OFF until the operator lands the client secrets; shelfmark
 #     has none of its own and gets Caddy forward auth. Forward auth is not an

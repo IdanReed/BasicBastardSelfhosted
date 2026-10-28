@@ -1,9 +1,7 @@
 # Automation — Home Assistant + Mosquitto + Frigate (Automation range, ports
-# 10250-10252). Design:
-# ServerNotes/designs/service-automation-stack-research.md (the annex, which
-# corrects service-ha-frigate-stack.md); _overview.md owns the port/auth rows.
+# 10250-10252). docs/services.md owns the port/auth rows.
 #
-#   - BRIDGE networking with loopback-only publishes, NOT the design doc's
+#   - BRIDGE networking with loopback-only publishes, NOT
 #     `network_mode: host`, and not style: a host-networked service is
 #     invisible to `loopback-binding` and to mk-stack-suite's port probe,
 #     which build their lists from `ports:`. For Frigate that would put port

@@ -1,5 +1,5 @@
 # Actual Budget — sync server (10308). EVALUATION stack: the bake-off rival to
-# stacks/firefly. Design: ServerNotes/designs/service-bakeoff.md.
+# stacks/firefly.
 # No backup-prepare.sh line yet — /mnt/fast/actual rides the raw fast-volume set.
 
 services:

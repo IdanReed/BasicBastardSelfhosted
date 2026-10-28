@@ -1,9 +1,8 @@
 # scanner/ — external-security-test box
 
 A throwaway NixOS box that reproduces an **attacker outside the tailnet** and
-runs the recon/enumeration phases of
-`ServerNotes/designs/security-external-testing.md` against infrastructure the
-operator owns. It holds no trust, joins no tailnet (phases 1-4), and is
+runs the recon/enumeration phases of a private test brief against
+infrastructure the operator owns. It holds no trust, joins no tailnet (phases 1-4), and is
 destroyed after the run.
 
 This is **not** the desktop (`nixos-de/`). It is a deliberately minimal config,
@@ -20,17 +19,18 @@ config are produced on the box by infect).
 | `provision.sh` | Operator-side: clone the public repo on the box, deliver the private targets, verify the toolkit. | yes |
 | `targets.env.example` | Shape of the targets file (placeholders only). | yes |
 
-The **real** targets live age-encrypted in the private repo at
-`ServerNotes/secrets/scanner-targets.sops.env` and never land here (this repo is
-mirrored to public GitHub). The Vultr API key is at
-`ServerNotes/secrets/scanner.sops.yaml`.
+The **real** targets, the test brief and the Vultr API key live age-encrypted
+in a private repo and never land here (this repo is mirrored to public
+GitHub). `provision.sh` takes their paths from `SCANNER_TARGETS_SOPS` (required
+unless `SKIP_TARGETS=1`) and `SCANNER_BRIEF` (optional).
 
 ## Bring-up
 
 ```bash
 cd scanner
 ./infect.sh 149.28.124.97      # Ubuntu -> NixOS (reimages + reboots; ~5-10 min)
-./provision.sh 149.28.124.97   # clone repo + push targets + verify tools
+SCANNER_TARGETS_SOPS=<path> SCANNER_BRIEF=<path> \
+  ./provision.sh 149.28.124.97 # clone repo + push targets + brief + verify tools
 ```
 
 Then, manual (by construction — no credentials baked into the image):
@@ -39,8 +39,8 @@ Then, manual (by construction — no credentials baked into the image):
    `claude`, log in (or export `ANTHROPIC_API_KEY`).
 2. **Re-verify dynamic targets** before a run (home WAN v4 / v6 prefix are
    ISP-assigned): `curl -4 https://1.1.1.1/cdn-cgi/trace` from the home LAN,
-   then update `ServerNotes/secrets/scanner-targets.sops.env` with `sopsedit`.
-3. **Run the phases** from `security-external-testing.md`, sourcing targets:
+   then update the encrypted targets file with `sopsedit`.
+3. **Run the phases** from the brief (`~/scan/brief.md`), sourcing targets:
    `set -a; . ~/targets.env; set +a`. Keep nmap at `-T3` or gentler; scan only
    IPs you own.
 4. **Tailnet is phase 5 only.** `tailscale` is installed but the daemon is off;
@@ -51,7 +51,7 @@ Then, manual (by construction — no credentials baked into the image):
 
 Destroy the Vultr instance when done (hourly billing — a run costs cents). The
 host key and `~/.ssh/vultr_scanner*` can then be removed locally, and the
-scanner's current IP in `security-external-testing.md` goes stale.
+scanner IP recorded in the brief goes stale.
 
 ## Toolchain
 

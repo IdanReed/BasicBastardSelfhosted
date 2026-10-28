@@ -30,7 +30,7 @@ done
 
 # One-shot. A second run would rebuild the shared file from a VPS file that no
 # longer holds those keys. A secret changed on main after the conversion is
-# ported by hand (ServerNotes designs/gitops-migration/README.md).
+# ported by hand.
 done_marker=secrets/shared.sops.json
 [ "$mode" = fixtures ] && done_marker=tests/fixtures/shared.sops.json
 if [ -e "$done_marker" ]; then
