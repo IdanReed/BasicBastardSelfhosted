@@ -61,6 +61,12 @@ services:
       # allauth's default, pinned so a future change cannot silently close it.
       # ⚠ REMOTE_USER_AUTH must NEVER be set — it removes /setup/.
       - SOCIALACCOUNT_AUTO_SIGNUP=1
+      # An Authentik login whose (verified) email belongs to a local account
+      # signs in to that account and links it — so idan's lands on the
+      # superuser tandoor_init seeds, with its email recorded verified.
+      # AUTO_CONNECT links without a confirmation mail (there is no SMTP).
+      - SOCIALACCOUNT_EMAIL_AUTHENTICATION=1
+      - SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT=1
       # POSTGRES_PASSWORD, SECRET_KEY and TANDOOR_OIDC_CLIENT_SECRET arrive from the stack env.
       # ⚠ An unset SECRET_KEY does NOT crash: settings.py falls back to the
       # published literal 'INSECURE_STANDARD_KEY_SET_IN_ENV' with only a

@@ -237,6 +237,7 @@ pkgs.testers.runNixOSTest {
         logs = services_vm.succeed("docker logs actual_init 2>&1")
         assert "CHANGE: bootstrapped the server password" in logs, logs
         assert "verified — login with the bootstrapped password returns a token" in logs, logs
+        assert "CHANGE: gave idan the admin seat" in logs, logs
 
     with subtest("🚨 the server is bootstrapped, and OIDC env vars were inert"):
         state = json.loads(services_vm.succeed(
@@ -255,6 +256,18 @@ pkgs.testers.runNixOSTest {
     with subtest("🚨 the fixture password really is the credential (bake-off claim, closed)"):
         res = login(PASSWORD)
         assert res.get("status") == "ok" and res["data"].get("token"), res
+        token = res["data"]["token"]
+
+    with subtest("🚨 idan holds the admin seat before any OpenID login"):
+        # The seat is what keeps another user's first OpenID login from
+        # becoming the server owner: upstream only promotes a first login
+        # while no named user exists.
+        users = json.loads(services_vm.succeed(
+            f"curl -fsS --max-time 30 -H 'x-actual-token: {token}' {BASE}/admin/users/"
+        ))
+        seat = [u for u in users if u["userName"] == "idan"]
+        assert len(seat) == 1, users
+        assert seat[0]["role"] == "ADMIN" and seat[0]["enabled"] is True, seat
 
     with subtest("a wrong password is refused"):
         res = login("not-the-password")

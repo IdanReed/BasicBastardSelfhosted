@@ -59,10 +59,12 @@ services:
       # OIDC
       # Authentik provider `actual` (actual-oidc.yaml; its redirect URI is
       # SERVER_HOSTNAME + /openid/callback). The client secret comes from the
-      # stack env (env.nix). The first OpenID login becomes the permanent
-      # server owner and must also enter the server password: make it idan.
-      # Users other than the owner exist only once the owner adds them in the
-      # client (ACTUAL_USER_CREATION_MODE stays manual).
+      # stack env (env.nix). actual_init seats ACTUAL_ADMIN_USER as ADMIN
+      # before OpenID exists, so idan's first login lands on that seat and no
+      # other first login can claim the server. Anyone else exists only once
+      # an admin adds them in the client's user directory
+      # (ACTUAL_USER_CREATION_MODE stays manual).
+      - ACTUAL_ADMIN_USER=idan
       - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
       - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
       # Beats the stack env's vestigial ACTUAL_OPENID_CLIENT_ID (environment

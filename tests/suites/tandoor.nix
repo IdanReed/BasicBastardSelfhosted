@@ -248,6 +248,12 @@ pkgs.testers.runNixOSTest {
             f"select count(*) from cookbook_userspace u "
             f"join auth_user a on a.id=u.user_id where a.username='{ADMIN}'"
         ) == "1"
+        # Its email is a VERIFIED allauth address: what email authentication
+        # links the Authentik login through, without wiping the password.
+        assert sql(
+            f"select e.verified from account_emailaddress e "
+            f"join auth_user a on a.id=e.user_id where a.username='{ADMIN}'"
+        ) == "t"
 
     with subtest("the developer fixture account does NOT exist"):
         # `manage.py seed_basic_data` reads like the tool for this job — its

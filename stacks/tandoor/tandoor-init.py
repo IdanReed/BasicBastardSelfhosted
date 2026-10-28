@@ -8,12 +8,20 @@
 # ⚠ NOT `seed_basic_data`: it looks like the tool for this job but is a
 # DEVELOPER FIXTURE — user `test` with password 'test'.
 #
+# It also records the superuser's email as verified: that is what lets
+# allauth's email authentication (SOCIALACCOUNT_EMAIL_AUTHENTICATION, compose)
+# sign idan's Authentik login in to this account instead of offering a signup
+# form for a second one — and allauth wipes the local password of an account it
+# matched through an UNVERIFIED address, which would take the break-glass
+# login with it.
+#
 # Every mutation prints "tandoor-init: CHANGE: ...". A second run — every
 # redeploy reruns this container — must print ZERO change lines.
 
 import os
 import sys
 
+from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
 from django_scopes import scopes_disabled
 
@@ -79,6 +87,22 @@ with scopes_disabled():
         if changed:
             user.save()
             log(f"CHANGE: repaired {username}: {', '.join(changed)}")
+
+    address = EmailAddress.objects.filter(user=user, email__iexact=email).first()
+    if address is None:
+        EmailAddress.objects.create(
+            user=user,
+            email=email,
+            verified=True,
+            primary=not EmailAddress.objects.filter(user=user, primary=True).exists(),
+        )
+        log(f"CHANGE: recorded {email} as verified for {username}")
+    elif not address.verified:
+        address.verified = True
+        address.save(update_fields=["verified"])
+        log(f"CHANGE: marked {email} verified for {username}")
+    else:
+        log(f"{email} already verified for {username}")
 
     # ScopeMiddleware would materialise the Space on the first authenticated
     # request; calling the app's OWN create_space_for_user makes post-deploy

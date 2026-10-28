@@ -2,14 +2,18 @@
 //
 //  1. Password: POST /account/bootstrap, the endpoint the browser form calls.
 //     Fails closed on a missing/placeholder password.
-//  2. OpenID: once a password exists, POST /openid/enable with an admin
-//     session — what upstream's scripts/enable-openid.js does, over HTTP. The
-//     ORDER is the safety property: with a password method on file, the first
-//     OpenID login (which becomes the permanent server owner) must also enter
-//     the server password, and the password stays the way in while Authentik
-//     is down. The stored client is compared with the env on every run and
-//     re-applied on drift, so a rotated client secret goes live with the
-//     redeploy that carries it.
+//  2. Admin seat: the user ACTUAL_ADMIN_USER (idan's Authentik username) is
+//     created as ADMIN through /admin/users before OpenID exists. Upstream
+//     makes the first OpenID login the owner only while no named user exists,
+//     so with the seat in place nobody else can claim the server: idan's
+//     login matches the seat, and anyone else is refused until an admin adds
+//     them in the user directory.
+//  3. OpenID: once a password exists, POST /openid/enable with an admin
+//     session — what upstream's scripts/enable-openid.js does, over HTTP. With
+//     a password method on file the password stays the way in while
+//     Authentik is down. The stored client is compared with the env on every
+//     run and re-applied on drift, so a rotated client secret goes live with
+//     the redeploy that carries it.
 //
 // Idempotent: a converged server logs zero "CHANGE:" lines, and needs no login
 // and no traffic beyond the server itself.
@@ -28,6 +32,7 @@ const PASSWORD = process.env.ACTUAL_INIT_PASSWORD;
 // The server's /data, mounted read-only (compose.yaml). Every write goes
 // through the HTTP API.
 const ACCOUNT_DB = process.env.ACCOUNT_DB || '/data/server-files/account.sqlite';
+const ADMIN_USER = process.env.ACTUAL_ADMIN_USER || '';
 
 const OIDC = {
   discoveryURL: process.env.ACTUAL_OPENID_DISCOVERY_URL || '',
@@ -114,20 +119,70 @@ async function ensurePassword() {
   return login.json.data.token;
 }
 
-// The client exactly as bootstrapOpenId stores it: the discovery URL lands in
-// `issuer`.
-function storedOpenIdClient() {
-  let row;
+function readAccountDb(query, ...params) {
   let db;
   try {
     const Database = require('/app/node_modules/better-sqlite3');
     db = new Database(ACCOUNT_DB, { readonly: true, fileMustExist: true });
-    row = db.prepare("SELECT extra_data FROM auth WHERE method = 'openid' AND active = 1").get();
+    return db.prepare(query).get(...params);
   } catch (e) {
-    fail(`cannot read the stored OpenID client from ${ACCOUNT_DB}: ${e.message}`);
+    fail(`cannot read ${ACCOUNT_DB}: ${e.message}`);
   } finally {
     db?.close();
   }
+}
+
+async function passwordToken(why) {
+  const login = await api('POST', '/account/login', {
+    loginMethod: 'password',
+    password: PASSWORD,
+  });
+  if (login.json?.status !== 'ok' || !login.json?.data?.token)
+    fail(
+      `password login for ${why} FAILED (HTTP ${login.http}, ` +
+        `${login.json?.reason}) — ACTUAL_INIT_PASSWORD no longer matches the ` +
+        'server password (changed in the client?); put the current one in it and redeploy',
+    );
+  return login.json.data.token;
+}
+
+// Read from the database, so a converged run needs no login. POST /admin/users
+// does not store the role at this version (insertUser is called without it),
+// so the role is always set by the PATCH that follows.
+async function ensureAdminSeat(token) {
+  if (!ADMIN_USER) {
+    console.log('actual-init: ACTUAL_ADMIN_USER unset — no admin seat');
+    return token;
+  }
+  const seat = () =>
+    readAccountDb('SELECT id, role, enabled FROM users WHERE user_name = ?', ADMIN_USER);
+  let row = seat();
+  if (row && row.role === 'ADMIN' && row.enabled === 1) {
+    console.log(`actual-init: ${ADMIN_USER} already holds the admin seat`);
+    return token;
+  }
+  token = token || (await passwordToken('the admin seat'));
+  const user = { userName: ADMIN_USER, role: 'ADMIN', displayName: ADMIN_USER, enabled: true };
+  if (!row) {
+    const res = await api('POST', '/admin/users', user, token);
+    if (res.json?.status !== 'ok')
+      fail(`POST /admin/users refused (HTTP ${res.http}): ${JSON.stringify(res.json)}`);
+    row = { id: res.json.data.id };
+  }
+  const res = await api('PATCH', '/admin/users', { id: row.id, ...user }, token);
+  if (res.json?.status !== 'ok')
+    fail(`PATCH /admin/users refused (HTTP ${res.http}): ${JSON.stringify(res.json)}`);
+  const after = seat();
+  if (!(after && after.role === 'ADMIN' && after.enabled === 1))
+    fail(`${ADMIN_USER} is still not an enabled ADMIN after the PATCH`);
+  console.log(`CHANGE: gave ${ADMIN_USER} the admin seat`);
+  return token;
+}
+
+// The client exactly as bootstrapOpenId stores it: the discovery URL lands in
+// `issuer`.
+function storedOpenIdClient() {
+  const row = readAccountDb("SELECT extra_data FROM auth WHERE method = 'openid' AND active = 1");
   if (!row) fail('the server reports OpenID active, but account.sqlite has no active openid row');
   try {
     return JSON.parse(row.extra_data);
@@ -209,19 +264,7 @@ async function ensureOpenId(token) {
 
   if (!(await issuerAnswers(verb))) return;
 
-  if (!token) {
-    const login = await api('POST', '/account/login', {
-      loginMethod: 'password',
-      password: PASSWORD,
-    });
-    if (login.json?.status !== 'ok' || !login.json?.data?.token)
-      fail(
-        `password login for the OpenID step FAILED (HTTP ${login.http}, ` +
-          `${login.json?.reason}) — ACTUAL_INIT_PASSWORD no longer matches the ` +
-          'server password (changed in the client?); put the current one in it and redeploy',
-      );
-    token = login.json.data.token;
-  }
+  token = token || (await passwordToken('the OpenID step'));
 
   // The server re-runs discovery itself, then replaces the openid row and
   // deletes every session (enableOpenID). authMethod is what upstream's own
@@ -235,15 +278,11 @@ async function ensureOpenId(token) {
   if (after.multiuser !== true)
     fail('POST /openid/enable said ok, but OpenID is still not the active login method');
   console.log(`CHANGE: ${verb} OpenID (client ${OIDC.client_id}); every session was signed out`);
-  if (verb === 'enabled')
-    console.log(
-      'actual-init: the FIRST OpenID login becomes the permanent server owner ' +
-        '(and must also enter the server password) — make it idan',
-    );
 }
 
 async function main() {
-  const token = await ensurePassword();
+  let token = await ensurePassword();
+  token = await ensureAdminSeat(token);
   await ensureOpenId(token);
 }
 
