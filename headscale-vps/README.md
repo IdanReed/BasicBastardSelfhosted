@@ -1,150 +1,113 @@
 # Headscale VPS
 
-NixOS configuration for the Hetzner Cloud VPS: Headscale (tailnet control plane)
-and Authentik (identity provider). This is the only publicly reachable host in
-the fleet.
+The Hetzner Cloud VPS: Headscale (the tailnet's control plane) and Authentik
+(the identity provider). The only publicly reachable host in the fleet.
 
-**Bring-up is not documented here.** Creating the box, rescue mode,
-`./deploy.sh`, minting the first preauth key, and the Authentik first login are
-`ServerNotes/designs/deploy-handbook.md` §7, §8 and §14, in order. Day-2 changes
-are `nrs-vps` (see `docs/deploy.md`). What follows is the architecture and the
-things that are specific to this host.
+Installing it, minting the first preauthkey and the first Authentik login are
+[docs/bring-up.md](../docs/bring-up.md) §7, §8 and §14. Day-2 changes are
+`nrs-vps` ([docs/deploy.md](../docs/deploy.md)). This file is the host's shape
+and its break-glass paths.
 
-## Architecture
+## Shape
 
 ```
-Hetzner VPS (headscale-vps)
-├── NixOS 25.11
-├── caddy.service       native systemd — the ONLY public listener, :80/:443
+headscale-vps (.#headscale-vps)
+├── caddy.service       native — the ONLY public listener, :80/:443, HTTP-01
 │   ├── headscale.idanreed.com → 127.0.0.1:8080
 │   └── auth.idanreed.com      → 127.0.0.1:9000
-├── headscale.service   native systemd — tailnet coordination + embedded DERP, loopback
-├── authentik.service   systemd → docker compose — server, worker, PostgreSQL, Redis
-├── alloy.service       native systemd — ships the journal to the services VM
+├── headscale.service   native — coordination + embedded DERP, loopback
+├── authentik.service   systemd → docker compose: server, worker, PostgreSQL, Redis
+├── alloy.service       native — ships the journal to the services VM
 ├── fail2ban            sshd and authentik jails
 └── tailscale           joins its own tailnet via --login-server
 ```
 
-Public ports: **22, 80, 443 TCP** and **3478 UDP** (DERP STUN). Nothing else.
-Headscale and Authentik both bind loopback only.
+Public ports: **22, 80, 443 TCP** and **3478 UDP** (STUN). Headscale and
+Authentik bind loopback only. There is no deploy agent, sync timer or checkout
+on the host: everything arrives by `nixos-rebuild switch --target-host`.
 
-**There is no GitOps agent on this host** — no Komodo, no sync timer, no mutable
-checkout. Everything is deployed by `nixos-rebuild switch --target-host` over
-SSH, which is the whole reason the VPS and the services VM behave differently.
-
-### Why the pieces are shaped this way
-
-- **Headscale is a native systemd service, not a container**, so the tailnet
-  never depends on the container runtime, and so repairing it can never require
-  being reachable *over* the tailnet.
-- **Authentik stays containerised** (upstream-supported images, monthly releases,
-  DB migrations), but its compose file ships *inside the flake* and is applied by
-  a systemd unit running `docker compose -f <store-path> -p authentik up -d
-  --wait`. The project name is pinned because the store path changes on every
-  rebuild. No drift window, no polling.
-- **Caddy exists because only one process can own `:443`**, and Headscale's OIDC
-  issuer (`auth.idanreed.com`) must be reachable over HTTPS on the standard port.
-- **HTTP-01, not DNS-01.** This host is publicly reachable on :80, so no
-  DNS-provider plugin and no custom Caddy build — unlike the services VM, which
-  is tailnet-only and must use DNS-01 against Cloudflare.
-- **The Authentik admin surface is fenced.** `/if/admin*` and `/api/v3/*` are
-  403'd unless the request comes from the tailnet or loopback (the `@restricted`
-  matcher in `modules/caddy.nix`), with narrow carve-outs for the flow executor
-  and root branding config. Reaching it before the VPS is on the tailnet:
-  `ssh -L 9000:127.0.0.1:9000 idan@<VPS_IP>`.
-- **Tailscale-the-SaaS is not a dependency.** `modules/headscale.nix` sets
-  `derp.urls = [ ]` explicitly so the nixpkgs default never fetches Tailscale's
-  public DERP map; the embedded DERP server (region 999) is the only relay.
-
-### Access and secrets
-
-- `authorizedKeys` is **generated from the repo-root `ssh-pubkeys.nix`** (the
-  `vps` and `backup-vps` entries), which both servers import; the desktop's copy
-  is held byte-identical by the `ssh-pubkey-parity` lint. Never hand-edit it in
-  `configuration.nix`.
-- The VPS's own secrets live in `secrets.sops.yaml`; the app OIDC client
-  secrets, the login passwords and the vlogs token are read from the
-  repo-root `secrets/shared.sops.json` (`secrets/shared.nix`), the same values
-  the services VM renders. Both are decrypted per key by sops-nix at activation
-  into `/run/secrets` (the inventory is `deploy-handbook.md` §4). **No plaintext `.env` is ever written to disk.** YAML rather
-  than dotenv is load-bearing: `sops-install-secrets` applies the per-secret key
-  only for yaml/json.
-- The age private key lives only at `/var/lib/sops-nix/sops_age_key.txt`, never
-  in the workspace. Edit secrets with `sopsedit headscale-vps/secrets.sops.yaml`
-  (or `sopseditnvim`), which sudo-reads the key for one invocation. The real file
-  holds real values — **do not regenerate it from `secrets.sops.yaml.example`**;
-  sops has no append-without-decrypt.
-- `modules/authentik.nix` renders all of them into one
-  `sops.templates."authentik.env"` at `/run/secrets/rendered/authentik.env`,
-  which is what the compose file reads.
+| Choice | Reason |
+|---|---|
+| Headscale is a native service | the tailnet never depends on the container runtime, and repairing it never needs the tailnet |
+| Authentik is containerised, compose shipped in the flake | upstream-supported images and migrations; the unit runs `docker compose -f <store path> -p authentik up -d --wait`, the project name pinned because the store path changes every rebuild |
+| Caddy in front of both | one process owns `:443`, and the OIDC issuer must be HTTPS on the standard port |
+| HTTP-01, not DNS-01 | the host is public on :80, so no DNS plugin and no custom build |
+| The Authentik admin surface is fenced | `/if/admin*` and `/api/v3/*` are 403 unless the request comes from the tailnet or loopback (`@restricted` in `modules/caddy.nix`), with narrow carve-outs for the flow executor and branding |
+| No Tailscale SaaS | `derp.urls = [ ]` keeps the nixpkgs default from fetching Tailscale's DERP map; the embedded DERP (region 999) is the only relay |
 
 ## Files
 
-```
-headscale-vps/                  (built by the repo-root flake: .#headscale-vps)
-├── host.nix                    the module set the flake and the test harness share
-├── configuration.nix           identity, firewall, fail2ban, nix settings
-├── disk-config.nix             disko partitioning for the Hetzner disk
-├── deploy.sh                   nixos-anywhere installer (DESTRUCTIVE)
-├── policy.hujson               headscale ACL
-├── secrets.sops.yaml{,.example}
-├── modules/
-│   ├── headscale.nix           services.headscale, embedded DERP
-│   ├── authentik.nix           systemd unit driving docker compose + the env template
-│   ├── caddy.nix               HTTP-01 vhosts, the @restricted matcher
-│   └── log-shipper.nix         Alloy → vlogs-ingest.svc.idanreed.com
-└── authentik/
-    ├── compose.yaml            shipped in the flake, applied on rebuild
-    └── blueprints/custom/      21 blueprints: 18 <app>-oidc.yaml, plus
-                                forward-auth, login-hardening, email-verified
-```
+| Path | What |
+|---|---|
+| `host.nix` | the module set the flake and the test harness share |
+| `configuration.nix` | identity, firewall, fail2ban, nix settings |
+| `disk-config.nix` | disko layout for the Hetzner disk |
+| `deploy.sh` | the nixos-anywhere installer — **destructive** |
+| `policy.hujson` | the headscale ACL |
+| `modules/headscale.nix` | `services.headscale`, OIDC, embedded DERP |
+| `modules/authentik.nix` | the compose unit and the `authentik.env` sops template |
+| `modules/caddy.nix` | the vhosts and the `@restricted` matcher |
+| `modules/log-shipper.nix` | Alloy → `vlogs-ingest.svc.idanreed.com` |
+| `authentik/compose.yaml` | Authentik, applied on every rebuild |
+| `authentik/blueprints/custom/` | every provider, application, group and declared user; applied by the worker |
 
-## Break-glass: Authentik is down, or OIDC is broken
+## Access and secrets
 
-`oidc.only_start_if_oidc_is_available` is `false`, so Headscale boots and
-existing nodes keep working with Authentik completely dead. The CLI is a full
-administrative path that does not touch OIDC:
+- `authorizedKeys` is generated from the repo-root `ssh-pubkeys.nix` (`vps`,
+  `backup-vps`). Never hand-edit it.
+- The host's secrets are `secrets.sops.yaml` (YAML on purpose: sops-nix
+  extracts per key only from yaml/json); the OIDC client secrets, idan's
+  password, the vlogs token and the LDAP secrets come from the repo-root
+  `secrets/shared.sops.json` — the same values the services VM renders.
+  sops-nix decrypts them into `/run/secrets` at activation; no plaintext `.env`
+  is written to disk.
+- `modules/authentik.nix` renders Authentik's values into one template,
+  `/run/secrets/rendered/authentik.env`, which the compose file reads;
+  `restartUnits` restarts Authentik and headscale when a value they read
+  changes.
+- Edit with `sopsedit headscale-vps/secrets.sops.yaml`. The real file holds
+  real values — never regenerate it from `secrets.sops.yaml.example`.
+
+## Break-glass
+
+**Authentik down or OIDC broken.** `oidc.only_start_if_oidc_is_available` is
+`false`, so headscale boots and existing nodes keep working. The CLI does not
+touch OIDC:
 
 ```bash
-sudo headscale users list          # note the NUMERIC id you want
+sudo headscale users list          # the NUMERIC id
 sudo headscale nodes list
 sudo headscale preauthkeys create -u <numeric-user-id> -e 1h
 ```
 
-`-u` takes the numeric user id, not the name. **Mint under the existing `idan`
-user, never a new one called `idan`** — a second user with that name makes the
-`idan@` in `policy.hujson` ambiguous and it then resolves to neither, which
-takes tailnet access away from every node.
+Mint under the **existing** `idan`, never a new user named `idan`: a second
+`idan` makes the ACL's `idan@` resolve to neither, and every node loses
+access.
 
-`akadmin` plus `AUTHENTIK_BOOTSTRAP_TOKEN` are the other break-glass path into
-Authentik itself. No blueprint retires either; both are permanent, full-API,
-never-rotated fleet-root credentials.
+**Into Authentik itself:** `akadmin` with `AUTHENTIK_BOOTSTRAP_PASSWORD`, or
+`AUTHENTIK_BOOTSTRAP_TOKEN` for the API. No blueprint retires either. Before
+the VPS is on the tailnet, reach the admin UI with
+`ssh -L 9000:127.0.0.1:9000 idan@<VPS_IP>`.
 
 ## Troubleshooting
 
-**SSH refused after an install.** Wait 1–2 minutes for the reboot, then
-`ssh-keygen -R <IP>` — rescue mode, the installer and the installed system each
-present a different host key.
-
-**Headscale failing** (`sudo journalctl -u headscale -f`):
-
-- ACME cannot complete HTTP-01 — port 80 must be reachable and
-  `headscale.idanreed.com` must resolve to this VPS.
-- `dns.base_domain` must not equal or contain the `server_url` hostname;
-  headscale refuses to start otherwise. `tailnet.idanreed.com` must have no
-  public records.
-- OIDC secret unreadable — check `/run/secrets/HEADSCALE_OIDC_CLIENT_SECRET`.
-
-**A node registers but can reach nothing.** It was registered under the wrong
-Authentik identity (a cached `akadmin` session), so the ACL's `idan@` does not
-cover it. `sudo headscale nodes move -i <id> -u <idan-id>` **then
-`sudo systemctl restart headscale`** — `nodes move` alone does not push
-recomputed packet filters to already-connected peers, so the node sits on a
-deny-all filter while `tailscale ping` still works.
-
-**Authentik failing** (`sudo systemctl status authentik`). The unit runs
-`docker compose up -d --wait`, so it stays `activating` until PostgreSQL and
-Redis pass their healthchecks, then goes `active (exited)`. A failure here is
-almost always a missing secret: verify `/run/secrets/rendered/authentik.env`
-exists and carries every key `modules/authentik.nix` declares. Then
-`docker logs authentik_server` / `docker logs authentik_db`.
+- **SSH refused after an install** — wait for the reboot, then
+  `ssh-keygen -R <IP>`: rescue, the installer and the installed system each
+  present a different host key.
+- **headscale fails** (`journalctl -u headscale -f`) — HTTP-01 needs :80
+  reachable and `headscale.idanreed.com` resolving here; `dns.base_domain`
+  must not contain the `server_url` host (`tailnet.idanreed.com` has no public
+  records); check `/run/secrets/HEADSCALE_OIDC_CLIENT_SECRET`.
+- **A node registers but reaches nothing** — it registered under a cached
+  `akadmin` session. `sudo headscale nodes move -i <id> -u <idan-id>`, **then
+  `sudo systemctl restart headscale`**: `nodes move` does not push the new
+  packet filter to connected peers, so the node sits on deny-all while
+  `tailscale ping` still works.
+- **Authentik fails** (`systemctl status authentik`) — the unit stays
+  `activating` until PostgreSQL and Redis are healthy, then goes
+  `active (exited)`. A failure is almost always a missing secret: check that
+  `/run/secrets/rendered/authentik.env` carries every key the template
+  declares, then `docker logs authentik_server` / `authentik_worker`.
+- **A blueprint did not apply** — the worker log names it. A provider name or
+  slug declared twice, a `.yml` extension, or a comment-only `attrs:` each
+  rolls the whole blueprint back.
