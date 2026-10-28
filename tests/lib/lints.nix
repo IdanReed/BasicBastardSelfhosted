@@ -2024,10 +2024,6 @@ in
           "vlogs-ingest.svc.idanreed.com":
               "a bearer-token write endpoint for Alloy, which cannot follow a "
               "302. The Caddyfile's fail-closed guard is the control.",
-          "backrest.svc.idanreed.com":
-              "TODO: decide — no reason is stated in the Caddyfile. Backrest "
-              "has its own bcrypt login (config.template.json), so this is "
-              "probably intentional; confirm it, or import protected.",
           "ntfy.svc.idanreed.com":
               "TODO: decide — anonymous read-write, ACCEPTED for now in "
               "stacks/ntfy/server.yml (arch-security AS-2). Forward auth is "

@@ -100,6 +100,10 @@
 
 	@backrest host backrest.svc.idanreed.com
 	handle @backrest {
+		# Forward auth in front of Backrest's own bcrypt login: it holds the
+		# restic password and the VPS backup key. Browser-only — the backup
+		# runs and the dead-man ping are its own outbound calls.
+		import protected
 		reverse_proxy localhost:10002
 	}
 

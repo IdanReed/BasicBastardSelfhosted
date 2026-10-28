@@ -43,6 +43,31 @@ entries:
       policy_engine_mode: any
       meta_description: "Client-side PDF toolbox"
 
+  # Backups (stacks/backrest): holds the restic password and the VPS backup
+  # key, so its own bcrypt login is not left as the only lock.
+  - model: authentik_providers_proxy.proxyprovider
+    id: backrest-provider
+    state: present
+    identifiers:
+      name: backrest
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      mode: forward_single
+      external_host: https://backrest.svc.idanreed.com
+      access_token_validity: hours=24
+
+  - model: authentik_core.application
+    id: backrest-app
+    state: present
+    identifiers:
+      slug: backrest
+    attrs:
+      name: Backrest
+      provider: !KeyOf backrest-provider
+      policy_engine_mode: any
+      meta_description: "Restic backups"
+
   # Media (stacks/media)
   # qBittorrent (10057) is deliberately absent: its Caddy route does not exist
   # yet, so entry and route land together.
@@ -673,6 +698,7 @@ entries:
         authentik_host: https://auth.idanreed.com
       providers:
         - !KeyOf bentopdf-provider
+        - !KeyOf backrest-provider
         - !KeyOf radarr-provider
         - !KeyOf sonarr-provider
         - !KeyOf prowlarr-provider

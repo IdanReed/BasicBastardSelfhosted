@@ -131,14 +131,14 @@ endpoints:
     alerts:
       - type: ntfy
 
-  - name: "backrest (path: caddy -> service)"
+  - name: "backrest (path: caddy -> authentik outpost)"
     group: "path"
     url: "https://backrest.svc.idanreed.com/"
     interval: 2m
     client:
       ignore-redirect: true
     conditions:
-      - "[STATUS] < 400"
+      - "[STATUS] == 302"
       - "[CERTIFICATE_EXPIRATION] > 240h"
 
     alerts:
