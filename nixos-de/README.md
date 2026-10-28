@@ -34,12 +34,12 @@ nixos-de/
 ├── disko.nix                    declarative disk partitioning (targetDisk — see below)
 ├── home.nix                     home-manager: aliases, sopsedit/sopsgen, starship
 ├── ssh-identities.nix           name → host/user/port; drives sops.secrets AND ssh config
-├── secrets.sops.yaml{,.example} 14 keys: ssh/* ×7, workvpn/* ×6, SAMBA_IDAN_PASSWORD
+├── secrets.sops.yaml{,.example} 13 keys: ssh/* ×7, workvpn/* ×6
 ├── test.sh / test-wsl.sh        config validation, no deploy
 ├── FUTURE.md                    tooling tracker
 ├── pkgs/                        excalirender, mmd2excalidraw, openconnect-saml
 └── modules/
-    ├── nixos/   containers, handy, nvidia, samba-mounts, ssh-identities,
+    ├── nixos/   containers, handy, nvidia, ssh-identities,
     │            sshd, tailscale, work-vpn
     └── home/    excalidraw, foot, handy, niri, nixvim, noctalia, obsidian,
                  ssh-identities, stylix, tts, vscode, work-vpn, yazi, zed, zen

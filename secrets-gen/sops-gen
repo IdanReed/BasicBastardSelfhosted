@@ -570,7 +570,7 @@ cmd_rotate() {
     # copy_only rotate = re-read the hand-set canonical value from the entry's
     # `source: true` target and re-derive every OTHER target from it (plain
     # copies verbatim, hash parts freshly hashed). This is how a single edit to
-    # e.g. IDAN_INITIAL_PASSWORD propagates to Samba/Windmill/Beszel plus the
+    # e.g. IDAN_INITIAL_PASSWORD propagates to Windmill/Beszel plus the
     # Backrest/qBittorrent hashes. Without a source target, rotation of a
     # copy_only entry is meaningless.
     for t in ${E_TARGETS[$i]//^/ }; do

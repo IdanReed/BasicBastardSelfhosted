@@ -33,7 +33,6 @@
 #   ./tests/run.sh wealthfolio    # heavy: argon2 $-quoting login round trip + boot-fatal OIDC pinned
 #   ./tests/run.sh gatus          # the host-network bind, proven from another machine
 #   ./tests/run.sh beszel         # heavy: the key/token triangle, and real disk numbers
-#   ./tests/run.sh samba          # heavy: an authenticated SMB round trip, and a refused one
 #   ./tests/run.sh docspace       # heavy: the machine key in play is the one from sops
 #   ./tests/run.sh journald-logging # the log driver + the `docker logs` contract
 #   ./tests/run.sh silverbullet   # heavy: git-sync vs a real Forgejo — mirror, remote-wins, canary
@@ -136,7 +135,7 @@ case "$TARGET" in
     ;;
 
   # Keep this arm one line starting with `vps |` — run-sh-suite-parity reads it.
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | samba | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 

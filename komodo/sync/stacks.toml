@@ -468,27 +468,6 @@ config_files = [
 ]
 
 [[stack]]
-name = "samba"
-tags = ["gitops"]
-[stack.config]
-server = "Local"
-git_provider = "forgejo:3000"
-git_https = false
-git_account = "komodo"
-repo = "idan/BasicBastardSelfhosted"
-branch = "main"
-run_directory = "stacks/samba"
-file_paths = ["compose.yaml"]
-webhook_enabled = false
-additional_env_files = [{ path = "/run/stack-env/samba.env", track = false }]
-config_files = [
-  { path = "secrets.sops.json", requires = "Redeploy" },
-  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
-  { path = "config.yml", services = ["samba"], requires = "Restart" },
-  { path = "samba-init.sh", services = ["samba-init"], requires = "Restart" },
-]
-
-[[stack]]
 name = "silverbullet"
 tags = ["gitops"]
 [stack.config]

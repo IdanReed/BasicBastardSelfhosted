@@ -205,9 +205,6 @@ auth.json — serve stays green and every login fails.
 The isync image (proton-export) sets no USER and runs as root, so the
 maildir archive stays root:root. No database anywhere; backup is the
 slow-volume-selective plan, not a dump.""",
-    "samba": """\
-smbd runs as ROOT and must — it setuids per connection — so /data is
-root-owned.""",
     "silverbullet": """\
 1000:1000, and here the ownership DECIDES THE UID THE SERVER RUNS AS: the
 entrypoint reads the owner of $SB_FOLDER and re-execs at that uid unless
@@ -268,19 +265,20 @@ backup-prepare.sh line yet: raw fast-volume include set only.""",
     },
     # --- excalidraw ----------------------------------------------------
     "/mnt/fast/excalidraw/pgdata": {
+        "mode": "0700",
+        "owner": ("70", "70"),
         "note": """\
 Both AstraDraw databases (`excalidraw` for metadata, `excalidraw_storage`
 for the scene payloads) — the whole backup payload, captured by the
-pg_dumpall loop. root:root because the postgres image chowns its own
-datadir before initdb drops privileges.""",
+pg_dumpall loop.""",
     },
     # --- komodo --------------------------------------------------------
     "/mnt/fast/komodo/pgdata": {
+        "mode": "0700",
+        "owner": ("999", "999"),
         "note": """\
 The FerretDB backend — Komodo's entire state as JSONB, captured by the
-pg_dumpall loop rather than a mongodump path. root:root because the
-postgres image chowns its own datadir to uid 999 before initdb drops
-privileges.""",
+pg_dumpall loop rather than a mongodump path.""",
     },
     # --- media ---------------------------------------------------------
     "/mnt/slow/data": {"owner": ("1000", "1000")},
@@ -465,34 +463,22 @@ it IS backed up: slow-volume-selective names it.""",
     },
     # --- wealthfolio ---------------------------------------------------
     "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},
-    # --- samba ---------------------------------------------------------
-    "/mnt/slow/samba/shared": {
-        "mode": "0775",
-        "owner": ("1000", "1000"),
-        "note": """\
-1000:1000 is a CONTRACT with stacks/samba/config.yml's `auth:` entry,
-which creates the SMB user with uid 1000 gid 1000 inside the container.
-Nothing connects the two but these two files agreeing; samba-init refuses
-to start on a mismatch. 0775 rather than 0755 so the other SMB users (all
-gid 1000) can share the tree.""",
-    },
-    # Per-user private trees: ONE shared gid (1000) so everyone can use
-    # `shared`, DISTINCT uids so each personal dir is private. Each uid must
-    # match config.yml's `auth:`; samba-init refuses to start on a mismatch.
-    "/mnt/slow/samba/personal": {
-        "mode": "0755",
-        "owner": ("root", "root"),
-        "note": """\
-Parent of the per-user private trees. Nobody writes here; o+x lets each
-SMB user traverse into their own 0700 subdir.""",
-    },
-    "/mnt/slow/samba/personal/idan": {"mode": "0700", "owner": ("1000", "1000")},
-    "/mnt/slow/samba/personal/alondra": {"mode": "0700", "owner": ("1001", "1000")},
-    "/mnt/slow/samba/personal/cale": {"mode": "0700", "owner": ("1002", "1000")},
-    "/mnt/slow/samba/personal/zach": {"mode": "0700", "owner": ("1003", "1000")},
-    "/mnt/slow/samba/personal/rylan": {"mode": "0700", "owner": ("1004", "1000")},
-    "/mnt/slow/samba/personal/cameron": {"mode": "0700", "owner": ("1005", "1000")},
-    "/mnt/slow/samba/personal/justin": {"mode": "0700", "owner": ("1006", "1000")},
+    # --- database data dirs ------------------------------------------
+    # The engine's own uid, 0700: the entrypoint chowns a root-owned dir back
+    # at every start anyway, but until then the files sit 0755 root:root.
+    # alpine postgres (and postgis) run as 70, the debian-based images
+    # (immich's; komodo's ferretdb, above) and mariadb as 999. excalidraw
+    # is above with its note.
+    "/mnt/fast/dawarich/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/firefly/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/ghostfolio/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/outline/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/paperless/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/tandoor/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/wger/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/windmill/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/immich/pgdata": {"mode": "0700", "owner": ("999", "999")},
+    "/mnt/fast/bookstack/db": {"mode": "0700", "owner": ("999", "999")},
 }
 
 

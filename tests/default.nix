@@ -159,7 +159,6 @@ let
     gatus = callSuite ./suites/gatus.nix { };
     proton = callSuite ./suites/proton.nix { };
     beszel = callSuite ./suites/beszel.nix { };
-    samba = callSuite ./suites/samba.nix { };
     docspace = callSuite ./suites/docspace.nix { };
     # Not a stack suite: the daemon-level journald log driver, and with it the
     # `docker logs` contract every other suite's assertions rest on.

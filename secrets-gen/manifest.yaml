@@ -49,7 +49,6 @@ files:
   - { path: stacks/ntfy/secrets.sops.json, format: json, example: stacks/ntfy/secrets.example.env }
   - { path: stacks/outline/secrets.sops.json, format: json, example: stacks/outline/secrets.example.env }
   - { path: stacks/paperless/secrets.sops.json, format: json, example: stacks/paperless/secrets.example.env }
-  - { path: stacks/samba/secrets.sops.json, format: json, example: stacks/samba/secrets.example.env }
   - { path: stacks/silverbullet/secrets.sops.json, format: json, example: stacks/silverbullet/secrets.example.env }
   - { path: stacks/tandoor/secrets.sops.json, format: json, example: stacks/tandoor/secrets.example.env }
   - { path: stacks/tracking/secrets.sops.json, format: json, example: stacks/tracking/secrets.example.env }
@@ -428,8 +427,6 @@ secrets:
     note: "idan's ONE password (source = VPS IDAN_INITIAL_PASSWORD). rotate re-derives all copies + hashes below"
     targets:
       - { file: secrets/shared.sops.json, key: IDAN_INITIAL_PASSWORD, source: true }
-      # desktop cifs credential (nixos-de/modules/nixos/samba-mounts.nix)
-      - { file: nixos-de/secrets.sops.yaml, key: SAMBA_IDAN_PASSWORD }
       - { file: stacks/backrest/secrets.sops.json, key: BACKREST_ADMIN_PASSWORD_BCRYPT, part: bcrypt_b64 }
       - { file: stacks/media/secrets.sops.json, key: QBIT_WEBUI_PASSWORD_PBKDF2, part: pbkdf2_qbit }
       # Jellyfin's first admin, and the account SEERR authenticates against.
@@ -478,10 +475,6 @@ secrets:
     note: "HAND-SET the VPS value; propagates to windmill + samba"
     targets:
       - { file: secrets/shared.sops.json, key: JUSTIN_INITIAL_PASSWORD, source: true }
-  - name: samba/SAMBA_INTERFACES
-    class: config
-    note: "lo + tailscale0 + the real nic"
-    targets: [{ file: stacks/samba/secrets.sops.json, key: SAMBA_INTERFACES }]
 
   - name: silverbullet/SB_USER
     class: derived

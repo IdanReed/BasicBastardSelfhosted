@@ -90,14 +90,6 @@
     finalImageName = "codeberg.org/forgejo/forgejo";
     finalImageTag = "16.0";
   };
-  "crazymax_samba_4_23_8" = {
-    composeRef = "crazymax/samba:4.23.8";
-    imageName = "crazymax/samba";
-    imageDigest = "sha256:b37f7af97c773eddb593537f64da6389e5ee6695bcecf44f3ba1a8a6bcf34125";
-    hash = "sha256-XK+bajrD5jIoedhyz0Ldz5NZoHm15b1aGKK+zRZnP1k=";
-    finalImageName = "crazymax/samba";
-    finalImageTag = "4.23.8";
-  };
   "ddvk_rmfakecloud_0_0_31" = {
     composeRef = "ddvk/rmfakecloud:0.0.31";
     imageName = "ddvk/rmfakecloud";

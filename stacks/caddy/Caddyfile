@@ -9,6 +9,13 @@
 # *.svc.idanreed.com is a public Cloudflare A record pointing at this host's
 # tailnet IP, which is CGNAT space and only routable from inside the tailnet.
 
+# No admin API: nothing here reloads through it (a Caddyfile change is a
+# container restart, via the Komodo config_files entry), and a :2019 listener
+# would let anything on the docker network rewrite the routing table.
+{
+	admin off
+}
+
 # ---------------------------------------------------------------------------
 # Forward auth
 # ---------------------------------------------------------------------------

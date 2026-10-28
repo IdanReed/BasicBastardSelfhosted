@@ -110,7 +110,7 @@
     # 1000:1000. Setting `user:` there skips the chown branch and crash-loops
     # on a root-owned mount; upstream warns about it inline, twice.
     "d /mnt/fast/dawarich 0755 root root -"
-    "d /mnt/fast/dawarich/pgdata 0755 root root -"
+    "d /mnt/fast/dawarich/pgdata 0700 70 70 -"
     "d /mnt/fast/dawarich/public 0755 1000 1000 -"
     # The redis image runs as uid 999 and does NOT chown its data directory.
     # This holds the sidekiq queue: a wrong owner makes redis exit at start and
@@ -151,16 +151,15 @@
     "d /mnt/fast/excalidraw 0755 root root -"
     # Both AstraDraw databases (`excalidraw` for metadata, `excalidraw_storage`
     # for the scene payloads) — the whole backup payload, captured by the
-    # pg_dumpall loop. root:root because the postgres image chowns its own
-    # datadir before initdb drops privileges.
-    "d /mnt/fast/excalidraw/pgdata 0755 root root -"
+    # pg_dumpall loop.
+    "d /mnt/fast/excalidraw/pgdata 0700 70 70 -"
     # === firefly (bind sources in its compose.yaml) ===
     # The image ends on `USER www-data` at BUILD time and never remaps ids, so
     # PUID/PGID are inert and the upload directory must be pre-owned 33:33 or
     # attachment upload fails at runtime with no startup symptom at all. Its
     # Postgres chowns its own datadir.
     "d /mnt/fast/firefly 0755 root root -"
-    "d /mnt/fast/firefly/pgdata 0755 root root -"
+    "d /mnt/fast/firefly/pgdata 0700 70 70 -"
     "d /mnt/fast/firefly/upload 0755 33 33 -"
     # === forgejo (bind sources in its compose.yaml) ===
     # 1000:1000, matching the USER_UID/USER_GID the compose sets. /data holds
@@ -182,7 +181,7 @@
     # app container has no /mnt mount at all and its Redis deliberately has no
     # volume, so the whole backup story is the pg_dumpall of ghostfolio_db.
     "d /mnt/fast/ghostfolio 0755 root root -"
-    "d /mnt/fast/ghostfolio/pgdata 0755 root root -"
+    "d /mnt/fast/ghostfolio/pgdata 0700 70 70 -"
     # === immich (bind sources in its compose.yaml) ===
     # root:root everywhere on purpose: the immich images have no PUID/PGID and
     # run as root, the postgres image chowns pgdata itself, and
@@ -192,7 +191,7 @@
     "d /mnt/fast/immich 0755 root root -"
     "d /mnt/fast/immich/config 0755 root root -"
     "d /mnt/fast/immich/model-cache 0755 root root -"
-    "d /mnt/fast/immich/pgdata 0755 root root -"
+    "d /mnt/fast/immich/pgdata 0700 999 999 -"
     # The photo originals tree (UPLOAD_LOCATION). Slow tier: bulk, sequential.
     "d /mnt/slow/photos 0755 root root -"
     # === komodo (bind sources in its compose.yaml) ===
@@ -205,10 +204,8 @@
     # the envs on the host.
     "d /mnt/fast/komodo 0755 root root -"
     # The FerretDB backend — Komodo's entire state as JSONB, captured by the
-    # pg_dumpall loop rather than a mongodump path. root:root because the
-    # postgres image chowns its own datadir to uid 999 before initdb drops
-    # privileges.
-    "d /mnt/fast/komodo/pgdata 0755 root root -"
+    # pg_dumpall loop rather than a mongodump path.
+    "d /mnt/fast/komodo/pgdata 0700 999 999 -"
     # === logging (bind sources in its compose.yaml) ===
     # Three containers, three answers, each read out of the pinned image:
     #   victorialogs  ROOT — the image sets User "0", NOT the old loki's 10001.
@@ -325,7 +322,7 @@
     # for every attachment, so a root-owned copy is a wiki that works until the
     # first upload.
     "d /mnt/fast/outline/data 0755 1001 1001 -"
-    "d /mnt/fast/outline/pgdata 0755 root root -"
+    "d /mnt/fast/outline/pgdata 0700 70 70 -"
     # === paperless (bind sources in its compose.yaml) ===
     # root:root for all five: the entrypoint runs as root, maps its
     # `paperless` user onto USERMAP_UID/USERMAP_GID (1000 here) and chowns
@@ -336,7 +333,7 @@
     "d /mnt/fast/paperless/data 0755 root root -"
     "d /mnt/fast/paperless/export 0755 root root -"
     "d /mnt/fast/paperless/media 0755 root root -"
-    "d /mnt/fast/paperless/pgdata 0755 root root -"
+    "d /mnt/fast/paperless/pgdata 0700 70 70 -"
     # === proton (bind sources in its compose.yaml) ===
     # hydroxide runs as USER hydroxide (uid 1000) with no chown-on-start, so
     # its directory must be pre-owned or the one-time `auth` can never write
@@ -354,27 +351,6 @@
     # (mbsyncrc: Sync Pull + Expunge None). Slow tier, and unlike the log store
     # it IS backed up: slow-volume-selective names it.
     "d /mnt/slow/proton-mail-archive 0755 root root -"
-    # === samba (bind sources in its compose.yaml) ===
-    # smbd runs as ROOT and must — it setuids per connection — so /data is
-    # root-owned.
-    "d /mnt/fast/samba 0755 root root -"
-    "d /mnt/slow/samba 0755 root root -"
-    # Parent of the per-user private trees. Nobody writes here; o+x lets each
-    # SMB user traverse into their own 0700 subdir.
-    "d /mnt/slow/samba/personal 0755 root root -"
-    "d /mnt/slow/samba/personal/alondra 0700 1001 1000 -"
-    "d /mnt/slow/samba/personal/cale 0700 1002 1000 -"
-    "d /mnt/slow/samba/personal/cameron 0700 1005 1000 -"
-    "d /mnt/slow/samba/personal/idan 0700 1000 1000 -"
-    "d /mnt/slow/samba/personal/justin 0700 1006 1000 -"
-    "d /mnt/slow/samba/personal/rylan 0700 1004 1000 -"
-    "d /mnt/slow/samba/personal/zach 0700 1003 1000 -"
-    # 1000:1000 is a CONTRACT with stacks/samba/config.yml's `auth:` entry,
-    # which creates the SMB user with uid 1000 gid 1000 inside the container.
-    # Nothing connects the two but these two files agreeing; samba-init refuses
-    # to start on a mismatch. 0775 rather than 0755 so the other SMB users (all
-    # gid 1000) can share the tree.
-    "d /mnt/slow/samba/shared 0775 1000 1000 -"
     # === silverbullet (bind sources in its compose.yaml) ===
     # 1000:1000, and here the ownership DECIDES THE UID THE SERVER RUNS AS: the
     # entrypoint reads the owner of $SB_FOLDER and re-execs at that uid unless
@@ -393,7 +369,7 @@
     # boot.sh chmods the media root on every start.
     "d /mnt/fast/tandoor 0755 root root -"
     "d /mnt/fast/tandoor/mediafiles 0755 root root -"
-    "d /mnt/fast/tandoor/pgdata 0755 root root -"
+    "d /mnt/fast/tandoor/pgdata 0700 70 70 -"
     # === tracking (bind sources in its compose.yaml) ===
     # Three ownership conventions in one stack; normalising any breaks it:
     #   - bookstack is LSIO: it drops to PUID/PGID and runs
@@ -405,7 +381,7 @@
     #     host mount cannot fix it (upstream #1324, closed unfixed).
     "d /mnt/fast/bookstack 0755 root root -"
     "d /mnt/fast/bookstack/config 0755 1000 1000 -"
-    "d /mnt/fast/bookstack/db 0755 root root -"
+    "d /mnt/fast/bookstack/db 0700 999 999 -"
     "d /mnt/fast/homebox 0755 root root -"
     "d /mnt/fast/karakeep 0755 root root -"
     "d /mnt/fast/karakeep/data 0755 root root -"
@@ -430,7 +406,7 @@
     # bind source fails collectstatic on the very first boot (finding #14).
     "d /mnt/fast/wger 0755 root root -"
     "d /mnt/fast/wger/media 0755 1000 1000 -"
-    "d /mnt/fast/wger/pgdata 0755 root root -"
+    "d /mnt/fast/wger/pgdata 0700 70 70 -"
     # === windmill (bind sources in its compose.yaml) ===
     # Only the pgdata root. The dependency cache is deliberately a named docker
     # volume and must never get a rule here: the image bakes CPython 3.11 and
@@ -438,6 +414,6 @@
     # from the image and a bind mount is not, and
     # UV_PYTHON_PREFERENCE=only-managed forbids a system fallback.
     "d /mnt/fast/windmill 0755 root root -"
-    "d /mnt/fast/windmill/pgdata 0755 root root -"
+    "d /mnt/fast/windmill/pgdata 0700 70 70 -"
   ];
 }
