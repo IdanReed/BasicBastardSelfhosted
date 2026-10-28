@@ -59,6 +59,9 @@ files:
   # post-fork stacks (merged after sops-keygen branched): excalidraw + proton.
   - { path: stacks/excalidraw/secrets.sops.json, format: json, example: stacks/excalidraw/secrets.example.env }
   - { path: stacks/proton/secrets.sops.json, format: json, example: stacks/proton/secrets.example.env }
+  # evaluation stacks
+  - { path: stacks/grist/secrets.sops.json, format: json, example: stacks/grist/secrets.example.env }
+  - { path: stacks/penpot/secrets.sops.json, format: json, example: stacks/penpot/secrets.example.env }
 
 secrets:
   # --- nixos/secrets.sops.yaml (services VM, OS-level) ---------------------
@@ -955,3 +958,27 @@ secrets:
     class: pull
     note: "printed exactly once by `hydroxide auth`; not derivable"
     targets: [{ file: stacks/proton/secrets.sops.json, key: PROTON_BRIDGE_PASSWORD }]
+
+  # --- stacks/grist/secrets.sops.json (evaluation) -------------------------
+  - name: grist/GRIST_SESSION_SECRET
+    class: generate
+    recipe: hex:64
+    note: "signs session cookies; unset, Grist uses a public hard-coded default"
+    targets: [{ file: stacks/grist/secrets.sops.json, key: GRIST_SESSION_SECRET }]
+  - name: grist/GRIST_BOOT_KEY
+    class: generate
+    recipe: hex:64
+    note: "install-admin break-glass login at /boot; printed to the container log at every start"
+    targets: [{ file: stacks/grist/secrets.sops.json, key: GRIST_BOOT_KEY }]
+
+  # --- stacks/penpot/secrets.sops.json (evaluation) ------------------------
+  - name: penpot/pg
+    class: generate
+    recipe: hex:64
+    note: "postgres reads it at initdb; the backend's PENPOT_DATABASE_PASSWORD is built from it (env.nix)"
+    targets: [{ file: stacks/penpot/secrets.sops.json, key: POSTGRES_PASSWORD }]
+  - name: penpot/PENPOT_SECRET_KEY
+    class: generate
+    recipe: hex:128
+    note: "master key for sessions, invitations and the exporter; rotating logs everyone out"
+    targets: [{ file: stacks/penpot/secrets.sops.json, key: PENPOT_SECRET_KEY }]
