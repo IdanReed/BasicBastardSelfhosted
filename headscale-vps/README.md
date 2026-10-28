@@ -19,7 +19,7 @@ Hetzner VPS (headscale-vps)
 │   ├── headscale.idanreed.com → 127.0.0.1:8080
 │   └── auth.idanreed.com      → 127.0.0.1:9000
 ├── headscale.service   native systemd — tailnet coordination + embedded DERP, loopback
-├── authentik.service   systemd → docker compose — server, worker, PostgreSQL, Redis
+├── authentik.service   systemd → docker compose — server, worker, PostgreSQL
 ├── alloy.service       native systemd — ships the journal to the services VM
 ├── fail2ban            sshd and authentik jails
 └── tailscale           joins its own tailnet via --login-server
@@ -145,7 +145,8 @@ cannot move it — so delete it and register it again as `idan`:
 
 **Authentik failing** (`sudo systemctl status authentik`). The unit runs
 `docker compose up -d --wait`, so it stays `activating` until PostgreSQL and
-Redis pass their healthchecks, then goes `active (exited)`. A failure here is
-almost always a missing secret: verify `/run/secrets/rendered/authentik.env`
-exists and carries every key `modules/authentik.nix` declares. Then
+both Authentik processes pass their healthchecks, then goes `active (exited)`.
+A failure here is almost always a missing secret: verify
+`/run/secrets/rendered/authentik.env` exists and carries every key
+`modules/authentik.nix` declares. Then
 `docker logs authentik_server` / `docker logs authentik_db`.

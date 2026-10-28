@@ -272,7 +272,6 @@ in
     # on every activation, so root:root here re-owns live PGDATA out from
     # under postgres.
     "d /srv/authentik/pgdata 0700 70 70 -"
-    "d /srv/authentik/redis 0755 root root -"
     "d /srv/authentik/media 0755 root root -"
     "d /srv/authentik/certs 0755 root root -"
     "d /srv/authentik/templates 0755 root root -"
