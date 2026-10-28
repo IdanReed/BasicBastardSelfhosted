@@ -692,6 +692,27 @@ pkgs.testers.runNixOSTest {
             f"qbit login with a wrong password returned {code}, expected 401"
         )
 
+    with subtest("qbit listens on the forwarded port, UPnP and random port off"):
+        # The fixture carries FIREWALL_VPN_INPUT_PORTS=51413; media-init set
+        # qbit's listen port to it over the API (qBittorrent.conf is seed-once).
+        services_vm.succeed(
+            "curl -s -o /dev/null --max-time 10 -c /tmp/qbit.jar "
+            "-H 'Referer: http://127.0.0.1:10057' "
+            + f"--data-urlencode 'username={QBIT_USER}' "
+            f"--data-urlencode 'password={QBIT_PASS}' "
+            "http://127.0.0.1:10057/api/v2/auth/login"
+        )
+        prefs = json.loads(services_vm.succeed(
+            "curl -sf --max-time 10 -b /tmp/qbit.jar "
+            "http://127.0.0.1:10057/api/v2/app/preferences"
+        ))
+        assert prefs.get("listen_port") == 51413, (
+            f"qbit listens on {prefs.get('listen_port')}, expected the forwarded 51413")
+        assert prefs.get("upnp") is False and prefs.get("random_port") is False, (
+            f"qbit upnp={prefs.get('upnp')} random_port={prefs.get('random_port')}")
+        init_log = services_vm.succeed("docker logs media_init 2>&1")
+        assert "forwarded port" in init_log, init_log[-2000:]
+
     # -----------------------------------------------------------------------
     # (c) arr wiring
     # -----------------------------------------------------------------------

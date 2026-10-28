@@ -241,7 +241,7 @@ def qbit(sid, path, form=None):
         return resp.status, resp.headers, resp.read().decode(errors="replace")
 
 
-try:
+def qbit_login():
     status, hdrs, body = qbit(None, "/api/v2/auth/login",
                               {"username": QBIT_USER, "password": QBIT_PASS})
     # Success is not one shape: 5.2.3 answers 204 with an EMPTY body, older
@@ -251,11 +251,13 @@ try:
     # The cookie is NOT called "SID" — 5.2.3 names it QBT_SID_<port>. Take
     # whatever name=value the server issued rather than looking for a name.
     sid = (hdrs.get("Set-Cookie") or "").split(";")[0].strip()
-    if "=" not in sid:
-        # No cookie: qbit skips the session under LocalHostAuth=false. The
-        # next call 403s loudly if one was needed after all.
-        sid = ""
+    # No cookie: qbit skips the session under LocalHostAuth=false. The next
+    # call 403s loudly if one was needed after all.
+    return sid if "=" in sid else ""
 
+
+try:
+    sid = qbit_login()
     _, _, raw = qbit(sid, "/api/v2/torrents/categories")
     cats = json.loads(raw or "{}")
     cur = cats.get(AUDIOBOOK_CATEGORY)
@@ -278,6 +280,37 @@ except Exception as e:  # noqa: BLE001
     log("WARN", f"qbittorrent: could not reconcile the {AUDIOBOOK_CATEGORY!r} "
                 f"category ({e}) — audiobook downloads must be assigned it by "
                 f"hand until the next media-init run succeeds")
+
+# ---------------------------------------------------------------------------
+# qBittorrent: listen on the port forwarded at the provider
+# ---------------------------------------------------------------------------
+# AirVPN-style forwarding is a port reserved by hand at the provider:
+# FIREWALL_VPN_INPUT_PORTS opens it in gluetun's tunnel firewall, and qbit must
+# listen on that same port or every inbound peer meets a closed one. Over the
+# API, because qbit-init writes qBittorrent.conf only when absent. UPnP and the
+# random port stay off — either would move the port off the forwarded one.
+fwd = (env.get("FIREWALL_VPN_INPUT_PORTS") or "").split(",")[0].strip()
+if not fwd:
+    log("OK", "qbittorrent: no forwarded port (FIREWALL_VPN_INPUT_PORTS empty) "
+              "- listen port left as is")
+elif not fwd.isdigit() or not 1 <= int(fwd) <= 65535:
+    log("WARN", f"qbittorrent: FIREWALL_VPN_INPUT_PORTS {fwd!r} is not a port "
+                f"- listen port left as is")
+else:
+    try:
+        sid = qbit_login()
+        _, _, raw = qbit(sid, "/api/v2/app/preferences")
+        prefs = json.loads(raw or "{}")
+        want = {"listen_port": int(fwd), "upnp": False, "random_port": False}
+        if all(prefs.get(k) == v for k, v in want.items()):
+            log("OK", f"qbittorrent: already listening on forwarded port {fwd}")
+        else:
+            qbit(sid, "/api/v2/app/setPreferences", {"json": json.dumps(want)})
+            change(f"qbittorrent: listen port {prefs.get('listen_port')} -> {fwd} "
+                   f"(the forwarded port; UPnP and random port off)")
+    except Exception as e:  # noqa: BLE001
+        log("WARN", f"qbittorrent: could not set the listen port to {fwd} ({e}) "
+                    f"- the next media-init run retries")
 
 # ---------------------------------------------------------------------------
 # x265 scoring guard, both-sided (see header contract)

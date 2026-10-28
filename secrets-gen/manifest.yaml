@@ -726,6 +726,8 @@ secrets:
       - { file: stacks/media/secrets.sops.json, key: VPN_ENDPOINT_PORT }
       - { file: stacks/media/secrets.sops.json, key: OPENVPN_USER }
       - { file: stacks/media/secrets.sops.json, key: OPENVPN_PASSWORD }
+      # The port reserved at the provider (AirVPN's client area); empty = none.
+      - { file: stacks/media/secrets.sops.json, key: FIREWALL_VPN_INPUT_PORTS }
   - name: media/config
     class: config
     targets:
