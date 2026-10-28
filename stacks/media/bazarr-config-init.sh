@@ -3,7 +3,7 @@
 # Radarr/Sonarr connections exist without a first-login UI pass. Runs in
 # python:3.13-alpine as a oneshot.
 #
-# WHICH FILE (this settles the annex §6 open question): bazarr/app/config.py
+# WHICH FILE: bazarr/app/config.py
 # builds Dynaconf over <config_dir>/config/config.yaml — note the DOUBLED
 # `config` — with config.ini treated as legacy and migrated once. Dynaconf +
 # a full validator list means a PARTIAL file is correct: every absent key is

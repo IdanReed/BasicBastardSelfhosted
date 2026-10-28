@@ -1987,9 +1987,10 @@ in
       # for that marker and lists them for the operator.
       UNAUTHENTICATED_OK = {
           "jellyfin.svc.idanreed.com":
-              "real accounts of its own (no OIDC on purpose: TV and mobile "
-              "clients cannot follow an OIDC redirect), and every native "
-              "client app would break on a forward-auth 302.",
+              "Authentik accounts over LDAP, checked server-side by its "
+              "plugin, plus the local admin (no OIDC on purpose: TV and "
+              "mobile clients cannot follow an OIDC redirect), and every "
+              "native client app would break on a forward-auth 302.",
           "seerr.svc.idanreed.com":
               "session auth against Jellyfin accounts; its mobile and API "
               "clients authenticate themselves.",

@@ -201,9 +201,10 @@
 
 	@jellyfin host jellyfin.svc.idanreed.com
 	handle @jellyfin {
-		# Jellyfin's own logins, no OIDC: TV and mobile clients cannot follow
-		# an OIDC redirect. NO forward auth: it would break every native
-		# client app.
+		# Authentik accounts over LDAP, checked server-side by Jellyfin's
+		# plugin, plus the local idan admin — no OIDC: TV and mobile clients
+		# cannot follow an OIDC redirect. NO forward auth: it would break
+		# every native client app.
 		reverse_proxy localhost:10050
 	}
 

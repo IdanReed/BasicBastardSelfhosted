@@ -1,7 +1,6 @@
 # Media suite (heavy): the full media stack on the services VM — Jellyfin,
 # the arrs, Seerr, Bazarr, Profilarr, Cleanuparr, ClamAV, and qBittorrent in
-# gluetun's netns. ~14 containers; annex §8 of
-# ServerNotes/designs/service-media-stack-research.md is the assertion spec.
+# gluetun's netns. ~14 containers.
 #
 # Genuinely under test:
 #   - the sops-nix render of the stack env (root-only, 0400), and env threading
@@ -48,6 +47,16 @@
 #     intact, an entry containing EICAR reaches the drop dir in no form (not
 #     even its clean sibling track), and media-init has declared the category
 #     in qBittorrent with the save path the promotion reads
+#   - Jellyfin over LDAP: the pinned plugin installed from its verified zip
+#     (a fixed-output fetch stands in for the download) and configured from
+#     jellyfin-ldap.json; against a stand-in directory shaped like Authentik's
+#     outpost (the outsider's slapd, reached as authentik-ldap on `homelab`),
+#     a member's first login creates their Jellyfin account, an Admin member
+#     becomes a Jellyfin admin, a non-member and a wrong password are refused,
+#     the local idan stays local (an LDAP idan with another password cannot
+#     log in as him, and no second idan appears), and an LDAP user signs in
+#     to Seerr. The outpost itself is the authentik suite's: it runs the real
+#     stacks/ldap against a real Authentik with the same filters
 #   - loopback-only publishing for every port 10050-10058, from another host
 #
 # Documented gaps (do not read a green run as covering these):
@@ -58,34 +67,27 @@
 #     Dictionarry profile CONTENT; that runs on the real host at first link.
 #     Same reason Profilarr's /api/v1/arr is asserted to answer with the
 #     fixture key but not to list linked arrs: linking them is the one
-#     documented UI/backup-restore step (annex §6).
+#     documented UI/backup-restore step.
 #   - gluetun can never turn HEALTHY offline (its healthcheck dials through
 #     the tunnel), so `up --wait` cannot include it: it is started detached
 #     and qbittorrent with --no-deps, and the netns behaviour is asserted
 #     instead. The depends_on service_healthy + restart:true contract is
 #     exercised only on the real host.
 #   - actual HW transcode (Arc A380): no GPU in the VM. The compose's guarded
-#     /dev/dri stanza is asserted to EXIST (drift guard, annex §8.18) and
-#     jellyfin to run without the device — software-transcode degradation.
-#   - annex §8.2 (indexer push): NOT exercised. No test indexer is added in
-#     Prowlarr and nothing asserts one arrives in Radarr/Sonarr — only the
-#     applications (fullSync) CONFIG is asserted, not a push. Needs a fake
-#     indexer definition to be non-vacuous offline.
-#   - annex §8.4 (bazarr/seerr wiring): NOT asserted — and the STACK does
-#     not wire them yet either. media-init configures neither; bazarr's arr
-#     connections and seerr's Jellyfin + arr connections are first-login UI
-#     steps (annex §6 open question). Both get healthchecks only here.
-#   - annex §8.12 (ntfy): the scanner's quarantine notification is never
-#     asserted — ntfy is not deployed in this suite, and scan-downloads.sh's
-#     notify-failure WARN line is not even grepped for.
-#   - annex §8.14 (cleanuparr): healthchecked, and cleanuparr-init's
-#     account claim + OIDC settings asserted — but no strike exercise (needs
-#     a live queue), and the LOCAL malware-blocklist file the compose comment
-#     points at is shipped by NOTHING in the stack: its arr connections and
-#     strike rules stay a one-time UI setup (v2 is UI/SQLite-configured,
-#     annex §0.2). The OIDC sign-in itself needs a live Authentik. Read no
-#     strike coverage into a green run here; freshclam updates and the
-#     arr-import -> strike fallout additionally need egress / a live indexer.
+#     /dev/dri stanza is asserted to EXIST (drift guard) and jellyfin to run
+#     without the device — software-transcode degradation.
+#   - indexer push: NOT exercised. No test indexer is added in Prowlarr and
+#     nothing asserts one arrives in Radarr/Sonarr — only the applications
+#     (fullSync) CONFIG is asserted, not a push.
+#   - ntfy: the scanner's quarantine notification is never asserted — ntfy is
+#     not deployed in this suite.
+#   - cleanuparr: healthchecked, and cleanuparr-init's account claim + OIDC
+#     settings asserted — but no strike exercise (needs a live queue), and its
+#     arr connections and strike rules stay a one-time UI setup (v2 is
+#     UI/SQLite-configured). The OIDC sign-in itself needs a live Authentik.
+#   - Jellyfin's plugin is never pointed at the real outpost here (no
+#     Authentik in this suite); the stand-in serves the entry shapes the
+#     authentik suite reads back from the real one.
 #   - the clamav DB volume is seeded from the image before first start: the
 #     bind mount shadows the image's baked database, and freshclam (which
 #     populates it on the real host, where egress exists) cannot run offline.
@@ -134,6 +136,120 @@ let
       url = "https://github.com/9p4/jellyfin-plugin-sso/releases/download/v4.0.0.4/sso-authentication_4.0.0.4.zip";
       sha256 = "c09f16ba31059a434ddd7f811e4f9608d4b4c4514cc80a5bf1ca33bee61e1107";
     }} -d $out
+  '';
+
+  # The LDAP plugin's pin. The suite is offline, so the zip jellyfin-config-init
+  # would download is fetched here, by the SAME url and sha256, and placed in
+  # its cache: the init still verifies and unpacks it.
+  jellyfinLdap = builtins.fromJSON (builtins.readFile ../../stacks/media/jellyfin-ldap.json);
+  ldapPluginZip = pkgs.fetchurl {
+    inherit (jellyfinLdap.plugin) url sha256;
+  };
+
+  # A stand-in for Authentik's LDAP outpost: entries shaped the way the real
+  # one serves them (cn=<username>,ou=users,<base>; a 64-hex uid; memberOf
+  # cn=<group>,ou=groups,<base>) — the authentik suite reads those shapes back
+  # from the real outpost with the same filters. idan exists here with a
+  # password that is NOT his local one, to prove the local account wins.
+  ldapBase = "dc=ldap,dc=idanreed,dc=com";
+  ldapUsers = "ou=users,${ldapBase}";
+  groupDn = g: "cn=${g},ou=groups,${ldapBase}";
+  ldapPerson =
+    {
+      name,
+      pw,
+      uid,
+      groups,
+    }:
+    lib.concatStringsSep "\n" (
+      [
+        "dn: cn=${name},${ldapUsers}"
+        "objectClass: inetOrgPerson"
+        "cn: ${name}"
+        "sn: ${name}"
+        "uid: ${uid}"
+        "userPassword: ${pw}"
+      ]
+      ++ map (g: "memberOf: ${groupDn g}") groups
+    )
+    + "\n";
+  ldapContents = lib.concatStringsSep "\n" (
+    [
+      ''
+        dn: ${ldapBase}
+        objectClass: dcObject
+        objectClass: organization
+        dc: ldap
+        o: stand-in
+
+        dn: ${ldapUsers}
+        objectClass: organizationalUnit
+        ou: users
+      ''
+    ]
+    ++ map ldapPerson [
+      {
+        name = "jellyfin-ldap-bind";
+        pw = "test_jellyfin_ldap_bind_not_secret";
+        uid = lib.fixedWidthString 64 "0" "";
+        groups = [ ];
+      }
+      {
+        name = "ldapfriend";
+        pw = "ldapfriend-pw";
+        uid = lib.fixedWidthString 64 "1" "";
+        groups = [ "headscale-users" ];
+      }
+      {
+        name = "ldapadmin";
+        pw = "ldapadmin-pw";
+        uid = lib.fixedWidthString 64 "2" "";
+        groups = [
+          "headscale-users"
+          "Admin"
+        ];
+      }
+      {
+        name = "ldapstranger";
+        pw = "ldapstranger-pw";
+        uid = lib.fixedWidthString 64 "3" "";
+        groups = [ ];
+      }
+      {
+        name = "idan";
+        pw = "idan-ldap-only-pw";
+        uid = lib.fixedWidthString 64 "4" "";
+        groups = [
+          "headscale-users"
+          "Admin"
+        ];
+      }
+    ]
+  );
+
+  # Gives the stand-in the outpost's name on `homelab`: a TCP relay
+  # container called authentik-ldap, forwarding to the outsider's slapd.
+  ldapRelay = pkgs.writeText "ldap-relay.py" ''
+    import asyncio, sys
+
+    async def pipe(r, w):
+        try:
+            while data := await r.read(65536):
+                w.write(data)
+                await w.drain()
+        finally:
+            w.close()
+
+    async def handle(cr, cw):
+        ur, uw = await asyncio.open_connection(sys.argv[1], 389)
+        await asyncio.gather(pipe(cr, uw), pipe(ur, cw), return_exceptions=True)
+
+    async def main():
+        server = await asyncio.start_server(handle, "0.0.0.0", 3389)
+        async with server:
+            await server.serve_forever()
+
+    asyncio.run(main())
   '';
 
   # Seeds /srv the way the real host gets it: Komodo's clone on the live
@@ -250,6 +366,10 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/jellyfin/config/plugins 0755 root root -"
           "C /mnt/fast/jellyfin/config/plugins/SSO-Auth_4.0.0.4 - - - - ${ssoPlugin}"
           "d /mnt/fast/jellyfin/config/plugins/configurations 0755 root root -"
+          # The LDAP plugin zip, where jellyfin-config-init looks before it
+          # downloads (it verifies the sha256 either way).
+          "d /mnt/fast/jellyfin/config/plugin-cache 0755 root root -"
+          "C /mnt/fast/jellyfin/config/plugin-cache/${baseNameOf jellyfinLdap.plugin.url} - - - - ${ldapPluginZip}"
           "f /mnt/fast/jellyfin/config/plugins/configurations/SSO-Auth.xml 0600 root root - <PluginConfiguration/>"
           "d /mnt/fast/radarr 0755 root root -"
           "d /mnt/fast/radarr/config 0755 root root -"
@@ -310,8 +430,10 @@ pkgs.testers.runNixOSTest {
     # whole VLAN), and the kill-switch egress target — it serves a trivial
     # HTTP 200 that containers WITH egress reach through the host's NAT and
     # qbittorrent must not.
+    #
+    # A third role: the stand-in LDAP directory (see ldapContents).
     outsider =
-      _:
+      { pkgs, ... }:
       {
         services.nginx = {
           enable = true;
@@ -320,7 +442,33 @@ pkgs.testers.runNixOSTest {
             locations."/".return = "200 'outsider-ok'";
           };
         };
-        networking.firewall.allowedTCPPorts = [ 80 ];
+        services.openldap = {
+          enable = true;
+          urlList = [ "ldap:///" ];
+          settings.children = {
+            # memberOf itself comes with slapd's built-in memberof overlay.
+            "cn=schema".includes = [
+              "${pkgs.openldap}/etc/schema/core.ldif"
+              "${pkgs.openldap}/etc/schema/cosine.ldif"
+              "${pkgs.openldap}/etc/schema/inetorgperson.ldif"
+            ];
+            "olcDatabase={1}mdb".attrs = {
+              objectClass = [
+                "olcDatabaseConfig"
+                "olcMdbConfig"
+              ];
+              olcDatabase = "{1}mdb";
+              olcDbDirectory = "/var/lib/openldap/data";
+              olcSuffix = ldapBase;
+              olcAccess = [ "{0}to * by * read" ];
+            };
+          };
+          declarativeContents.${ldapBase} = ldapContents;
+        };
+        networking.firewall.allowedTCPPorts = [
+          80
+          389
+        ];
       };
   };
 
@@ -351,9 +499,33 @@ pkgs.testers.runNixOSTest {
     # token is appended once there is one.
     JF_AUTH = ('MediaBrowser Client="suite", Device="suite", '
                'DeviceId="media-suite", Version="1.0.0"')
-    # The seeded users and the shared fixture's password for each.
-    ROSTER = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
-    ROSTER_PW = {n: "test_" + n.upper() + "_initial_pw_not_secret" for n in ROSTER}
+    # The LDAP plugin's pin and configuration (stacks/media/jellyfin-ldap.json),
+    # and the shared fixture's bind password jellyfin-init writes into it.
+    JL = json.loads('${builtins.toJSON jellyfinLdap}')
+    LDAP_BIND_PW = "test_jellyfin_ldap_bind_not_secret"
+    LDAP_PROVIDER = "Jellyfin.Plugin.LDAP_Auth.LdapAuthenticationProviderPlugin"
+
+    def jf_auth(user, pw, device):
+        # (HTTP status, body) of a Jellyfin password login. Each probe gets its
+        # own DeviceId: a login replaces any session of the same user+device.
+        hdr = JF_AUTH.replace('DeviceId="media-suite"', f'DeviceId="{device}"')
+        out = services_vm.succeed(
+            "curl -s -w '\\n%{http_code}' --max-time 90 -X POST "
+            "-H 'Content-Type: application/json' "
+            + "-H " + shlex.quote("Authorization: " + hdr) + " "
+            + "-d " + shlex.quote(json.dumps({"Username": user, "Pw": pw})) + " "
+            "http://127.0.0.1:10050/Users/AuthenticateByName"
+        )
+        body, _, code = out.rpartition("\n")
+        return code.strip(), (json.loads(body) if code.strip() == "200" else body)
+
+    def jf_get(path, token):
+        return json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote(
+                'Authorization: ' + JF_AUTH + ', Token="' + token + '"') + " "
+            + f"http://127.0.0.1:10050{path}"
+        ))
 
     ARRS = {
         "radarr": (10051, "v3", RKEY),
@@ -895,7 +1067,7 @@ pkgs.testers.runNixOSTest {
             raise
 
     with subtest("x265 outranks x264 in every profile (both-sided sweep)"):
-        # The sweep from annex §8.6/§8.7, over BOTH arrs and every profile,
+        # The sweep, over BOTH arrs and every profile,
         # both-sided: negative x265 AND positive x264 each defeat the policy,
         # and a profile carrying both kinds must rank x265 STRICTLY higher —
         # pure formatItems arithmetic, no egress needed.
@@ -999,8 +1171,7 @@ pkgs.testers.runNixOSTest {
         )
 
     with subtest("quarantine follows the INODE: a pre-scan hardlink dies too"):
-        # 🚨 THE regression test for the ClamAV-quarantine/import race
-        # (ServerNotes/designs/audiobook-acquisition.md, finding 4).
+        # 🚨 THE regression test for the ClamAV-quarantine/import race.
         #
         # *arr imports are HARDLINKS by design — /mnt/slow is one filesystem
         # precisely so they are (compose.yaml's layout header) — and they
@@ -1124,8 +1295,7 @@ pkgs.testers.runNixOSTest {
     # (e2) the audiobook hand-off: downloads/audiobooks -> the books drop dir
     # -----------------------------------------------------------------------
     with subtest("audiobooks: a clean entry is promoted, an infected one never is"):
-        # Option C (ServerNotes/designs/audiobook-acquisition.md): the media
-        # stack acquires audiobooks and MOVES a completed entry into the
+        # The media stack acquires audiobooks and MOVES a completed entry into the
         # books stack's drop directory — but only on a clean verdict, and
         # per ENTRY, because an audiobook is a folder of tracks with one
         # verdict. The two directions are asserted together so they share the
@@ -1257,7 +1427,7 @@ pkgs.testers.runNixOSTest {
         )
 
     with subtest("the guarded GPU stanza exists and degrades in a VM"):
-        # Drift guard for annex §8.18: HW transcode is untestable here, but
+        # Drift guard: HW transcode is untestable here, but
         # losing the stanza silently would cost the Arc A380 on the real host.
         services_vm.succeed(
             "grep -qF -- '- /dev/dri:/dev/dri' /srv/stacks/media/compose.yaml"
@@ -1358,32 +1528,104 @@ pkgs.testers.runNixOSTest {
             "curl -sf --max-time 30 http://127.0.0.1:10050/Branding/Configuration"))
         assert "/sso/OID/" not in (branding.get("LoginDisclaimer") or ""), branding
 
-    with subtest("the other users have Jellyfin accounts with their Authentik passwords"):
-        # jellyfin-init seeded each from media.jellyfin-users.env — the
-        # shared fixture's per-user password, the same value Authentik sets.
-        for name in ROSTER:
-            dev = JF_AUTH.replace('DeviceId="media-suite"',
-                                  'DeviceId="media-suite-' + name + '"')
-            got = json.loads(services_vm.succeed(
-                "curl -sf --max-time 30 -X POST "
-                "-H 'Content-Type: application/json' "
-                + "-H " + shlex.quote("Authorization: " + dev) + " "
-                + "-d " + shlex.quote(json.dumps(
-                    {"Username": name, "Pw": ROSTER_PW[name]})) + " "
-                "http://127.0.0.1:10050/Users/AuthenticateByName"
-            ))
-            pol = (got.get("User") or {}).get("Policy") or {}
-            assert not pol.get("IsAdministrator"), f"{name} is an admin: {pol!r}"
-            assert pol.get("EnableAllFolders"), f"{name} sees no libraries: {pol!r}"
-        # Only jellyfin-init reads the users' passwords: no other media
-        # container's environment carries one.
-        for c in ["gluetun", "radarr", "sonarr", "prowlarr", "profilarr"]:
+    # -----------------------------------------------------------------------
+    # (f2) Jellyfin over LDAP
+    # -----------------------------------------------------------------------
+    with subtest("the LDAP plugin is installed from its verified zip, pinned, and configured"):
+        ver = JL["plugin"]["version"]
+        init_out = services_vm.succeed("docker logs media_jellyfin_config_init 2>&1")
+        assert f"CHANGE: installed the LDAP plugin {ver}" in init_out, init_out
+        # The suite's copy satisfied the cache, so nothing was downloaded —
+        # and the init still checked its sha256 before unpacking it.
+        assert "downloaded" not in init_out and "WARN" not in init_out, init_out
+        meta = json.loads(services_vm.succeed(
+            f"cat /mnt/fast/jellyfin/config/plugins/LDAP-Auth_{ver}/meta.json"))
+        assert meta.get("autoUpdate") is False, (
+            f"the pinned plugin would be auto-updated by jellyfin: {meta!r}")
+        token = jf_auth(JELLYFIN_USER, JELLYFIN_PASS, "suite-ldap-cfg")[1]["AccessToken"]
+        guid = JL["plugin"]["guid"].replace("-", "").lower()
+        loaded = [p for p in jf_get("/Plugins", token)
+                  if str(p.get("Id", "")).replace("-", "").lower() == guid]
+        assert loaded and loaded[0].get("Status") == "Active", loaded
+        assert loaded[0].get("Version") == ver, loaded
+        cfg = jf_get(f"/Plugins/{loaded[0]['Id']}/Configuration", token)
+        for k, v in JL["configuration"].items():
+            assert cfg.get(k) == v, f"plugin {k} is {cfg.get(k)!r}, expected {v!r}"
+        assert cfg.get("LdapBindPassword") == LDAP_BIND_PW, "bind password not configured"
+        out = services_vm.succeed(MEDIA + " run --rm --no-deps jellyfin-config-init 2>&1")
+        assert "CHANGE:" not in out, f"a jellyfin-config-init re-run changed something:\n{out}"
+
+    with subtest("a stand-in directory answers as authentik-ldap on homelab"):
+        outsider_ip = outsider.succeed(
+            "ip -4 -o addr show eth1 | awk '{print $4}' | cut -d/ -f1"
+        ).strip()
+        outsider.wait_for_unit("openldap.service")
+        services_vm.succeed(
+            "docker run -d --name authentik-ldap --network homelab "
+            "-v ${ldapRelay}:/relay.py:ro python:3.13-alpine "
+            f"python /relay.py {outsider_ip}"
+        )
+        # From jellyfin's own netns: the name resolves on homelab and the
+        # directory answers through the relay.
+        services_vm.wait_until_succeeds(
+            "docker exec jellyfin bash -c ': </dev/tcp/authentik-ldap/3389'",
+            timeout=60,
+        )
+
+    with subtest("an LDAP member's first login creates the account; Admin members are admins"):
+        try:
+            code, body = jf_auth("ldapfriend", "ldapfriend-pw", "suite-ldapfriend")
+            assert code == "200", f"ldapfriend: HTTP {code} {body!r}"
+            pol = body["User"]["Policy"]
+            assert pol.get("AuthenticationProviderId") == LDAP_PROVIDER, pol
+            assert not pol.get("IsAdministrator") and pol.get("EnableAllFolders"), pol
+            code, body = jf_auth("ldapadmin", "ldapadmin-pw", "suite-ldapadmin")
+            assert code == "200", f"ldapadmin: HTTP {code} {body!r}"
+            assert body["User"]["Policy"].get("IsAdministrator") is True, (
+                "a member of Admin did not become a Jellyfin admin")
+            code, _ = jf_auth("ldapstranger", "ldapstranger-pw", "suite-stranger")
+            assert code == "401", f"a non-member of headscale-users got HTTP {code}"
+            code, _ = jf_auth("ldapfriend", "not-the-password", "suite-ldapfriend-bad")
+            assert code == "401", f"a wrong LDAP password got HTTP {code}"
+        except Exception:
+            print(services_vm.execute("docker logs jellyfin 2>&1 | grep -i ldap | tail -30")[1])
+            print(outsider.execute("journalctl -u openldap --no-pager | tail -30")[1])
+            raise
+
+    with subtest("idan stays the local admin: no LDAP idan, no second account"):
+        code, body = jf_auth(JELLYFIN_USER, JELLYFIN_PASS, "suite-idan-local")
+        assert code == "200" and body["User"]["Policy"].get("IsAdministrator"), body
+        assert body["User"]["Policy"].get("AuthenticationProviderId", "").endswith(
+            "DefaultAuthenticationProvider"), body["User"]["Policy"]
+        # The stand-in's idan has another password: an existing account is
+        # authenticated by its own provider only, so it is refused.
+        code, _ = jf_auth(JELLYFIN_USER, "idan-ldap-only-pw", "suite-idan-ldap")
+        assert code == "401", f"idan logged in with the directory's password (HTTP {code})"
+        token = jf_auth(JELLYFIN_USER, JELLYFIN_PASS, "suite-idan-local")[1]["AccessToken"]
+        names = sorted(str(u.get("Name", "")).lower() for u in jf_get("/Users", token))
+        assert names == ["idan", "ldapadmin", "ldapfriend"], names
+
+    with subtest("jellyfin-init stays a no-op, and keeps the plugin's user links"):
+        out = services_vm.succeed(MEDIA + " run --rm --no-deps jellyfin-init 2>&1")
+        assert "CHANGE:" not in out, f"jellyfin-init changed something:\n{out}"
+        xml = services_vm.succeed(
+            "cat /mnt/fast/jellyfin/config/plugins/configurations/LDAP-Auth.xml")
+        assert xml.count("<LinkedJellyfinUserId>") == 2, xml[-1500:]
+
+    with subtest("only jellyfin-init carries the bind password; the outpost's env renders"):
+        for c in ["gluetun", "radarr", "sonarr", "prowlarr", "profilarr", "jellyfin"]:
             env = services_vm.succeed(
                 f"docker inspect -f '{{{{range .Config.Env}}}}{{{{println .}}}}{{{{end}}}}' {c}")
-            assert "_INITIAL_PASSWORD=" not in env, f"{c} carries a user password"
-        assert "ALONDRA_INITIAL_PASSWORD=" in services_vm.succeed(
+            assert "JELLYFIN_LDAP_BIND_PASSWORD=" not in env, f"{c} carries it"
+        assert "JELLYFIN_LDAP_BIND_PASSWORD=" in services_vm.succeed(
             "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "
             "media_jellyfin_init")
+        # stacks/ldap's env: the outpost token, from the shared fixture.
+        st = services_vm.succeed("stat -c '%a %u:%g' /run/stack-env/ldap.env").strip()
+        assert st == "400 0:0", st
+        services_vm.succeed(
+            "grep -qx \"AUTHENTIK_TOKEN='test_ldap_outpost_token_not_secret'\" "
+            "/run/stack-env/ldap.env")
 
     with subtest("seerr is initialised, with the arrs and jellyfin linked"):
         # public.initialized is the first-run flag; /setup is the browser step
@@ -1422,20 +1664,34 @@ pkgs.testers.runNixOSTest {
             f"something:\n{out}"
         )
 
-    with subtest("a seeded user signs in to Seerr with their Jellyfin account"):
-        # Seerr's stable tag signs in with Jellyfin accounts; its defaults let
-        # a Jellyfin user it has not seen before in and create their account.
+    with subtest("an LDAP user signs in to Seerr, which creates their account"):
+        # Seerr signs in against Jellyfin, so this is the plugin's login again;
+        # seerr-bootstrap keeps Jellyfin sign-in and new-user sign-in on.
+        main = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
+            "http://127.0.0.1:10054/api/v1/settings/main"
+        ))
+        assert main.get("mediaServerLogin") is True and main.get("newPlexLogin") is True, main
         status = services_vm.succeed(
-            "curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST "
+            "curl -s -o /dev/null -w '%{http_code}' --max-time 90 -X POST "
             "-H 'Content-Type: application/json' "
             + "-d " + shlex.quote(json.dumps(
-                {"username": "alondra", "password": ROSTER_PW["alondra"]})) + " "
+                {"username": "ldapfriend", "password": "ldapfriend-pw"})) + " "
             "http://127.0.0.1:10054/api/v1/auth/jellyfin"
         ).strip()
-        assert status == "200", f"seerr sign-in for alondra: HTTP {status}"
+        assert status == "200", f"seerr sign-in for ldapfriend: HTTP {status}"
+        users = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
+            "'http://127.0.0.1:10054/api/v1/user?take=50'"
+        ))
+        names = sorted(str(u.get("jellyfinUsername") or u.get("displayName") or "")
+                       for u in users.get("results", []))
+        assert "ldapfriend" in names, names
 
     with subtest("bazarr loaded its seeded arr connections"):
-        # Settles the annex §6 question: <config_dir>/config/config.yaml, with
+        # The file bazarr reads is <config_dir>/config/config.yaml, with
         # the doubled `config`. Asserted through the API, so this proves
         # bazarr LOADED the file rather than that the file exists — and the
         # pinned auth.apikey working is the other half (the default is a

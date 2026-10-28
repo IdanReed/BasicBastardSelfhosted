@@ -5,7 +5,9 @@
     "mediaServerType": 4,
     "discoverRegion": "",
     "streamingRegion": "US",
-    "locale": "en"
+    "locale": "en",
+    "mediaServerLogin": true,
+    "newPlexLogin": true
   },
   "jellyfin": {
     "ip": "",
