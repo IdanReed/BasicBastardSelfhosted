@@ -1,0 +1,118 @@
+# SAML provider + application for OnlyOffice DocSpace (slug "docspace") — the
+# fleet's only SAML provider. DocSpace has no OIDC client of any kind; its SSO
+# is SAML 2.0 alone, served by ASC.SsoAuth inside the portal container. The
+# shared blueprint conventions are documented in headscale-oidc.yaml.
+#
+# The consumer is stacks/docspace/docspace-init.sh, which reads this
+# provider's metadata on every deploy and copies the entity id, SSO endpoint
+# and signing certificate into DocSpace. There is no shared secret and no
+# !Env: the trust anchor is the signing certificate, published in the
+# metadata, so a re-keyed Authentik reaches DocSpace on its next redeploy.
+#
+# The SP side is fixed by ASC.SsoAuth, which builds every URL from the
+# X-Forwarded-Proto/-Host it is reached through:
+#   entity id  https://docspace.svc.idanreed.com/sso/metadata
+#   ACS        https://docspace.svc.idanreed.com/sso/acs
+# Authentik refuses an AuthnRequest whose AssertionConsumerServiceURL differs
+# from acs_url, so a renamed vhost fails at login, not at deploy.
+#
+# DocSpace looks a SAML user up by NameID, then by email, and creates them on
+# first login. The NameID is the email, so the init-seeded owner
+# (idan@idanreed.com) is LINKED to idan's Authentik account, not duplicated —
+# and keeps its local password as break-glass.
+version: 1
+metadata:
+  name: docspace-saml
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # Property mappings
+  # Attribute names are DocSpace's own defaults (SsoSettingsV2.GetDefault's
+  # FieldMapping), matched against each <Attribute Name=...>; the init pins
+  # the same three. DocSpace refuses an SSO login whose email, first name or
+  # last name is empty, and its name rule is ^[\p{L}\p{M}' \-]+$ (no digits),
+  # so both name parts are reduced to letters, space, apostrophe and hyphen.
+  - model: authentik_providers_saml.samlpropertymapping
+    id: docspace-saml-mail
+    state: present
+    identifiers:
+      name: "DocSpace SAML: mail"
+    attrs:
+      saml_name: mail
+      expression: |
+        return request.user.email
+
+  - model: authentik_providers_saml.samlpropertymapping
+    id: docspace-saml-givenname
+    state: present
+    identifiers:
+      name: "DocSpace SAML: givenName"
+    attrs:
+      saml_name: givenName
+      expression: |
+        clean = lambda s: "".join(c for c in (s or "") if c.isalpha() or c in " '-")
+        parts = clean(request.user.name).split() or clean(request.user.username).split()
+        return parts[0] if parts else None
+
+  # A one-word name ("Cale") has no surname to give, and an empty one fails
+  # the login outright, so it becomes "-" — the shortest value DocSpace's
+  # name rule accepts. A full name in headscale-oidc.yaml replaces it on that
+  # user's next login.
+  - model: authentik_providers_saml.samlpropertymapping
+    id: docspace-saml-sn
+    state: present
+    identifiers:
+      name: "DocSpace SAML: sn"
+    attrs:
+      saml_name: sn
+      expression: |
+        clean = lambda s: "".join(c for c in (s or "") if c.isalpha() or c in " '-")
+        return " ".join(clean(request.user.name).split()[1:]) or "-"
+
+  # Provider
+  # 🚨 sign_assertion MUST be stated: the serializer rejects a signing_kp
+  # unless sign_assertion or sign_response is in the attrs, and a model
+  # default is not. DocSpace (samlify) verifies every response's signature
+  # and cannot verify ECDSA — the self-signed keypair is RSA.
+  #
+  # issuer_override is Authentik's own default for this slug, stated so the
+  # Issuer DocSpace must match byte-for-byte does not depend on the Host and
+  # scheme of whichever request built it.
+  #
+  # No verification_kp, so unsigned AuthnRequests are accepted (DocSpace has
+  # no SP certificate). No sls_url: logging out of DocSpace ends only the
+  # DocSpace session, as with every OIDC app here.
+  - model: authentik_providers_saml.samlprovider
+    id: docspace-provider
+    state: present
+    identifiers:
+      name: docspace
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      acs_url: "https://docspace.svc.idanreed.com/sso/acs"
+      sp_binding: post
+      audience: "https://docspace.svc.idanreed.com/sso/metadata"
+      issuer_override: "https://auth.idanreed.com/application/saml/docspace/metadata/"
+      signing_kp: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      sign_assertion: true
+      sign_response: false
+      name_id_mapping: !KeyOf docspace-saml-mail
+      default_name_id_policy: "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+      property_mappings:
+        - !KeyOf docspace-saml-mail
+        - !KeyOf docspace-saml-givenname
+        - !KeyOf docspace-saml-sn
+
+  - model: authentik_core.application
+    id: docspace-app
+    state: present
+    identifiers:
+      slug: docspace
+    attrs:
+      name: OnlyOffice DocSpace
+      provider: !KeyOf docspace-provider
+      policy_engine_mode: any
+      meta_launch_url: "https://docspace.svc.idanreed.com"
+      meta_description: "Document rooms and office editors"

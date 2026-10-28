@@ -37,9 +37,11 @@
 #   - **init is idempotent**: a rerun (every Komodo redeploy) logs zero
 #     CHANGE lines. Deliberately NOT re-verifying the password on rerun —
 #     an in-app password change is legitimate and must not fail deploys.
-#   - **OIDC is really off**: the fixture carries ACTUAL_OPENID_CLIENT_*
-#     values, and loginMethod must still come back "password" — the env vars
-#     alone must be inert (no discovery URL, no enable-openid run).
+#   - **OpenID is enabled only by actual-init, and only once the issuer
+#     answers**: the server gets no ACTUAL_OPENID_* env (the pinned server
+#     would otherwise switch itself to OpenID-only at boot). Offline the
+#     issuer is unreachable, so actual-init logs its WARN, exits 0, and
+#     loginMethod stays "password".
 #
 # Documented gaps:
 #   - **The /health liveness lie is not demonstrated**, only documented: it
@@ -47,9 +49,9 @@
 #     /data leaves the healthcheck green. Making /mnt/fast/actual read-only
 #     mid-suite to prove it would leave SQLite in a state the reboot subtest
 #     could not distinguish from a real regression.
-#   - **OIDC enable path.** scripts/enable-openid.js needs a reachable
-#     issuer; the offline VM has none. Ships ready-and-off; the off state is
-#     what is asserted.
+#   - **The OIDC enable itself** (`POST /openid/enable`) needs a reachable
+#     issuer; the offline VM has none. Only the unreachable-issuer path is
+#     asserted.
 #   - **SimpleFIN.** Native, but the credential is pasted in the client UI
 #     and the bridge is on the internet — nothing automated can cover it.
 #   - **Rate limiting is respected, not tested**: /account/bootstrap and
@@ -241,11 +243,14 @@ pkgs.testers.runNixOSTest {
             f"curl -fsS --max-time 30 {BASE}/account/needs-bootstrap"
         ))["data"]
         assert state["bootstrapped"] is True, state
-        # The fixture .env carries ACTUAL_OPENID_CLIENT_ID/SECRET. With no
-        # discovery URL and no enable-openid run they must change NOTHING —
-        # if this ever comes back "openid" the ships-off posture is broken
-        # and the first login through the tailnet claims ownership forever.
+        # actual-init could not reach the issuer, so OpenID is NOT enabled:
+        # the password stays the login method and the init said why. If this
+        # ever comes back "openid" offline, something enabled it without the
+        # init — the pinned server does that by itself when it is handed
+        # ACTUAL_OPENID_* env, and the first login would claim ownership.
         assert state["loginMethod"] == "password", state
+        init_log = services_vm.succeed("docker logs actual_init 2>&1")
+        assert "WARN: OpenID NOT " in init_log, init_log[-2000:]
 
     with subtest("🚨 the fixture password really is the credential (bake-off claim, closed)"):
         res = login(PASSWORD)

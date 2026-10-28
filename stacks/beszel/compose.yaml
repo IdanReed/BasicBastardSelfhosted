@@ -38,6 +38,11 @@ services:
     environment:
       - TZ=America/Chicago
       - APP_URL=https://beszel.svc.idanreed.com
+      # Authentik login is configured by beszel-role. USER_CREATION stays
+      # UNSET: an account it creates gets role "user" and no systems
+      # (SyncSystems re-asserts each system's users from config.yml on every
+      # start), so it is an empty dashboard with write rights. And never
+      # AUTO_LOGIN or TRUSTED_AUTH_HEADER — see the Caddy route.
     env_file: /run/stack-env/beszel.env
     healthcheck:
       # `/beszel health` short-circuits on argv before the app is built, so it
@@ -53,7 +58,8 @@ services:
   # The env-seeded app user lands with role "user": initial-settings.go sets
   # email/password/verified and never role, and InitializeUserRole then
   # defaults it. Only the UI's first-run path sets "admin". Post-boot because
-  # beszel-init runs before the hub exists. See beszel-role.sh.
+  # beszel-init runs before the hub exists. It also registers Authentik as the
+  # users collection's OAuth2 provider. See beszel-role.sh.
   beszel-role:
     image: python:3.13-alpine
     container_name: beszel-role

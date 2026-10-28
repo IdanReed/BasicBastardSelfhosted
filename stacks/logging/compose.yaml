@@ -154,13 +154,75 @@ services:
       - TZ=America/Chicago
 
       # Every absolute link (OAuth redirects, share URLs, alerts) is built
-      # from this; without it they point at localhost:3000.
+      # from this; without it they point at localhost:3000. The OAuth
+      # redirect_uri is <this>/login/generic_oauth, byte for byte the one
+      # grafana-oidc.yaml allows under strict matching.
       - GF_SERVER_ROOT_URL=https://grafana.svc.idanreed.com
 
-      # Grafana's own login is the inner gate behind forward auth, and its
-      # defaults are permissive.
+      # Grafana's own login is the inner gate behind forward auth, with two
+      # ways in on its login page: "Sign in with Authentik" (Admin group
+      # only, below) and the local admin form. 🚨 The form is the BREAK-GLASS
+      # — the one login that does not depend on the OIDC leg — so the login
+      # form and basic auth are never disabled. The defaults are permissive,
+      # hence no self sign-up and no anonymous access.
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
+
+      # Authentik — native generic OAuth, provider + application "grafana-sso"
+      # in headscale-vps/authentik/blueprints/custom/grafana-oidc.yaml (not
+      # "grafana": that slug is forward auth's). Not auth.proxy, which the
+      # Caddyfile explains.
+      #
+      # Endpoints set MANUALLY rather than by discovery, which keeps the IdP
+      # out of the boot path: nothing is fetched from Authentik until someone
+      # clicks the button, so an unreachable VPS costs the button, never the
+      # boot. Authentik's authorize/token/userinfo endpoints are global; only
+      # end-session carries the app slug.
+      - GF_AUTH_GENERIC_OAUTH_ENABLED=true
+      - GF_AUTH_GENERIC_OAUTH_NAME=Authentik
+      - GF_AUTH_GENERIC_OAUTH_CLIENT_ID=grafana
+      - GF_AUTH_GENERIC_OAUTH_SCOPES=openid email profile
+      - GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://auth.idanreed.com/application/o/authorize/
+      - GF_AUTH_GENERIC_OAUTH_TOKEN_URL=https://auth.idanreed.com/application/o/token/
+      - GF_AUTH_GENERIC_OAUTH_API_URL=https://auth.idanreed.com/application/o/userinfo/
+      - GF_AUTH_GENERIC_OAUTH_SIGNOUT_REDIRECT_URL=https://auth.idanreed.com/application/o/grafana-sso/end-session/
+      - GF_AUTH_GENERIC_OAUTH_USE_PKCE=true
+      # GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET arrives from the stack env, built
+      # by env.nix from secrets/shared.sops.json.
+      #
+      # An Admin member's first Authentik login creates the account;
+      # GF_USERS_ALLOW_SIGN_UP above governs only the local form.
+      - GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP=true
+      # A button, not a redirect. auto_login would bounce /login straight to
+      # Authentik, and reaching the break-glass form would then need
+      # /login?disableAutoLogin — a URL nobody remembers mid-outage. Sessions
+      # last days, so the cost is one click per session.
+      - GF_AUTH_GENERIC_OAUTH_AUTO_LOGIN=false
+      # Login is the email, NOT preferred_username. Grafana links an OAuth
+      # user by `sub` alone (email lookup is off by default, and login is
+      # never consulted), so an Authentik username equal to the local admin's
+      # login fails that user's first sign-up with "user already exists".
+      - GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH=email
+      # 🚨 ADMIN-ONLY. Members of Authentik's Admin group get org Admin; the
+      # expression yields NO role for anyone else, and strict mode refuses a
+      # login without one, so no account is ever created for them. Not a
+      # Viewer fallback: Viewer would be READ ACCESS TO EVERY LOG LINE for
+      # the six friends — OSS Grafana has no datasource permissions, so any
+      # signed-in user can POST arbitrary LogsQL to /api/ds/query, with or
+      # without Explore.
+      #
+      # The role re-syncs on EVERY login, so one changed in the UI reverts.
+      # Not GrafanaAdmin: server administration (users across orgs, plugins,
+      # server settings) stays with the local break-glass account, so a
+      # stolen Authentik session gets the org, not the server.
+      - "GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH=contains(groups[*], 'Admin') && 'Admin'"
+      - GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT=true
+      # Off, and the default: once the login completes the session is
+      # Grafana's own (7d idle / 30d max) and Authentik is not consulted
+      # again — forward auth in front is what keeps checking the Authentik
+      # session. On, Grafana would also track the access token's expiry and
+      # log the user out whenever a refresh failed.
+      - GF_AUTH_GENERIC_OAUTH_USE_REFRESH_TOKEN=false
 
       # EGRESS OFF: analytics, version check, plugin-update check and the
       # news feed all phone home by default, and each is a stalled panel on

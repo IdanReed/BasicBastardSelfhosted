@@ -43,22 +43,22 @@ offers no non-browser / non-DB path to it.
 |---|---|---|---|
 | **Forgejo → Komodo** | Create the `komodo` bot (read collaborator on the repo), mint its `read:repository` PAT into `komodo/secrets.sops.json`, add the repo's push webhook | The bot, its token and the webhook live in Forgejo's DB; a token can only be minted once Forgejo runs, and Forgejo has no declarative webhook config | Yes — Forgejo DB + the sops value |
 | **Beszel** | Set `USER_EMAIL` before the **first** boot | Seeding is declarative, but the PocketBase migration that reads the pair fires only against a virgin `data.db` | Yes — in `data.db` on `/mnt/fast/beszel` |
-| **Beszel** | Log in twice (Authentik forward-auth, then Beszel's own login) | OIDC config lives in `users.oauth2` inside `data.db`; no env vars — browser wizard only | n/a (every login) |
-| **Jellyfin** | *(not a chore — a caveat)* the SSO plugin is a one-time pinned download | No native OIDC; the plugin is a runtime install. `jellyfin-config-init` fetches it by version + sha256, `jellyfin-init` configures it | Yes — `/mnt/fast/jellyfin/config/plugins` |
+| **Jellyfin** | *(not a chore — a why)* no OIDC: each user has a local account with their Authentik username and password | TV and mobile clients cannot follow an OIDC redirect. `jellyfin-init` seeds and re-asserts the accounts | Yes — `/mnt/fast/jellyfin/config` |
+| **Komodo** | After your first "Login with OIDC", enable `idan` and make it Admin, logged in as the local `admin` | OIDC sign-ups land disabled on purpose (`KOMODO_ENABLE_NEW_USERS=false`): the UI is root-equivalent, so no account is live until the admin says so | Yes — Komodo DB |
 | **Profilarr** | Bind Dictionarry profiles to the arr instances (one UI action) | API-key auth is scoped to `/api/` paths and `/api/v1/arr` is GET-only; the binding is a session-cookie form action | Yes — `/mnt/fast/profilarr/config` |
 | **Grafana** | Install `victoriametrics-logs-datasource` by hand on the host | The image that bakes it in is built but never published, so the compose still pins stock Grafana | Yes — `/mnt/fast/grafana/plugins` |
-| **Actual** | `docker exec actual node scripts/enable-openid.js`, then log in immediately | OIDC activation is a DB flip with no env equivalent; first OIDC login = permanent owner | Yes — Actual DB |
+| **Actual** | Be the first OIDC login (it also asks once for the server password) | `actual-init` enables OpenID declaratively, but the first OIDC login becomes the permanent owner and upstream cannot pre-assign it | Yes — Actual DB |
 | **Vaultwarden** | Set a master password in the web vault after the first SSO login | Vaults are client-side E2EE — no server-side seed can create the first vault key | Yes — `db.sqlite3` |
 | **Outline** | First login creates and owns the team | No env, no CLI, no seeder in `server/scripts/` | Yes — Outline DB |
 | **Homebox** | Close `HBOX_OPTIONS_ALLOW_REGISTRATION` after the first deploy | The open-registration window *is* the headless bootstrap; closing it is a deliberate second act | Yes — compose edit + redeploy |
 | **Firefly III** | Mint a Personal Access Token in the UI for the importer | The only `createToken` path is a browser session — `laravel/tinker` is not in the image | Yes — the token survives a recreate now that Passport's keys come from sops |
 | **Firefly Importer** | Every import is an operator at the importer UI uploading a config JSON | No scheduled sync exists; `SIMPLEFIN_TOKEN` is a one-shot claim URL | No — redone per import |
-| **Cleanuparr** | Configure the arr connections and the malware blocker in the web UI | v2 keeps all of it in `/config` SQLite; `cleanuparr.json` covers only `PORT`/`BASE_PATH` | Yes — `/mnt/fast/cleanuparr/config` |
+| **Cleanuparr** | Configure the arr connections and the malware blocker in the web UI | v2 keeps all of it in `/config` SQLite; `cleanuparr.json` covers only `PORT`/`BASE_PATH`. The account and its OIDC are seeded by `cleanuparr-init` | Yes — `/mnt/fast/cleanuparr/config` |
 | **qBittorrent** | Rotating the WebUI password needs `qBittorrent.conf` deleted and the stack redeployed | The conf is seed-once: `qbit-init` writes it only when absent, and qbit rewrites it whole on shutdown | Yes — `/mnt/fast/qbittorrent/config` |
 | **Proton / hydroxide** | One interactive `docker exec -it hydroxide … auth <account>` | Env credentials are refused by design so the Proton password never reaches sops; the bridge password prints **once** | Yes — `auth.json` on `/mnt/fast/proton`, but the value must be pasted into `secrets.sops.json` |
 | **Syncthing** | Add each peer by device ID, from **both** sides | Deliberate: no device is pre-seeded, so nothing can pair itself | Yes — Syncthing config |
 | **SilverBullet** | Create the private Forgejo mirror repo and a `write:repository` PAT, embed both in `GIT_SYNC_REMOTE` | The stack creates neither, by design | Yes — the `secrets.sops.json` value |
-| **Excalidraw / Wealthfolio** | OIDC is staged but shipped OFF; enabling it is an operator flip | Both panic or misbehave against an unavailable issuer, so the repo ships them off | One-shot (compose edit) |
+| **Wealthfolio** | OIDC is staged but shipped OFF; enabling it is an operator flip | Discovery runs once at startup and its failure aborts boot, so every restart would depend on the VPS | One-shot (compose edit) |
 | **Dawarich** | Ensure your Authentik email == `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; Dawarich then asks once for that account's password to link it | Auto-register matches by email; a mismatch mints a second account to merge. Dawarich 1.14 links an SSO identity to an existing account only after a password confirmation | Ordering constraint (one-shot) |
 | **Paperless-ngx** | Grant admin/staff in `/admin` if the SSO user needs it | The superuser-group env var first exists in 3.1.0; the compose pins 2.20, where it is silently ignored | Yes — Paperless DB |
 | **Frigate** | Per camera: set the admin password and enable HTTP in the Reolink app; reserve its IP on OPNsense | Camera settings live on the device, and the HTTP API that could flip them is itself one of the services that ships off | Yes — on the camera (a factory reset undoes it) |
@@ -92,6 +92,21 @@ offers no non-browser / non-DB path to it.
   token is a sops value. A Komodo database rebuild needs only the switch (the
   bootstrap re-registers `fleet`; the webhook URL names the procedure, not an id).
 
+### Komodo — an OIDC sign-up lands disabled
+
+- **(b) The step:** after `nrs-vps` (the `komodo-sso` blueprint) and `nrs-vm`,
+  click "Login with OIDC" once — that creates `idan`, disabled. Log in locally as
+  `admin` (`KOMODO_INIT_ADMIN_PASSWORD`), Settings → Users → `idan`: enable, then
+  make Admin. Over the API: `/read/FindUser {"user":"idan"}`, then
+  `/write/UpdateUserBasePermissions {"user_id":…,"enabled":true}` and
+  `/write/UpdateUserAdmin {"user_id":…,"admin":true}`.
+- **(c) Why not declarative:** `KOMODO_ENABLE_NEW_USERS=false` on purpose — the
+  UI drives Periphery, which mounts the docker socket, so no account goes live
+  without the admin saying so. Authentik already refuses everyone outside
+  `Admin`; this is the second lock.
+- **(d) Survives recreate:** yes — Komodo DB. The local `admin` stays the
+  break-glass login and what `komodo-sync-bootstrap` uses.
+
 ### Beszel — the app login is a *different* collection from the admin console
 
 Two things here.
@@ -120,19 +135,17 @@ hub is healthy. What is not declarative is the *timing*.
 - **(d) Survives recreate:** yes — `data.db` under `/mnt/fast/beszel`. Changing
   the credential means resetting that file.
 
-**(2) Two logins, because OIDC is a browser wizard.**
-
-- **(b) The step:** log in through Authentik forward-auth, then again at Beszel's
-  own PocketBase login.
-- **(c) Why not declarative:** Beszel's OAuth2 provider config (`clientId`,
-  `clientSecret`, `authURL`, …) lives in the `users` collection's `oauth2` options
-  **inside `data.db`**, with no environment variable for any part of it.
-  Upstream's only documented procedure is a click-path through the PocketBase
-  admin UI. `_overview.md` therefore marks the row `FwdAuth` — Caddy forward-auth
-  to Authentik **and** Beszel's own login underneath, failing closed either way.
-  The **agent** never traverses Caddy (it dials `http://127.0.0.1:10452` on the
-  host network), so forward auth is purely a browser concern.
-- **(d) Survives recreate:** n/a — it is every login.
+**(2) SSO signs into that seeded user — so its email must be yours.**
+Beszel's OAuth2 provider (`clientId`, `clientSecret`, endpoints) lives in the
+`users` collection's `oauth2` options inside `data.db`, with no environment
+variable for any part of it; `beszel-role` writes it over PocketBase's API from
+the superuser session it already opens (`beszel-sso`, Admin group only).
+`USER_CREATION` stays off on purpose — an account it minted would get role
+`user` and an empty dashboard — so the Authentik login links to the seeded user
+**by email**: `USER_EMAIL` must be your Authentik email. The seeded password
+stays the break-glass login. The **agent** never traverses Caddy (it dials
+`http://127.0.0.1:10452` on the host network), so forward auth is purely a
+browser concern.
 
 ### Jellyfin — its own logins, seeded
 
@@ -206,20 +219,20 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
 - **(d) Survives recreate:** yes — the plugin dir is inside the
   `/mnt/fast/grafana/plugins` bind.
 
-### Actual — DB flip plus first-login-owner
+### Actual — the first OIDC login is the owner
 
-- **(b) The step:**
-  ```bash
-  docker exec actual node scripts/enable-openid.js
-  ```
-  then log in through Authentik **immediately**.
-- **(c) Why not declarative:** the `ACTUAL_OPENID_*` env is present but inert;
-  activation is a DB mutation with no declarative equivalent. And the first OIDC
-  login becomes the server **owner permanently** (not reassignable from the UI) —
-  on the tailnet that is "whoever clicks first". Only set
-  `ACTUAL_OPENID_ENFORCE=true` (which kills the password fallback) *after* a
-  verified login.
-- **(d) Survives recreate:** yes — the flip and ownership live in Actual's DB.
+- **(b) The step:** after the first deploy that enables OpenID (`docker logs
+  actual_init` says so), log in through Authentik as **idan, first**. That login
+  also asks once for the server password (`ACTUAL_INIT_PASSWORD`). Add other users
+  in the app by their Authentik username.
+- **(c) Why not declarative:** `actual-init` enables OpenID itself (`POST
+  /openid/enable`, re-applied when the client changes), but the first OIDC login
+  becomes the server **owner permanently** and upstream has no way to pre-assign
+  it. The server is never handed `ACTUAL_OPENID_*` env: the pinned server would
+  then switch itself to OpenID-only at boot, before any password exists. Never
+  set `ACTUAL_OPENID_ENFORCE` — it kills the password fallback.
+- **(d) Survives recreate:** yes — the OpenID config and ownership live in
+  Actual's DB.
 
 ### Vaultwarden — the master password, not the account
 
@@ -294,15 +307,20 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   operator's machine.
 - **(d) Redone every time:** the import configuration is not stored server-side.
 
-### Cleanuparr — v2 is configured entirely through its web UI
+### Cleanuparr — v2 is configured through its web UI
 
 - **(b) The step:** in the Cleanuparr UI, add the Radarr/Sonarr/qBittorrent
   connections and configure the malware blocker against the local blocklist under
-  `/config`.
+  `/config`. The login is already done: `cleanuparr-init` claims the one account
+  (`idan`, idan's password) and writes its Authentik OIDC settings
+  (`cleanuparr-sso`, Admin group only), so the first-run page is never open.
 - **(c) Why not declarative:** v2 moved configuration out of environment variables
   into a SQLite database under `/config`. The only env knobs left are `PORT` and
   `BASE_PATH`; every connection, schedule and rule is UI-only, with no import
   endpoint and no config file to seed.
+- ⚠ Like Jellyfin's admin: change idan's password in Cleanuparr (Settings →
+  Account) **before** `sopsgen rotate user/idan`, or `cleanuparr-init` fails at
+  login on the next deploy.
 - **(d) Survives recreate:** yes — `/mnt/fast/cleanuparr/config`.
 
 ### qBittorrent — the WebUI password is seed-once
@@ -363,16 +381,15 @@ password in the Jellyfin UI first, or wipe `/mnt/fast/jellyfin/config`.
   would be a credential a compromised container could mint for itself.
 - **(d) Survives recreate:** yes — it is a sops value.
 
-### Excalidraw / Wealthfolio — OIDC staged, shipped OFF
+### Wealthfolio — OIDC staged, shipped OFF
 
-- **(b) The step:** flip the OIDC env on in the compose file once you have
-  verified the issuer is reachable. For Excalidraw, put your Authentik email into
-  `SUPERADMIN_EMAILS` **before** enabling — super-admin is matched by email at
-  login, and enabling first loses it.
-- **(c) Why not declarative:** both ship off because discovery failure is fatal
-  rather than degraded — turning them on makes every restart hostage to VPS
-  reachability. The client secrets exist; only the flip is manual, and it is a
-  judgement call rather than a chore.
+- **(b) The step:** flip the OIDC env on in the compose file, if you accept the
+  cost below.
+- **(c) Why not declarative:** Wealthfolio runs OIDC discovery once at startup
+  and a failure aborts the boot, so turning it on makes every restart hostage to
+  VPS reachability. The client secret exists; only the flip is manual, and it is a
+  judgement call rather than a chore. (Excalidraw's discovery is lazy, so its OIDC
+  is on.)
 - **(d) One-shot:** a compose edit.
 
 ### Dawarich — email must match the seeded admin

@@ -42,9 +42,15 @@ services:
       - X_FORWARDED_PROTO_HEADER_SET=True
       - CSRF_TRUSTED_ORIGINS=https://wger.svc.idanreed.com
       # Both default to TRUE in this image; unset means open to anyone who can
-      # reach the vhost.
+      # reach the vhost. ALLOW_REGISTRATION=False also closes allauth's SOCIAL
+      # signup, which is why wger_init seeds the Authentik accounts.
       - ALLOW_REGISTRATION=False
       - ALLOW_GUEST_USERS=False
+      # Loads allauth's openid_connect provider app, which also makes the
+      # login page render a button per SocialApp. The Authentik app itself
+      # (client id, secret, discovery URL) is a DB row wger_init writes; there
+      # is no env var for it.
+      - WGER_SOCIAL_PROVIDERS=openid_connect
       - DJANGO_DB_ENGINE=django.db.backends.postgresql
       - DJANGO_DB_DATABASE=wger
       - DJANGO_DB_USER=wger
@@ -152,7 +158,8 @@ services:
   # Admin seed
   #
   # Wger creates an `admin` account with the published password `adminadmin`
-  # and no env var to change it; see wger-init.py. Same image as the app,
+  # and no env var to change it; see wger-init.py. It also writes the
+  # Authentik SocialApp and seeds the SSO roster. Same image as the app,
   # because this is a Django shell script against the real ORM.
   wger_init:
     image: wger/server:2.6

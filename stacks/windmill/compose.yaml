@@ -120,7 +120,8 @@ services:
 
   # Init
   # Upstream's path leaves admin@windmill.dev / changeme live until a human
-  # intervenes; SUPERADMIN_SECRET is the way around it. See windmill-init.sh.
+  # intervenes; SUPERADMIN_SECRET is the way around it. It also configures
+  # Authentik SSO and each roster account's login type. See windmill-init.sh.
   windmill_init:
     image: python:3.13-alpine
     container_name: windmill_init

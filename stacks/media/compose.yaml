@@ -435,9 +435,25 @@ services:
       - /mnt/fast/profilarr/config:/config
     environment:
       - TZ=America/Chicago
-      - AUTH=on
-      # PROFILARR_API_KEY (>=32 chars) arrives from the stack env below.
-    env_file: /run/stack-env/media.env
+      # Authentik is the login, under the route's forward auth
+      # (blueprints/custom/profilarr-oidc.yaml, Admin group only): no local
+      # account and no first-run setup page in this mode. Discovery is fetched
+      # at sign-in, never at boot, so with Authentik down only the sign-in
+      # fails (a 500) — the container still starts and stays healthy. The
+      # path is the blueprint's application slug.
+      - AUTH=oidc
+      - OIDC_DISCOVERY_URL=https://auth.idanreed.com/application/o/profilarr-sso/.well-known/openid-configuration
+      - OIDC_CLIENT_ID=profilarr
+      # The redirect URI is {ORIGIN}/auth/oidc/callback, and an https ORIGIN
+      # makes the session cookie Secure. Every request URL is rewritten to it.
+      - ORIGIN=https://profilarr.svc.idanreed.com
+      # PROFILARR_API_KEY (>=32 chars) arrives from the stack env below; it
+      # still authenticates /api/ in OIDC mode, which is what media-init uses.
+    env_file:
+      - /run/stack-env/media.env
+      # OIDC_CLIENT_SECRET, for this service alone
+      # (stacks/media/env.profilarr.nix).
+      - /run/stack-env/media.profilarr.env
     healthcheck:
       # Toolset not pinned down (python base): try curl, wget, then python.
       # Any 2xx/3xx on the SPA root is up.
@@ -457,6 +473,9 @@ services:
   #
   # v2 is configured through its web UI into /config, not env vars; point the
   # malware blocker at a LOCAL blocklist under /config so it works offline.
+  # The login is the exception: cleanuparr-init below claims the one account
+  # and turns on the Authentik sign-in (under the route's forward auth) over
+  # the API.
   cleanuparr:
     image: ghcr.io/cleanuparr/cleanuparr:2.10.5
     container_name: cleanuparr
@@ -476,6 +495,28 @@ services:
       retries: 5
       start_period: 90s
     restart: unless-stopped
+
+  # Creates the admin account while setup is still anonymous, then signs in
+  # with it and writes the OIDC settings (blueprints/custom/cleanuparr-oidc.yaml)
+  # — so it reconciles on every redeploy. See cleanuparr-init.sh.
+  cleanuparr-init:
+    image: python:3.13-alpine
+    container_name: media_cleanuparr_init
+    entrypoint: ['/bin/sh', '/init/cleanuparr-init.sh']
+    depends_on:
+      cleanuparr:
+        condition: service_healthy
+    environment:
+      - CLEANUPARR_ADMIN_USER=idan
+      - CLEANUPARR_PUBLIC_URL=https://cleanuparr.svc.idanreed.com
+      # The path is the blueprint's application slug.
+      - CLEANUPARR_OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/cleanuparr-sso/
+      - CLEANUPARR_OIDC_CLIENT_ID=cleanuparr
+    volumes:
+      - ./cleanuparr-init.sh:/init/cleanuparr-init.sh:ro
+    # Its two secrets alone (stacks/media/env.cleanuparr.nix), not media.env.
+    env_file: /run/stack-env/media.cleanuparr.env
+    restart: "no"
 
   # Antivirus
   #

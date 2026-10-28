@@ -422,6 +422,38 @@ in
                         f"authentik.service at boot, taking the whole IdP "
                         f"down")
 
+        # Provider names are unique across ALL provider types (a proxy
+        # provider is an OAuth2 provider underneath), and an application holds
+        # one provider. A second present entry with the same provider name or
+        # application slug fails or re-points the first — and Authentik
+        # reports that only in the worker log, after rolling the blueprint
+        # back. Hence the `<app>-sso` names beside the forward-auth ones.
+        seen_provider, seen_slug = {}, {}
+        for bp in sorted(glob.glob(
+                "${(repo + "/headscale-vps/authentik/blueprints/custom")}/*.yaml")):
+            base = os.path.basename(bp)
+            with open(bp) as f:
+                doc = yaml.load(f, Loose) or {}
+            for e in doc.get("entries") or []:
+                if e.get("state") == "absent":
+                    continue
+                ident = e.get("identifiers") or {}
+                model = str(e.get("model", ""))
+                if (model.startswith("authentik_providers_")
+                        and model.endswith("provider") and ident.get("name")):
+                    key, seen = ident["name"], seen_provider
+                elif model == "authentik_core.application" and ident.get("slug"):
+                    key, seen = ident["slug"], seen_slug
+                else:
+                    continue
+                if key in seen:
+                    errs.append(
+                        f"{base}: {model} {key!r} is also declared in "
+                        f"{seen[key]} — provider names and application slugs "
+                        f"must be unique across blueprints")
+                else:
+                    seen[key] = base
+
         if errs:
             print("OIDC contract violations:", file=sys.stderr)
             for e in errs:
@@ -1933,11 +1965,28 @@ in
               for item in node:
                   yield from redirect_hosts(item)
 
+      # A SAML service provider's equivalent is its ACS URL (*-saml.yaml).
+      def acs_hosts(node):
+          if isinstance(node, dict):
+              for k, v in node.items():
+                  if k == "acs_url":
+                      m = re.match(r"https?://([A-Za-z0-9.-]+)", str(v))
+                      if m:
+                          yield m.group(1)
+                  else:
+                      yield from acs_hosts(v)
+          elif isinstance(node, list):
+              for item in node:
+                  yield from acs_hosts(item)
+
       oidc_hosts = set()
-      for f in sorted(glob.glob(
-              "${(repo + "/headscale-vps/authentik/blueprints/custom")}/*-oidc.yaml")):
+      bp_dir = "${(repo + "/headscale-vps/authentik/blueprints/custom")}"
+      for f in sorted(glob.glob(bp_dir + "/*-oidc.yaml")):
           with open(f) as fh:
               oidc_hosts |= set(redirect_hosts(yaml.load(fh, Loose)))
+      for f in sorted(glob.glob(bp_dir + "/*-saml.yaml")):
+          with open(f) as fh:
+              oidc_hosts |= set(acs_hosts(yaml.load(fh, Loose)))
 
       protected_hosts = {r["host"] for r in handles.values()
                          if r["protected"] and r["host"]}
@@ -1972,9 +2021,6 @@ in
           "rmfakecloud.svc.idanreed.com":
               "the tablet is a non-interactive client holding an rmfakecloud "
               "JWT that cannot follow a 302, and only /ui/* is a browser path.",
-          "docspace.svc.idanreed.com":
-              "real accounts of its own, plus desktop and mobile clients a 302 "
-              "would break; its SSO is SAML 2.0, not OIDC.",
           "vlogs-ingest.svc.idanreed.com":
               "a bearer-token write endpoint for Alloy, which cannot follow a "
               "302. The Caddyfile's fail-closed guard is the control.",

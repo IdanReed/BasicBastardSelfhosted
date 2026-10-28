@@ -262,14 +262,14 @@ secrets:
     class: generate
     recipe: base64:24
     freeze: true
-    note: "first-run-only bootstrap; later rotation here is a silent no-op (reset via client UI / reset-password.js)"
+    note: "set at first bootstrap only (reset via client UI / reset-password.js); actual-init logs in with it to enable or re-apply OpenID, so a stale value fails the init exactly when it has OpenID work to do"
     targets: [{ file: stacks/actual/secrets.sops.json, key: ACTUAL_INIT_PASSWORD }]
-  # Rollout 2026-09-05: only the SECRET is generated. ACTUAL_OPENID_CLIENT_ID is
-  # public and pinned to the literal "actual" in compose.yaml (which overrides
-  # the vestigial env stub via compose's environment>env_file precedence),
-  # so it is intentionally NOT a managed secret. Native OIDC ships ready-and-off:
-  # the value is inert until `docker exec actual node scripts/enable-openid.js`
-  # (a DB flip) — the first OIDC login then becomes the server owner permanently.
+  # Only the SECRET is generated. ACTUAL_OPENID_CLIENT_ID is public and pinned to
+  # the literal "actual" in compose.yaml (which overrides the vestigial env stub
+  # via compose's environment>env_file precedence), so it is intentionally NOT a
+  # managed secret. actual-init enables OpenID (POST /openid/enable) once the
+  # issuer answers and re-applies a changed client on later deploys; the first
+  # OIDC login becomes the server owner permanently, so idan logs in first.
   - name: actual/oidc
     class: generate
     recipe: hex:64

@@ -6,6 +6,10 @@
   # Built from the one Postgres password.
   DATABASE_URL = "postgres://windmill:${secret "POSTGRES_PASSWORD"}@windmill_db:5432/windmill?sslmode=disable";
 
+  # The client secret Authentik's windmill-oidc blueprint reads; windmill-init
+  # writes it into the `oauths` instance setting.
+  WINDMILL_OIDC_CLIENT_SECRET = shared "WINDMILL_OIDC_CLIENT_SECRET";
+
   # The same per-user passwords Authentik sets; windmill-init creates the users.
   IDAN_INITIAL_PASSWORD = shared "IDAN_INITIAL_PASSWORD";
   ALONDRA_INITIAL_PASSWORD = shared "ALONDRA_INITIAL_PASSWORD";

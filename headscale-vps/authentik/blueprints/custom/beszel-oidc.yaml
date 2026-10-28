@@ -1,0 +1,73 @@
+# OIDC provider + application for Beszel (slug "beszel-sso"). beszel-role.sh
+# registers the matching `oidc` provider on PocketBase's users collection; it
+# takes Authentik's global authorize, token and userinfo endpoints, so no
+# app-side URL names the slug. client_secret travels sops ->
+# modules/authentik.nix template -> worker env -> !Env below; the app reads the
+# SAME value from secrets/shared.sops.json through its env.nix. The shared
+# blueprint conventions are documented in headscale-oidc.yaml.
+#
+# Native OIDC sits UNDER the forward auth, which stays: forward-auth.yaml's
+# proxy provider "beszel" still guards the Caddy route, and the env-seeded
+# PocketBase admin keeps its password as break-glass. Both names here differ
+# from forward-auth.yaml's on purpose: provider names are globally unique
+# across types, and the application slug "beszel" already holds the proxy
+# provider (an application has one provider).
+version: 1
+metadata:
+  name: beszel-oidc
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: beszel-sso-provider
+    state: present
+    identifiers:
+      name: beszel-sso
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: beszel
+      client_secret: !Env BESZEL_OIDC_CLIENT_SECRET
+      redirect_uris:
+        # PocketBase's all-in-one (popup) OAuth2 callback, which is the flow
+        # Beszel uses unless OAUTH_DISABLE_POPUP is set.
+        - url: "https://beszel.svc.idanreed.com/api/oauth2-redirect"
+          matching_mode: strict
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+
+  - model: authentik_core.application
+    id: beszel-sso-app
+    state: present
+    identifiers:
+      slug: beszel-sso
+    attrs:
+      name: Beszel SSO
+      provider: !KeyOf beszel-sso-provider
+      policy_engine_mode: any
+      meta_launch_url: "https://beszel.svc.idanreed.com"
+      meta_description: "Host and container monitoring login (Admin group only)"
+
+  # Admin-only: an infra monitoring tool. With the one group binding,
+  # Authentik refuses everyone outside `Admin` (declared in
+  # headscale-oidc.yaml) and hides the tile from them. Beszel itself would
+  # refuse them too — USER_CREATION is unset, so only an existing account can
+  # sign in — but this stops them at Authentik.
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf beszel-sso-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30

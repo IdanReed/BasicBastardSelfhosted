@@ -70,8 +70,10 @@
 	handle @komodo {
 		# 🚨 The largest blast radius in this file: Core's UI drives
 		# Periphery, which mounts the docker socket, so this is a
-		# root-equivalent interface for the host. Komodo's own local login
-		# stays underneath, so it fails closed either way.
+		# root-equivalent interface for the host. Komodo's own login stays
+		# underneath — Authentik OIDC (`komodo-sso`, Admin group only, new
+		# users disabled until enabled) and the local `admin` — so it fails
+		# closed either way.
 		#
 		# Rollout order is not optional here, because the thing you would
 		# normally use to fix a broken deploy IS Komodo. If it does lock out,
@@ -458,18 +460,18 @@
 
 	@windmill host windmill.svc.idanreed.com
 	handle @windmill {
-		# The only SSO Windmill can have — OIDC login is an Enterprise
-		# feature. It gates ACCESS ONLY: Windmill does not consume
-		# X-Authentik-*, so a local login still follows. Two logins,
-		# permanently; that is the trade.
+		# Forward auth, with Windmill's own login underneath: the six users
+		# sign in through Authentik (`windmill-sso`, set by windmill-init;
+		# the CE image carries the OAuth code), idan by password as the
+		# break-glass superadmin.
 		#
 		# 🚨 IN-FLEET CALLERS MUST NOT USE THIS VHOST — forward auth 302s
 		# every POST /api/w/<ws>/jobs/run/*, and an Authentik carve-out for
 		# ^/api/.* would expose the whole authenticated API. Browsers come
 		# here, machines call 127.0.0.1:10253 direct.
 		#
-		# ⚠ Never set `disable_password_login` in Instance Settings: with no
-		# OAuth provider — the permanent state on OSS — it is a self-lockout.
+		# ⚠ Never set `disable_password_login` in Instance Settings: it locks
+		# out idan's password account, the break-glass login.
 		import protected
 		reverse_proxy localhost:10253
 	}
@@ -560,9 +562,10 @@
 
 	@wger host wger.svc.idanreed.com
 	handle @wger {
-		# Forward auth. Wger has no OIDC in this version, and its own login
-		# stays underneath — the account wger_init provisions is the fallback
-		# if the outpost is unreachable.
+		# Forward auth, with wger's own login underneath: Authentik OIDC
+		# (`wger-sso`, allauth, matched to the users wger_init seeds) and the
+		# `admin` password account as the fallback if the outpost is
+		# unreachable.
 		#
 		# The upstream port is the NGINX SIDECAR, not gunicorn: wger/server
 		# serves no static files at all (no whitenoise in INSTALLED_APPS), so
@@ -623,9 +626,9 @@
 	@docspace host docspace.svc.idanreed.com
 	handle @docspace {
 		# NO forward auth: real accounts of its own, plus desktop and mobile
-		# clients a 302 would break. Its SSO is SAML 2.0, not OIDC, and is
-		# free self-hosted; until that exchange with Authentik happens it runs
-		# on the local owner account.
+		# clients a 302 would break. SSO is SAML against Authentik
+		# (docspace-saml.yaml, set by docspace_init); /sso/acs receives
+		# Authentik's POST and must never get forward auth either.
 		#
 		# 🚨 Document Server has NO route and must never get one: it is served
 		# at /ds-vpath/ by this container's own nginx, and publishing it would
@@ -651,9 +654,9 @@
 
 	@beszel host beszel.svc.idanreed.com
 	handle @beszel {
-		# Forward auth with Beszel's own PocketBase login underneath. OIDC
-		# cannot work here: its provider config lives inside data.db with no
-		# environment variable for any part of it.
+		# Forward auth with Beszel's own PocketBase login underneath:
+		# Authentik OIDC (`beszel-sso`, Admin group only; beszel-role writes
+		# the provider over PocketBase's API) and the seeded password user.
 		#
 		# 🚨 Browser-only, which is what makes forward auth safe: the AGENT
 		# dials 127.0.0.1:10452 on the host network, and pointed at this
@@ -670,11 +673,12 @@
 
 	@grafana host grafana.svc.idanreed.com
 	handle @grafana {
-		# Forward auth with Grafana's own admin login underneath. Two logins
-		# is the deliberate cost of not using Grafana's auth.proxy header
-		# mode, which would trust X-Authentik-* from anything reaching
-		# 127.0.0.1:10455 — and this is the service you want working when the
-		# VPS running the outpost is the thing that broke.
+		# Forward auth with Grafana's own login underneath: Authentik OIDC
+		# (`grafana-sso`, Admin group only) and the local admin form. NOT
+		# Grafana's auth.proxy header mode, which would trust X-Authentik-*
+		# from anything reaching 127.0.0.1:10455 — and this is the service you
+		# want working when the VPS running the outpost is the thing that
+		# broke.
 		#
 		# 🚨 Browser-only, which is what makes forward auth safe: nothing
 		# talks to Grafana programmatically, and the log INGESTION path does

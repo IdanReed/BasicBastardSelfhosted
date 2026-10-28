@@ -12,12 +12,14 @@
 #   /api/v2     -> api  (10409)   auth + workspace + scene storage
 # Postgres is deliberately not published.
 #
-# AUTH: no forward auth (the outline/tandoor posture) — AstraDraw has a local
-# admin seeded from env plus native OIDC. ENABLE_REGISTRATION=false is
-# load-bearing. The room relay is unauthenticated by design: joining needs the
-# room id AND its E2E key, which travels in the URL fragment.
+# AUTH: no forward auth (the outline/tandoor posture) — AstraDraw has native
+# OIDC against Authentik plus a local admin seeded from env, the break-glass
+# login. ENABLE_REGISTRATION=false is load-bearing. The room relay is
+# unauthenticated by design: joining needs the room id AND its E2E key, which
+# travels in the URL fragment.
 #
-# EGRESS: containers make none (proven on a no-egress network). The user's
+# EGRESS: only the api, and only to auth.idanreed.com for OIDC (discovery, token,
+# userinfo); boot needs none (proven on a no-egress network). The user's
 # BROWSER prefers Excalidraw's font CDN and one fonts.googleapis.com face, both
 # with working fallbacks; simpleanalytics is gated off below.
 #
@@ -94,8 +96,8 @@ services:
     container_name: excalidraw_api
     ports:
       - '127.0.0.1:10409:8080'
-    # Carries POSTGRES_PASSWORD, STORAGE_URI, JWT_SECRET, ROOM_KEY_SECRET and
-    # ADMIN_PASSWORD — see secrets.example.env.
+    # Carries POSTGRES_PASSWORD, STORAGE_URI, JWT_SECRET, ROOM_KEY_SECRET,
+    # ADMIN_PASSWORD and OIDC_CLIENT_SECRET — see secrets.example.env and env.nix.
     env_file: /run/stack-env/excalidraw.env
     environment:
       - TZ=America/Chicago
@@ -115,20 +117,30 @@ services:
       # OIDC redirects and invite links are built from this.
       - APP_URL=https://excalidraw.svc.idanreed.com
       # Auth posture: local admin seeded at first boot, registration closed so
-      # reaching the vhost does not mint accounts. Super-admin is matched by
-      # email, so add the operator's Authentik address before enabling OIDC.
+      # reaching the vhost does not mint accounts. ENABLE_LOCAL_AUTH must stay
+      # explicit: with OIDC configured, unset means local auth OFF, and the
+      # admin is the way in while Authentik is down.
       - ENABLE_LOCAL_AUTH=true
       - ENABLE_REGISTRATION=false
       - ADMIN_USERNAME=admin
       - ADMIN_EMAIL=admin@idanreed.com
-      - SUPERADMIN_EMAILS=admin@idanreed.com
+      # Matched by email at boot and on every OIDC login, and never demoted:
+      # idan's Authentik address lands his SSO account as super-admin.
+      - SUPERADMIN_EMAILS=admin@idanreed.com,idan@idanreed.com
       # OIDC
-      # Ready but OFF (empty issuer = local auth only). Turning it on needs an
-      # Authentik provider plus, in the stack env, OIDC_ISSUER_URL / OIDC_CLIENT_ID /
-      # OIDC_CLIENT_SECRET / OIDC_CALLBACK_URL (.../api/v2/auth/callback) — and
-      # a key-set change, so the stack-env-drift lint applies.
-      # Discovery is boot-safe (measured: the suite with an unreachable issuer
-      # comes up healthy offline), unlike wealthfolio's.
+      # Authentik provider `excalidraw` (excalidraw-oidc.yaml); the secret
+      # arrives from the stack env (env.nix). Any Authentik user is
+      # provisioned on first login, and an existing account with the same
+      # email is linked rather than duplicated — so an SSO login as akadmin
+      # (admin@idanreed.com) IS the local admin.
+      # Boot-safe: discovery runs on the first /api/v2/auth/login, not at
+      # startup, and a failure is not cached — a dead issuer fails SSO logins
+      # until it answers, never the boot.
+      - OIDC_ISSUER_URL=https://auth.idanreed.com/application/o/excalidraw/
+      - OIDC_CLIENT_ID=excalidraw
+      # The blueprint's strict redirect URI. APP_URL + /api/v2/auth/callback
+      # is the default and the same string; pinned so the two read alike.
+      - OIDC_CALLBACK_URL=https://excalidraw.svc.idanreed.com/api/v2/auth/callback
       #
       # Prisma CLI phone-home during the boot-time migrate — off.
       - CHECKPOINT_DISABLE=1

@@ -30,7 +30,9 @@
 #     route out, so `prisma migrate deploy` completing proves the CLI and
 #     engines are baked into the image, not fetched.
 #   - **The auth posture**: local auth on, registration CLOSED (a register
-#     attempt is refused and cannot log in afterwards), OIDC off, wrong
+#     attempt is refused and cannot log in afterwards), OIDC configured — and
+#     with the issuer unreachable the api stays healthy and the SSO login
+#     answers 401 (discovery happens at login, never at boot) — wrong
 #     password 401s, anonymous workspace API 401s.
 #   - **Runtime env injection**: env-config.js carries the real vhost URLs
 #     and no __VITE_APP placeholders — the property that makes the PREBUILT
@@ -50,9 +52,8 @@
 #   - **Vhost path routing is not exercised** — no Caddy here. The three-way
 #     /, /socket.io, /api/v2 split is asserted only as "each upstream
 #     answers on its loopback port".
-#   - **OIDC turn-on.** Needs the VPS and a client secret; only the OFF
-#     state is pinned. Discovery behaviour against a dead issuer is
-#     UNMEASURED for this app — check before enabling (see compose.yaml).
+#   - **The OIDC sign-in itself** needs a live Authentik: only "configured,
+#     and harmless while the issuer is unreachable" is pinned.
 #   - **CDN font fallback** is a browser behaviour; the local woff2 files'
 #     presence in the image is relied on, not asserted.
 
@@ -282,12 +283,20 @@ pkgs.testers.runNixOSTest {
             )[1].strip()
             assert out == "0", f"keyv logged {out} Connection Error line(s) at first boot"
 
-        with subtest("auth posture pinned: local on, registration CLOSED, OIDC off"):
+        with subtest("auth posture pinned: local on, registration CLOSED, OIDC configured"):
             services_vm.succeed(
                 f"curl -fsS --max-time 10 {API}/auth/status "
-                "| jq -e '.oidcConfigured == false and .localAuthEnabled == true "
+                "| jq -e '.oidcConfigured == true and .localAuthEnabled == true "
                 "and .registrationEnabled == false'"
             )
+            # Offline the issuer is unreachable: the SSO login fails (401)
+            # and the api stays up — discovery is lazy and never cached as a
+            # failure.
+            code = services_vm.succeed(
+                f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 30 {API}/auth/login"
+            ).strip()
+            assert code == "401", f"SSO login with no issuer answered {code}"
+            services_vm.succeed(f"curl -fsS --max-time 10 {API}/auth/status >/dev/null")
 
         with subtest("a register attempt is refused and mints no account"):
             # Measured against the pinned image with ENABLE_REGISTRATION=

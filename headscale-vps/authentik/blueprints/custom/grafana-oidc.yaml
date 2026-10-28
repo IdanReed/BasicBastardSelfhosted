@@ -1,0 +1,79 @@
+# OIDC provider + application for Grafana (slug "grafana-sso"). The
+# client_secret travels sops -> modules/authentik.nix template -> worker env ->
+# !Env below; Grafana reads the SAME value from secrets/shared.sops.json
+# through stacks/logging/env.nix. The shared blueprint conventions are
+# documented in headscale-oidc.yaml.
+#
+# Native OIDC sits UNDER the forward auth, which stays: forward-auth.yaml's
+# proxy provider "grafana" still guards the Caddy route, and Grafana's local
+# admin login stays beside this one as break-glass. Both names here differ
+# from forward-auth.yaml's on purpose: provider names are globally unique
+# across types, and the application slug "grafana" already holds the proxy
+# provider (an application has one provider; a second blueprint claiming the
+# slug would re-point it and break the forward auth).
+#
+# Only members of Admin get in: Grafana's role_attribute_path is strict and
+# maps nothing else (stacks/logging/compose.yaml), so the policy here stays
+# open like every other application's.
+version: 1
+metadata:
+  name: grafana-oidc
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: grafana-sso-provider
+    state: present
+    identifiers:
+      name: grafana-sso
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: grafana
+      client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
+      redirect_uris:
+        - url: "https://grafana.svc.idanreed.com/login/generic_oauth"
+          matching_mode: strict
+      # profile carries `groups`, which Grafana's role_attribute_path maps to
+      # its Admin role (members of Admin).
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+      # The default, pinned: Grafana evaluates role_attribute_path against the
+      # id_token BEFORE userinfo, so `groups` belongs in it. Were a fallback
+      # role ever added to that expression, an id_token without `groups` would
+      # resolve to the fallback on its own and userinfo would never be read.
+      include_claims_in_id_token: true
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+
+  - model: authentik_core.application
+    id: grafana-sso-app
+    state: present
+    identifiers:
+      slug: grafana-sso
+    attrs:
+      name: Grafana SSO
+      provider: !KeyOf grafana-sso-provider
+      policy_engine_mode: any
+      meta_launch_url: "https://grafana.svc.idanreed.com"
+      meta_description: "Fleet log search login (Admin group only — Grafana refuses everyone else)"
+
+  # Admin-only: an admin tool, whose own login was a second lock only idan
+  # held. With the one group binding, Authentik refuses everyone outside
+  # `Admin` (declared in headscale-oidc.yaml) and hides the tile from them.
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf grafana-sso-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30

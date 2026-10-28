@@ -17,18 +17,16 @@ services:
       # The published port above depends on it.
       - ACTUAL_PORT=5006
       # OIDC
-      # Inert until the DB flip (`docker exec actual node scripts/enable-openid.js`):
-      # after bootstrap the login method lives in the database, and nothing is
-      # fetched at boot. Then log in through Authentik IMMEDIATELY — the first
-      # OIDC login becomes the permanent, unreassignable server owner.
-      # ACTUAL_OPENID_ENFORCE stays UNSET until a verified OIDC login, or it is
-      # a lockout.
-      - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
-      - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
-      - ACTUAL_OPENID_CLIENT_ID=actual
+      # 🚨 No ACTUAL_OPENID_* and no stack env on this service, on purpose: at
+      # every start the server force-bootstraps OpenID from those vars before
+      # it listens (app.ts run()). On a fresh volume that is before actual_init
+      # has set a password — an OpenID-only server, no password fallback, and
+      # the first Authentik user in owns it without the server-password gate.
+      # The login method lives in the database; actual_init sets it, password
+      # first. ACTUAL_OPENID_ENFORCE stays UNSET: it hides the password method,
+      # the only way in while Authentik is down.
       # SimpleFIN needs no wiring: the credential is pasted in the client UI
       # and stored in account.sqlite.
-    env_file: /run/stack-env/actual.env
     healthcheck:
       # Upstream's own script; the final image has no curl/wget, only node.
       # Liveness only — /health is a bare express 200.
@@ -40,9 +38,9 @@ services:
     restart: unless-stopped
 
   # Bootstrap
-  # POST /account/bootstrap over the project network — the endpoint the browser
-  # form calls; there is no env var and no CLI. Same image so the pin moves in
-  # one place. See actual-init.js.
+  # The server password, then OpenID, over the project network — the endpoints
+  # the browser forms call (/account/bootstrap, /openid/enable). Same image so
+  # the pin moves in one place. See actual-init.js.
   actual_init:
     image: actualbudget/actual-server:26.9.0
     container_name: actual_init
@@ -53,8 +51,22 @@ services:
         condition: service_healthy
     volumes:
       - ./actual-init.js:/init/actual-init.js:ro
+      # Read-only, for the drift check against the stored OpenID client.
+      - /mnt/fast/actual:/data:ro
     command: ['node', '/init/actual-init.js']
     environment:
       - INIT_URL=http://actual:5006
+      # OIDC
+      # Authentik provider `actual` (actual-oidc.yaml; its redirect URI is
+      # SERVER_HOSTNAME + /openid/callback). The client secret comes from the
+      # stack env (env.nix). The first OpenID login becomes the permanent
+      # server owner and must also enter the server password: make it idan.
+      # Users other than the owner exist only once the owner adds them in the
+      # client (ACTUAL_USER_CREATION_MODE stays manual).
+      - ACTUAL_OPENID_DISCOVERY_URL=https://auth.idanreed.com/application/o/actual/.well-known/openid-configuration
+      - ACTUAL_OPENID_SERVER_HOSTNAME=https://actual.svc.idanreed.com
+      # Beats the stack env's vestigial ACTUAL_OPENID_CLIENT_ID (environment
+      # wins over env_file).
+      - ACTUAL_OPENID_CLIENT_ID=actual
     env_file: /run/stack-env/actual.env
     restart: "no"

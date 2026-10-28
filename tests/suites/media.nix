@@ -78,13 +78,14 @@
 #   - annex §8.12 (ntfy): the scanner's quarantine notification is never
 #     asserted — ntfy is not deployed in this suite, and scan-downloads.sh's
 #     notify-failure WARN line is not even grepped for.
-#   - annex §8.14 (cleanuparr): healthchecked on its port only — no strike
-#     exercise (needs a live queue), and the LOCAL malware-blocklist file
-#     the compose comment points at is shipped by NOTHING in the stack:
-#     production Cleanuparr starts WHOLLY UNCONFIGURED (v2 is UI/SQLite-
-#     configured, annex §0.2) until its one-time UI setup. Read no coverage
-#     into a green run here; freshclam updates and the arr-import -> strike
-#     fallout additionally need egress / a live indexer.
+#   - annex §8.14 (cleanuparr): healthchecked, and cleanuparr-init's
+#     account claim + OIDC settings asserted — but no strike exercise (needs
+#     a live queue), and the LOCAL malware-blocklist file the compose comment
+#     points at is shipped by NOTHING in the stack: its arr connections and
+#     strike rules stay a one-time UI setup (v2 is UI/SQLite-configured,
+#     annex §0.2). The OIDC sign-in itself needs a live Authentik. Read no
+#     strike coverage into a green run here; freshclam updates and the
+#     arr-import -> strike fallout additionally need egress / a live indexer.
 #   - the clamav DB volume is seeded from the image before first start: the
 #     bind mount shadows the image's baked database, and freshclam (which
 #     populates it on the real host, where egress exists) cannot run offline.
@@ -560,6 +561,29 @@ pkgs.testers.runNixOSTest {
             diag("seerr-bootstrap run")
             raise
 
+    with subtest("cleanuparr-init claims the account and sets OIDC; a re-run changes nothing"):
+        # Same shape as jellyfin-init: no dependent consumes it. Offline it
+        # writes the OIDC settings without contacting the issuer — discovery
+        # happens at sign-in.
+        try:
+            services_vm.succeed(MEDIA + " up -d cleanuparr-init")
+            services_vm.wait_until_succeeds(
+                "docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                "media_cleanuparr_init | grep -qx exited/0",
+                timeout=600,
+            )
+        except Exception:
+            diag("cleanuparr-init run")
+            raise
+        first = services_vm.succeed("docker logs media_cleanuparr_init 2>&1")
+        assert "CHANGE:" in first, (
+            f"cleanuparr-init's first run against a fresh Cleanuparr changed "
+            f"nothing:\n{first}")
+        again = services_vm.succeed(
+            MEDIA + " run --rm --no-deps cleanuparr-init 2>&1")
+        assert "CHANGE:" not in again, (
+            f"a cleanuparr-init re-run was not a no-op:\n{again}")
+
     with subtest("every container is in its contract state"):
         # Healthchecked services must be healthy; the two init oneshots must
         # have exited 0; gluetun must be running AND unhealthy — offline, a
@@ -574,7 +598,8 @@ pkgs.testers.runNixOSTest {
             assert h == "healthy", f"{name} is {h!r}, expected healthy"
         for name in ["media_qbit_init", "media_seerr_init", "media_init",
                      "media_jellyfin_config_init", "media_jellyfin_init",
-                     "media_bazarr_config_init", "media_seerr_bootstrap"]:
+                     "media_bazarr_config_init", "media_seerr_bootstrap",
+                     "media_cleanuparr_init"]:
             code = services_vm.succeed(
                 f"docker inspect -f '{{{{.State.ExitCode}}}}' {name}"
             ).strip()
@@ -902,7 +927,7 @@ pkgs.testers.runNixOSTest {
             "http://127.0.0.1:10056/api/v1/arr"
         ).strip()
         assert code != "200", (
-            f"profilarr /api/v1/arr answered {code} with no key (AUTH=on)"
+            f"profilarr /api/v1/arr answered {code} with no key (AUTH=oidc)"
         )
         # media-init could not link Dictionarry offline — that must be the
         # loud WARN with the UI fallback, never a silent skip or a FATAL.

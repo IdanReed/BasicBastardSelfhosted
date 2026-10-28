@@ -9,6 +9,11 @@
 # Three containers, one published port. Upstream's community compose has four;
 # OpenSearch is dropped (its 4 GB JVM heap alone exceeds the suite's budget).
 #
+# SSO is SAML 2.0 against Authentik (DocSpace has no OIDC client), configured by
+# docspace_init from the IdP's metadata; the IdP half is
+# headscale-vps/authentik/blueprints/custom/docspace-saml.yaml. The owner's
+# local login stays on the login page as the break-glass.
+#
 # Backup: docspace_db is MySQL 8.4, which still ships mysqldump — backup-prepare.sh
 # needs a second branch in its MySQL section for it.
 
@@ -39,6 +44,14 @@ services:
       # `Basedomain == "localhost"`, so the real vhost here silently converts the
       # portal to SaaS mode — paywalling SSO — with no error.
       - APP_CORE_BASE_DOMAIN=localhost
+      # 🚨 The in-container router, for the server-side calls ASC.SsoAuth,
+      # Socket.IO and the Next.js apps make back into the portal. Unset, each
+      # dials the PUBLIC origin it was reached through — https://docspace.svc…,
+      # Caddy on the tailnet IP — which the host firewall drops from a docker
+      # bridge, and SsoAuth fetches its config that way before every /sso/*
+      # request, so SAML would fail on every route. The public URLs it hands
+      # browsers still come from X-Forwarded-Host/-Proto.
+      - API_HOST=http://127.0.0.1:80
       # 🚨 Defaults to http://host.docker.internal/, which does not resolve on
       # Linux. This is the base Document Server calls back on, so left alone
       # every document opens and every save silently 404s.
@@ -156,8 +169,10 @@ services:
     restart: unless-stopped
 
   # Init
-  # Completes the setup wizard headlessly. Idempotent for free: `wizardToken` is
-  # populated only while the wizard is incomplete. See docspace-init.sh.
+  # Completes the setup wizard headlessly, then points SAML SSO at Authentik.
+  # Idempotent: `wizardToken` is populated only while the wizard is incomplete,
+  # and the SSO settings are compared before anything is saved. An unreachable
+  # Authentik leaves SSO as it is and still exits 0. See docspace-init.sh.
   docspace_init:
     image: python:3.13-alpine
     container_name: docspace_init
@@ -165,6 +180,14 @@ services:
     depends_on:
       docspace:
         condition: service_healthy
+    # 🚨 The IdP metadata URL redirects into /api/v3/, which the VPS Caddy
+    # serves only to tailnet sources (publicly: 403), and the services VM
+    # resolves auth.idanreed.com to the public IP. The same pin as the
+    # desktop's networking.extraHosts: if the VPS's tailnet IP is not
+    # 100.64.0.1, change both. Wrong, it costs SSO updates (a WARN), never
+    # the stack.
+    extra_hosts:
+      - 'auth.idanreed.com:100.64.0.1'
     volumes:
       - ./docspace-init.sh:/init/docspace-init.sh:ro
     env_file: /run/stack-env/docspace.env
