@@ -268,6 +268,22 @@ pkgs.testers.runNixOSTest {
         # reach /django-admin/ and do almost nothing there.
         assert "\nSUPER" in "\n" + out and "NOT_SUPER" not in out, out
 
+    with subtest("the SSO roster is idan alone, a superuser with no password"):
+        # wger-init's roster: idan for Authentik login (superuser, unusable
+        # password, verified email — the address allauth signs him in by),
+        # beside the `admin` break-glass. Nobody else.
+        out = shell(
+            "from django.contrib.auth import get_user_model;"
+            "from allauth.account.models import EmailAddress;"
+            "U=get_user_model();"
+            "print('USERS', sorted(U.objects.values_list('username', flat=True)));"
+            "u=U.objects.get(username='idan');"
+            "print('IDAN', u.is_superuser, u.has_usable_password(), "
+            "EmailAddress.objects.filter(user=u, email='idan@idanreed.com', verified=True).count())"
+        )
+        assert "USERS ['admin', 'idan']" in out, out
+        assert "IDAN True False 1" in out, out
+
     with subtest("🚨 static files are actually served through nginx"):
         # wger/server ships no whitenoise. Without the sidecar the app renders,
         # answers the API, and has no CSS and no JS — which looks plausible

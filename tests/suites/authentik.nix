@@ -782,10 +782,15 @@ pkgs.testers.runNixOSTest {
                   f"{CURL} '{API}/core/users/?email=idan@idanreed.com'"))["results"]
               assert [o["username"] for o in owners] == ["idan"], owners
 
-              devices = json.loads(headscale_vps.succeed(
-                  f"{CURL} '{API}/authenticators/admin/totp/'"))["results"]
-              mine = [d for d in devices if d["user"]["pk"] == u["pk"]]
-              assert len(mine) == 1 and mine[0]["confirmed"], devices
+              # The API serializer leaves `confirmed` out; read the row.
+              out = headscale_vps.succeed(
+                  "docker exec authentik_worker ak shell -c "
+                  "\"from authentik.stages.authenticator_totp.models import TOTPDevice; "
+                  f"print('DEVICES', TOTPDevice.objects.filter(user__username='{INVITEE}', "
+                  "confirmed=True).count())\" 2>/dev/null"
+              )
+              devices = [l for l in out.splitlines() if l.startswith("DEVICES ")]
+              assert devices and devices[-1] == "DEVICES 1", out[-500:]
 
               # Single use: the link is spent.
               headscale_vps.succeed("rm -f /tmp/reuse.jar")

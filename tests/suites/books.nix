@@ -930,6 +930,20 @@ pkgs.testers.runNixOSTest {
             f"curl -sf --max-time 15 {SHELFMARK}/api/health | grep -q ok"
         )
 
+    with subtest("shelfmark: Authentik's Admin group, and only it, is admin"):
+        # PROXY_AUTH_ADMIN_GROUP_NAME — without it every new proxy user is
+        # an admin. The headers are the ones Caddy's (protected) snippet
+        # copies from the outpost, groups pipe-separated.
+        def sm_check(user, groups):
+            return json.loads(services_vm.succeed(
+                f"curl -sf --max-time 15 -H 'X-authentik-username: {user}' "
+                f"-H 'X-authentik-groups: {groups}' {SHELFMARK}/api/auth/check"
+            ))
+        admin = sm_check("idan", "headscale-users|Admin")
+        assert admin.get("authenticated") and admin.get("is_admin") is True, admin
+        member = sm_check("invitee", "headscale-users")
+        assert member.get("authenticated") and member.get("is_admin") is False, member
+
     with subtest("the oneshots publish nothing"):
         for name in ["books_config_init", "books_init"]:
             ports = services_vm.succeed(

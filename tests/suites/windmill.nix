@@ -290,6 +290,18 @@ pkgs.testers.runNixOSTest {
             f"{body[:300]}"
         )
 
+    with subtest("the roster is idan alone"):
+        # The instance's accounts are windmill-init's roster: no friends'
+        # accounts, and the default one retired.
+        code, body = login(ADMIN, ADMIN_PASS)
+        token = body.strip().strip('"')
+        users = json.loads(services_vm.succeed(
+            f"curl -sf --max-time 20 -H {shlex.quote('Authorization: Bearer ' + token)} "
+            f"'{BASE}/api/users/list_as_super_admin?per_page=1000'"
+        ))
+        emails = sorted(u["email"] for u in users)
+        assert emails == [ADMIN], f"instance users: {emails}"
+
     with subtest("the worker registered with the server"):
         code, body = login(ADMIN, ADMIN_PASS)
         token = body.strip().strip('"')
