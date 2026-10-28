@@ -210,8 +210,10 @@ pkgs.testers.runNixOSTest {
         # sets it and wins over env_file. SSO_CLIENT_SECRET must NOT be:
         # config.rs refuses to start vaultwarden when SSO_ENABLED is true and
         # it is empty, so an empty value is a crash loop, not an off-state.
-        services_vm.succeed("grep -qx 'SSO_CLIENT_ID=' /srv/stacks/vaultwarden/.env")
-        services_vm.fail("grep -qx 'SSO_CLIENT_SECRET=' /srv/stacks/vaultwarden/.env")
+        # stack-env.nix single-quotes every value: empty renders as a pair of
+        # quotes (written as three below, Nix's escape for two).
+        services_vm.succeed("grep -qx \"SSO_CLIENT_ID='''\" /srv/stacks/vaultwarden/.env")
+        services_vm.fail("grep -qx \"SSO_CLIENT_SECRET='''\" /srv/stacks/vaultwarden/.env")
 
     with subtest("the rendered env keeps the PHC SINGLE-QUOTED"):
         # stack-env.nix single-quotes every rendered value. If a future edit

@@ -248,7 +248,7 @@ pkgs.testers.runNixOSTest {
         # through an authenticated browser session, so the shipping state is
         # "importer runs, cannot talk to Firefly yet".
         services_vm.succeed(
-            "grep -qx 'FIREFLY_III_ACCESS_TOKEN=' /srv/stacks/firefly/.env"
+            "grep -qx \"FIREFLY_III_ACCESS_TOKEN='''\" /srv/stacks/firefly/.env"
         )
 
     with subtest("APP_KEY is exactly 32 characters"):

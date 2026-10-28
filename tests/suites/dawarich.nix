@@ -34,13 +34,14 @@
 #     which is what every Komodo redeploy will do.
 #   - the backup contract by executing it: `pg_dumpall -U dawarich` inside
 #     `dawarich_db`, exactly as nixos/backup-prepare.sh builds it.
-#   - the OIDC-ready-but-OFF shipping state.
+#   - OIDC configured with the shared client secret, and the stack healthy
+#     while the issuer is unreachable (discovery happens at login).
 #   - loopback-only publishing from another host, with a positive control.
 #   - reboot durability on a real disk.
 #
 # Documented gaps (a green run covers NONE of these):
-#   - **The OIDC login.** Ships off because the Authentik client secret needs
-#     the production age key. What is asserted is the deliberate off-state.
+#   - **The OIDC login.** Needs a live Authentik; only "configured, and
+#     harmless offline" is asserted.
 #   - **Reverse geocoding.** Disabled by default (no PHOTON_API_HOST) and
 #     self-hosting Photon needs a ~150 GB planet index.
 #   - **Any real tracker client.** Overland/OwnTracks/Traccar posting points is
@@ -259,14 +260,12 @@ pkgs.testers.runNixOSTest {
             "stat -L -c '%a %u:%g' /srv/stacks/dawarich/.env"
         ).strip()
         assert stat == "400 0:0", f".env is {stat}, expected 400 0:0"
+        # The OIDC client secret arrives from the shared file
+        # (stacks/dawarich/env.nix), non-empty.
         for k in ["SECRET_KEY_BASE", "POSTGRES_PASSWORD", "DATABASE_PASSWORD",
-                  "DAWARICH_ADMIN_EMAIL", "DAWARICH_ADMIN_PASSWORD"]:
+                  "DAWARICH_ADMIN_EMAIL", "DAWARICH_ADMIN_PASSWORD",
+                  "DAWARICH_OIDC_CLIENT_SECRET"]:
             services_vm.succeed(f"grep -q '^{k}=.' /srv/stacks/dawarich/.env")
-        # The OIDC secret is asserted PRESENT AND EMPTY — that is the shipping
-        # state this suite pins, not an oversight.
-        services_vm.succeed(
-            "grep -qx 'DAWARICH_OIDC_CLIENT_SECRET=' /srv/stacks/dawarich/.env"
-        )
 
     services_vm.wait_for_unit("load-test-images.service")
 

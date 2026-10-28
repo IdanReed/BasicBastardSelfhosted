@@ -448,7 +448,7 @@ pkgs.testers.runNixOSTest {
       with subtest("caddy, util and ntfy come up on the services VM"):
           # TAILNET_IP is only known post-join, same dance as tailnet.nix.
           services_vm.succeed(
-              f"sed -i 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
+              f"sed -i --follow-symlinks 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
           )
           # Second -f: the test-only overlay mounting the runtime CA bundle
           # for the (protected) snippet's injected trust pool.

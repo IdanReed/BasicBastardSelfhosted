@@ -386,7 +386,7 @@ pkgs.testers.runNixOSTest {
           # until the node has joined. Same thing here: rewrite it, then bring
           # the stack up as Komodo would.
           services_vm.succeed(
-              f"sed -i 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
+              f"sed -i --follow-symlinks 's|^TAILNET_IP=.*|TAILNET_IP={svc_ip}|' /srv/stacks/caddy/.env"
           )
           services_vm.succeed(
               "docker compose -f /srv/stacks/caddy/compose.yaml "
