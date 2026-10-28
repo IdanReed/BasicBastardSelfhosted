@@ -17,9 +17,13 @@ are zsh functions — both live in `nixos-de/home.nix`.
 # edit, then:
 git add -A && git commit
 nrs-vps            # only if headscale-vps/ or a value it reads changed
-nrs-vm             # only if nixos/, forgejo/, komodo/ (not komodo/sync/) or a secret changed
+nrs-vm             # only if nixos/, forgejo/, komodo/ (not komodo/sync/), a stacks/*/env.nix
+                   #   or a secret changed
 git push forgejo main
 ```
+
+An `env.nix`-only change is the one the push does not deploy (`env.nix` is not
+a `config_files` entry): after `nrs-vm`, Deploy that stack in the Komodo UI.
 
 **Push is the deploy for stacks.** Forgejo's push webhook runs Komodo's `apply`
 procedure: it re-applies `komodo/sync/` (registering, updating or removing

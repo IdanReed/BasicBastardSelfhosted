@@ -87,7 +87,9 @@
 
   # storagebox_ed25519 must be a REAL file, not the sops-nix symlink: backrest
   # bind-mounts this directory and a /run/secrets.d symlink dangles
-  # in-container. C+ re-copies on every switch, so never ssh-keygen here.
+  # in-container. C+ copies only when the file is absent: a rotated key lands
+  # after `rm` + `systemd-tmpfiles --create`, and a hand-made key would shadow
+  # the sops value — never ssh-keygen here.
   systemd.tmpfiles.rules = [
     "d /var/lib/backup 0700 root root -"
     "C+ /var/lib/backup/storagebox_ed25519 0600 root root - ${config.sops.secrets.BACKUP_STORAGEBOX_SSH_KEY.path}"
