@@ -169,6 +169,22 @@ in
       ensure ResourceSync sync sync
       ensure Procedure procedure apply
 
+      # Komodo's own "Rotate Server Keys" system procedure (daily, 06:00):
+      # Periphery mints a new keypair and Core swaps the public key it expects,
+      # which drops the Core<->Periphery connection and strands every deploy in
+      # flight. Both keys live in the one /config/keys volume here, so rotating
+      # buys nothing. Core recreates it, schedule on, in a fresh database; this
+      # turns the schedule off on every run.
+      rotate='{"procedure":"Rotate Server Keys"}'
+      if id=$(k /read/GetProcedure "$rotate" 2>/dev/null | jq -er '._id."$oid"'); then
+        if [ "$(k /read/GetProcedure "$rotate" | jq -r .config.schedule_enabled)" = true ]; then
+          k /write/UpdateProcedure "$(jq -n --arg id "$id" '{id: $id, config: {schedule_enabled: false}}')" >/dev/null
+          echo "Rotate Server Keys: schedule disabled"
+        else
+          echo "Rotate Server Keys: schedule already off"
+        fi
+      fi
+
       # The sync clones from Forgejo, which starts beside Komodo at boot.
       for _ in $(seq 120); do
         curl -fsS --max-time 5 http://127.0.0.1:10550/api/healthz >/dev/null 2>&1 && break

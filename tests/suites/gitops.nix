@@ -362,6 +362,11 @@ pkgs.testers.runNixOSTest {
         kapi("/read/GetBuilder", {"builder": "Local"})
         for name in ("Backup Core Database", "Global Auto Update", "Rotate Server Keys"):
             kapi("/read/GetProcedure", {"procedure": name})
+        # ...except that the key rotation's schedule is off: rotating drops
+        # Core<->Periphery and strands every deploy in flight.
+        rot = json.loads(kapi("/read/GetProcedure", {"procedure": "Rotate Server Keys"}))
+        assert rot["config"]["schedule_enabled"] is False, rot["config"]
+        assert rot["config"]["stages"], "the rotation procedure lost its stages"
         # ...and a second sync over the same commit has nothing to change —
         # above all not the sync or `apply`, which a running `apply` could
         # never update.
