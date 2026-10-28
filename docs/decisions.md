@@ -85,9 +85,9 @@ on the reason.
   OIDC. Jellyfin has no headless password reset, so the admin's password
   changes in the Jellyfin UI first (D-26).
 - **Actual's OpenID is enabled by `actual-init`**, never by server env (the
-  pinned server would go OpenID-only at boot, before a password exists). The
-  first OIDC login still becomes the permanent owner, so log in as `idan`
-  right after the deploy that enables it.
+  pinned server would go OpenID-only at boot, before a password exists). It
+  seats `idan` as ADMIN first, so no other first OIDC login can claim the
+  server.
 
 ### Hosts
 

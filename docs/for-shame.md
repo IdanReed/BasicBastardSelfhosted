@@ -20,8 +20,9 @@ the volume is lost) or must be redone on every recreate.
 | Service | The step | Why it cannot be declarative | Survives |
 |---|---|---|---|
 | Komodo | after your first "Login with OIDC", log in as the local `admin` and enable `idan` as Admin | OIDC sign-ups land disabled on purpose (`KOMODO_ENABLE_NEW_USERS=false`): the UI drives the docker socket | Komodo DB |
-| Actual | be the **first** OIDC login (it asks once for the server password) | `actual-init` enables OpenID, but the first OIDC login becomes the permanent owner and upstream cannot pre-assign it | Actual DB |
 | Outline | log in once, as `idan`, right after the first deploy | the first login creates and owns the team; no env, CLI or seeder exists | Outline DB |
+| Firefly III | open it once, as `idan`, right after the first deploy | the remote-user guard makes the first email it sees the owner; nothing seeds a user | Firefly DB |
+| Ghostfolio | log in once, as `idan`, right after the first deploy | the first account becomes ADMIN; OIDC users are keyed by `sub` alone, so nothing can pre-seed one | Ghostfolio DB |
 | Vaultwarden | set a master password in the web vault after the first SSO login | vaults are client-side E2EE; no server-side seed can create a vault key | `db.sqlite3` |
 | Paperless-ngx | grant staff/admin to the SSO user in `/admin` | the superuser-group variable first exists in 3.1; the stack pins 2.20 | Paperless DB |
 | Dawarich | make your Authentik email equal `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; confirm the password once to link | auto-register matches by email; a mismatch mints a second account | ordering, once |
@@ -52,14 +53,17 @@ the break-glass login and what `komodo-sync-bootstrap` uses.
 
 ### The "first login owns it" apps
 
-Actual and Outline make whoever logs in first the permanent owner. On a
-tailnet every enrolled device could be first, so log in as `idan` right after
-the first deploy. Never set `ACTUAL_OPENID_ENFORCE` — it kills the password
-fallback. Outline has no local accounts at all: its OIDC secret is the login.
+Outline, Firefly III and Ghostfolio make whoever signs in first the owner. On
+a tailnet every enrolled device could be first, so log in as `idan` right
+after the first deploy — before any invitation goes out
+([accounts.md](accounts.md)). Outline has no local accounts at all: its OIDC
+secret is the login.
 
-Two apps look like this family and are not: Homebox's owner is pre-created by
-`tracking-init`, and BookStack's admin comes from membership of the Authentik
-group `Admin`, re-asserted on every login.
+Apps that look like this family and are not: Actual (`actual-init` seats
+`idan` as ADMIN before OpenID exists — never set `ACTUAL_OPENID_ENFORCE`, it
+kills the password fallback), Homebox (`tracking-init` pre-creates the
+owner), and BookStack (admin is membership of the Authentik group `Admin`,
+re-asserted on every login).
 
 ### Grafana plugin
 

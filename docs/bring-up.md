@@ -1033,11 +1033,13 @@ green; `sudo headscale users list` shows exactly one `idan`, with
 `idan` is declared in `headscale-vps/authentik/blueprints/custom/headscale-oidc.yaml`
 (groups `headscale-users` and `Admin`) with one password,
 `IDAN_INITIAL_PASSWORD` in `secrets/shared.sops.json`. Everyone else enrols
-by **invitation**: Authentik admin → Directory → Invitations → create one
-(single use, 7-day expiry, fixed username and email) and send the link; the
+by **invitation**: `headscale-vps/invite.sh <username> <email>` mints one
+(single use, 7-day expiry, fixed username and email) and prints the link; the
 enrollment flow sets a password and TOTP and puts the user in
 `headscale-users`. Each person then enrols their own devices with
-`tailscale up --login-server=https://headscale.idanreed.com`.
+`tailscale up --login-server=https://headscale.idanreed.com`. Log in to the
+"first login owns it" apps as idan before the first invitation; the details
+and the per-app list are [accounts.md](accounts.md).
 
 idan's password is also the admin credential of the services that cannot
 federate. Change it with:
