@@ -399,10 +399,14 @@ for impl, app in (("Radarr", ARRS["radarr"]), ("Sonarr", ARRS["sonarr"])):
 #
 # Prowlarr refuses to save an indexer whose test search returns nothing, and a
 # fresh Bitmagnet has an empty index until its crawler's first batch lands —
-# so on a first deploy this waits (bounded) for the index to fill. Once the
-# indexer exists the whole step is a lookup.
+# and on a first deploy bitmagnet/armiger start only after gluetun is healthy,
+# often after this runs. So it waits for Armiger to answer and the index to
+# fill, INDEX_WAIT in all; but when neither Armiger nor qbittorrent (same netns)
+# answers after TUNNEL_WAIT, the tunnel is down and it gives up at once. Once
+# the indexer exists the whole step is a lookup.
 ARMIGER = "http://gluetun:8097/torznab"
 ARMIGER_NAME = "Armiger (Bitmagnet)"
+TUNNEL_WAIT = 120
 INDEX_WAIT = 600
 
 
@@ -416,12 +420,30 @@ def armiger_results():
         return None
 
 
+def netns_up():
+    """Anything answering on qbittorrent's port: gluetun's netns has started
+    its tenants, i.e. the tunnel is up."""
+    try:
+        urllib.request.urlopen(QBIT, timeout=10)
+    except urllib.error.HTTPError:
+        pass
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 indexers = req("GET", f"{PROWLARR}/api/v1/indexer", PKEY) or []
 if any(i.get("name") == ARMIGER_NAME for i in indexers):
     log("OK", f"prowlarr: {ARMIGER_NAME} indexer present")
 else:
+    start = time.time()
+    deadline = start + INDEX_WAIT
     n = armiger_results()
-    deadline = time.time() + INDEX_WAIT
+    while n is None and time.time() < deadline:
+        if time.time() - start > TUNNEL_WAIT and not netns_up():
+            break
+        time.sleep(15)
+        n = armiger_results()
     while n == 0 and time.time() < deadline:
         log("OK", f"prowlarr: Bitmagnet's index is still empty - waiting for "
                   f"its crawler's first batch ({int(deadline - time.time())}s left)")
@@ -450,9 +472,15 @@ else:
             "name": ARMIGER_NAME, "enable": True, "priority": 25, "tags": [],
             "appProfileId": profiles[0]["id"] if profiles else 1,
         })
-        req("POST", f"{PROWLARR}/api/v1/indexer", PKEY, tmpl, timeout=120)
-        change(f"prowlarr: added the {ARMIGER_NAME} indexer ({ARMIGER}, "
-               f"{n} result(s) in its test search)")
+        try:
+            req("POST", f"{PROWLARR}/api/v1/indexer", PKEY, tmpl, timeout=120)
+            change(f"prowlarr: added the {ARMIGER_NAME} indexer ({ARMIGER}, "
+                   f"{n} result(s) in its test search)")
+        except ApiError as e:
+            # Prowlarr's own test search (the body above says why) — the
+            # next run retries.
+            log("WARN", f"prowlarr: refused {ARMIGER_NAME} ({e}) - the next "
+                        f"media-init run retries")
 
 # ---------------------------------------------------------------------------
 # Profilarr: Dictionarry database link (best-effort, see header contract)
