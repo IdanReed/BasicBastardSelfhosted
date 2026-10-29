@@ -14,7 +14,7 @@
 #   ./tests/run.sh gitops         # komodo: push -> sync -> decrypt -> deploy -> update
 #   ./tests/run.sh forwardauth    # heavy: the gate is on bentopdf, scoped to it (no login leg)
 #   ./tests/run.sh forgejo        # heavy: healthz, admin seed, API repo, push/clone
-#   ./tests/run.sh media          # heavy: gluetun kill-switch, x265 guard, EICAR chain
+#   ./tests/run.sh media          # heavy: gluetun kill-switch, codec ranking, EICAR + ffprobe chains
 #   ./tests/run.sh immich         # heavy: config render, v3 API, thumbs sans ML, reboot
 #   ./tests/run.sh books          # heavy: kavita/abs seeding, OPDS, :ro mounts, hook
 #   ./tests/run.sh automation     # heavy: HA storage config, MQTT round trip, frigate

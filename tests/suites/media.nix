@@ -19,17 +19,31 @@
 #     download client at gluetun:8080 via forceSave while the tunnel is down,
 #     TRaSH naming, Prowlarr application push) and IDEMPOTENCE — a second run
 #     logs zero "CHANGE:" lines (what protects Komodo redeploys)
-#   - x265 ENFORCEMENT, mechanically and BOTH-SIDED: a TRaSH-style
-#     "x265 (HD)" custom format scored -10000 AND an "x264" one scored
-#     +10000 are injected into BOTH arrs via the API — the two artifacts an
-#     x264-biased profile produces — and a media-init re-run must zero the
-#     first, invert the second, and log the GUARD lines (the injection is
-#     also what makes the sonarr sweep leg non-vacuous). Then both arrs are
-#     swept: no custom format matching /x265|h.?265|hevc/i scores negative,
-#     none matching /x264|h.?264|\bavc\b/i scores positive, and wherever a
-#     profile carries both kinds the best x265 score strictly outranks the
-#     best x264 score. A one-sided sweep would pass a profile that scores
-#     x264 at +10000 — that is not "enforced", hence both sides.
+#   - the CODEC RANKING and the profile set, mechanically, in BOTH arrs:
+#     Dictionarry-shaped custom formats (plain AV1/x265/x264 formats and
+#     codec-bearing tiers, AV1 at -999999 as Dictionarry ships it, a TRaSH-
+#     style x265 at -10000 and x264 at +10000) and the two Efficient profiles
+#     are created over the API, and a media-init run must leave AV1 positive
+#     and strictly above the best x265 score, every x264 format strictly
+#     below it, plain x265 non-negative and plain x264 non-positive — swept
+#     over every profile left. It must delete every other profile except one
+#     an import list still uses (a WARN, never a failure), which goes on the
+#     run after the list does; then a run is a no-op again. Seerr's default
+#     follows BY NAME to 1080p Efficient in both arrs (a WARN, not a failure,
+#     while the profile does not exist yet)
+#   - Bazarr's subtitle policy from bazarr-init: one English profile (not
+#     forced, not HI-only, the remove_HI mod on), the default for series and
+#     movies and assigned to an item Bazarr already held, the account-free
+#     providers on and OpenSubtitles.com off while its fixture credentials are
+#     placeholders — on with real ones, off again after — idempotent
+#   - Cleanuparr's queue hygiene from cleanuparr-init: both arrs and
+#     qBittorrent connected, the malware blocker on the repo's blocklist (the
+#     copy under /config byte-identical), the queue cleaner and its stall rule
+#   - the ffprobe check: a real tiny feature and its 30-second sample pass, a
+#     30-second "feature" and a file of garbage are quarantined BY INODE (a
+#     library hardlink to the fake is gone too), and a file in .incomplete is
+#     never probed. The media is generated offline at build time
+#   - Jellyfin: the local idan's subtitle language is English
 #   - the ClamAV chain: EICAR dropped into the downloads tree is quarantined
 #     by scan-downloads.sh within a poll interval, a clean file is untouched,
 #     and clamd publishes no host port
@@ -70,9 +84,9 @@
 # Documented gaps (do not read a green run as covering these):
 #   - Profilarr's Dictionarry database link + profile sync needs egress
 #     (git clone of the PCD repo) — offline, media-init logs its WARN and the
-#     arrs carry no Dictionarry profiles. The x265 sweep is therefore
-#     structural here (guard mechanics + no negative scores), not a check of
-#     Dictionarry profile CONTENT; that runs on the real host at first link.
+#     arrs carry no Dictionarry profiles. The codec ranking runs against
+#     Dictionarry-SHAPED formats and profiles made over the API, not
+#     Dictionarry's own; that content meets the guard on the real host.
 #     Same reason Profilarr's /api/v1/arr is asserted to answer with the
 #     fixture key but not to list linked arrs: linking them is the one
 #     documented UI/backup-restore step.
@@ -91,10 +105,11 @@
 #     CONFIG is asserted, not the push.
 #   - ntfy: the scanner's quarantine notification is never asserted — ntfy is
 #     not deployed in this suite.
-#   - cleanuparr: healthchecked, and cleanuparr-init's account claim + OIDC
-#     settings asserted — but no strike exercise (needs a live queue), and its
-#     arr connections and strike rules stay a one-time UI setup (v2 is
-#     UI/SQLite-configured). The OIDC sign-in itself needs a live Authentik.
+#   - cleanuparr: its configuration is asserted, not exercised — no strike or
+#     block happens without a live arr queue. The OIDC sign-in itself needs a
+#     live Authentik.
+#   - bazarr: no provider is ever contacted (no egress), and its queue of
+#     wanted subtitles is not run; the policy is asserted through its API.
 #   - Jellyfin's plugin is never pointed at the real outpost here (no
 #     Authentik in this suite); the stand-in serves the entry shapes the
 #     authentik suite reads back from the real one.
@@ -149,6 +164,21 @@ let
       url = "https://github.com/9p4/jellyfin-plugin-sso/releases/download/v4.0.0.4/sso-authentication_4.0.0.4.zip";
       sha256 = "c09f16ba31059a434ddd7f811e4f9608d4b4c4514cc80a5bf1ca33bee61e1107";
     }} -d $out
+  '';
+
+  # The ffprobe check's media, made offline at build time: a 15-minute
+  # feature (over the 600 s movie floor) and two 30-second clips, the
+  # feature's sample and a fake. Tiny frames, one per second, mpeg4 so no
+  # optional encoder is needed.
+  probeMedia = pkgs.runCommand "media-probe-fixtures" { nativeBuildInputs = [ pkgs.ffmpeg-headless ]; } ''
+    mkdir $out
+    clip() {
+      ffmpeg -nostdin -v error -f lavfi -i color=c=gray:s=64x36:r=1 -t "$1" \
+        -c:v mpeg4 -g 30 "$out/$2"
+    }
+    clip 900 feature.mkv
+    clip 30 sample.mkv
+    clip 30 fake.mkv
   '';
 
   # The LDAP plugin's pin. The suite is offline, so the zip jellyfin-config-init
@@ -437,6 +467,8 @@ pkgs.testers.runNixOSTest {
         environment.systemPackages = with pkgs; [
           docker-compose
           jq
+          # Plants an item in Bazarr's database, the way its arr sync would.
+          sqlite
         ];
       };
 
@@ -839,6 +871,76 @@ pkgs.testers.runNixOSTest {
         assert "CHANGE:" not in again, (
             f"a cleanuparr-init re-run was not a no-op:\n{again}")
 
+    # A movie Bazarr already holds, with no profile: what its Radarr sync
+    # leaves behind for everything it found before a default existed.
+    BAZARR_MOVIE = 9001
+    with subtest("bazarr-init declares the subtitle policy; a re-run changes nothing"):
+        services_vm.succeed(
+            "sqlite3 /mnt/fast/bazarr/config/db/bazarr.db "
+            + shlex.quote(
+                "INSERT INTO table_movies (radarrId, path, title, tmdbId, monitored, tags) "
+                f"VALUES ({BAZARR_MOVIE}, '/data/media/movies/Suite (2026)/suite.mkv', "
+                "'Suite', '900001', 'True', '[]')"))
+        try:
+            services_vm.succeed(MEDIA + " up -d bazarr-init")
+            services_vm.wait_until_succeeds(
+                "docker inspect -f '{{.State.Status}}/{{.State.ExitCode}}' "
+                "media_bazarr_init | grep -qx exited/0",
+                timeout=600,
+            )
+        except Exception:
+            print(services_vm.execute("docker logs media_bazarr_init 2>&1 | tail -30")[1])
+            print(services_vm.execute("docker logs bazarr 2>&1 | tail -30")[1])
+            raise
+        first = services_vm.succeed("docker logs media_bazarr_init 2>&1")
+        assert "CHANGE:" in first and "OpenSubtitles.com stays off" in first, first
+        again = services_vm.succeed(MEDIA + " run --rm --no-deps bazarr-init 2>&1")
+        assert "CHANGE:" not in again, f"a bazarr-init re-run was not a no-op:\n{again}"
+
+    def cleanuparr_get(path):
+        # Signed in as the account cleanuparr-init claimed (the fixture's
+        # IDAN_INITIAL_PASSWORD); its settings API takes a bearer token.
+        login = json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 -X POST -H 'Content-Type: application/json' "
+            + "-d " + shlex.quote(json.dumps({"username": "idan", "password": JELLYFIN_PASS}))
+            + " http://127.0.0.1:10058/api/auth/login"))
+        token = login["tokens"]["accessToken"]
+        return json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("Authorization: Bearer " + token)
+            + f" http://127.0.0.1:10058{path}"))
+
+    with subtest("cleanuparr: both arrs and qBittorrent connected, blocker and cleaner on"):
+        for kind, name, url in [("radarr", "Radarr", "http://radarr:7878"),
+                                ("sonarr", "Sonarr", "http://sonarr:8989")]:
+            inst = cleanuparr_get(f"/api/configuration/{kind}")["instances"]
+            assert [i["name"] for i in inst] == [name], inst
+            assert inst[0]["url"].rstrip("/") == url and inst[0]["enabled"], inst
+        clients = cleanuparr_get("/api/configuration/download_client")["clients"]
+        assert [c["name"] for c in clients] == ["qBittorrent"], clients
+        qb = clients[0]
+        assert qb["typeName"] == "qBittorrent" and qb["enabled"], qb
+        assert qb["host"].rstrip("/") == "http://gluetun:8080", qb
+        assert qb["username"] == QBIT_USER, qb
+        mb = cleanuparr_get("/api/configuration/malware_blocker")
+        assert mb["enabled"] is True, mb
+        for arr in ["radarr", "sonarr"]:
+            assert mb[arr] == {"enabled": True, "blocklistType": "Blacklist",
+                               "blocklistPath": "/config/blocklist.txt"}, mb
+        # Cleanuparr reads the repo's list, byte for byte: executables out,
+        # subtitles still in.
+        services_vm.succeed(
+            "cmp /srv/stacks/media/cleanuparr-blocklist.txt "
+            "/mnt/fast/cleanuparr/config/blocklist.txt")
+        services_vm.succeed("grep -qxF '*.exe' /mnt/fast/cleanuparr/config/blocklist.txt")
+        services_vm.fail("grep -qxF '*.srt' /mnt/fast/cleanuparr/config/blocklist.txt")
+        qc = cleanuparr_get("/api/configuration/queue_cleaner")
+        assert qc["enabled"] is True and qc["downloadingMetadataMaxStrikes"] == 5, qc
+        fi = qc["failedImport"]
+        assert fi["maxStrikes"] == 3 and fi["patternMode"] == "Exclude", fi
+        stall = cleanuparr_get("/api/queue-rules/stall")
+        assert [(r["name"], r["enabled"], r["maxStrikes"]) for r in stall] == [("Stalled", True, 5)], stall
+
     with subtest("every container is in its contract state"):
         # Healthchecked services must be healthy; the two init oneshots must
         # have exited 0; gluetun must be running AND unhealthy — offline, a
@@ -854,7 +956,7 @@ pkgs.testers.runNixOSTest {
         for name in ["media_qbit_init", "media_seerr_init", "media_init",
                      "media_jellyfin_config_init", "media_jellyfin_init",
                      "media_bazarr_config_init", "media_seerr_bootstrap",
-                     "media_cleanuparr_init"]:
+                     "media_cleanuparr_init", "media_bazarr_init"]:
             code = services_vm.succeed(
                 f"docker inspect -f '{{{{.State.ExitCode}}}}' {name}"
             ).strip()
@@ -1109,136 +1211,140 @@ pkgs.testers.runNixOSTest {
             services_vm.succeed(f"test -f {p}")
 
     # -----------------------------------------------------------------------
-    # (d) x265 ENFORCEMENT — mechanical, not vibes
+    # (d) the profile set and the codec ranking — mechanical, not vibes
     # -----------------------------------------------------------------------
-    with subtest("the guard fixes BOTH sides of an x264-biased profile"):
-        # Inject the two artifacts an x264-biased profile produces — TRaSH's
-        # golden-rule 'x265 (HD)' at -10000 AND an 'x264' at +10000 — into
-        # BOTH arrs via the API, then re-run media-init: the guard must zero
-        # the first, invert the second, and say so. This is the codified
-        # anti-TRaSH assertion (and what makes the sonarr leg of the sweep
-        # below non-vacuous — without injection sonarr carries no codec CFs);
-        # the offline gap is only Dictionarry profile CONTENT (see header).
-        cf265 = {
-            "name": "x265 (HD)",
-            "includeCustomFormatWhenRenaming": False,
-            "specifications": [{
-                "name": "x265",
-                "implementation": "ReleaseTitleSpecification",
-                "negate": False,
-                "required": True,
-                "fields": [{"name": "value", "value": "[xh]265|HEVC"}],
-            }],
-        }
-        cf264 = {
-            "name": "x264",
-            "includeCustomFormatWhenRenaming": False,
-            "specifications": [{
-                "name": "x264",
-                "implementation": "ReleaseTitleSpecification",
-                "negate": False,
-                "required": True,
-                "fields": [{"name": "value", "value": "[xh]264|AVC"}],
-            }],
-        }
-        try:
-            injected = {}
-            for name in ["radarr", "sonarr"]:
-                id265 = api(name, "customformat", "POST", cf265)["id"]
-                id264 = api(name, "customformat", "POST", cf264)["id"]
-                profs = api(name, "qualityprofile")
-                assert profs, f"{name} has no quality profiles at all"
-                prof = profs[0]
-                hits = {id265: 0, id264: 0}
-                for fi in prof.get("formatItems", []):
-                    if fi.get("format") == id265:
-                        fi["score"] = -10000
-                        hits[id265] += 1
-                    elif fi.get("format") == id264:
-                        fi["score"] = 10000
-                        hits[id264] += 1
-                assert hits == {id265: 1, id264: 1}, (
-                    f"expected each new CF once in {name}'s formatItems, "
-                    f"saw {hits}: {prof!r}"
-                )
-                api(name, f"qualityprofile/{prof['id']}", "PUT", prof)
-                injected[name] = (id265, id264, prof["id"])
+    # Dictionarry-shaped formats: a codec in a required release-title
+    # condition, alone (plain) or with a resolution (a tier). The scores are
+    # what a Profilarr sync leaves: Dictionarry blocks AV1, a TRaSH artifact
+    # scores x265 down and x264 up, and the 2160p x264 tier sits ABOVE the
+    # best x265 so the ceiling has work to do.
+    X265_RX = r"[xh][ ._-]?265|\bHEVC(\b|\d)"
+    X264_RX = r"[xh][ ._-]?264|\bAVC(\b|\d)"
+    KEEP = ["1080p Efficient", "2160p Efficient"]
+    FORMATS = {
+        # name: (codec, plain, title pattern, Profilarr's score per profile)
+        "AV1": ("av1", True, r"\bAV1\b", (-999999, -999999)),
+        "x265 (HD)": ("x265", True, X265_RX, (-10000, 0)),
+        "Suite HEVC Tier": ("x265", False, X265_RX, (960000, 982000)),
+        "x264": ("x264", True, X264_RX, (10000, 0)),
+        "Suite x264 Tier": ("x264", False, X264_RX, (880000, 990000)),
+    }
+    RANKED = {
+        "1080p Efficient": {"AV1": 960001, "x265 (HD)": 0, "Suite HEVC Tier": 960000,
+                            "x264": -10000, "Suite x264 Tier": 880000},
+        "2160p Efficient": {"AV1": 982001, "x265 (HD)": 0, "Suite HEVC Tier": 982000,
+                            "x264": 0, "Suite x264 Tier": 981999},
+    }
 
-            out = run_media_init()
-            assert "GUARD" in out and "zeroing (x265 ENFORCED)" in out, (
-                f"guard did not zero the injected -10000 x265 CFs:\n{out}"
-            )
-            assert "inverting" in out, (
-                f"guard did not invert the injected +10000 x264 CFs:\n{out}"
-            )
+    def custom_format(name, pattern, tier):
+        specs = [{"name": "codec", "implementation": "ReleaseTitleSpecification",
+                  "negate": False, "required": True,
+                  "fields": [{"name": "value", "value": pattern}]}]
+        if tier:
+            specs.append({"name": "1080p", "implementation": "ResolutionSpecification",
+                          "negate": False, "required": True,
+                          "fields": [{"name": "value", "value": 1080}]})
+        return {"name": name, "includeCustomFormatWhenRenaming": False,
+                "specifications": specs}
 
-            # And the APIs agree: x265 back to 0, x264 inverted to -10000,
-            # in each arr independently (the log asserts above cannot tell
-            # which arr a GUARD line came from).
-            for name, (id265, id264, pid) in injected.items():
-                prof2 = api(name, f"qualityprofile/{pid}")
-                scores = {fi.get("format"): fi.get("score")
-                          for fi in prof2.get("formatItems", [])}
-                assert scores.get(id265) == 0, (
-                    f"{name} post-guard x265 score: {scores.get(id265)!r}, "
-                    "expected 0"
-                )
-                assert scores.get(id264) == -10000, (
-                    f"{name} post-guard x264 score: {scores.get(id264)!r}, "
-                    "expected -10000"
-                )
+    def scores(name, profile):
+        ids = {c["name"]: c["id"] for c in api(name, "customformat")}
+        by_id = {fi["format"]: fi.get("score", 0) for fi in profile.get("formatItems", [])}
+        return {n: by_id.get(ids[n]) for n in FORMATS}
 
-            # A further run is a no-op again — the guard itself is idempotent
-            # (including the strictness demotion on every OTHER profile, where
-            # both CFs landed at the arrs' default score of 0).
-            out = run_media_init()
-            assert "complete: 0 change(s)" in out, (
-                f"run after the guard was not a no-op:\n{out}"
-            )
-        except Exception:
-            diag("x265 guard")
-            raise
+    def profiles(name):
+        return {p["name"]: p for p in api(name, "qualityprofile") or []}
 
-    with subtest("x265 outranks x264 in every profile (both-sided sweep)"):
-        # The sweep, over BOTH arrs and every profile,
-        # both-sided: negative x265 AND positive x264 each defeat the policy,
-        # and a profile carrying both kinds must rank x265 STRICTLY higher —
-        # pure formatItems arithmetic, no egress needed.
-        x265 = re.compile(r"x265|h\.?265|hevc", re.I)
-        x264 = re.compile(r"x264|h\.?264|\bavc\b", re.I)
+    with subtest("Profilarr-shaped profiles and formats land in both arrs"):
+        # Before them, a run deletes nothing: neither Efficient profile exists.
+        out = run_media_init()
+        assert out.count("profile yet (Profilarr has not synced it)") == 2, out
         for name in ["radarr", "sonarr"]:
-            cfs = api(name, "customformat") or []
-            f265 = {c["id"]: c["name"]
-                    for c in cfs if x265.search(c.get("name", ""))}
-            # A name matching both regexes (e.g. "h264/h265") counts as x265
-            # so the two rule sets cannot fight over one format — same
-            # precedence media-init's guard uses.
-            f264 = {c["id"]: c["name"]
-                    for c in cfs
-                    if x264.search(c.get("name", "")) and c["id"] not in f265}
-            for prof in api(name, "qualityprofile") or []:
-                s265, s264 = [], []
-                for fi in prof.get("formatItems", []):
-                    if fi.get("format") in f265:
-                        s265.append(fi.get("score", 0))
-                        assert fi.get("score", 0) >= 0, (
-                            f"{name} profile {prof['name']!r} scores "
-                            f"{f265[fi['format']]!r} at {fi['score']} — "
-                            "x265 is ENFORCED"
-                        )
-                    elif fi.get("format") in f264:
-                        s264.append(fi.get("score", 0))
-                        assert fi.get("score", 0) <= 0, (
-                            f"{name} profile {prof['name']!r} scores "
-                            f"{f264[fi['format']]!r} at {fi['score']} — "
-                            "a positive x264 score defeats x265 enforcement"
-                        )
-                if s265 and s264:
-                    assert max(s265) > max(s264), (
-                        f"{name} profile {prof['name']!r}: best x265 score "
-                        f"{max(s265)} does not strictly outrank best x264 "
-                        f"score {max(s264)} — x265 is ENFORCED"
-                    )
+            for n, (_, plain, rx, _) in FORMATS.items():
+                api(name, "customformat", "POST", custom_format(n, rx, not plain))
+            base = profiles(name)["Any"]
+            ids = {c["name"]: c["id"] for c in api(name, "customformat")}
+            for i, pname in enumerate(KEEP):
+                prof = json.loads(json.dumps(base))
+                prof.pop("id")
+                prof["name"] = pname
+                want = {ids[n]: v[3][i] for n, v in FORMATS.items()}
+                for fi in prof["formatItems"]:
+                    fi["score"] = want.get(fi["format"], 0)
+                api(name, "qualityprofile", "POST", prof)
+        # An import list on Radarr's HD-1080p: the arr then refuses to delete
+        # that profile. Disabled, so saving it needs no connection test.
+        hd = profiles("radarr")["HD-1080p"]["id"]
+        tmpl = next(t for t in api("radarr", "importlist/schema")
+                    if t.get("implementation") == "RadarrImport")
+        for f in tmpl["fields"]:
+            if f["name"] == "baseUrl":
+                f["value"] = "http://radarr:7878"
+            elif f["name"] == "apiKey":
+                f["value"] = RKEY
+        tmpl.update({"name": "suite-holds-hd1080p", "enabled": False, "enableAuto": False,
+                     "qualityProfileId": hd, "rootFolderPath": "/data/media/movies",
+                     "monitor": "movieOnly", "minimumAvailability": "released",
+                     "searchOnAdd": False, "tags": []})
+        IMPORT_LIST = api("radarr", "importlist?forceSave=true", "POST", tmpl)["id"]
+
+    with subtest("media-init keeps only the Efficient pair and ranks AV1 > x265 > x264"):
+        try:
+            out = run_media_init()
+        except Exception:
+            diag("codec ranking")
+            raise
+        assert "FATAL" not in out, out
+        assert "zeroing: a plain x265 format never scores negative" in out, out
+        assert "inverting: a plain x264 format never scores positive" in out, out
+        assert "x264 must score strictly below the best x265" in out, out
+        assert "AV1 must score above zero" in out, out
+        # The in-use profile is a WARN and survives; every other one is gone.
+        assert re.search(r"^media-init: WARN: radarr: kept quality profile 'HD-1080p'", out, re.M), out
+        assert sorted(profiles("radarr")) == sorted(KEEP + ["HD-1080p"]), sorted(profiles("radarr"))
+        assert sorted(profiles("sonarr")) == sorted(KEEP), sorted(profiles("sonarr"))
+        for name in ["radarr", "sonarr"]:
+            for pname in KEEP:
+                got = scores(name, profiles(name)[pname])
+                assert got == RANKED[pname], f"{name} {pname}: {got} != {RANKED[pname]}"
+
+    with subtest("AV1 > x265 > x264 in every profile left (sweep)"):
+        # Over every profile in both arrs — the kept HD-1080p too, where all
+        # five formats started at 0.
+        for name in ["radarr", "sonarr"]:
+            for pname, prof in profiles(name).items():
+                got = scores(name, prof)
+                by = {c: [got[n] for n, v in FORMATS.items() if v[0] == c]
+                      for c in ("av1", "x265", "x264")}
+                best = max(by["x265"])
+                assert min(by["av1"]) > max(best, 0), f"{name} {pname}: {got}"
+                assert max(by["x264"]) < best, f"{name} {pname}: {got}"
+                for n, (c, plain, _, _) in FORMATS.items():
+                    if plain and c == "x265":
+                        assert got[n] >= 0, f"{name} {pname}: {n} at {got[n]}"
+                    if plain and c == "x264":
+                        assert got[n] <= 0, f"{name} {pname}: {n} at {got[n]}"
+
+    with subtest("a freed profile goes on the next run, then a run is a no-op"):
+        api("radarr", f"importlist/{IMPORT_LIST}", "DELETE")
+        out = run_media_init()
+        assert "radarr: deleted quality profile 'HD-1080p'" in out, out
+        assert sorted(profiles("radarr")) == sorted(KEEP), sorted(profiles("radarr"))
+        out = run_media_init()
+        assert "complete: 0 change(s)" in out, f"run after the ranking was not a no-op:\n{out}"
+
+    with subtest("Seerr defaults to 1080p Efficient by name in both arrs"):
+        out = services_vm.succeed(MEDIA + " run --rm --no-deps seerr-bootstrap 2>&1")
+        assert out.count("-> '1080p Efficient'") == 2, out
+        for kind, name in [("radarr", "radarr"), ("sonarr", "sonarr")]:
+            srv = json.loads(services_vm.succeed(
+                "curl -sf --max-time 30 "
+                + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
+                + f"http://127.0.0.1:10054/api/v1/settings/{kind}"))[0]
+            assert srv.get("activeProfileName") == "1080p Efficient", srv
+            assert srv.get("activeProfileId") == profiles(name)["1080p Efficient"]["id"], srv
+        out = services_vm.succeed(MEDIA + " run --rm --no-deps seerr-bootstrap 2>&1")
+        assert "CHANGE:" not in out, f"a seerr-bootstrap re-run changed something:\n{out}"
 
     with subtest("profilarr answers to the fixture key; anonymous is refused"):
         # Content assertions (linked arrs, Dictionarry DB) need egress and the
@@ -1546,6 +1652,66 @@ pkgs.testers.runNixOSTest {
             f"{first}"
         )
 
+    # -----------------------------------------------------------------------
+    # (e3) the ffprobe check: finished video downloads must play
+    # -----------------------------------------------------------------------
+    with subtest("ffprobe: a real feature and its sample pass, a fake and garbage are quarantined by inode"):
+        # Started here, after the ClamAV subtests: their EICAR files carry a
+        # video extension, and the probe would race the scanner for them.
+        try:
+            services_vm.succeed(MEDIA + " up -d --wait --wait-timeout 300 media-probe", timeout=360)
+        except Exception:
+            print(services_vm.execute("docker logs media_probe 2>&1 | tail -30")[1])
+            raise
+        mv = "/mnt/slow/data/downloads/movies"
+        real_dir, fake_dir = f"{mv}/Probe Real (2026)", f"{mv}/Probe Fake (2026)"
+        lib_fake = "/mnt/slow/data/media/movies/Probe Fake (2026)/probe-fake.mkv"
+        services_vm.succeed(
+            "mkdir -p " + shlex.quote(f"{real_dir}/Sample") + " " + shlex.quote(fake_dir)
+            + " " + shlex.quote(lib_fake.rsplit("/", 1)[0]))
+        services_vm.succeed(f"cp ${probeMedia}/feature.mkv {shlex.quote(real_dir + '/probe-real.mkv')}")
+        services_vm.succeed(f"cp ${probeMedia}/sample.mkv {shlex.quote(real_dir + '/Sample/sample.mkv')}")
+        services_vm.succeed(f"cp ${probeMedia}/fake.mkv {shlex.quote(fake_dir + '/probe-fake.mkv')}")
+        # The fake already imported: the hardlink an arr leaves in the library.
+        services_vm.succeed(f"ln {shlex.quote(fake_dir + '/probe-fake.mkv')} {shlex.quote(lib_fake)}")
+        services_vm.succeed(f"head -c 65536 /dev/zero | tr '\\0' x > {mv}/Probe.Garbage.2026.mkv")
+        # Still downloading: never probed, whatever it holds.
+        services_vm.succeed(
+            "cp ${probeMedia}/fake.mkv /mnt/slow/data/downloads/.incomplete/probe-partial.mkv")
+        services_vm.succeed("chown -R 1000:1000 /mnt/slow/data/downloads /mnt/slow/data/media")
+        ino = services_vm.succeed(f"stat -c %i {shlex.quote(lib_fake)}").strip()
+        try:
+            # PROBE_SETTLE_SECONDS=120 plus a 60 s interval, with slack.
+            services_vm.wait_until_succeeds(
+                "ls /mnt/slow/data/downloads/.quarantine/ | grep -q '^probe-fake\\.mkv\\.'",
+                timeout=600)
+            services_vm.wait_until_succeeds(
+                "ls /mnt/slow/data/downloads/.quarantine/ | grep -q '^Probe\\.Garbage\\.2026\\.mkv\\.'",
+                timeout=600)
+            services_vm.wait_until_succeeds(
+                "docker logs media_probe 2>&1 | grep -qF 'probe: OK /data/downloads/movies/Probe Real (2026)/probe-real.mkv'",
+                timeout=300)
+        except Exception:
+            print(services_vm.execute("docker logs media_probe 2>&1 | tail -40")[1])
+            print(services_vm.execute("ls -laR /mnt/slow/data/downloads | head -60")[1])
+            raise
+        logs = services_vm.succeed("docker logs media_probe 2>&1")
+        assert "under the 600s floor for a movie" in logs, logs
+        assert "ffprobe cannot read it" in logs, logs
+        assert "probe: OK /data/downloads/movies/Probe Real (2026)/Sample/sample.mkv" in logs, logs
+        assert "probe-partial" not in logs, "a file in .incomplete was probed"
+        services_vm.succeed(f"test -f {shlex.quote(real_dir + '/probe-real.mkv')}")
+        services_vm.succeed(f"test -f {shlex.quote(real_dir + '/Sample/sample.mkv')}")
+        services_vm.succeed("test -f /mnt/slow/data/downloads/.incomplete/probe-partial.mkv")
+        # By inode, like ClamAV: the library link to the fake is gone, and no
+        # path outside .quarantine reaches it.
+        services_vm.fail(f"test -e {shlex.quote(lib_fake)}")
+        reachable = services_vm.succeed(
+            "find /mnt/slow -xdev -path /mnt/slow/data/downloads/.quarantine -prune -o "
+            f"-type f -inum {ino} -print").strip()
+        assert reachable == "", f"the rejected fake is still reachable:\n{reachable}"
+        assert "probe: UNLINKED /data/media/movies/Probe Fake (2026)/probe-fake.mkv" in logs, logs
+
     with subtest("clamd publishes no host port"):
         ports = services_vm.succeed("docker port clamav").strip()
         assert ports == "", f"clamav publishes ports: {ports!r}"
@@ -1611,6 +1777,9 @@ pkgs.testers.runNixOSTest {
         assert policy.get("IsAdministrator") is True, (
             f"the seeded jellyfin user is not an administrator: {auth!r}"
         )
+        # English subtitles for idan: what Bazarr fetches (.en.srt).
+        prefs = (auth.get("User") or {}).get("Configuration") or {}
+        assert prefs.get("SubtitleLanguagePreference") == "eng", prefs
         # ... and the two libraries exist, on the read-only bind.
         folders = json.loads(services_vm.succeed(
             "curl -sf --max-time 30 "
@@ -1852,6 +2021,45 @@ pkgs.testers.runNixOSTest {
             "http://127.0.0.1:10055/api/system/settings"
         ).strip()
         assert code == "401", f"bazarr accepted a wrong API key (HTTP {code})"
+
+    def bazarr_get(path):
+        return json.loads(services_vm.succeed(
+            "curl -sf --max-time 30 "
+            + "-H " + shlex.quote("X-API-KEY: " + BAZARR_KEY) + " "
+            + f"http://127.0.0.1:10055{path}"))
+
+    FREE_PROVIDERS = ["gestdown", "tvsubtitles", "yifysubtitles"]
+
+    with subtest("bazarr: one English profile, the default everywhere, account-free providers"):
+        profs = bazarr_get("/api/system/languages/profiles")
+        assert [p["name"] for p in profs] == ["English"], profs
+        eng = profs[0]
+        assert eng["items"] == [{"id": 1, "language": "en", "hi": "False", "forced": "False",
+                                 "audio_exclude": "False", "audio_only_include": "False"}], eng
+        langs = bazarr_get("/api/system/languages")
+        assert sorted(l["code2"] for l in langs if l["enabled"]) == ["en"], "enabled languages"
+        g = bazarr_get("/api/system/settings")["general"]
+        assert g["serie_default_enabled"] is True and g["movie_default_enabled"] is True, g
+        assert str(g["serie_default_profile"]) == str(eng["profileId"]) == str(g["movie_default_profile"]), g
+        assert sorted(g["enabled_providers"]) == FREE_PROVIDERS, g["enabled_providers"]
+        assert "remove_HI" in g["subzero_mods"] and g["single_language"] is False, g
+        # The item Bazarr held before the default existed has the profile now.
+        movie = bazarr_get(f"/api/movies?radarrid%5B%5D={BAZARR_MOVIE}")["data"]
+        assert [m["profileId"] for m in movie] == [eng["profileId"]], movie
+
+    with subtest("bazarr: OpenSubtitles.com on with a real account, off again with a placeholder"):
+        out = services_vm.succeed(
+            MEDIA + " run --rm --no-deps -e OPENSUBTITLES_USERNAME=suite-user "
+            "-e OPENSUBTITLES_PASSWORD=suite-pw bazarr-init 2>&1")
+        assert "CHANGE:" in out and "suite-pw" not in out, out
+        cfg = bazarr_get("/api/system/settings")
+        assert sorted(cfg["general"]["enabled_providers"]) == sorted(FREE_PROVIDERS + ["opensubtitlescom"]), cfg["general"]
+        assert cfg["opensubtitlescom"]["username"] == "suite-user", cfg["opensubtitlescom"]
+        out = services_vm.succeed(MEDIA + " run --rm --no-deps bazarr-init 2>&1")
+        assert "CHANGE:" in out, out
+        cfg = bazarr_get("/api/system/settings")
+        assert sorted(cfg["general"]["enabled_providers"]) == FREE_PROVIDERS, cfg["general"]
+        assert cfg["opensubtitlescom"]["username"] == "", cfg["opensubtitlescom"]
 
     # -----------------------------------------------------------------------
     # (g) loopback-only publishing, from the VLAN
