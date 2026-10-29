@@ -230,6 +230,30 @@ endpoints:
     alerts:
       - type: ntfy
 
+  - name: "bitmagnet (path: caddy -> authentik outpost)"
+    group: "path"
+    url: "https://bitmagnet.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+    alerts:
+      - type: ntfy
+
+  # Its /status answers 503 whenever TMDB or the DHT is down (i.e. with the
+  # tunnel); the database check is Bitmagnet's own health.
+  - name: "bitmagnet (service)"
+    group: "service"
+    url: "http://127.0.0.1:10059/status"
+    interval: 1m
+    conditions:
+      - "[BODY].details.postgres.status == up"
+    alerts:
+      - type: ntfy
+
   - name: "bookstack (path: caddy -> service)"
     group: "path"
     url: "https://bookstack.svc.idanreed.com/"

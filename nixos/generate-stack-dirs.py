@@ -176,6 +176,8 @@ seerr-init chowns seerr's config, and clamav 1.5's /init chowns
 /var/lib/clamav unconditionally before starting clamd. /mnt/slow/data is
 1000:1000 — every media container works there as uid 1000.
 
+bitmagnet_db's pgdata is 70:70 0700 like every alpine Postgres (below).
+
 This stack also binds /mnt/slow/books/drop, which BELONGS TO THE BOOKS
 STACK: clamav-scanner moves a clean audiobook download in and
 audiobookshelf reads it :ro. Nothing else crosses.""",
@@ -496,6 +498,13 @@ fast-volume plan.""",
     # alpine postgres (and postgis) run as 70, the debian-based images
     # (immich's; komodo's ferretdb, above) and mariadb as 999. excalidraw
     # is above with its note.
+    "/mnt/fast/bitmagnet/pgdata": {
+        "mode": "0700",
+        "owner": ("70", "70"),
+        "note": """\
+Bitmagnet's DHT index, regenerable by re-crawling and deliberately not
+dumped (the backup-coverage lint's exemption).""",
+    },
     "/mnt/fast/dawarich/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/firefly/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/ghostfolio/pgdata": {"mode": "0700", "owner": ("70", "70")},

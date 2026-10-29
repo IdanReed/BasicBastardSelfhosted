@@ -1,0 +1,233 @@
+# LDAP for Jellyfin: a password-only bind flow, the LDAP provider and its
+# application, the read-only bind account Jellyfin searches with, and the
+# outpost that serves it. The outpost container runs on the services VM
+# (stacks/ldap), next to Jellyfin, and stock TV and mobile clients keep
+# working because the LDAP login happens server-side, inside Jellyfin's
+# jellyfin-plugin-ldapauth (configured by stacks/media/jellyfin-init.sh from
+# stacks/media/jellyfin-ldap.json — the DNs and filters there must match this
+# file). The shared blueprint conventions are documented in headscale-oidc.yaml.
+#
+# Password only: LDAP cannot prompt for a second factor, so the bind flow has
+# no MFA stage. The application's bindings keep the blast radius to Jellyfin.
+#
+# Direct bind and direct search, not cached: the directory is a handful of
+# users and Jellyfin binds a few times per login, so the API round trips cost
+# nothing that matters, while a cached bind would keep accepting a changed
+# password or a deactivated account until its session expired, and a cached
+# search would hide a newly invited user for a refresh interval.
+version: 1
+metadata:
+  name: jellyfin-ldap
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+
+entries:
+  # Discovery applies files in no fixed order; these create the objects the
+  # !Finds below resolve (headscale-users; the reputation policy and its deny
+  # stage; the logout flow).
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: headscale-oidc
+      required: true
+
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: login-hardening
+      required: true
+
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: Default - Invalidation flow
+      required: true
+
+  # Bind flow
+  # What the outpost runs for every bind: identification with the password on
+  # the same challenge, then the session login. The flow executor in the
+  # outpost answers exactly these challenge types.
+  - model: authentik_stages_password.passwordstage
+    id: ldap-bind-password-stage
+    state: present
+    identifiers:
+      name: ldap-bind-password
+    attrs:
+      # Account passwords only — no app passwords or tokens through LDAP.
+      backends:
+        - authentik.core.auth.InbuiltBackend
+
+  - model: authentik_stages_identification.identificationstage
+    id: ldap-bind-identification-stage
+    state: present
+    identifiers:
+      name: ldap-bind-identification
+    attrs:
+      user_fields:
+        - username
+      password_stage: !KeyOf ldap-bind-password-stage
+
+  - model: authentik_stages_user_login.userloginstage
+    id: ldap-bind-login-stage
+    state: present
+    identifiers:
+      name: ldap-bind-login
+
+  - model: authentik_flows.flow
+    id: ldap-bind-flow
+    state: present
+    identifiers:
+      slug: ldap-bind
+    attrs:
+      name: LDAP bind (password only)
+      title: LDAP bind
+      designation: authentication
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf ldap-bind-flow
+      stage: !KeyOf ldap-bind-identification-stage
+      order: 10
+
+  # The web login's reputation gate (login-hardening.yaml), bound here too so
+  # the LDAP path is not a way around it: failed binds lower the same
+  # username/IP score, and at the threshold a correct password is refused.
+  # The evaluate_on_plan / re_evaluate_policies pair is load-bearing for the
+  # same reason as there.
+  - model: authentik_flows.flowstagebinding
+    id: ldap-bind-reputation-binding
+    state: present
+    identifiers:
+      target: !KeyOf ldap-bind-flow
+      stage: !Find [authentik_stages_deny.denystage, [name, login-reputation-deny]]
+      order: 15
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      policy: !Find [authentik_policies_reputation.reputationpolicy, [name, login-reputation]]
+      target: !KeyOf ldap-bind-reputation-binding
+      order: 0
+    attrs:
+      enabled: true
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf ldap-bind-flow
+      stage: !KeyOf ldap-bind-login-stage
+      order: 30
+
+  # The bind account
+  # Jellyfin binds as this account to find a user's DN before binding as the
+  # user. Its DN is cn=jellyfin-ldap-bind,ou=users,dc=ldap,dc=idanreed,dc=com.
+  # The password is re-asserted on every apply, like every user's.
+  - model: authentik_core.user
+    id: jellyfin-ldap-bind-user
+    state: present
+    identifiers:
+      username: jellyfin-ldap-bind
+    attrs:
+      name: Jellyfin LDAP bind
+      type: service_account
+      path: service-accounts
+      is_active: true
+      password: !Env JELLYFIN_LDAP_BIND_PASSWORD
+
+  # Provider
+  # search_full_directory on THIS provider is what lets the bind account see
+  # other users; without it a search returns only the account itself.
+  - model: authentik_providers_ldap.ldapprovider
+    id: jellyfin-ldap-provider
+    state: present
+    identifiers:
+      name: jellyfin-ldap
+    attrs:
+      authorization_flow: !KeyOf ldap-bind-flow
+      # An unbind ends the Authentik session the bind opened.
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+      base_dn: dc=ldap,dc=idanreed,dc=com
+      bind_mode: direct
+      search_mode: direct
+      # Off: there is no MFA stage to feed, and on it would split any password
+      # containing a semicolon into password + code.
+      mfa_support: false
+    permissions:
+      - permission: authentik_providers_ldap.search_full_directory
+        user: !KeyOf jellyfin-ldap-bind-user
+
+  - model: authentik_core.application
+    id: jellyfin-ldap-app
+    state: present
+    identifiers:
+      slug: jellyfin-ldap
+    attrs:
+      name: Jellyfin
+      provider: !KeyOf jellyfin-ldap-provider
+      policy_engine_mode: any
+      meta_launch_url: "https://jellyfin.svc.idanreed.com"
+      meta_description: "Movies and TV — sign in with your Authentik username and password"
+
+  # Every bind is access-checked against this application, the bind account's
+  # included: members of headscale-users, or the bind account itself.
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf jellyfin-ldap-app
+      group: !Find [authentik_core.group, [name, headscale-users]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf jellyfin-ldap-app
+      user: !KeyOf jellyfin-ldap-bind-user
+      order: 1
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+
+  # Outpost
+  # The primary key is pinned so the outpost's service account
+  # (ak-outpost-<pk hex>) and API token (ak-outpost-<pk>-api) have names this
+  # file can address. No service connection: Authentik does not deploy it —
+  # stacks/ldap does.
+  - model: authentik_outposts.outpost
+    id: jellyfin-ldap-outpost
+    state: present
+    identifiers:
+      pk: 33910060-74e3-439f-b2ec-ac5e8aa6eb19
+      name: jellyfin-ldap
+    attrs:
+      type: ldap
+      providers:
+        - !KeyOf jellyfin-ldap-provider
+      config:
+        authentik_host: https://auth.idanreed.com
+
+  # The outpost's API token, with a FIXED key so the services VM is configured
+  # declaratively (stacks/ldap/env.nix reads the same shared value). Authentik
+  # creates the token itself when the outpost is saved and finds it again by
+  # identifier + managed; this entry only overwrites its key. The condition
+  # keeps it from ever creating an unmanaged token of that identifier, which
+  # Authentik would delete and replace with a random key.
+  - model: authentik_core.token
+    state: present
+    conditions:
+      - !Find [authentik_core.token, [managed, goauthentik.io/outpost/ak-outpost-33910060-74e3-439f-b2ec-ac5e8aa6eb19-api]]
+    identifiers:
+      identifier: ak-outpost-33910060-74e3-439f-b2ec-ac5e8aa6eb19-api
+    attrs:
+      user: !Find [authentik_core.user, [username, ak-outpost-3391006074e3439fb2ecac5e8aa6eb19]]
+      intent: api
+      expiring: false
+      key: !Env LDAP_OUTPOST_TOKEN

@@ -1,6 +1,6 @@
-# Media — Jellyfin + *arr + qBittorrent-behind-Gluetun + ClamAV + Cleanuparr.
-# Design: ServerNotes/designs/service-media-stack-research.md (the annex wins
-# over service-media-stack.md); ports 10050-10058 per _overview.md.
+# Media — Jellyfin + *arr + qBittorrent-behind-Gluetun + ClamAV + Cleanuparr,
+# and Bitmagnet + Armiger behind Gluetun as a self-hosted indexer. Ports
+# 10050-10059 per docs/services.md.
 #
 # Invariants other files depend on:
 #   - x265 is ENFORCED; media-init.sh re-scores profiles and Profilarr may
@@ -10,7 +10,10 @@
 #   - /mnt/slow is ONE filesystem so *arr imports are hardlinks; scan-
 #     downloads.sh quarantines by inode because of it.
 #   - Audiobooks are acquired here and handed to the books stack through
-#     /mnt/slow/books/drop (ServerNotes/designs/audiobook-acquisition.md).
+#     /mnt/slow/books/drop, after a clean ClamAV verdict (scan-downloads.sh).
+#   - Jellyfin logins are LDAP (Authentik's outpost, stacks/ldap) for everyone
+#     but the local idan admin; jellyfin-ldap.json is the plugin pin and
+#     configuration, and must match the jellyfin-ldap.yaml blueprint.
 
 services:
   # VPN
@@ -21,15 +24,20 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
-    # qBittorrent's WebUI rides this publish (shared netns).
+    # qBittorrent's WebUI and Bitmagnet's UI ride these publishes (shared
+    # netns).
     ports:
       - '127.0.0.1:10057:8080'
+      - '127.0.0.1:10059:3333'
     volumes:
       - /mnt/fast/gluetun:/gluetun
     environment:
       - TZ=America/Chicago
-      # Without this gluetun's firewall drops the published-port traffic.
-      - FIREWALL_INPUT_PORTS=8080
+      # The publishes above, or gluetun's firewall drops their traffic: 8080
+      # qBittorrent, 3333 Bitmagnet. Containers on the stack network need no
+      # entry — gluetun admits its own docker subnet to every port, which is
+      # how the arrs reach gluetun:8080 and Prowlarr Armiger at gluetun:8097.
+      - FIREWALL_INPUT_PORTS=8080,3333
       # Only runs when .env sets VPN_PORT_FORWARDING=on. {{PORTS}} is
       # gluetun's v3.39+ placeholder; needs WebUI\LocalHostAuth=false.
       - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'''
@@ -149,6 +157,123 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # Indexer
+  #
+  # Bitmagnet crawls the BitTorrent DHT into its own Postgres and serves it as
+  # Torznab; Armiger classifies what it indexes (tags in Bitmagnet's database)
+  # and fronts its Torznab with a filter that drops executable lures, junk and
+  # honeypots before Prowlarr sees a result. media-init adds Armiger to
+  # Prowlarr, which pushes it to Radarr/Sonarr.
+  #
+  # All three share gluetun's netns, like qbittorrent: the crawler's traffic
+  # leaves only through the tunnel, and the kill-switch holds it at zero
+  # egress when the tunnel is down. They talk over 127.0.0.1 because docker
+  # names do not resolve there (gluetun runs its own DNS). Gated on a HEALTHY
+  # gluetun for the same reason as qbittorrent — the crawler must never start
+  # before the firewall is up — with restart: true to rejoin a re-created
+  # netns.
+  #
+  # The index is regenerable: re-crawling rebuilds it, which is why its
+  # database is deliberately not dumped (the backup-coverage lint's exemption
+  # says the same).
+  bitmagnet-db:
+    image: postgres:16.13-alpine
+    container_name: bitmagnet_db
+    network_mode: 'service:gluetun'
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+    # Loopback only: the netns is gluetun's, and nothing outside it needs the
+    # database.
+    command: ['postgres', '-c', 'listen_addresses=127.0.0.1']
+    environment:
+      - POSTGRES_DB=bitmagnet
+      - POSTGRES_USER=bitmagnet
+      # Named, not env_file: the one value these two read (D-08).
+      - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD:-}
+    volumes:
+      - /mnt/fast/bitmagnet/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U bitmagnet -d bitmagnet']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  bitmagnet:
+    image: ghcr.io/bitmagnet-io/bitmagnet:v0.10.0
+    container_name: bitmagnet
+    network_mode: 'service:gluetun'
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      bitmagnet-db:
+        condition: service_healthy
+    command: ['worker', 'run', '--keys=http_server', '--keys=queue_server', '--keys=dht_crawler']
+    environment:
+      - POSTGRES_HOST=127.0.0.1
+      - POSTGRES_NAME=bitmagnet
+      - POSTGRES_USER=bitmagnet
+      - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD:-}
+      # TMDB stays on, with Bitmagnet's built-in (rate-limited) key: it is what
+      # turns a crawled name into a movie or episode with the IDs the arrs
+      # search by.
+    healthcheck:
+      # /status answers 503 whenever ANY check is down, TMDB and the DHT
+      # included — i.e. whenever the tunnel or TMDB is. Health here is
+      # Bitmagnet's own: its HTTP server up and its database reachable.
+      test: ['CMD-SHELL', 'curl -s http://127.0.0.1:3333/status | grep -q ''"postgres":{"status":"up"''']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  armiger:
+    image: ghcr.io/spencernorton/armiger:3.4.1
+    container_name: armiger
+    network_mode: 'service:gluetun'
+    depends_on:
+      gluetun:
+        condition: service_healthy
+        restart: true
+      bitmagnet:
+        condition: service_healthy
+    # The Bitmagnet connector: a GraphQL poller that tags new torrents, its
+    # status API on 8096 and the filtering Torznab proxy on 8097.
+    command: ['python', '/opt/connectors/bitmagnet/bitmagnet_connector.py']
+    environment:
+      - ARMIGER_CONNECTOR_MODE=both
+      - ARMIGER_CONNECTOR_HOST=0.0.0.0
+      - ARMIGER_CONNECTOR_PORT=8096
+      - ARMIGER_PROXY_PORT=8097
+      - ARMIGER_ENABLE_TORZNAB_PROXY=true
+      - BITMAGNET_GRAPHQL_URL=http://127.0.0.1:3333/graphql
+      - UPSTREAM_TORZNAB_URL=http://127.0.0.1:3333/torznab
+      # Ultra: the full model, Apache-2.0, no licence key, baked into the
+      # image. The image tag is the model's version of record: no runtime
+      # downloads, no hot-swapped updates from the DHT, nothing shared.
+      - ARMIGER_VARIANT=ultra
+      - ARMIGER_AUTO_DOWNLOAD=false
+      - ARMIGER_DHT_AUTO_UPDATE=false
+      - ARMIGER_DHT_RSI_MODE=off
+      - ARMIGER_DHT_SHARE_OPT_IN=false
+      # Filter at search time; never delete from the index.
+      - ARMIGER_PRUNE_MALWARE=false
+      - ARMIGER_PRUNE_DEAD_SWARMS=false
+      - ARMIGER_REJECT_DEAD_SWARMS=false
+      - ARMIGER_REQUIRE_ENGLISH_AUDIO=false
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8096/healthz', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
   # Library
   jellyfin:
     image: jellyfin/jellyfin:10.11.11
@@ -171,6 +296,11 @@ services:
     environment:
       - TZ=America/Chicago
       - JELLYFIN_PublishedServerUrl=https://jellyfin.svc.idanreed.com
+    networks:
+      # default for seerr and the inits; homelab for the LDAP outpost
+      # (authentik-ldap, stacks/ldap) its LDAP plugin logs users in against.
+      - default
+      - homelab
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:8096/health >/dev/null']
       interval: 30s
@@ -179,56 +309,26 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-  # Seeds config/encoding.xml BEFORE jellyfin's first start: there is no env
-  # var for any EncodingOptions field and the API needs an admin token that
-  # does not exist yet, so a file is the only channel. Seed-if-absent, NOT
-  # merge — jellyfin rewrites it whenever an admin saves the Transcoding page.
+  # What has to be on disk BEFORE jellyfin starts: encoding.xml seeded once
+  # (VA-API), the pinned LDAP plugin installed, an earlier SSO-Auth plugin
+  # removed. Plugins load only at startup. See jellyfin-config-init.sh.
   #
   # ⚠ Deliberately does NOT seed config/system.xml; see jellyfin-init.sh.
   jellyfin-config-init:
-    image: alpine:3.21
+    image: python:3.13-alpine
     container_name: media_jellyfin_config_init
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        dest=/config/config/encoding.xml
-        if [ -f "$$dest" ]; then
-          echo "jellyfin-config-init: $$dest exists - jellyfin owns it, not touching"
-        else
-          mkdir -p /config/config
-          # Tmpfile+rename: the -f guard is touch-once, so a crash mid-write
-          # would leave a partial XML that jellyfin logs and then ignores in
-          # favour of defaults.
-          cp /template/encoding.xml "$$dest.tmp"
-          mv "$$dest.tmp" "$$dest"
-          echo "jellyfin-config-init: CHANGE: seeded $$dest (vaapi)"
-        fi
-
-        # No SSO plugin: Jellyfin keeps its own logins, because TV and
-        # mobile clients cannot follow an OIDC redirect. An SSO-Auth install
-        # from an earlier deploy is removed here, before jellyfin starts
-        # (plugins load only at startup), together with its stored provider
-        # config, which holds the retired client secret.
-        found=
-        for p in /config/plugins/SSO-Auth_* /config/plugins/configurations/SSO-Auth.xml; do
-          [ -e "$$p" ] && found=1
-        done
-        if [ -n "$$found" ]; then
-          rm -rf /config/plugins/SSO-Auth_* /config/plugins/configurations/SSO-Auth.xml
-          echo "jellyfin-config-init: CHANGE: removed the SSO-Auth plugin and its config"
-        else
-          echo "jellyfin-config-init: no SSO-Auth plugin - no change"
-        fi
+    entrypoint: ['/bin/sh', '/init/jellyfin-config-init.sh']
     volumes:
+      - ./jellyfin-config-init.sh:/init/jellyfin-config-init.sh:ro
       - ./jellyfin-encoding.xml:/template/encoding.xml:ro
+      - ./jellyfin-ldap.json:/template/jellyfin-ldap.json:ro
       - /mnt/fast/jellyfin/config:/config
     restart: "no"
 
-  # Drives the startup wizard, the first admin, the other users' accounts and
-  # the two libraries over REST — anonymous while the wizard is open,
-  # token-authed afterwards, so it reconciles on every redeploy. See
-  # jellyfin-init.sh. Seerr signs in with these Jellyfin accounts.
+  # Drives the startup wizard, the local idan admin and the two libraries over
+  # REST — anonymous while the wizard is open, token-authed afterwards — and
+  # configures the LDAP plugin, so it reconciles on every redeploy. See
+  # jellyfin-init.sh. Seerr signs in with the Jellyfin accounts.
   jellyfin-init:
     image: python:3.13-alpine
     container_name: media_jellyfin_init
@@ -242,12 +342,12 @@ services:
         condition: service_completed_successfully
     volumes:
       - ./jellyfin-init.sh:/init/jellyfin-init.sh:ro
+      - ./jellyfin-ldap.json:/init/jellyfin-ldap.json:ro
     env_file:
       - /run/stack-env/media.env
-      # The other users' passwords, for this service alone
-      # (stacks/media/env.jellyfin-users.nix): every other media container
-      # reads media.env, and these are each user's Authentik password too.
-      - /run/stack-env/media.jellyfin-users.env
+      # The LDAP bind account's password, for this service alone
+      # (stacks/media/env.jellyfin-ldap.nix).
+      - /run/stack-env/media.jellyfin-ldap.env
     restart: "no"
 
   # Arrs
@@ -355,7 +455,8 @@ services:
       - TZ=America/Chicago
       # API_KEY forces main.apiKey on EVERY load, so the headless key is a sops
       # value rather than something scraped out of settings.json. Named, not
-      # env_file: seerr needs this one value, not the whole media .env (D-08).
+      # env_file: seerr needs this one value, not the whole media .env
+      # (docs/decisions.md, D-08).
       # `${VAR:-}` interpolates from the project .env at parse time.
       - API_KEY=${SEERR_API_KEY:-}
     healthcheck:

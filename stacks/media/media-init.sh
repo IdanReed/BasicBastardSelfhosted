@@ -13,6 +13,9 @@
 #     Profilarr syncs. GUARD lines in the log are the tell.
 #   - Linking Dictionarry needs egress, so a failed link is a WARN with a UI
 #     fallback rather than fatal; a linked trash-pcd is fatal.
+#   - The Armiger indexer needs the tunnel up (Bitmagnet runs in gluetun's
+#     netns) and Bitmagnet's index non-empty; without either it is a WARN and
+#     the next run adds it.
 set -eu
 exec python3 -u - <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
@@ -385,6 +388,99 @@ for impl, app in (("Radarr", ARRS["radarr"]), ("Sonarr", ARRS["sonarr"])):
     )
     req("POST", f"{PROWLARR}/api/v1/applications?forceSave=true", PKEY, body)
     change(f"prowlarr: added {impl} application (fullSync — indexers pushed to {app['base']})")
+
+# ---------------------------------------------------------------------------
+# Prowlarr: the Armiger indexer (Bitmagnet behind Armiger's filter)
+# ---------------------------------------------------------------------------
+# A Generic Torznab indexer at Armiger's proxy, never at Bitmagnet directly, so
+# every search result passes the filter; Prowlarr's fullSync above pushes it to
+# Radarr/Sonarr. Best-effort like the qbit client: bitmagnet/armiger share
+# gluetun's netns and are DOWN whenever the tunnel is (WARN, next run adds it).
+#
+# Prowlarr refuses to save an indexer whose test search returns nothing, and a
+# fresh Bitmagnet has an empty index until its crawler's first batch lands —
+# and on a first deploy bitmagnet/armiger start only after gluetun is healthy,
+# often after this runs. So it waits for Armiger to answer and the index to
+# fill, INDEX_WAIT in all; but when neither Armiger nor qbittorrent (same netns)
+# answers after TUNNEL_WAIT, the tunnel is down and it gives up at once. Once
+# the indexer exists the whole step is a lookup.
+ARMIGER = "http://gluetun:8097/torznab"
+ARMIGER_NAME = "Armiger (Bitmagnet)"
+TUNNEL_WAIT = 120
+INDEX_WAIT = 600
+
+
+def armiger_results():
+    """How many items Armiger's proxy returns for an empty search, or None
+    when it does not answer at all."""
+    try:
+        with urllib.request.urlopen(f"{ARMIGER}/api?t=search", timeout=30) as r:
+            return r.read().decode(errors="replace").count("<item>")
+    except Exception:  # noqa: BLE001 — unreachable is the answer
+        return None
+
+
+def netns_up():
+    """Anything answering on qbittorrent's port: gluetun's netns has started
+    its tenants, i.e. the tunnel is up."""
+    try:
+        urllib.request.urlopen(QBIT, timeout=10)
+    except urllib.error.HTTPError:
+        pass
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+indexers = req("GET", f"{PROWLARR}/api/v1/indexer", PKEY) or []
+if any(i.get("name") == ARMIGER_NAME for i in indexers):
+    log("OK", f"prowlarr: {ARMIGER_NAME} indexer present")
+else:
+    start = time.time()
+    deadline = start + INDEX_WAIT
+    n = armiger_results()
+    while n is None and time.time() < deadline:
+        if time.time() - start > TUNNEL_WAIT and not netns_up():
+            break
+        time.sleep(15)
+        n = armiger_results()
+    while n == 0 and time.time() < deadline:
+        log("OK", f"prowlarr: Bitmagnet's index is still empty - waiting for "
+                  f"its crawler's first batch ({int(deadline - time.time())}s left)")
+        time.sleep(30)
+        n = armiger_results()
+    if n is None:
+        log("WARN", f"prowlarr: Armiger does not answer at {ARMIGER} (bitmagnet "
+                    f"and armiger run in gluetun's netns, down with the tunnel) "
+                    f"- {ARMIGER_NAME} NOT added; the next media-init run adds it")
+    elif n == 0:
+        log("WARN", f"prowlarr: Bitmagnet's index is still empty after "
+                    f"{INDEX_WAIT}s, and Prowlarr refuses an indexer whose test "
+                    f"search finds nothing - {ARMIGER_NAME} NOT added; the next "
+                    f"media-init run adds it")
+    else:
+        profiles = req("GET", f"{PROWLARR}/api/v1/appprofile", PKEY) or []
+        tmpl = next(i for i in req("GET", f"{PROWLARR}/api/v1/indexer/schema", PKEY)
+                    if i.get("implementation") == "Torznab"
+                    and i.get("name") == "Generic Torznab")
+        for f in tmpl.get("fields", []):
+            if f.get("name") == "baseUrl":
+                f["value"] = ARMIGER
+            elif f.get("name") == "apiPath":
+                f["value"] = "/api"
+        tmpl.update({
+            "name": ARMIGER_NAME, "enable": True, "priority": 25, "tags": [],
+            "appProfileId": profiles[0]["id"] if profiles else 1,
+        })
+        try:
+            req("POST", f"{PROWLARR}/api/v1/indexer", PKEY, tmpl, timeout=120)
+            change(f"prowlarr: added the {ARMIGER_NAME} indexer ({ARMIGER}, "
+                   f"{n} result(s) in its test search)")
+        except ApiError as e:
+            # Prowlarr's own test search (the body above says why) — the
+            # next run retries.
+            log("WARN", f"prowlarr: refused {ARMIGER_NAME} ({e}) - the next "
+                        f"media-init run retries")
 
 # ---------------------------------------------------------------------------
 # Profilarr: Dictionarry database link (best-effort, see header contract)

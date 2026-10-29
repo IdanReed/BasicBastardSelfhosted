@@ -1,0 +1,28 @@
+{
+  "plugin": {
+    "guid": "958aad66-3784-4d2a-b89a-a7b6fab6e25c",
+    "version": "23.0.0.0",
+    "url": "https://repo.jellyfin.org/files/plugin/ldap-authentication/ldap-authentication_23.0.0.0.zip",
+    "sha256": "952e33fa8d3ac512ccb5c1e2e1c655cbb1957e41fa1f00bd6ccf3076e0467446"
+  },
+  "configuration": {
+    "LdapServer": "authentik-ldap",
+    "LdapPort": 3389,
+    "UseSsl": false,
+    "UseStartTls": false,
+    "SkipSslVerify": false,
+    "LdapBindUser": "cn=jellyfin-ldap-bind,ou=users,dc=ldap,dc=idanreed,dc=com",
+    "LdapBaseDn": "ou=users,dc=ldap,dc=idanreed,dc=com",
+    "LdapSearchFilter": "(memberOf=cn=headscale-users,ou=groups,dc=ldap,dc=idanreed,dc=com)",
+    "LdapSearchAttributes": "cn",
+    "LdapUidAttribute": "uid",
+    "LdapUsernameAttribute": "cn",
+    "LdapAdminBaseDn": "",
+    "LdapAdminFilter": "(memberOf=cn=Admin,ou=groups,dc=ldap,dc=idanreed,dc=com)",
+    "EnableLdapAdminFilterMemberUid": false,
+    "CreateUsersFromLdap": true,
+    "EnableAllFolders": true,
+    "AllowPassChange": false,
+    "EnableLdapProfileImageSync": false
+  }
+}

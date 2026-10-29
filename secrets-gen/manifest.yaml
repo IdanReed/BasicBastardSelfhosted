@@ -731,6 +731,10 @@ secrets:
     class: generate
     recipe: hex:64
     targets: [{ file: stacks/media/secrets.sops.json, key: PROFILARR_API_KEY }]
+  - name: media/BITMAGNET_DB_PASSWORD
+    class: generate
+    recipe: hex:48
+    targets: [{ file: stacks/media/secrets.sops.json, key: BITMAGNET_DB_PASSWORD }]
   # qBittorrent WebUI password: folded into the shared `services-admin` entry
   # (QBIT_WEBUI_PASSWORD plain + QBIT_WEBUI_PASSWORD_PBKDF2 are targets there).
   # QBIT_WEBUI_USER stays a config value (media/config) — pin it to idan.

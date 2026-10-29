@@ -92,7 +92,7 @@ quarantine_file() {
 }
 
 # ---------------------------------------------------------------------------
-# Audiobook promotion (ServerNotes/designs/audiobook-acquisition.md)
+# Audiobook promotion (to the books stack's drop dir)
 # ---------------------------------------------------------------------------
 # No *arr imports this category, so this loop is also its importer. WHOLE
 # ENTRIES, one verdict per torrent — a per-file quarantine could strip the

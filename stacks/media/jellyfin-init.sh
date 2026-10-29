@@ -1,7 +1,15 @@
 #!/bin/sh
-# jellyfin-init — headless first run: the setup wizard, the first admin, the
-# other users, and the two libraries. Runs in python:3.13-alpine as a oneshot
-# once jellyfin is healthy.
+# jellyfin-init — headless first run: the setup wizard, the first admin and
+# the two libraries, then the LDAP plugin's configuration on every run. Runs in
+# python:3.13-alpine as a oneshot once jellyfin is healthy.
+#
+# Everyone but idan signs in through LDAP (the Authentik outpost, stacks/ldap):
+# the plugin creates their Jellyfin account at first login, so there is no
+# per-user seeding here. idan is the LOCAL admin this script creates, and stays
+# local: Jellyfin authenticates an existing account only with the provider it
+# was created by, so an LDAP login as `idan` reaches the local password (the
+# same IDAN_INITIAL_PASSWORD Authentik holds) and the plugin never creates a
+# second idan. That is the break-glass when the VPS is unreachable.
 #
 # WHY IT WORKS: StartupController and LibraryStructureController both carry
 # [Authorize(Policy = FirstTimeSetupOrElevated)], and FirstTimeSetupHandler
@@ -73,7 +81,8 @@ def detail(exc):
         return ""
 
 
-required = ("JELLYFIN_ADMIN_USER", "JELLYFIN_ADMIN_PASSWORD")
+required = ("JELLYFIN_ADMIN_USER", "JELLYFIN_ADMIN_PASSWORD",
+            "JELLYFIN_LDAP_BIND_PASSWORD")
 missing = [k for k in required if not os.environ.get(k)]
 if missing:
     sys.exit(f"jellyfin-init: FATAL: unset or empty in .env: "
@@ -82,19 +91,6 @@ if missing:
 USER = os.environ["JELLYFIN_ADMIN_USER"]
 PASSWORD = os.environ["JELLYFIN_ADMIN_PASSWORD"]
 SERVER_NAME = os.environ.get("JELLYFIN_SERVER_NAME", "jellyfin")
-
-# The other six users of the fleet roster (their Authentik usernames), each
-# seeded with the password Authentik sets for them, so one username/password
-# works in the web UI, on TV and mobile clients, and in Seerr (which signs in
-# with Jellyfin accounts). From media.jellyfin-users.env, which only this
-# service reads. Resolved up front so a missing one fails before any mutation.
-ROSTER = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
-ROSTER_PW = {u: os.environ.get(f"{u.upper()}_INITIAL_PASSWORD", "") for u in ROSTER}
-_no_pw = [u for u, pw in ROSTER_PW.items() if not pw]
-if _no_pw:
-    sys.exit(f"jellyfin-init: FATAL: no password for {', '.join(_no_pw)} — "
-             f"/run/stack-env/media.jellyfin-users.env is missing or "
-             f"incomplete (switch the host before the push)")
 
 # name -> (collectionType, container path). Both live inside the
 # /data/media:ro bind and are created by media-init's skeleton pass;
@@ -209,51 +205,59 @@ if not completed:
 else:
     log("startup wizard already completed - no change")
 
-# Users, re-asserted like Authentik's own: an account that does not log in with
-# its password gets it set back, so Jellyfin and Authentik agree. Each probe
-# uses its own DeviceId — a login replaces any session of the same user and
-# device. A disabled account is an admin's decision and is left alone.
-_, users = call("/Users", token=token)
-by_name = {str(u.get("Name", "")).lower(): u for u in (users or [])}
-for name in ROSTER:
-    pw = ROSTER_PW[name]
-    probe = AUTH.replace('DeviceId="jellyfin-init"',
-                         f'DeviceId="jellyfin-init-{name}"')
-    user = by_name.get(name)
-    if user is None:
-        try:
-            _, user = call("/Users/New", "POST",
-                           {"Name": name, "Password": pw}, token=token)
-        except urllib.error.HTTPError as e:
-            sys.exit(f"jellyfin-init: FATAL: creating user {name!r} HTTP "
-                     f"{e.code}: {detail(e)}")
-        policy = (user or {}).get("Policy") or {}
-        if policy.get("IsAdministrator") or not policy.get("EnableAllFolders"):
-            policy["IsAdministrator"] = False
-            policy["EnableAllFolders"] = True
-            call(f"/Users/{user['Id']}/Policy", "POST", policy, token=token)
-        change(f"user {name} created")
-        continue
-    if (user.get("Policy") or {}).get("IsDisabled"):
-        log(f"WARN: user {name} is disabled - leaving it alone")
-        continue
-    try:
-        _, session = call("/Users/AuthenticateByName", "POST",
-                          {"Username": name, "Pw": pw}, auth=probe)
-    except urllib.error.HTTPError as e:
-        if e.code != 401:
-            sys.exit(f"jellyfin-init: FATAL: probing user {name!r} HTTP "
-                     f"{e.code}: {detail(e)}")
-        call(f"/Users/Password?userId={user['Id']}", "POST",
-             {"NewPw": pw, "ResetPassword": False}, token=token)
-        change(f"user {name} password set to the Authentik one")
+# The LDAP plugin, reconciled on every run. jellyfin-config-init installs it
+# before jellyfin starts; its settings live in the plugin's own XML, which also
+# holds STATE (LdapUsers, the uid -> Jellyfin user links the plugin writes at
+# each first login), so the desired keys are merged into what the API returns
+# rather than the file being written whole. Values: jellyfin-ldap.json, which
+# must match the blueprint (headscale-vps/authentik/blueprints/custom/
+# jellyfin-ldap.yaml); the bind password comes from media.jellyfin-ldap.env.
+with open("/init/jellyfin-ldap.json") as fh:
+    LDAP = json.load(fh)
+want = dict(LDAP["configuration"])
+want["LdapBindPassword"] = os.environ["JELLYFIN_LDAP_BIND_PASSWORD"]
+guid = LDAP["plugin"]["guid"].replace("-", "").lower()
+_, plugins = call("/Plugins", token=token)
+plugin = next((p for p in plugins or []
+               if str(p.get("Id", "")).replace("-", "").lower() == guid), None)
+if plugin is None:
+    log("WARN: the LDAP plugin is not loaded - LDAP logins are off until it "
+        "installs (jellyfin-config-init downloads it; see its log) and "
+        "jellyfin restarts")
+elif plugin.get("Status") != "Active":
+    log(f"WARN: the LDAP plugin {plugin.get('Version')} is "
+        f"{plugin.get('Status')!r}, not Active - LDAP logins are off")
+else:
+    if plugin.get("Version") != LDAP["plugin"]["version"]:
+        log(f"WARN: jellyfin loaded the LDAP plugin {plugin.get('Version')}, "
+            f"the pin is {LDAP['plugin']['version']}")
+    path = f"/Plugins/{plugin['Id']}/Configuration"
+    _, cur = call(path, token=token)
+    cur = cur or {}
+    drift = sorted(k for k, v in want.items() if cur.get(k) != v)
+    if drift:
+        merged = dict(cur)
+        merged.update(want)
+        call(path, "POST", merged, token=token)
+        change(f"LDAP plugin configured ({', '.join(drift)})")
     else:
-        call("/Sessions/Logout", "POST",
-             token=(session or {}).get("AccessToken"), auth=probe)
-        log(f"user {name} already exists - no change")
+        log("LDAP plugin already configured - no change")
 
-# No SSO: Jellyfin keeps its own logins (TV and mobile clients cannot follow
-# an OIDC redirect), and jellyfin-config-init removes an earlier SSO-Auth
+# A LOCAL account other than the admin shadows the LDAP user of that name: an
+# existing account only ever authenticates with its own provider, so that
+# person's Authentik password is refused. Reported, never deleted — removing
+# an account is an admin's decision (Dashboard -> Users).
+_, users = call("/Users", token=token)
+for u in users or []:
+    provider = (u.get("Policy") or {}).get("AuthenticationProviderId") or ""
+    if provider.endswith("DefaultAuthenticationProvider") and \
+            str(u.get("Name", "")).lower() != USER.lower():
+        log(f"WARN: {u.get('Name')!r} is a local Jellyfin account, so the LDAP "
+            f"user of that name cannot sign in - delete it in the UI unless it "
+            f"is meant to stay local")
+
+# No OIDC (TV and mobile clients cannot follow the redirect; LDAP above is the
+# shared login instead), and jellyfin-config-init removes an earlier SSO-Auth
 # install. What that plugin's setup left in the branding — the "Sign in with
 # Authentik" form and its CSS — is cleared here. Only that markup is touched:
 # a disclaimer set by hand stays.

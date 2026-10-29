@@ -35,6 +35,14 @@
 #     and email win over a tampered POST, the password policy bites, TOTP is
 #     set up before the session exists, the user lands in headscale-users —
 #     whose next login then asks for the TOTP device.
+#   - LDAP for Jellyfin: the jellyfin-ldap blueprint's provider, bind flow (no
+#     MFA stage), bind account, application bindings, outpost and the token
+#     whose key it pins; then the REAL outpost from stacks/ldap/compose.yaml
+#     connecting with that fixed token and answering the exact binds and
+#     filters stacks/media/jellyfin-ldap.json configures the plugin with. The
+#     plugin's side of that dialogue is the media suite's (against a stand-in
+#     directory of the same shape) — together they cover the chain, but no
+#     suite runs Jellyfin against this outpost.
 #
 # The vps suite covers everything else about this host (firewall, ssh, tailnet,
 # ACME details); it stands in a nginx stub for :9000. This suite is the stub
@@ -70,6 +78,28 @@ let
     in
     lib.head (lib.splitString "\nREMOTE\n" after)
   );
+  # The Jellyfin plugin's configuration: the bind DN, base DN and filters the
+  # outpost must answer exactly as configured.
+  jellyfinLdap = (builtins.fromJSON (builtins.readFile ../../stacks/media/jellyfin-ldap.json)).configuration;
+
+  # The real stack, AUTHENTIK_HOST included, with the test's stand-ins for DNS
+  # and the CA: host networking with auth.idanreed.com pinned to this host's
+  # Caddy, and Pebble's root trusted. Dialling 127.0.0.1:9000 instead would
+  # not do: the session cookie is scoped to idanreed.com, and the bind flow
+  # cannot complete without it.
+  ldapStack = ../../stacks/ldap;
+  ldapOverride = pkgs.writeText "ldap-test-override.yaml" ''
+    services:
+      authentik-ldap:
+        network_mode: host
+        networks: !reset []
+        extra_hosts:
+          - "${authHost}:127.0.0.1"
+        environment:
+          - SSL_CERT_FILE=/var/lib/test-ca/bundle.pem
+        volumes:
+          - /var/lib/test-ca:/var/lib/test-ca:ro
+  '';
 in
 pkgs.testers.runNixOSTest {
   name = "authentik";
@@ -119,6 +149,7 @@ pkgs.testers.runNixOSTest {
             inherit pkgs;
             images = [
               images."ghcr_io_goauthentik_server_2026_8_5"
+              images."ghcr_io_goauthentik_ldap_2026_8_5"
               images."postgres_16_13-alpine"
             ];
             beforeUnits = [ "authentik.service" ];
@@ -133,6 +164,9 @@ pkgs.testers.runNixOSTest {
         '';
 
         security.pki.certificateFiles = [ nodes.acme.test-support.acme.caCert ];
+
+        # ldapsearch, for the LDAP outpost leg.
+        environment.systemPackages = [ pkgs.openldap ];
 
         # Both public names live on this host; /etc/hosts stands in for DNS.
         # This is also what lets headscale's OIDC setup and the test script
@@ -178,6 +212,7 @@ pkgs.testers.runNixOSTest {
       import hashlib
       import hmac
       import json
+      import re
       import shlex
       import struct
       import time
@@ -855,7 +890,8 @@ pkgs.testers.runNixOSTest {
       # and a mis-bound policy is finding-#9-silent: the object exists, the API
       # shows it, and nothing gates. So this does not stop at "policy exists";
       # it walks policy -> policybinding -> flowstagebinding -> flow and pins
-      # the whole chain to default-authentication-flow.
+      # the whole chain to default-authentication-flow (and to the LDAP bind
+      # flow, which binds the same gate).
       with subtest("the login-hardening reputation policy exists"):
           # Exact-name selection, never results[0]: ?name= is fuzzy and other
           # policies share the DB.
@@ -871,7 +907,7 @@ pkgs.testers.runNixOSTest {
               authentik_diag()
               raise
 
-      with subtest("the reputation policy is bound to default-authentication-flow"):
+      with subtest("the reputation policy is bound to the web login and the LDAP bind flow"):
           try:
               # 1. reputation policy pk, by exact name.
               pols = json.loads(headscale_vps.succeed(
@@ -881,42 +917,49 @@ pkgs.testers.runNixOSTest {
               assert len(pol) == 1, f"policy count: {[p['name'] for p in pols['results']]}"
               policy_pk = pol[0]["pk"]
 
-              # 2. the policybinding that attaches it — filtered by THIS
-              # policy's pk, so it cannot resolve to some other policy's
-              # binding. Its target is a flowstagebinding uuid.
+              # 2. the policybindings that attach it — filtered by THIS
+              # policy's pk, so none can resolve to some other policy's
+              # binding. Each target is a flowstagebinding uuid: one in the
+              # web login (login-hardening.yaml), one in the LDAP bind flow
+              # (jellyfin-ldap.yaml), so LDAP is no way around the gate.
+              # The LDAP flow's file may apply after this point is reached;
+              # its flow and binding land in one transaction.
+              headscale_vps.wait_until_succeeds(
+                  f"{CURL} '{API}/flows/instances/ldap-bind/' >/dev/null",
+                  timeout=300)
               binds = json.loads(headscale_vps.succeed(
                   f"{CURL} '{API}/policies/bindings/?policy={policy_pk}'"
               ))
-              assert len(binds["results"]) == 1, (
-                  f"expected exactly one binding of login-reputation, got "
-                  f"{len(binds['results'])}"
-              )
-              fsb_pk = binds["results"][0]["target"]
-
-              # 3. the flowstagebinding itself: it must target the default
-              # authentication flow, sit at the conditional order, run the
-              # deny stage, and carry the evaluate_on_plan/re_evaluate pair
-              # that makes reputation re-check post-identification. Get either
-              # flag wrong and the policy runs at plan time with an anonymous
-              # user — check_username goes silently inert.
-              fsb = json.loads(headscale_vps.succeed(
-                  f"{CURL} '{API}/flows/bindings/{fsb_pk}/'"
-              ))
-              flow = json.loads(headscale_vps.succeed(
-                  f"{CURL} '{API}/flows/instances/default-authentication-flow/'"
-              ))
-              assert fsb["target"] == flow["pk"], (
-                  f"reputation deny stage is bound to flow {fsb['target']!r}, "
-                  f"not default-authentication-flow ({flow['pk']!r})"
-              )
-              assert fsb["stage_obj"]["name"] == "login-reputation-deny", (
-                  f"conditional binding runs the wrong stage: "
-                  f"{fsb['stage_obj']['name']!r}"
-              )
-              assert fsb["evaluate_on_plan"] is False, \
-                  "evaluate_on_plan must be false or check_username is inert"
-              assert fsb["re_evaluate_policies"] is True, \
-                  "re_evaluate_policies must be true or the deny never re-checks"
+              flows = {}
+              for slug in ["default-authentication-flow", "ldap-bind"]:
+                  flows[json.loads(headscale_vps.succeed(
+                      f"{CURL} '{API}/flows/instances/{slug}/'"
+                  ))["pk"]] = slug
+              bound = []
+              for b in binds["results"]:
+                  # 3. each flowstagebinding: it must sit in one of the two
+                  # flows, run the deny stage, and carry the evaluate_on_plan/
+                  # re_evaluate pair that makes reputation re-check after
+                  # identification. Get either flag wrong and the policy runs
+                  # at plan time with an anonymous user — check_username goes
+                  # silently inert.
+                  fsb = json.loads(headscale_vps.succeed(
+                      f"{CURL} '{API}/flows/bindings/{b['target']}/'"
+                  ))
+                  assert fsb["target"] in flows, (
+                      f"reputation deny stage is bound to an unexpected flow "
+                      f"{fsb['target']!r}")
+                  bound.append(flows[fsb["target"]])
+                  assert fsb["stage_obj"]["name"] == "login-reputation-deny", (
+                      f"conditional binding runs the wrong stage: "
+                      f"{fsb['stage_obj']['name']!r}"
+                  )
+                  assert fsb["evaluate_on_plan"] is False, \
+                      "evaluate_on_plan must be false or check_username is inert"
+                  assert fsb["re_evaluate_policies"] is True, \
+                      "re_evaluate_policies must be true or the deny never re-checks"
+              assert sorted(bound) == ["default-authentication-flow", "ldap-bind"], (
+                  f"login-reputation is bound in {sorted(bound)}")
           except Exception:
               authentik_diag()
               raise
@@ -1052,7 +1095,7 @@ pkgs.testers.runNixOSTest {
               assert st["bp"] and not bad, f"custom blueprints not applied: {bad}"
               for slug in ["grafana-sso", "komodo-sso", "profilarr-sso",
                            "cleanuparr-sso", "beszel-sso", "windmill-sso",
-                           "wger-sso", "docspace", "backrest"]:
+                           "wger-sso", "docspace", "backrest", "jellyfin-ldap"]:
                   assert slug in st["apps"], f"application {slug!r} missing: {st['apps']}"
               assert "jellyfin" not in st["apps"], "the retired jellyfin application exists"
               assert "docspace" in st["saml"], f"no docspace SAML provider: {st['saml']}"
@@ -1074,6 +1117,136 @@ pkgs.testers.runNixOSTest {
                   )[1])
               authentik_diag()
               raise
+
+      # ---------------------------------------------------------------------
+      # LDAP for Jellyfin (blueprints/custom/jellyfin-ldap.yaml)
+      # ---------------------------------------------------------------------
+      LDAP_TOKEN = "test_ldap_outpost_token_not_secret"
+      LDAP_BIND_PW = "test_jellyfin_ldap_bind_not_secret"
+      IDAN_PW = "test_IDAN_initial_pw_not_secret"
+      OUTPOST_PK = "33910060-74e3-439f-b2ec-ac5e8aa6eb19"
+      JL = json.loads('${builtins.toJSON jellyfinLdap}')
+
+      with subtest("jellyfin-ldap: provider, password-only bind flow, bind account, outpost, fixed token"):
+          check = "\n".join([
+              "import json",
+              "from authentik.core.models import Application, Token, User",
+              "from authentik.flows.models import FlowStageBinding",
+              "from authentik.outposts.models import Outpost",
+              "from authentik.policies.models import PolicyBinding",
+              "from authentik.providers.ldap.models import LDAPProvider",
+              "p = LDAPProvider.objects.get(name='jellyfin-ldap')",
+              "app = Application.objects.get(slug='jellyfin-ldap')",
+              "o = Outpost.objects.get(pk='" + OUTPOST_PK + "')",
+              "t = Token.objects.get(identifier=o.token_identifier)",
+              "u = User.objects.get(username='jellyfin-ldap-bind')",
+              "stages = [b.stage.component for b in FlowStageBinding.objects.filter(target=p.authorization_flow).order_by('order')]",
+              "binds = PolicyBinding.objects.filter(target=app)",
+              "print('JSON' + json.dumps({",
+              "  'base_dn': p.base_dn, 'bind_mode': p.bind_mode, 'search_mode': p.search_mode,",
+              "  'mfa_support': p.mfa_support, 'flow': p.authorization_flow.slug,",
+              "  'app_provider': app.provider_id == p.pk,",
+              "  'outpost': [o.name, o.type, [x.pk for x in o.providers.all()] == [p.pk]],",
+              "  'token': [t.key, t.managed, t.intent, t.expiring, t.user.username == o.user_identifier],",
+              "  'bind_user': [u.type, u.check_password('" + LDAP_BIND_PW + "'),",
+              "                u.has_perm('authentik_providers_ldap.search_full_directory', p)],",
+              "  'stages': stages,",
+              "  'bindings': sorted([b.group.name if b.group else ('user:' + b.user.username) for b in binds]),",
+              "}))",
+          ])
+          headscale_vps.succeed(
+              "cat > /tmp/ldapcheck.py <<'LDEOF'\n" + check + "\nLDEOF\n"
+              "docker cp /tmp/ldapcheck.py authentik_worker:/tmp/ldapcheck.py"
+          )
+          try:
+              out = headscale_vps.wait_until_succeeds(
+                  "docker exec authentik_worker ak shell -c "
+                  "\"exec(open('/tmp/ldapcheck.py').read())\" 2>/dev/null | grep '^JSON'",
+                  timeout=300,
+              )
+              st = json.loads(out.strip().splitlines()[-1][4:])
+              assert st["base_dn"] == "dc=ldap,dc=idanreed,dc=com", st
+              assert (st["bind_mode"], st["search_mode"]) == ("direct", "direct"), st
+              assert st["mfa_support"] is False, st
+              assert st["flow"] == "ldap-bind" and st["app_provider"], st
+              # Password only: LDAP cannot answer a second factor, so a bound
+              # validate stage would refuse every bind.
+              assert "ak-stage-authenticator-validate-form" not in st["stages"], st
+              assert st["stages"][0] == "ak-stage-identification-form", st
+              assert st["stages"][-1] == "ak-stage-user-login-form", st
+              assert st["outpost"] == ["jellyfin-ldap", "ldap", True], st
+              # The pinned key, on the token Authentik itself manages for the
+              # outpost (identifier + managed are how it finds it again).
+              assert st["token"] == [LDAP_TOKEN,
+                                     "goauthentik.io/outpost/ak-outpost-" + OUTPOST_PK + "-api",
+                                     "api", False, True], st
+              assert st["bind_user"] == ["service_account", True, True], st
+              assert st["bindings"] == ["headscale-users", "user:jellyfin-ldap-bind"], st
+          except Exception:
+              authentik_diag()
+              raise
+
+      with subtest("the stacks/ldap outpost connects with the fixed token and answers the plugin's binds"):
+          # The env the services VM renders from env.nix (AUTHENTIK_TOKEN =
+          # the shared LDAP_OUTPOST_TOKEN), written by hand: stack-env.nix is
+          # a services-VM module.
+          headscale_vps.succeed(
+              "install -d -m 0755 /run/stack-env && "
+              f"printf \"AUTHENTIK_TOKEN='%s'\\n\" {LDAP_TOKEN} > /run/stack-env/ldap.env && "
+              "chmod 0400 /run/stack-env/ldap.env && "
+              "(docker network inspect homelab >/dev/null 2>&1 || docker network create homelab)"
+          )
+          LDAPC = ("docker compose -f ${ldapStack}/compose.yaml "
+                   "-f ${ldapOverride} -p ldap")
+          try:
+              # healthy only once the outpost fetched its config with the token
+              headscale_vps.succeed(LDAPC + " up -d --wait --wait-timeout 300",
+                                    timeout=360)
+          except Exception:
+              print(headscale_vps.execute(LDAPC + " logs --tail=60")[1])
+              authentik_diag()
+              raise
+
+          H = "ldap://127.0.0.1:3389"
+          bind = f"-D {JL['LdapBindUser']!r} -w {LDAP_BIND_PW}"
+          base = JL["LdapBaseDn"]
+
+          def ldapsearch(auth, base_dn, flt, *attrs):
+              return headscale_vps.execute(
+                  f"ldapsearch -LLL -x -H {H} {auth} -b {base_dn!r} {flt!r} "
+                  + " ".join(attrs) + " 2>&1")
+
+          # The plugin's lookup: user filter AND the search attribute = the
+          # typed username, as the bind account.
+          rc, out = ldapsearch(
+              bind, base, f"(&{JL['LdapSearchFilter']}({JL['LdapSearchAttributes']}=idan))",
+              JL["LdapUidAttribute"], JL["LdapUsernameAttribute"])
+          assert rc == 0 and "dn: cn=idan," + base in out, out
+          assert f"{JL['LdapUsernameAttribute']}: idan" in out, out
+          assert re.search(r"^" + JL["LdapUidAttribute"] + r": [0-9a-f]{64}$", out, re.M), (
+              f"no stable {JL['LdapUidAttribute']} attribute for the plugin to link on:\n{out}")
+          # The admin check: the same account, the admin filter (idan is in Admin).
+          rc, out = ldapsearch(bind, JL["LdapAdminBaseDn"] or base,
+                               JL["LdapAdminFilter"], "cn")
+          assert rc == 0 and "dn: cn=idan," + base in out, out
+          # The user bind, through the password-only flow.
+          rc, out = ldapsearch(f"-D 'cn=idan,{base}' -w {IDAN_PW}", base, "(cn=idan)", "cn")
+          assert rc == 0 and "cn: idan" in out, out
+          rc, out = ldapsearch(f"-D 'cn=idan,{base}' -w definitely-wrong", base, "(cn=idan)")
+          assert "Invalid credentials (49)" in out, out
+          # Outside headscale-users: the application's bindings refuse the bind.
+          headscale_vps.succeed(
+              "docker exec authentik_worker ak shell -c \""
+              "from authentik.core.models import User; "
+              "u, _ = User.objects.get_or_create(username='ldap-outsider', defaults={'name': 'x', 'path': 'users'}); "
+              "u.set_password('ldap-outsider-pw'); u.save()\" >/dev/null 2>&1"
+          )
+          rc, out = ldapsearch(f"-D 'cn=ldap-outsider,{base}' -w ldap-outsider-pw",
+                               base, "(cn=ldap-outsider)")
+          assert "Insufficient access (50)" in out, out
+          # And no anonymous reads.
+          rc, out = ldapsearch("", base, "(cn=idan)")
+          assert "Insufficient access (50)" in out, out
 
       with subtest("headscale sets up its OIDC provider against the live issuer"):
           # At first boot headscale raced Authentik and its OIDC setup failed
