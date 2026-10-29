@@ -45,24 +45,24 @@ username afterwards (the tenant defaults, pinned by the authentik suite).
 | Service | On first login |
 |---|---|
 | OIDC apps (Immich, Paperless, Kavita, Audiobookshelf, Outline, BookStack, Homebox, Karakeep, Dawarich, Ghostfolio, Tandoor, Mealie, Excalidraw, Forgejo, DocSpace) | "Sign in with Authentik" creates a normal, non-admin account |
-| Forward-auth apps (`import protected`) | reachable after the Authentik login; see the warning below |
+| Everyday forward-auth apps (BentoPDF, Mazanoke, IT-Tools, Glance, Shelfmark, Frigate as `viewer`, Firefly III, Owl, Wger) | reachable after the Authentik login |
 | Jellyfin, Seerr | their Authentik username and password through the LDAP outpost (no TOTP — LDAP cannot prompt); Seerr follows Jellyfin |
 | Vaultwarden | SSO login, then they set a **master password** in the web vault — it is the vault key, and Authentik can never reset it |
 | Windmill, Wger | nothing until added: one roster line in `stacks/windmill/windmill-init.sh` (`(email, None, False, SSO_PROVIDER)`) or `stacks/wger/wger-init.py` (`(username, email, False)`), then push |
 | Actual | nothing until an admin adds them in the client's user directory (the `userName` is their Authentik username) |
-| Admin-only apps (Komodo, Grafana, Beszel, Profilarr, Cleanuparr SSO, Grist, Penpot) | refused — those applications are bound to `Admin` |
+| Admin-only apps — the admin tools (Komodo, Grafana, Beszel, Gatus, Backrest, Windmill, Radarr, Sonarr, Prowlarr, Bazarr, Profilarr, Cleanuparr, Bitmagnet, the Firefly importer, Vaultwarden `/admin`) and idan's single-user apps (Syncthing, SilverBullet, Grist, Penpot) | refused — those applications are bound to `Admin` |
 
 ⚠ **Before the first invitation:**
 
-- **The tailnet ACL is default-deny.** `headscale-vps/policy.hujson` grants
-  only `idan@` (and `tag:guest` → `tag:server:443`), so an invitee's devices
-  register and reach nothing. Granting them :443 is the AS-5 decision in
-  [decisions.md](decisions.md): Caddy fronts every vhost.
-- **Forward auth with no binding admits every Authentik user.** Radarr,
-  Sonarr, Prowlarr and Bazarr have no login of their own (full control),
-  Frigate gives non-`Admin` users `viewer`, and the Firefly importer acts with
-  idan's Firefly token. To keep one to `idan`, add an `Admin` policybinding on
-  its application in `forward-auth.yaml` (the pattern in `grafana-oidc.yaml`).
+- **Claim the first-login apps as idan** (the table below: Outline, Firefly
+  III, Ghostfolio, and the Paperless and Komodo steps) — an invitee's first
+  login there would otherwise own it.
+- **What an invitee's devices reach:** `headscale-vps/policy.hujson` gives
+  every non-owner account (`autogroup:member`) the services VM's :443 and
+  nothing else. Caddy fronts every vhost, so the per-app control is
+  Authentik's: an application with no binding admits every Authentik user. A
+  new admin tool or single-user app gets an `Admin` policybinding in
+  `forward-auth.yaml` (or its `*-oidc.yaml`) in the same change that adds it.
 
 To remove someone: Authentik → Directory → Users → deactivate (or delete),
 `sudo headscale nodes expire -i <id>` for their devices, then their accounts in

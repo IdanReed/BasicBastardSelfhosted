@@ -17,6 +17,13 @@
 //   tailscale up --login-server=https://headscale.idanreed.com \
 //                --advertise-tags=tag:server
 {
+  // The services VM by address: no node advertises tags yet, so a tag:server
+  // destination matches nothing. It keeps 100.64.0.2 across a re-registration
+  // because it rejoins second (docs/bring-up.md §14 step 4).
+  "hosts": {
+    "services-vm": "100.64.0.2/32",
+  },
+
   "tagOwners": {
     "tag:server": ["idan@"],
     "tag:guest": ["idan@"],
@@ -40,19 +47,27 @@
       "dst": ["tag:server:*"],
     },
 
-    // Guests get published services over HTTPS only: no SSH, no direct
-    // container ports, no LAN behind the subnet router.
+    // Invited users (every account but idan enrolls through invite-enrollment)
+    // reach the services VM's Caddy on 443 only: no SSH, no direct container
+    // ports, no LAN behind the subnet router.
     //
-    // 🚨 :443 IS CADDY, and Caddy fronts every vhost — including the ones with
-    // no forward auth and the apps whose first login claims ownership
-    // (docs/for-shame.md). A headscale ACL is layer 3; it cannot say "these
-    // vhosts only". Before the first guest node exists, the per-vhost control
-    // must land in stacks/caddy/Caddyfile (import protected, or a
-    // `not remote_ip <guest-range>` guard). See docs/decisions.md, AS-5/AS-6.
+    // 🚨 :443 IS CADDY, and Caddy fronts every vhost. A headscale ACL is layer
+    // 3; the per-vhost control is Authentik's: the admin tools and idan's
+    // single-user apps are bound to the Admin group (forward-auth.yaml and the
+    // Admin-bound *-oidc.yaml), and the apps whose first login claims
+    // ownership must have been claimed by idan before the first invitation
+    // (docs/accounts.md).
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["services-vm:443"],
+    },
+
+    // Guest devices, once tagged, get the same.
     {
       "action": "accept",
       "src": ["tag:guest"],
-      "dst": ["tag:server:443"],
+      "dst": ["services-vm:443"],
     },
   ],
 }

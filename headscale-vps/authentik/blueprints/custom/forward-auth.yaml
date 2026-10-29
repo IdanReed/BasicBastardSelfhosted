@@ -767,3 +767,168 @@ entries:
         - !KeyOf beszel-provider
         - !KeyOf silverbullet-provider
         - !KeyOf grafana-provider
+
+  # Admin tools, and the single-user apps that hold idan's own data, bound to
+  # the Admin group: an invited user signs in to the everyday apps and reaches
+  # none of these. With no binding an application admits every Authentik user.
+  # (Bitmagnet's binding sits with its provider above.)
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf backrest-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf radarr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf sonarr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf prowlarr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf bazarr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf profilarr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf cleanuparr-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf firefly-importer-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf vaultwarden-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf komodo-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf windmill-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf gatus-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf beszel-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf grafana-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf syncthing-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf silverbullet-app
+      group: !Find [authentik_core.group, [name, Admin]]
+      order: 0
+    attrs:
+      enabled: true
+      negate: false
+      timeout: 30
