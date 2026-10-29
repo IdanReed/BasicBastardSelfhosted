@@ -47,8 +47,8 @@ in
       # did not author, which is what preserves the CI-authored pin commit.
       gitAuthor = "Renovate Bot <renovate@svc.idanreed.com>";
 
-      # Explicit list, not autodiscovery: the forge also hosts ServerNotes and
-      # the retired arcane-sops fork.
+      # Explicit list, not autodiscovery: the forge also hosts private repos
+      # this bot has no business opening PRs on.
       autodiscover = false;
       repositories = [ "idan/BasicBastardSelfhosted" ];
 

@@ -13,9 +13,9 @@
 #     promotes clean audiobook downloads into /mnt/slow/books/drop), so
 #     nothing here mounts the download tree or names a QBITTORRENT_*
 #     variable — the books suite asserts that.
-#   - Auth: kavita and audiobookshelf drive their own OIDC, shipping
-#     ready-and-OFF until the operator lands the client secrets; shelfmark
-#     has none of its own and gets Caddy forward auth. Forward auth is not an
+#   - Auth: kavita and audiobookshelf drive their own OIDC (on, local
+#     logins kept as break-glass); shelfmark has none of its own and gets
+#     Caddy forward auth. Forward auth is not an
 #     option for kavita — OPDS and KOReader sync authenticate by API key in
 #     the URL from clients that cannot follow a redirect.
 #   - All three are SQLite, so backup-prepare.sh's pg_dumpall loop is

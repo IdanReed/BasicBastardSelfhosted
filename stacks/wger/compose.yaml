@@ -1,6 +1,5 @@
 # Wger — workout and nutrition tracker (Food range, port 10351).
-# Design: ServerNotes/designs/service-food-stack-research.md; _overview.md owns
-# the port/auth row.
+# docs/services.md owns the port/auth row.
 #
 # Its own stack rather than sharing tandoor's: both read a bare `SECRET_KEY`
 # through env_file and would collide.

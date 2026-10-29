@@ -139,7 +139,7 @@
 
 	@mazanoke host mazanoke.svc.idanreed.com
 	handle @mazanoke {
-		# Forward auth, matching its _overview.md row and its sibling
+		# Forward auth, matching its docs/services.md row and its sibling
 		# bentopdf. Mazanoke is a client-side image optimiser with no auth
 		# of its own, so this is the only lock it can have.
 		import protected
@@ -213,9 +213,9 @@
 
 	# ------------------------------------------------------------------
 	# Media stack (stacks/media, 10050-10059). qBittorrent has NO route
-	# yet, deliberately: _overview marks it FwdAuth and its blueprint
-	# entry does not exist, so flipping the route live first is the
-	# lockout hazard described above. Add both together.
+	# yet, deliberately: its only lock is its own WebUI login, and its
+	# forward-auth blueprint entry does not exist, so flipping the route
+	# live first is the lockout hazard described above. Add both together.
 	# ------------------------------------------------------------------
 
 	@jellyfin host jellyfin.svc.idanreed.com
@@ -281,9 +281,8 @@
 	# ------------------------------------------------------------------
 	# Books stack (stacks/books, 10150-10152). kavita and audiobookshelf
 	# drive their own OIDC and get no forward auth; shelfmark has no auth
-	# of its own and does. Both OIDC apps ship ready-and-OFF on local
-	# accounts until the operator lands the client secrets — neither is
-	# ever unauthenticated, which is what makes the OFF state safe.
+	# of its own and does. Both OIDC apps keep their local accounts
+	# underneath, so neither is ever unauthenticated.
 	# ------------------------------------------------------------------
 
 	@kavita host kavita.svc.idanreed.com

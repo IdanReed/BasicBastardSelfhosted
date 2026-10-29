@@ -7,8 +7,8 @@
 # rotation touch every fixture. All three stay inside 10300-10349; the lints
 # key on ports, not stack names.
 #
-#   - All three apps drive native OIDC, shipping ready-and-OFF on local
-#     accounts until the operator lands the Authentik client secrets.
+#   - All three apps drive native OIDC (on), with local accounts kept
+#     underneath: the init seeds each owner with a password.
 #   - FOUR different uid conventions live in this file; normalising any one
 #     breaks it. See each service.
 #   - Backups: bookstack is MariaDB, dumped by backup-prepare.sh's mysqldump

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Headless first-run for Windmill (annex §3.4). Upstream's documented setup is
+# Headless first-run for Windmill. Upstream's documented setup is
 # "log in as admin@windmill.dev / changeme, then use the UI" with no forced
 # password change, so the published default is live until a human intervenes.
 # SUPERADMIN_SECRET presented as a bearer token authenticates against the

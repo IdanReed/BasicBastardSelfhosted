@@ -1,6 +1,5 @@
-# Windmill — workflow orchestration (10253).
-# Design: ServerNotes/designs/service-notes-sync-stack-research.md (the annex,
-# §3.4/§4.4/§7.4) and custom-finance.md.
+# Windmill — workflow orchestration (10253): reMarkable OCR, Paperless AI,
+# generic LLM tasks, finance automation.
 #
 # 🚨 THE WORKER'S CACHE VOLUME IS THE THING MOST LIKELY TO BE "FIXED"
 # INCORRECTLY. It is a NAMED volume deliberately: the image bakes CPython into

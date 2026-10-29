@@ -2,8 +2,8 @@
 #
 # Genuinely under test:
 #   - config-init seeding config.json ONCE via config-init.sh's busybox-awk
-#     substitution, from the decrypted .env — including a '$'-laden restic
-#     password surviving the whole decrypt -> source -> substitute pipeline (the
+#     substitution, from the rendered stack env — including a '$'-laden restic
+#     password surviving the whole render -> compose -> substitute pipeline (the
 #     quoting hazard CLAUDE.md warns about, proven here rather than left as
 #     folklore). That this suite runs offline is itself part of the contract:
 #     the script's predecessor did `apk add gettext` at boot, which no
@@ -282,7 +282,7 @@ pkgs.testers.runNixOSTest {
     # Boot chain
     # -----------------------------------------------------------------------
     # The same chain the services suite covers in depth; here it only has to
-    # deliver a decrypted .env and the homelab network before compose runs.
+    # deliver a rendered .env and the homelab network before compose runs.
     services_vm.wait_for_unit("docker-network-homelab.service")
     services_vm.wait_for_unit("bootstrap-komodo.service")
     services_vm.succeed("test -s /srv/stacks/backrest/.env")

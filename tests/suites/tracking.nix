@@ -29,7 +29,7 @@
 #     parses MEILI_ADDR/MEILI_MASTER_KEY in a separate per-plugin schema, so a
 #     typo produces no validation error anywhere and search silently never
 #     registers
-#   - the OIDC-ready-but-OFF shipping state for all three
+#   - OIDC on for all three, with local login kept where the bootstrap needs it
 #   - the backup paths, including the two Karakeep SQLite files whose
 #     committed path was WRONG (it named a file the app never creates, and
 #     sqlite_backup returns 0 for a missing source — so it backed up nothing,
@@ -38,9 +38,8 @@
 #   - reboot durability on a real disk
 #
 # Documented gaps (a green run covers NONE of these):
-#   - **Every OIDC login.** All three ship with OIDC off because the Authentik
-#     client secrets need the production age key. What is asserted is the
-#     deliberate off-state, not a login.
+#   - **Every OIDC login.** A login needs a live Authentik; what is asserted
+#     is the switch each app ships, not a login.
 #   - **Karakeep's crawler and all AI.** Crawling needs egress; inference is
 #     inert without an endpoint and is meant to be. The chrome sidecar is
 #     started but nothing exercises it — Karakeep is explicitly designed to
@@ -474,9 +473,8 @@ pkgs.testers.runNixOSTest {
     # the OIDC posture each app actually ships
     # -----------------------------------------------------------------------
     with subtest("OIDC is ON, and local login survives where it must"):
-        # Post-rollout (2026-09-05) all three ship OIDC ENABLED, not
-        # ready-and-off. Homebox exposes its whole OIDC block unauthenticated,
-        # which makes it checkable directly.
+        # All three ship OIDC ENABLED. Homebox exposes its whole OIDC block
+        # unauthenticated, which makes it checkable directly.
         status = curl(HOMEBOX, "/api/v1/status")
         assert isinstance(status, dict), f"homebox /status: {status!r}"
         oidc = status.get("oidc") or {}

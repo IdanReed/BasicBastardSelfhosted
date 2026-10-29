@@ -57,8 +57,7 @@ in
       # `restrict` = no pty, no port/agent/X11 forwarding, no user rc. The
       # backup pull is `ssh <host> 'sudo …'` plus rsync --rsync-path, none of
       # which needs any of them; a stolen key then cannot be used as a tunnel
-      # or an interactive shell. Still root via passwordless sudo below — see
-      # arch-security AS-3 for the forced-command version.
+      # or an interactive shell. Still root via passwordless sudo below.
       (lib.mapNullable (k: "restrict ${k}") sshPubkeys.backup-vps)
     ];
   };

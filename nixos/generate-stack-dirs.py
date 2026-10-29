@@ -320,8 +320,7 @@ slow-volume-selective plan already includes that path.""",
     "/mnt/slow/books/drop": {
         "owner": ("1000", "1000"),
         "note": """\
-The one directory TWO stacks share
-(ServerNotes/designs/audiobook-acquisition.md, Option C). stacks/media's
+The one directory TWO stacks share (the audiobook hand-off). stacks/media's
 clamav-scanner (root) moves a completed `audiobooks` download in after a
 clean verdict; stacks/books' audiobookshelf mounts it :ro. The 1000:1000
 is for the third party: a human or shelfmark reorganising a promoted book

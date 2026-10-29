@@ -1,5 +1,5 @@
 # Gatus — availability monitoring for the whole fleet. This file IS the
-# deployment. Design: ServerNotes/designs/service-monitoring-stack-research.md.
+# deployment.
 #
 # 🚨 TWO PROBES PER SERVICE, MEASURING DIFFERENT THINGS:
 #   path probe    https://<svc>.svc.idanreed.com/  proves Caddy, the wildcard

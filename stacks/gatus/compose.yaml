@@ -1,5 +1,4 @@
 # Gatus — availability monitoring (10450). Config is the deployment: gatus.yaml.
-# Design: ServerNotes/designs/service-monitoring-stack-research.md.
 #
 # network_mode: host is not optional — every stack here publishes on
 # 127.0.0.1:PORT, which a bridged container cannot reach, and only three stacks

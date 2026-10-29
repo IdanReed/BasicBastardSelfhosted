@@ -20,9 +20,9 @@
 #     which needs a real tailnet peer; those probes live in tailnet.nix.
 #
 # hardware-configuration.nix is not imported: it mounts real partitions by
-# partlabel. Its tmpfiles rules are reproduced below; only the /srv/stacks
-# ownership rule is cross-checked (the tmpfiles-ownership lint) — the
-# remaining rules are hand-copied and CAN drift without anything noticing.
+# partlabel. Its tmpfiles rules are reproduced below; the tmpfiles-ownership
+# lint checks the real config (/srv/komodo and every stack bind source), so
+# the copies here are hand-kept and CAN drift without anything noticing.
 
 {
   pkgs,

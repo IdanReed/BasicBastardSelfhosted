@@ -1297,8 +1297,9 @@ in
 
   # findings #10 and #14, on servicesFullConfig — the ONE eval that includes
   # the real hardware config, since every VM suite replaces it with tmpfs
-  # stubs: /srv/stacks stays 1000:1000, and every /mnt bind source has a
-  # tmpfiles 'd' rule so docker cannot create it root-owned.
+  # stubs: /srv/komodo exists 0700 root, no rule names the retired
+  # /srv/stacks, and every /mnt bind source has a tmpfiles 'd' rule so docker
+  # cannot create it root-owned.
   tmpfiles-ownership =
     mkLint "tmpfiles-ownership" ''
       ${stackDirsJson} > dirs.json
@@ -1997,7 +1998,7 @@ in
   # in the owner (docs/for-shame.md). Every vhost must now be forward-authed,
   # in the OIDC contract, or named below with the reason its own auth is
   # enough. Stale entries are an error, so closing a hole forces the note out.
-  # arch-security AS-5.
+  # docs/decisions.md, AS-5.
   auth-coverage-required =
     mkLint "auth-coverage-required" ''
       ${py} - <<'PY'
@@ -2094,7 +2095,7 @@ in
               "302. The Caddyfile's fail-closed guard is the control.",
           "ntfy.svc.idanreed.com":
               "TODO: decide — anonymous read-write, ACCEPTED for now in "
-              "stacks/ntfy/server.yml (arch-security AS-2). Forward auth is "
+              "stacks/ntfy/server.yml. Forward auth is "
               "NOT the fix: the VPS publishes alerts through Caddy and a 302 "
               "would swallow them, so closing it means deny-all plus tokens.",
       }
