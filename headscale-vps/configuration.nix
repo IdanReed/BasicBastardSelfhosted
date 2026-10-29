@@ -88,8 +88,6 @@ in
   # depend on the container runtime.
   virtualisation.docker = {
     enable = true;
-    # 25.11's default docker 28.x is marked insecure by nixpkgs.
-    package = pkgs.docker_29;
     autoPrune = {
       enable = true;
       dates = "weekly";
@@ -274,7 +272,6 @@ in
     # on every activation, so root:root here re-owns live PGDATA out from
     # under postgres.
     "d /srv/authentik/pgdata 0700 70 70 -"
-    "d /srv/authentik/redis 0755 root root -"
     "d /srv/authentik/media 0755 root root -"
     "d /srv/authentik/certs 0755 root root -"
     "d /srv/authentik/templates 0755 root root -"

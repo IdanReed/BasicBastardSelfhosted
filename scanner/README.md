@@ -57,5 +57,5 @@ scanner IP recorded in the brief goes stale.
 
 `nmap testssl nuclei subfinder dnsx gitleaks ssh-audit dnsutils(dig) whois
 openssl curl wget jq git tailscale` + `claude-code`, `tmux ripgrep fd htop`.
-All from nixpkgs `nixos-25.11` (matches the other two server flakes). `nuclei`
+All from nixpkgs `nixos-26.05` (matches the servers' flake input). `nuclei`
 fetches its templates on first run (needs outbound network, which the box has).

@@ -16,7 +16,7 @@ headscale-vps (.#headscale-vps)
 │   ├── headscale.idanreed.com → 127.0.0.1:8080
 │   └── auth.idanreed.com      → 127.0.0.1:9000
 ├── headscale.service   native — coordination + embedded DERP, loopback
-├── authentik.service   systemd → docker compose: server, worker, PostgreSQL, Redis
+├── authentik.service   systemd → docker compose: server, worker, PostgreSQL
 ├── alloy.service       native — ships the journal to the services VM
 ├── fail2ban            sshd and authentik jails
 └── tailscale           joins its own tailnet via --login-server
@@ -99,13 +99,13 @@ the VPS is on the tailnet, reach the admin UI with
   must not contain the `server_url` host (`tailnet.idanreed.com` has no public
   records); check `/run/secrets/HEADSCALE_OIDC_CLIENT_SECRET`.
 - **A node registers but reaches nothing** — it registered under a cached
-  `akadmin` session. `sudo headscale nodes move -i <id> -u <idan-id>`, **then
-  `sudo systemctl restart headscale`**: `nodes move` does not push the new
-  packet filter to connected peers, so the node sits on deny-all while
-  `tailscale ping` still works.
+  `akadmin` session, and a node keeps the user it registered under. `sudo
+  headscale nodes delete -i <id> --force`, then log it in again as `idan`
+  from a private window: `tailscale up
+  --login-server=https://headscale.idanreed.com --force-reauth`.
 - **Authentik fails** (`systemctl status authentik`) — the unit stays
-  `activating` until PostgreSQL and Redis are healthy, then goes
-  `active (exited)`. A failure is almost always a missing secret: check that
+  `activating` until PostgreSQL and both Authentik processes are healthy, then
+  goes `active (exited)`. A failure is almost always a missing secret: check that
   `/run/secrets/rendered/authentik.env` carries every key the template
   declares, then `docker logs authentik_server` / `authentik_worker`.
 - **A blueprint did not apply** — the worker log names it. A provider name or

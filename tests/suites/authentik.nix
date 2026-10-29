@@ -114,7 +114,7 @@ pkgs.testers.runNixOSTest {
             caCert = nodes.acme.test-support.acme.caCert;
           })
           # Authentik will not finish its migrations below ~3GB, and postgres +
-          # redis + two Authentik processes need headroom on top. The disk
+          # two Authentik processes need headroom on top. The disk
           # holds the multi-GB image tarballs plus pgdata.
           (profiles.sized {
             memoryMB = 4096;
@@ -131,7 +131,6 @@ pkgs.testers.runNixOSTest {
               images."ghcr_io_goauthentik_server_2026_8_5"
               images."ghcr_io_goauthentik_ldap_2026_8_5"
               images."postgres_16_13-alpine"
-              images."redis_7_4-alpine"
             ];
             beforeUnits = [ "authentik.service" ];
           })
@@ -219,8 +218,7 @@ pkgs.testers.runNixOSTest {
       # failing response rather than a silent nonzero exit.
       CURL_RAW = f"curl -s --max-time 10 -H 'Authorization: Bearer {TOKEN}'"
 
-      CONTAINERS = ["authentik_db", "authentik_redis",
-                    "authentik_server", "authentik_worker"]
+      CONTAINERS = ["authentik_db", "authentik_server", "authentik_worker"]
 
 
       def authentik_diag():

@@ -72,6 +72,7 @@ are plaintext; no private key is needed).
 | `lib/profiles.nix` | The test-only overrides, each with the coverage it costs |
 | `lib/lints.nix` | Structural contract checks against production values |
 | `lib/mk-stack-suite.nix` | The generic per-stack suite, derived from a compose file |
+| `lib/machine-names.nix` | Names each test VM after its hostname (`services_vm`, `headscale_vps`), not its `nodes` key; added to every `runNixOSTest` |
 | `suites/*.nix` | The hand-written VM suites |
 | `fixtures/` | Fake secrets encrypted to the throwaway key: `stacks/<name>.sops.json`, `shared.sops.json`, the hosts' `*.sops.yaml`, `secrets-recovery.sops.yaml` |
 | `keys/` | Throwaway keypairs, committed on purpose (below) |
@@ -237,7 +238,7 @@ possible, a lint recovers it against the real value.
 Each rule below was found by a suite or lint failing, and code across the repo
 cites them by number ("finding #14", "ledger #30"). The numbers are stable.
 
-**1. Check a version's defaults, not only the keys you set.** Headscale 0.27
+**1. Check a version's defaults, not only the keys you set.** Headscale
 defaults `dns.override_local_dns` to true, and true with no global nameservers
 is fatal at start. `modules/headscale.nix` sets it false.
 
@@ -487,8 +488,8 @@ ordering against a nonexistent unit is silently ignored.**
 `tailscaled.service`, and polls for a terminal backend state.
 
 **55. A default can differ by enrollment path and widen on rename.**
-Headscale's node expiry is set explicitly in `modules/headscale.nix`, with
-the warning that the 0.28 rename covers preauthkey nodes too.
+Headscale's node expiry is set explicitly in `modules/headscale.nix`
+(`node.expiry`, which covers preauthkey and OIDC nodes alike).
 
 **56. The Caddyfile is a compiler input; check its output.** `copy_headers`
 already deletes what it copies, and `request_header` sorts after
