@@ -424,29 +424,15 @@ secrets:
     targets:
       - { file: secrets/shared.sops.json, key: PAPERLESS_OIDC_CLIENT_SECRET }
 
-  # --- Per-user login passwords (rollout 2026-09-05) -----------------------
-  # ONE human-memorable password per user, HAND-SET (copy_only = sops-gen never
-  # draws these). Workflow: `sopsedit headscale-vps/secrets.sops.yaml`, type the
-  # memorable value into <USER>_INITIAL_PASSWORD, then `sopsgen apply` copies it
-  # to that user's Windmill (<USER>_INITIAL_PASSWORD) and Samba
-  # (SAMBA_<USER>_PASSWORD) accounts. The same value is the user's login for
-  # every tier-1 app (Authentik !Env, re-asserted each apply = option a),
-  # Windmill, and Samba. idan's entry unifies + supersedes the former
-  # windmill/WINDMILL_ADMIN_PASSWORD and samba/SAMBA_IDAN_PASSWORD.
-  #
-  # idan is SPECIAL: his one password is ALSO the admin for the second-login
-  # services that cannot federate (Beszel, Backrest, qBittorrent) — superseding
-  # the former separate `services-admin` entry. The VPS IDAN_INITIAL_PASSWORD is
-  # the `source: true` target: the single hand-set value. `sopsgen rotate
-  # user/idan` re-reads it and re-derives every other target — plain copies
-  # (Samba/Windmill/Beszel/qBit-plain) verbatim and hashes (Backrest bcrypt,
-  # qBittorrent pbkdf2) freshly hashed. So idan's admin password lives in ONE
-  # place; edit it, `sopsgen rotate user/idan`, and every service follows.
-  # (username is pinned to idan in each compose/config; plaintext is readable
-  # from the source, so no recovery escrow is needed.)
-  # MIGRATION: because Beszel/Backrest/qBit currently hold the old generated
-  # services-admin value, a plain `apply` will refuse on "diverged twins" — run
-  # `sopsgen rotate user/idan` ONCE to converge them onto idan's password.
+  # --- idan's password -------------------------------------------------------
+  # ONE human-memorable password, HAND-SET (copy_only: sops-gen never draws
+  # it). It is idan's Authentik login (!Env, re-asserted on every apply) and the
+  # admin password of the services that cannot federate (Windmill, Beszel,
+  # Backrest, qBittorrent, the local Jellyfin admin). IDAN_INITIAL_PASSWORD is
+  # the `source: true` target; `sopsgen rotate user/idan` re-reads it and
+  # re-derives every other target, copies verbatim and hashes (Backrest bcrypt,
+  # qBittorrent pbkdf2) freshly. Everyone else enrolls by invitation and owns
+  # their own password (docs/accounts.md).
   - name: user/idan
     class: generate
     recipe: base64:24
@@ -460,48 +446,6 @@ secrets:
       # ⚠ Jellyfin has no headless password reset, so a rotation reaches
       # jellyfin-init's LOGIN, not the stored password: reset it in the UI
       # first (or wipe /mnt/fast/jellyfin/config) or the next deploy fails.
-  - name: user/alondra
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: ALONDRA_INITIAL_PASSWORD, source: true }
-  - name: user/cale
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: CALE_INITIAL_PASSWORD, source: true }
-  - name: user/zach
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: ZACH_INITIAL_PASSWORD, source: true }
-  - name: user/rylan
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: RYLAN_INITIAL_PASSWORD, source: true }
-  - name: user/cameron
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: CAMERON_INITIAL_PASSWORD, source: true }
-  - name: user/justin
-    class: generate
-    recipe: base64:24
-    copy_only: true
-    note: "HAND-SET the VPS value; propagates to windmill + samba"
-    targets:
-      - { file: secrets/shared.sops.json, key: JUSTIN_INITIAL_PASSWORD, source: true }
 
   - name: silverbullet/SB_USER
     class: derived

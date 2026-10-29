@@ -115,14 +115,8 @@ services:
       # read-only bind account's password and the outpost's API token.
       JELLYFIN_LDAP_BIND_PASSWORD: ${JELLYFIN_LDAP_BIND_PASSWORD:?jellyfin ldap bind password required}
       LDAP_OUTPOST_TOKEN: ${LDAP_OUTPOST_TOKEN:?ldap outpost token required}
-      # Per-user login passwords, consumed by !Env in headscale-oidc.yaml.
+      # idan's password, consumed by !Env in headscale-oidc.yaml.
       IDAN_INITIAL_PASSWORD: ${IDAN_INITIAL_PASSWORD:?idan initial password required}
-      ALONDRA_INITIAL_PASSWORD: ${ALONDRA_INITIAL_PASSWORD:?alondra initial password required}
-      CALE_INITIAL_PASSWORD: ${CALE_INITIAL_PASSWORD:?cale initial password required}
-      ZACH_INITIAL_PASSWORD: ${ZACH_INITIAL_PASSWORD:?zach initial password required}
-      RYLAN_INITIAL_PASSWORD: ${RYLAN_INITIAL_PASSWORD:?rylan initial password required}
-      CAMERON_INITIAL_PASSWORD: ${CAMERON_INITIAL_PASSWORD:?cameron initial password required}
-      JUSTIN_INITIAL_PASSWORD: ${JUSTIN_INITIAL_PASSWORD:?justin initial password required}
       # First-start bootstrap of the `akadmin` superuser; ignored on later
       # starts. Without it there is no way in at all — blueprint users have no
       # credential and no SMTP is configured for a reset link.
