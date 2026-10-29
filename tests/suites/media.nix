@@ -1030,15 +1030,12 @@ pkgs.testers.runNixOSTest {
             "docker exec armiger python -c "
             + shlex.quote(f"import urllib.request; urllib.request.urlopen('http://{outsider_ip}/', timeout=10)")
         )
-        # What IS let in: Armiger's Torznab proxy from the stack network
-        # (FIREWALL_INPUT_PORTS) — and nothing else of theirs: not Armiger's
-        # status port, not Bitmagnet's database.
+        # What the stack network does reach: Armiger's Torznab proxy (gluetun
+        # admits its own docker subnet to the netns) — but not Bitmagnet's
+        # database, which listens on 127.0.0.1 only.
         services_vm.succeed(
             "docker exec prowlarr curl -sf --max-time 10 "
             "'http://gluetun:8097/torznab/api?t=caps' | grep -q '<caps>'"
-        )
-        services_vm.fail(
-            "docker exec prowlarr curl -s --max-time 10 http://gluetun:8096/healthz"
         )
         services_vm.fail(
             "docker exec prowlarr bash -c "

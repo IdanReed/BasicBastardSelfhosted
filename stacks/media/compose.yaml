@@ -33,11 +33,11 @@ services:
       - /mnt/fast/gluetun:/gluetun
     environment:
       - TZ=America/Chicago
-      # Every port something dials INTO this netns, or gluetun's firewall
-      # drops it: 8080 qBittorrent (the publish, and the arrs at
-      # gluetun:8080), 3333 Bitmagnet (the publish), 8097 Armiger's Torznab
-      # proxy (Prowlarr at gluetun:8097).
-      - FIREWALL_INPUT_PORTS=8080,3333,8097
+      # The publishes above, or gluetun's firewall drops their traffic: 8080
+      # qBittorrent, 3333 Bitmagnet. Containers on the stack network need no
+      # entry — gluetun admits its own docker subnet to every port, which is
+      # how the arrs reach gluetun:8080 and Prowlarr Armiger at gluetun:8097.
+      - FIREWALL_INPUT_PORTS=8080,3333
       # Only runs when .env sets VPN_PORT_FORWARDING=on. {{PORTS}} is
       # gluetun's v3.39+ placeholder; needs WebUI\LocalHostAuth=false.
       - 'VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c ''wget -O- --retry-connrefused --post-data "json={\"listen_port\":{{PORTS}}}" http://127.0.0.1:8080/api/v2/app/setPreferences 2>&1'''

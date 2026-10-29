@@ -62,16 +62,23 @@ let
   # outpost must answer exactly as configured.
   jellyfinLdap = (builtins.fromJSON (builtins.readFile ../../stacks/media/jellyfin-ldap.json)).configuration;
 
-  # The real stack, with the one test override: the outpost dials Authentik on
-  # this host's loopback instead of the public name (there is no DNS here).
+  # The real stack, AUTHENTIK_HOST included, with the test's stand-ins for DNS
+  # and the CA: host networking with auth.idanreed.com pinned to this host's
+  # Caddy, and Pebble's root trusted. Dialling 127.0.0.1:9000 instead would
+  # not do: the session cookie is scoped to idanreed.com, and the bind flow
+  # cannot complete without it.
   ldapStack = ../../stacks/ldap;
   ldapOverride = pkgs.writeText "ldap-test-override.yaml" ''
     services:
       authentik-ldap:
         network_mode: host
         networks: !reset []
+        extra_hosts:
+          - "${authHost}:127.0.0.1"
         environment:
-          - AUTHENTIK_HOST=http://127.0.0.1:9000
+          - SSL_CERT_FILE=/var/lib/test-ca/bundle.pem
+        volumes:
+          - /var/lib/test-ca:/var/lib/test-ca:ro
   '';
 in
 pkgs.testers.runNixOSTest {

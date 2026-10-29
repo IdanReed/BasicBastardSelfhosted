@@ -14,6 +14,9 @@ services:
     image: ghcr.io/goauthentik/ldap:2026.8.5
     container_name: authentik-ldap
     environment:
+      # A name under Authentik's cookie domain (idanreed.com): the bind flow's
+      # session cookie is scoped to it, and an executor that cannot keep that
+      # cookie restarts the flow on every answer until it gives up.
       - AUTHENTIK_HOST=https://auth.idanreed.com
       - AUTHENTIK_INSECURE=false
     # AUTHENTIK_TOKEN: the outpost's API token, whose key the blueprint pins

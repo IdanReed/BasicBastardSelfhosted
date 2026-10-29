@@ -1498,9 +1498,9 @@ in
               "127.0.0.1 only and nothing publishes it.",
           ("media", "armiger"):
               "service:gluetun — beside the Bitmagnet it polls on 127.0.0.1. "
-              "Its Torznab proxy is reached as gluetun:8097 on the stack "
-              "network only (FIREWALL_INPUT_PORTS), never published; its "
-              "status port 8096 is not opened in gluetun's firewall at all.",
+              "Its Torznab proxy (8097) and status API (8096) are reachable "
+              "as gluetun:<port> from the media stack's own network only "
+              "(gluetun admits its docker subnet), and neither is published.",
       }
 
       found, errs = set(), []
