@@ -685,8 +685,8 @@ strips the cloud-init address and the next reboot would take another lease.
 |---|---|---|---|
 | virtio0 | 32 GB | local-zfs | image fs label `nixos` → `/` |
 | scsi1 | 50 GB | local-zfs | `state` → `/srv` |
-| scsi2 | 200 GB | local-zfs | `fast` → `/mnt/fast` (+ the docker bind) |
-| scsi3 | 2 TB | rpool_hdd | `slow` → `/mnt/slow` |
+| scsi2 | 2 TB | local-zfs | `fast` → `/mnt/fast` (+ the docker bind) |
+| scsi3 | 8 TB | rpool_hdd | `slow` → `/mnt/slow` |
 
 Partition the data disks **on the Proxmox host before first boot** — the
 fstab has no `nofail`, so a missing partlabel drops the boot into emergency
@@ -694,7 +694,7 @@ mode. Storage names are this host's (`pvesm status`):
 
 ```bash
 qm resize 110 virtio0 32G                 # autoResize grows the fs on boot
-qm set 110 --scsi1 local-zfs:50 --scsi2 local-zfs:200 --scsi3 rpool_hdd:2000
+qm set 110 --scsi1 local-zfs:50 --scsi2 local-zfs:2000 --scsi3 rpool_hdd:8000
 qm config 110    # disk NUMBERS are assigned out of order: map scsiN -> vm-110-disk-M here
 printf 'label: gpt\nstart=1MiB, name=state\n' | sfdisk /dev/zvol/rpool/data/vm-110-disk-<state>
 printf 'label: gpt\nstart=1MiB, name=fast\n'  | sfdisk /dev/zvol/rpool/data/vm-110-disk-<fast>
