@@ -182,6 +182,16 @@
     # volume, so the whole backup story is the pg_dumpall of ghostfolio_db.
     "d /mnt/fast/ghostfolio 0755 root root -"
     "d /mnt/fast/ghostfolio/pgdata 0700 70 70 -"
+    # === grist (bind sources in its compose.yaml) ===
+    # 1001:1001, the image's `grist` user. The entrypoint starts as root, chowns
+    # whatever under /persist is not already the grist user's, then drops to it,
+    # so a wrong owner heals at start — declared anyway so the tree is right
+    # before the first one. home.sqlite3 and docs/*.grist are SQLite databases,
+    # dumped one by one by backup-prepare.sh.
+    # The whole stack state: home.sqlite3 (users, sites, the activation row with
+    # the install settings) and docs/<docId>.grist, one SQLite file per
+    # document.
+    "d /mnt/fast/grist 0755 1001 1001 -"
     # === immich (bind sources in its compose.yaml) ===
     # root:root everywhere on purpose: the immich images have no PUID/PGID and
     # run as root, the postgres image chowns pgdata itself, and
@@ -340,6 +350,17 @@
     "d /mnt/fast/paperless/export 0755 root root -"
     "d /mnt/fast/paperless/media 0755 root root -"
     "d /mnt/fast/paperless/pgdata 0700 70 70 -"
+    # === penpot (bind sources in its compose.yaml) ===
+    # assets/ is 1001:1001, the `penpot` user the backend image ends on: it
+    # writes every upload there and nothing in it chowns. The frontend (also
+    # uid 1001) mounts the same tree read-only to serve it. Postgres's datadir
+    # is in the database data dirs block below; valkey has no volume.
+    "d /mnt/fast/penpot 0755 root root -"
+    # Uploaded images, fonts and file thumbnails (objects storage backend `fs`)
+    # — the half of Penpot's state that is not in Postgres, raw-copied by the
+    # fast-volume plan.
+    "d /mnt/fast/penpot/assets 0755 1001 1001 -"
+    "d /mnt/fast/penpot/pgdata 0700 70 70 -"
     # === proton (bind sources in its compose.yaml) ===
     # hydroxide runs as USER hydroxide (uid 1000) with no chown-on-start, so
     # its directory must be pre-owned or the one-time `auth` can never write

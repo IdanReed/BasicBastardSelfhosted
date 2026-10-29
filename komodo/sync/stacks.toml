@@ -267,6 +267,25 @@ config_files = [
 ]
 
 [[stack]]
+name = "grist"
+tags = ["gitops"]
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/grist"
+file_paths = ["compose.yaml"]
+webhook_enabled = false
+additional_env_files = [{ path = "/run/stack-env/grist.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
 name = "immich"
 tags = ["gitops"]
 [stack.config]
@@ -464,6 +483,25 @@ run_directory = "stacks/paperless"
 file_paths = ["compose.yaml"]
 webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/paperless.env", track = false }]
+config_files = [
+  { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
+]
+
+[[stack]]
+name = "penpot"
+tags = ["gitops"]
+[stack.config]
+server = "Local"
+git_provider = "forgejo:3000"
+git_https = false
+git_account = "komodo"
+repo = "idan/BasicBastardSelfhosted"
+branch = "main"
+run_directory = "stacks/penpot"
+file_paths = ["compose.yaml"]
+webhook_enabled = false
+additional_env_files = [{ path = "/run/stack-env/penpot.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },

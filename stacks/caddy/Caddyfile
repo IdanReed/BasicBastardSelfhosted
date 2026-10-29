@@ -105,6 +105,16 @@
 		reverse_proxy localhost:10102
 	}
 
+	@grist host grist.svc.idanreed.com
+	handle @grist {
+		# NO forward auth: Authentik OIDC is Grist's own and only login
+		# (GRIST_FORCE_LOGIN refuses anonymous requests), and its document
+		# websockets would get a 302 on every session expiry. Grist checks a
+		# websocket's Origin against the Host header, which Caddy passes
+		# through unchanged.
+		reverse_proxy localhost:10101
+	}
+
 	@backrest host backrest.svc.idanreed.com
 	handle @backrest {
 		# Forward auth in front of Backrest's own bcrypt login: it holds the
@@ -181,6 +191,15 @@
 		handle {
 			reverse_proxy localhost:10406
 		}
+	}
+
+	@penpot host penpot.svc.idanreed.com
+	handle @penpot {
+		# NO forward auth: Authentik OIDC is Penpot's own and only login
+		# (password login is off), and the editor's notification websocket
+		# would get a 302 on every session expiry. One upstream: Penpot's
+		# own nginx routes /api, /api/export and /ws itself.
+		reverse_proxy localhost:10410
 	}
 
 	@forgejo host forgejo.svc.idanreed.com

@@ -40,6 +40,8 @@
 #   ./tests/run.sh victorialogs   # heavy: journald -> alloy -> VictoriaLogs ingest + retention flags
 #   ./tests/run.sh proton         # bannered listeners sans creds + the calm no-login export loop
 #   ./tests/run.sh excalidraw     # heavy: named-scene persistence through Postgres + the keyv/P3005 traps
+#   ./tests/run.sh grist          # boot-fatal OIDC discovery against an issuer stub, formulas in gVisor, the doc dumps
+#   ./tests/run.sh penpot         # heavy: the offline OIDC redirect contract, password login + registration refused
 #   ./tests/run.sh disko          # disk-config.nix actually partitions
 #   ./tests/run.sh proxmox        # image build gate (also part of all)
 #   ./tests/run.sh proxmox-boot   # boots the image: cloud-init key -> sops decrypt
@@ -128,7 +130,7 @@ case "$TARGET" in
     ;;
 
   # Keep this arm one line starting with `vps |` — run-sh-suite-parity reads it.
-  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw)
+  vps | services | tailnet | authentik | paperless | backrest | rotation | gitops | forwardauth | forgejo | media | immich | books | automation | tracking | firefly | dawarich | vaultwarden | notes-sync | util | windmill | restore | tandoor | wger | mealie | actual | wealthfolio | gatus | docspace | beszel | journald-logging | silverbullet | outline | victorialogs | proton | excalidraw | grist | penpot)
     exec nix-build tests "${NIX_ARGS[@]}" -A "checks.$TARGET" --no-out-link
     ;;
 

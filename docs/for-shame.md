@@ -22,6 +22,7 @@ the volume is lost) or must be redone on every recreate.
 | Komodo | after your first "Login with OIDC", log in as the local `admin` and enable `idan` as Admin | OIDC sign-ups land disabled on purpose (`KOMODO_ENABLE_NEW_USERS=false`): the UI drives the docker socket | Komodo DB |
 | Actual | be the **first** OIDC login (it asks once for the server password) | `actual-init` enables OpenID, but the first OIDC login becomes the permanent owner and upstream cannot pre-assign it | Actual DB |
 | Outline | log in once, as `idan`, right after the first deploy | the first login creates and owns the team; no env, CLI or seeder exists | Outline DB |
+| Penpot | at the first SSO login, confirm the name on the one page it shows | an SSO login with no profile behind it lands there, and the click creates the profile; the only other path, `manage.py create-profile`, talks to the backend's localhost-only REPL, which no init container can reach | Penpot DB |
 | Vaultwarden | set a master password in the web vault after the first SSO login | vaults are client-side E2EE; no server-side seed can create a vault key | `db.sqlite3` |
 | Paperless-ngx | grant staff/admin to the SSO user in `/admin` | the superuser-group variable first exists in 3.1; the stack pins 2.20 | Paperless DB |
 | Dawarich | make your Authentik email equal `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; confirm the password once to link | auto-register matches by email; a mismatch mints a second account | ordering, once |
