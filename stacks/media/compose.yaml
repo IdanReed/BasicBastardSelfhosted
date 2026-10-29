@@ -218,9 +218,15 @@ services:
       - POSTGRES_NAME=bitmagnet
       - POSTGRES_USER=bitmagnet
       - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD:-}
-      # TMDB stays on, with Bitmagnet's built-in (rate-limited) key: it is what
-      # turns a crawled name into a movie or episode with the IDs the arrs
-      # search by.
+      # Throughput: four classifier workers (upstream default 1; this host has
+      # the cores) and the DHT crawler at twice its default scale (returns
+      # diminish above 10 upstream says, so measure before going higher).
+      - PROCESSOR_CONCURRENCY=4
+      - DHT_CRAWLER_SCALING_FACTOR=20
+      # TMDB stays on, with Bitmagnet's built-in key: it is what turns a crawled
+      # name into a movie or episode with the IDs the arrs search by. That key
+      # is held to 1 request/s, which caps classification; a personal TMDB key
+      # (TMDB_API_KEY) gets 20/s.
     healthcheck:
       # /status answers 503 whenever ANY check is down, TMDB and the DHT
       # included — i.e. whenever the tunnel or TMDB is. Health here is
