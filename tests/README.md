@@ -140,6 +140,8 @@ what they cover and let the nightly sweep do the rest. The fleet-wide gaps in
 | `victorialogs` | *Heavy.* The ingest contract (a container's stdout queryable in the store with the label contract), retention flags in the running argv, data under `/mnt/slow/victorialogs`, vmui, Grafana healthy offline with the datasource plugin absent. | The VPS side of the hop; real dashboard queries. |
 | `proton` | No creds and no egress: SMTP/IMAP/CardDAV listeners answer, an unauthorised IMAP login is a clean `NO`, the export loop fails calmly and leaves no success stamp. | Anything reaching Proton. |
 | `excalidraw` | *Heavy.* A named scene persisted through Postgres (not process memory) across an api restart, the keyv table in its own database, registration closed with OIDC configured, the collab relay handshake. | A collaborative browser session. |
+| `grist` | Boots with its boot-fatal OIDC discovery answered by an issuer stub (the only test-only override: DNS alias + CA trust); the login redirect matched to the blueprint's client id and redirect URI; anonymous access refused; the boot key in, a wrong key out; idan owning `home`; the sandboxing probe reporting gVisor functional and effective and a formula computed through it; backup-prepare.sh dumping the home DB and the document, and dropping an orphan dump. | A real Authentik login; the vhost and its websocket Origin check. |
+| `penpot` | *Heavy.* An offline boot (no discovery, no JWKS, air-gapped nginx) migrated onto Postgres 17; the SSO redirect matched to the blueprint's client id and redirect URI; password login and registration refused with no profile minted; flags and SSO label in `config.js`; the exporter reaching the frontend by name; assets writable by the backend only; the `pg_dumpall` contract. | A real Authentik login and its groups-claim check; an export. |
 
 ### Other targets
 
@@ -166,14 +168,17 @@ gets the ownership from the generated `nixos/stack-dirs.nix`, so registering a
 stack is one list entry in `default.nix`.
 
 Registered: `ghostfolio`, `logging`, `ntfy`, `proton`, `owl`, `util`,
-`outline`, `silverbullet`, `excalidraw`.
+`outline`, `silverbullet`, `excalidraw`, and `penpot` in a larger VM
+(`mk-stack-suite` takes `memoryMB`/`diskMB`).
 
 A stack needs a hand-written suite instead when the generic suite cannot make
 its claim: a `restart: "no"` init one-shot fails the all-running check
 (rule #39), a healthcheck reports healthy on a broken config, or the contract
 is a protocol dialogue rather than a port answering. `caddy` has no generic
 suite: it needs the DNS-01 → `tls internal` substitution and a `TAILNET_IP`,
-and `services`/`tailnet` cover its routing.
+and `services`/`tailnet` cover its routing. `grist` has none either: OIDC
+discovery runs before it listens and a failure exits, so it boots only beside
+its suite's issuer stub.
 
 ## The lints
 
