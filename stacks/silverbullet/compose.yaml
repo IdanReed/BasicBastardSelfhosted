@@ -58,7 +58,8 @@ services:
       - SB_DISABLE_SERVICE_WORKER=1
       # ⚠ SB_READ_ONLY is deliberately ABSENT — see trap 2.
       #
-      # SB_USER (user:password) arrives from the stack env — a SECOND lock under forward
+      # SB_USER (idan:<his one password>, built in env.nix) arrives from the stack
+      # env — a SECOND lock under forward
       # auth, so the service stays closed if a route is flipped or the outpost is
       # down. SilverBullet ignores X-Authentik-* headers, so this is two logins
       # permanently.

@@ -542,6 +542,7 @@ webhook_enabled = false
 additional_env_files = [{ path = "/run/stack-env/silverbullet.env", track = false }]
 config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
+  { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "git-sync.sh", services = ["silverbullet_gitsync"], requires = "Restart" },
 ]
 

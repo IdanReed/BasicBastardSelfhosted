@@ -216,7 +216,7 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed(
             "grep -q '^GIT_SYNC_REMOTE=http://test:' /srv/stacks/silverbullet/.env"
         )
-        services_vm.succeed("grep -q '^SB_USER=.' /srv/stacks/silverbullet/.env")
+        services_vm.succeed("grep -q '^SB_USER=.idan:test' /srv/stacks/silverbullet/.env")
 
     services_vm.wait_for_unit("load-test-images.service")
 

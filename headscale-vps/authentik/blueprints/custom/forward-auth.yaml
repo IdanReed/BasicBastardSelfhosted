@@ -459,7 +459,7 @@ entries:
       meta_description: "File synchronisation (web GUI)"
 
   # SilverBullet (stacks/silverbullet)
-  # Forward auth is the primary lock; its single SB_USER credential stays
+  # Forward auth is the primary lock; SB_USER (idan's one password) stays
   # underneath. No skip_path_regex, measured: nothing dials this vhost
   # non-interactively (the Forgejo mirror sidecar uses Forgejo's loopback
   # publish). The PWA service worker is turned off in the compose file rather

@@ -447,12 +447,6 @@ secrets:
       # jellyfin-init's LOGIN, not the stored password: reset it in the UI
       # first (or wipe /mnt/fast/jellyfin/config) or the next deploy fails.
 
-  - name: silverbullet/SB_USER
-    class: derived
-    recipe: base64:24
-    note: "composite idan:<pw>"
-    targets:
-      - { file: stacks/silverbullet/secrets.sops.json, key: SB_USER, template: "idan:${v}" }
   - name: silverbullet/GIT_SYNC_REMOTE
     class: pull
     note: "Forgejo PAT embedded in the remote URL"
