@@ -23,6 +23,7 @@ the volume is lost) or must be redone on every recreate.
 | Outline | log in once, as `idan`, right after the first deploy | the first login creates and owns the team; no env, CLI or seeder exists | Outline DB |
 | Firefly III | open it once, as `idan`, right after the first deploy | the remote-user guard makes the first email it sees the owner; nothing seeds a user | Firefly DB |
 | Ghostfolio | log in once, as `idan`, right after the first deploy | the first account becomes ADMIN; OIDC users are keyed by `sub` alone, so nothing can pre-seed one | Ghostfolio DB |
+| Penpot | at the first SSO login, confirm the name on the one page it shows | an SSO login with no profile behind it lands there, and the click creates the profile; the only other path, `manage.py create-profile`, talks to the backend's localhost-only REPL, which no init container can reach | Penpot DB |
 | Vaultwarden | set a master password in the web vault after the first SSO login | vaults are client-side E2EE; no server-side seed can create a vault key | `db.sqlite3` |
 | Paperless-ngx | grant staff/admin to the SSO user in `/admin` | the superuser-group variable first exists in 3.1; the stack pins 2.20 | Paperless DB |
 | Dawarich | make your Authentik email equal `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; confirm the password once to link | auto-register matches by email; a mismatch mints a second account | ordering, once |

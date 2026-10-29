@@ -50,7 +50,7 @@ username afterwards (the tenant defaults, pinned by the authentik suite).
 | Vaultwarden | SSO login, then they set a **master password** in the web vault — it is the vault key, and Authentik can never reset it |
 | Windmill, Wger | nothing until added: one roster line in `stacks/windmill/windmill-init.sh` (`(email, None, False, SSO_PROVIDER)`) or `stacks/wger/wger-init.py` (`(username, email, False)`), then push |
 | Actual | nothing until an admin adds them in the client's user directory (the `userName` is their Authentik username) |
-| Admin-only apps (Komodo, Grafana, Beszel, Profilarr, Cleanuparr SSO) | refused — those applications are bound to `Admin` |
+| Admin-only apps (Komodo, Grafana, Beszel, Profilarr, Cleanuparr SSO, Grist, Penpot) | refused — those applications are bound to `Admin` |
 
 ⚠ **Before the first invitation:**
 
@@ -101,6 +101,8 @@ outside it.
 | Actual | `actual-init` seats `idan` as ADMIN before OpenID exists | yes | — |
 | DocSpace | `docspace-init` completes the wizard as idan (owner); SAML links by email | yes | — |
 | Excalidraw | `SUPERADMIN_EMAILS` includes idan's | yes | — |
+| Grist | `GRIST_ADMIN_EMAIL` is idan's: install admin and owner of the team site; SSO bound to `Admin` | yes | — |
+| Penpot | his SSO login creates the only profile (`PENPOT_OIDC_ROLES: Admin`); SSO bound to `Admin` | mostly | confirm the name once at the first login ([for-shame.md](for-shame.md)) |
 | Home Assistant | `automation-init` onboards `idan` as owner | yes | — |
 | rmfakecloud | `notes-sync-init` creates the first user, an admin, with idan's email | yes | — |
 | Vaultwarden | `/admin` behind `ADMIN_TOKEN` (sops) and forward auth; users have no admin role | yes | — |

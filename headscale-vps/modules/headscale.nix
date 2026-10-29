@@ -42,17 +42,22 @@
         client_secret_path = config.sops.secrets.HEADSCALE_OIDC_CLIENT_SECRET.path;
         scope = [ "openid" "profile" "email" ];
         extra_params.domain_hint = "idanreed.com";
+      };
 
-        # The shipped default (180d) splits the fleet: preauth-key nodes never
-        # expire, OIDC-enrolled ones die at day 180 with no warning — and every
-        # channel that would report it lives on the tailnet that just
-        # disappeared. Revocation stays an explicit `headscale nodes
-        # expire|delete`, backed by the default-deny ACLs in ../policy.hujson.
-        #
-        # REVISIT ON 0.28: oidc.expiry is removed for node.expiry, which also
-        # covers auth-key nodes. Set node.expiry = "0" as part of that upgrade
-        # or this failure returns on more nodes.
+      node = {
+        # No node-key expiry, for OIDC and auth-key nodes alike. An expiring
+        # node dies with no warning, and every channel that would report it
+        # lives on the tailnet that just disappeared. Revocation stays an
+        # explicit `headscale nodes expire|delete`, backed by the default-deny
+        # ACLs in ../policy.hujson. Headscale refuses to start with the old
+        # oidc.expiry key set.
         expiry = "0";
+
+        # NOT node expiry despite the name: only garbage-collects EPHEMERAL
+        # nodes, and nothing here registers ephemerally. The nixpkgs module
+        # still renders the deprecated top-level
+        # ephemeral_node_inactivity_timeout at its own default; this key wins.
+        ephemeral.inactivity_timeout = "30m";
       };
 
       prefixes = {
@@ -72,7 +77,7 @@
         # their own resolvers; *.svc.idanreed.com is a public A record into
         # CGNAT space, routable only inside the tailnet.
         #
-        # Must be explicit: 0.27 defaults this to true, and true without
+        # Must be explicit: headscale defaults this to true, and true without
         # nameservers.global is a fatal config error (headscale crash-loops).
         override_local_dns = false;
       };
@@ -103,10 +108,6 @@
       };
 
       disable_check_updates = true;
-
-      # NOT node expiry despite the name: only garbage-collects EPHEMERAL
-      # nodes, and nothing here registers ephemerally.
-      ephemeral_node_inactivity_timeout = "30m";
     };
   };
 

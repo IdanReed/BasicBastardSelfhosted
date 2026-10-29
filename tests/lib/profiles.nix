@@ -11,6 +11,31 @@ let
   fixtureStacks = map (lib.removeSuffix ".sops.json") (
     builtins.attrNames (builtins.readDir ../fixtures/stacks)
   );
+
+  # Every sops file a host reads, pointed at its fixture.
+  fixtureFiles =
+    fixture:
+    lib.recursiveUpdate
+      # Services VM only (the host whose fixture this is; keyed on the argument
+      # because a module's shape cannot depend on `options` without recursing):
+      # every stack's env renders from its fixture JSON, through the real
+      # sops-nix templates and stack-env-publish.
+      (lib.optionalAttrs (baseNameOf fixture == "services-vm.sops.yaml") {
+        bbs.stackEnv = {
+          stacks = lib.mkForce (
+            lib.genAttrs fixtureStacks (
+              name:
+              if name == "komodo" || name == "forgejo" then ../.. + "/${name}" else ../../stacks + "/${name}"
+            )
+          );
+          sourceFor = lib.mkForce (name: ../fixtures/stacks + "/${name}.sops.json");
+        };
+      })
+      {
+        sops.defaultSopsFile = lib.mkForce fixture;
+        # Both hosts: the cross-host values (secrets/shared.nix).
+        bbs.sharedSecrets.file = lib.mkForce ../fixtures/shared.sops.json;
+      };
 in
 {
   # Boot / hardware
@@ -46,27 +71,7 @@ in
   sopsFixture =
     fixture:
     _:
-    lib.recursiveUpdate
-      # Services VM only (the host whose fixture this is; keyed on the argument
-      # because a module's shape cannot depend on `options` without recursing):
-      # every stack's env renders from its fixture JSON, through the real
-      # sops-nix templates and stack-env-publish.
-      (lib.optionalAttrs (baseNameOf fixture == "services-vm.sops.yaml") {
-        bbs.stackEnv = {
-          stacks = lib.mkForce (
-            lib.genAttrs fixtureStacks (
-              name:
-              if name == "komodo" || name == "forgejo" then ../.. + "/${name}" else ../../stacks + "/${name}"
-            )
-          );
-          sourceFor = lib.mkForce (name: ../fixtures/stacks + "/${name}.sops.json");
-        };
-      })
-    {
-      sops.defaultSopsFile = lib.mkForce fixture;
-      # Both hosts: the cross-host values (secrets/shared.nix).
-      bbs.sharedSecrets.file = lib.mkForce ../fixtures/shared.sops.json;
-
+    lib.recursiveUpdate (fixtureFiles fixture) {
       # Both hosts hardcode this path and populate it out of band (cloud-init
       # on Proxmox, --extra-files on Hetzner). Planting the key beats
       # overriding sops.age.keyFile: the path the real config names is used.
@@ -78,6 +83,10 @@ in
       };
       system.activationScripts.setupSecrets.deps = [ "plantTestAgeKey" ];
     };
+
+  # sopsFixture without the key planting, for a suite whose key arrives the
+  # real way (proxmox-boot: cloud-init).
+  sopsFixtureFiles = fixture: _: fixtureFiles fixture;
 
   # Container images
 
@@ -128,8 +137,7 @@ in
           docker load -i ${t}
         '') tarballs;
 
-        # The host's own docker (pinned to 29.x — pkgs.docker is 28.x and
-        # marked insecure), not a second copy.
+        # The host's own docker, not a second copy.
         path = [ config.virtualisation.docker.package ];
       };
     };

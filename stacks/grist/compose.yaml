@@ -1,0 +1,97 @@
+# Grist — relational spreadsheets (10101). EVALUATION stack, idan only.
+#
+# One container, all state under /mnt/fast/grist (bind of /persist): the home
+# database home.sqlite3 (users, sites, workspaces, the activation row) and
+# docs/<docId>.grist, each document a SQLite database of its own.
+#
+# AUTH: Authentik OIDC is the only login (grist-oidc.yaml, Admin group only),
+# no forward auth. GRIST_FORCE_LOGIN refuses every anonymous request; site
+# creation is off and the UI is pinned to `home`, so an account Authentik lets
+# in sees nothing until idan shares it something. idan owns `home` from the
+# first boot (Grist creates it for GRIST_ADMIN_EMAIL) and is the install admin
+# by the same email, so his first SSO login lands on both — no first-login
+# step.
+#
+# 🚨 OIDC DISCOVERY IS BOOT-FATAL. The server runs Issuer.discover() before it
+# listens and exits when it fails, so with Authentik unreachable this container
+# restart-loops until the issuer answers, then comes up on its own. No override
+# exists: unlike outline's manual endpoints, Grist reads only the issuer. The
+# offline suite stands an issuer stub in for Authentik for exactly this reason.
+#
+# BREAK-GLASS: GRIST_BOOT_KEY (sops) logs in as the install admin at /boot
+# without Authentik — while Authentik is up but the account behind it is not.
+# Grist prints the key to the container log at every start, unconditionally;
+# the log store is admin-only.
+#
+# SANDBOX: formulas are user Python. gVisor (the image's runsc, built to run
+# under default unprivileged docker) at no extra privileges; the image default
+# is UNSANDBOXED, so GRIST_SANDBOX_FLAVOR is load-bearing. run.sh refuses to
+# start when the runsc check fails, so a healthy container is a working
+# sandbox — and the suite proves a formula evaluates through it.
+#
+# BACKUP: backup-prepare.sh `.backup`s home.sqlite3 and every docs/*.grist into
+# /mnt/fast/_dumps; the raw tree is in the fast-volume plan as well.
+
+services:
+  grist:
+    # grist-oss, not gristlabs/grist: free and open-source code only, version
+    # checks off by default, and nothing to upgrade itself with at runtime
+    # (GRIST_SERVER_EDITION below pins that too). Tag is BARE; the git tag
+    # carries the `v`.
+    image: gristlabs/grist-oss:1.7.21
+    container_name: grist
+    ports:
+      - '127.0.0.1:10101:8484'
+    volumes:
+      # Owned 1001:1001 (the image's `grist` user); the entrypoint starts as
+      # root, chowns anything under /persist to it and drops privileges.
+      - /mnt/fast/grist:/persist
+    # Carries GRIST_SESSION_SECRET, GRIST_BOOT_KEY and the OIDC client secret
+    # (env.nix) — see secrets.example.env.
+    env_file: /run/stack-env/grist.env
+    environment:
+      - TZ=America/Chicago
+      # Public URL: OIDC's redirect URI (`/oauth2/callback`) is built from it,
+      # so it must match grist-oidc.yaml's strict redirect_uri.
+      - APP_HOME_URL=https://grist.svc.idanreed.com
+      # Access
+      # One team site, created at boot for GRIST_ADMIN_EMAIL when missing.
+      - GRIST_SINGLE_ORG=home
+      - GRIST_ADMIN_EMAIL=idan@idanreed.com
+      # Only consulted with no login system configured; pinned to idan so that
+      # fallback never invents a you@example.com owner.
+      - GRIST_DEFAULT_EMAIL=idan@idanreed.com
+      - GRIST_FORCE_LOGIN=true
+      - GRIST_ORG_CREATION_ANYONE=false
+      # 🚨 Must stay true (ORG_CREATION_ANYONE=false defaults it to false): a
+      # fresh install creates its internal support user's personal site at
+      # boot and exits ("No example workspace available") without it. Every
+      # user gets a personal site the `home` pin leaves unreachable.
+      - GRIST_PERSONAL_ORGS=true
+      - GRIST_ANON_PLAYGROUND=false
+      # A new install otherwise starts OUT of service behind the Quick setup
+      # wizard (boot key + admin email in a browser). Everything it asks for
+      # is declared here.
+      - GRIST_IN_SERVICE=true
+      - GRIST_SERVER_EDITION=community
+      - GRIST_SANDBOX_FLAVOR=gvisor
+      - GRIST_TELEMETRY_LEVEL=off
+      - GRIST_ALLOW_AUTOMATIC_VERSION_CHECKING=false
+      - GRIST_HIDE_UI_ELEMENTS=billing,createSite,multiSite,multiAccounts,supportGrist
+      # OIDC
+      # Authentik provider `grist`; the client secret arrives from the stack
+      # env (env.nix). Authentik's discovery document carries an
+      # end_session_endpoint, which Grist requires for logout.
+      - GRIST_OIDC_IDP_ISSUER=https://auth.idanreed.com/application/o/grist/
+      - GRIST_OIDC_IDP_CLIENT_ID=grist
+    healthcheck:
+      # /status answers from the RestartShell while the worker boots (503) and
+      # from the server once it runs; db=1 adds a home-database query and
+      # ready=1 fails until startup has finished.
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', '--max-time', '5', 'http://127.0.0.1:8484/status?db=1&ready=1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # The gVisor check and the engine checkpoint run before the server.
+      start_period: 120s
+    restart: unless-stopped

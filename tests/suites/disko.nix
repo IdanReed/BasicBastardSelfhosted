@@ -40,34 +40,16 @@
 let
   # disko's testLib defaults its nixpkgs helpers to <nixpkgs>, which the
   # harness deliberately does not provide (no NIX_PATH dependence — see
-  # tests/default.nix). Pass them explicitly from the pinned nixpkgs.
-  #
-  # qemu-common needs a shim: the pinned disko revision calls it with
-  # { lib, stdenv } (tracking nixpkgs-unstable's signature), but nixos-25.11's
-  # nixos/lib/qemu-common.nix still takes { lib, pkgs }. The shim ignores the
-  # arguments and closes over the harness pkgs — safe because makeDiskoTest is
-  # only ever invoked with this same pkgs below.
-  # The pinned disko's test lib targets an older nixpkgs test driver: it
-  # registers extra VMs via `driver.machines_qemu`, an attribute the
-  # nixos-25.11 driver no longer has (it is plain `driver.machines` now), so
-  # every makeDiskoTest run died with AttributeError before asserting anything.
-  # Patch the ONE line. Production consumes only disko's module — this touches
-  # test tooling exclusively, so the host pin does not drift.
-  patchedDiskoSource = pkgs.applyPatches {
-    name = "disko-testlib-driver-api";
-    src = diskoSource;
-    postPatch = ''
-      substituteInPlace lib/tests.nix \
-        --replace-fail "driver.machines_qemu.append(machine)" \
-                       "driver.machines.append(machine)"
-    '';
-  };
-
-  diskoLib = import "${patchedDiskoSource}/lib" {
+  # tests/default.nix). Pass them explicitly from the pinned nixpkgs, as-is:
+  # qemu-common's { lib, stdenv } signature and the driver's machines_qemu
+  # list are the ones the pinned disko's test lib calls. A disko bump that
+  # outruns the nixpkgs pin breaks here first, at eval or in the driver,
+  # before anything is asserted.
+  diskoLib = import "${diskoSource}/lib" {
     inherit lib;
     makeTest = import "${pkgs.path}/nixos/tests/make-test-python.nix";
     eval-config = import "${pkgs.path}/nixos/lib/eval-config.nix";
-    qemu-common = _: import "${pkgs.path}/nixos/lib/qemu-common.nix" { inherit lib pkgs; };
+    qemu-common = import "${pkgs.path}/nixos/lib/qemu-common.nix";
   };
 in
 diskoLib.testLib.makeDiskoTest {

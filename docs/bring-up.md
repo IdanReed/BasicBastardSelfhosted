@@ -636,14 +636,13 @@ The first headscale user is a throwaway **`bootstrap`**, never `idan`. The real
    `100.64.0.2` — the addresses the desktop's `extraHosts`,
    `ssh-identities.nix` and Caddy's `TAILNET_IP` assume.
 
-Bootstrap-registered nodes have no service access until §14 moves them onto
-`idan` (the ACL grants `idan@`); §9–§13 are all SSH and LAN. When headscale's
+Bootstrap-registered nodes have no service access until §14 re-registers them
+under `idan` (the ACL grants `idan@`); §9–§13 are all SSH and LAN. When headscale's
 database still holds `idan` (a VM-only re-image, or a restored VPS), mint the
 keys under `idan` instead and skip the reconcile.
 
-OIDC-registered nodes get no expiry (`oidc.expiry = "0"`). Headscale 0.28
-renames the key to `node.expiry` and applies it to preauth-key nodes too —
-re-check on that upgrade.
+No node expires: `node.expiry = "0"` in `modules/headscale.nix` covers
+OIDC-registered and preauth-key nodes alike.
 
 **Verify:** `sudo headscale nodes list` shows `headscale-vps`; `tailscale
 status` on it is Running via `headscale.idanreed.com`.
@@ -985,19 +984,37 @@ VPS rebuild.
    It prints a URL → Authentik → TOTP → node registered. This login creates
    the real `idan` headscale user; `headscale.idanreed.com` is public, which
    breaks the chicken-and-egg.
-4. **Reconcile the bootstrap nodes onto `idan`** (from-zero runs only):
+4. **Re-register the bootstrap nodes under `idan`** (from-zero runs only). A
+   node keeps the user it registered under, so each server is deleted and
+   joins again with a key minted for `idan`:
 
    ```bash
    sudo headscale users list      # idan's id (the row WITH idan@idanreed.com) + bootstrap's
    sudo headscale nodes list
-   for n in <vps-node-id> <vm-node-id>; do sudo headscale nodes move -i $n -u <idan-id>; done
-   sudo systemctl restart headscale     # required: `nodes move` does not push new ACL filters
+   sudo headscale preauthkeys list                 # bootstrap's key id
+   sudo headscale preauthkeys expire --id <bootstrap-key-id>   # autoconnect cannot rejoin as bootstrap
+   sudo headscale preauthkeys create -u <idan-id> -e 1h --reusable
+   sudo headscale nodes delete -i <vps-node-id> --force
+   sudo headscale nodes delete -i <vm-node-id> --force
+   sudo systemctl restart headscale     # the allocator restarts at the bottom of the range
+   ```
+
+   Then rejoin **the VPS first, then the VM** (over the LAN), with each
+   host's own `tailscale-autoconnect` flags, so they take back `100.64.0.1`
+   and `100.64.0.2`:
+
+   ```bash
+   sudo tailscale up --login-server=https://headscale.idanreed.com --authkey <key> \
+     --hostname=headscale-vps --force-reauth                  # on the VPS
+   sudo tailscale up --login-server=https://headscale.idanreed.com --authkey <key> \
+     --hostname=services-vm --accept-routes --force-reauth    # on the VM
+   tailscale ip -4                                            # on each
    sudo headscale users rename -i <bootstrap-id> --new-name bootstrap-legacy
    ```
 
    A rename frees the name (`destroy` fails while the preauthkey exists). A
-   node registered under a stray `akadmin` user is moved the same way; then
-   `sudo headscale users destroy -i <akadmin-id>`.
+   node registered under a stray `akadmin` user is deleted and re-registered
+   the same way; then `sudo headscale users destroy -i <akadmin-id>`.
 5. **Forward auth.** The provider/application entry in `forward-auth.yaml`
    **plus a VPS rebuild** must land before the `import protected` line reaches
    the VM. The forward-auth hop rides the MagicDNS name

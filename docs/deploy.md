@@ -461,14 +461,16 @@ arrives.
 state parameter"): the provider's `grant_types` is empty.
 
 **A node registers but reaches nothing:** it registered under a cached
-`akadmin` session. `sudo headscale nodes move -i <node> -u <idan-id>`, then
-**`sudo systemctl restart headscale`** — `nodes move` does not push new ACL
-filters to connected peers. Log nodes in from a private window as `idan`.
+`akadmin` session, and a node keeps the user it registered under. `sudo
+headscale nodes delete -i <node> --force`, then log it in again from a private
+window as `idan` (`tailscale up --login-server=https://headscale.idanreed.com
+--force-reauth`).
 
 **Two headscale users named `idan`:** the ACL's `idan@` resolves to neither
 and every node loses access. Rename one (`headscale users rename -i <id>
---new-name <other>`) and move its nodes. A fresh Authentik database in front
-of a kept headscale database does this too — every `sub` changes
+--new-name <other>`) and re-register its nodes under the one that stays. A
+fresh Authentik database in front of a kept headscale database does this too
+— every `sub` changes
 ([bring-up.md §0.1](bring-up.md#01-what-a-reset-destroys)).
 
 **GPU work** (Jellyfin QSV, Frigate OpenVINO, Immich ML) runs on CPU until the

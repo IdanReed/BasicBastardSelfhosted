@@ -45,16 +45,17 @@
 # Deliberately NOT profiles.sopsFixture: that profile also PLANTS the test key
 # via an activation script, standing in for cloud-init — but cloud-init is the
 # very mechanism under test here, and a pre-planted key would keep every
-# assertion below green even with the seed YAML broken. Only the fixture-file
-# half of the profile is reproduced (suite-locally, with mkForce like the
-# profile). profiles.manualTailscaleAutoconnect is likewise omitted: the unit
+# assertion below green even with the seed YAML broken. Only its fixture-file
+# half comes along (profiles.sopsFixtureFiles): every sops file the host reads,
+# the shared file and the stack renders included — one file the test key
+# cannot open fails the whole sops-install-secrets run. profiles.manualTailscaleAutoconnect is likewise omitted: the unit
 # ships in the image and may fail/retry against the unreachable production
 # headscale URL — the suite asserts through the guest agent, not through
 # multi-user.target, so the retry loop costs nothing and the image stays real.
 #
-# First-boot finding this suite pins down: sops-nix installs secrets from a
-# stage-2 activation script, which runs BEFORE systemd and therefore before any
-# cloud-init stage. On the very first boot after imaging, the key does not
+# First-boot finding this suite pins down: sops-nix installs secrets from an
+# activation script, which runs before the booted system's systemd (in the
+# initrd, under systemd stage 1) and therefore before any cloud-init stage. On the very first boot after imaging, the key does not
 # exist yet when activation runs, so /run/secrets stays unpopulated until the
 # next activation — the reboot below, or the config-only `nixos-rebuild switch`
 # the deploy runbook performs right after imaging. Stack secrets are sops-nix
@@ -67,6 +68,7 @@
   pkgs,
   lib,
   sopsModule,
+  profiles,
   nixpkgs,
   ...
 }:
@@ -97,7 +99,7 @@ let
 
       # Fixture-file half of profiles.sopsFixture (see header for why the
       # key-planting half must not come along).
-      { sops.defaultSopsFile = lib.mkForce ../fixtures/services-vm.sops.yaml; }
+      (profiles.sopsFixtureFiles ../fixtures/services-vm.sops.yaml)
     ];
   };
 
@@ -420,8 +422,8 @@ pkgs.runCommand "proxmox-boot"
     done
     [ "$boot2" != "$boot1" ] || fail "guest never came back from the reboot"
 
-    # (b) Activation runs in stage 2, before systemd — so by the time the
-    # agent answers, sops-install-secrets has already run with the key
+    # (b) Activation runs before the booted system's systemd — so by the time
+    # the agent answers, sops-install-secrets has already run with the key
     # cloud-init persisted. Exact equality with the fixture sentinel: proves
     # decryption AND per-key extraction (the dotenv finding), not merely that
     # some file appeared.

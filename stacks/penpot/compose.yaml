@@ -1,0 +1,197 @@
+# Penpot — design and prototyping (10410). EVALUATION stack, idan only.
+#
+# Upstream's compose, minus its mailpit, admin-console and MCP services: the
+# frontend (nginx: SPA + reverse proxy, the ONLY publish), the backend (JVM,
+# RPC API + websockets), the exporter (headless Chromium renders PDF/PNG
+# exports), Postgres and Valkey. The frontend proxies /api to the backend and
+# /api/export to the exporter, so Caddy needs one upstream.
+#
+# SERVICE NAMES are upstream's on purpose: the frontend's nginx config defaults
+# to http://penpot-backend:6060 and http://penpot-exporter:6061, and the JVM
+# parses PENPOT_REDIS_URI with java.net.URI, which reads an underscored host as
+# no host at all. The container_names are the fleet's; backup-prepare.sh execs
+# penpot_db.
+#
+# AUTH: Authentik OIDC is the only login (penpot-oidc.yaml, Admin group only),
+# no forward auth. Password login and password registration are OFF; an
+# Authentik user who is not yet a Penpot profile gets one on first SSO login
+# (oidc-registration) — but only with `Admin` in their groups claim
+# (PENPOT_OIDC_ROLES), on top of Authentik's own binding. Penpot has no
+# instance-admin role: idan is its only profile and owns his teams.
+# First login lands once on "confirm your name", which creates the profile.
+#
+# BOOT NEEDS NO NETWORK. The OIDC endpoints are set explicitly and user info
+# comes from the userinfo endpoint, so the backend never runs discovery or a
+# JWKS fetch (a failed boot-time discovery would leave SSO off until the next
+# restart). `enable-air-gapped-conf` drops the frontend's Google Fonts and
+# GitHub-templates proxies: their nginx `proxy_pass` names a public host, and
+# nginx refuses to start when that name does not resolve. Fonts come from
+# uploads instead.
+#
+# BACKUP: penpot_db is in backup-prepare.sh's pg_dumpall loop (pgdata is
+# excluded from the raw plans); /mnt/fast/penpot/assets — every uploaded image,
+# font and thumbnail — rides the fast-volume plan as plain files. Valkey holds
+# only websocket fan-out and export-job state, no volume.
+
+x-penpot-flags: &penpot-flags
+  # The same set on the frontend (UI), backend (behaviour) and exporter.
+  PENPOT_FLAGS: >-
+    enable-login-with-oidc
+    disable-login-with-password
+    disable-registration
+    enable-oidc-registration
+    enable-air-gapped-conf
+    disable-google-fonts-provider
+    disable-dashboard-templates-section
+    enable-prepl-server
+  PENPOT_PUBLIC_URI: https://penpot.svc.idanreed.com
+
+services:
+  # Frontend
+  # Static SPA under nginx (uid 1001). Its entrypoint writes PENPOT_FLAGS and
+  # PENPOT_OIDC_NAME into js/config.js at every start.
+  penpot-frontend:
+    image: penpotapp/frontend:2.18.5
+    container_name: penpot
+    ports:
+      - '127.0.0.1:10410:8080'
+    volumes:
+      # Read-only: the backend answers asset requests with an X-Accel-Redirect
+      # that nginx serves from here.
+      - /mnt/fast/penpot/assets:/opt/data/assets:ro
+    environment:
+      <<: *penpot-flags
+      TZ: America/Chicago
+      # The SSO button's label.
+      PENPOT_OIDC_NAME: Authentik
+    depends_on:
+      # nginx resolves its upstreams once, at start: both must exist first,
+      # and a recreated backend needs nginx restarted to see its new address.
+      penpot-backend:
+        condition: service_healthy
+        restart: true
+      penpot-exporter:
+        condition: service_started
+        restart: true
+    healthcheck:
+      # No curl or wget in the image; bash's /dev/tcp is the client.
+      test: ['CMD', 'bash', '-c', 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -n1 <&3 | grep -q " 200 "']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Backend
+  penpot-backend:
+    image: penpotapp/backend:2.18.5
+    container_name: penpot_backend
+    volumes:
+      # Owned 1001:1001, the image's `penpot` user; nothing in it chowns.
+      - /mnt/fast/penpot/assets:/opt/data/assets
+    # Carries PENPOT_SECRET_KEY, PENPOT_DATABASE_PASSWORD (env.nix, built from
+    # POSTGRES_PASSWORD) and PENPOT_OIDC_CLIENT_SECRET — see secrets.example.env.
+    env_file: /run/stack-env/penpot.env
+    environment:
+      <<: *penpot-flags
+      TZ: America/Chicago
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+      PENPOT_OBJECTS_STORAGE_BACKEND: fs
+      PENPOT_OBJECTS_STORAGE_FS_DIRECTORY: /opt/data/assets
+      PENPOT_TELEMETRY_ENABLED: 'false'
+      # OIDC
+      # Authentik provider `penpot`; the redirect URI is PENPOT_PUBLIC_URI +
+      # /api/auth/oidc/callback. BASE_URI is required even with every endpoint
+      # given; given all three, no discovery runs. No JWKS URI: with
+      # USER_INFO_SOURCE=userinfo the id_token is never read.
+      PENPOT_OIDC_CLIENT_ID: penpot
+      PENPOT_OIDC_BASE_URI: https://auth.idanreed.com/application/o/penpot/
+      PENPOT_OIDC_AUTH_URI: https://auth.idanreed.com/application/o/authorize/
+      PENPOT_OIDC_TOKEN_URI: https://auth.idanreed.com/application/o/token/
+      PENPOT_OIDC_USER_URI: https://auth.idanreed.com/application/o/userinfo/
+      PENPOT_OIDC_USER_INFO_SOURCE: userinfo
+      # Every role listed must be in the claim, or the login is refused.
+      PENPOT_OIDC_ROLES: Admin
+      PENPOT_OIDC_ROLES_ATTR: groups
+    depends_on:
+      penpot-postgres:
+        condition: service_healthy
+      penpot-valkey:
+        condition: service_healthy
+    healthcheck:
+      # /readyz runs a query against Postgres; 200 means migrated and serving.
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', '--max-time', '5', 'http://127.0.0.1:6060/readyz']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # JVM start plus the migrations on a fresh database.
+      start_period: 180s
+    restart: unless-stopped
+
+  # Exporter
+  # Renders exports by loading the frontend in headless Chromium, over the
+  # project network.
+  penpot-exporter:
+    image: penpotapp/exporter:2.18.5
+    container_name: penpot_exporter
+    # PENPOT_SECRET_KEY: the exporter derives its shared key with the backend
+    # from it.
+    env_file: /run/stack-env/penpot.env
+    environment:
+      <<: *penpot-flags
+      TZ: America/Chicago
+      PENPOT_INTERNAL_URI: http://penpot-frontend:8080
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+    depends_on:
+      penpot-valkey:
+        condition: service_healthy
+    healthcheck:
+      # Liveness only: a static OK from the exporter's own HTTP handler.
+      test: ['CMD', 'curl', '-fsS', '-o', '/dev/null', '--max-time', '5', 'http://127.0.0.1:6061/readyz']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # Database
+  # The fleet's Postgres pin (upstream ships 15; Penpot needs 13+).
+  penpot-postgres:
+    image: postgres:17.9-alpine
+    container_name: penpot_db
+    # Upstream's: SIGINT is Postgres's fast shutdown.
+    stop_signal: SIGINT
+    volumes:
+      - /mnt/fast/penpot/pgdata:/var/lib/postgresql/data
+    environment:
+      - TZ=America/Chicago
+      - POSTGRES_INITDB_ARGS=--data-checksums
+      - POSTGRES_DB=penpot
+      - POSTGRES_USER=penpot
+      # POSTGRES_PASSWORD arrives from the stack env.
+    env_file: /run/stack-env/penpot.env
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U penpot -d penpot']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  # Valkey
+  # Websocket notifications and the exporter's job queue: transient, no
+  # volume, no password, project network only.
+  penpot-valkey:
+    image: valkey/valkey:9.1-alpine
+    container_name: penpot_valkey
+    environment:
+      - VALKEY_EXTRA_FLAGS=--maxmemory 128mb --maxmemory-policy volatile-lfu
+    healthcheck:
+      test: ['CMD-SHELL', 'valkey-cli ping | grep -q PONG']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

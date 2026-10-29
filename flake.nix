@@ -5,13 +5,13 @@
   # secrets/, ssh-pubkeys.nix, and every stack's secrets beside its compose
   # file. tests/lib/sources.nix pins the harness from this lock's `nixpkgs`.
   #
-  # Two package sets: the servers track nixos-25.11 (`nixpkgs` and everything
+  # Two package sets: the servers track nixos-26.05 (`nixpkgs` and everything
   # following it), the desktop tracks nixos-unstable (`nixpkgs-unstable` and the
   # inputs following that). Update them separately: `nfu` updates only the
   # desktop's; the servers' are `nix flake update nixpkgs sops-nix disko
   # nixos-generators`, followed by the test harness.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     sops-nix = {
       url = "github:Mic92/sops-nix";

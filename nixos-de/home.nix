@@ -82,7 +82,7 @@
           hms = "home-manager switch --flake ${serverDir}#idan && { noctalia-shell kill 2>/dev/null || true; sleep 0.3; DISPLAY=:0 setsid -f noctalia-shell >/dev/null 2>&1; } && { source ~/.zshrc; rehash; }";
           hmb = "home-manager build --flake ${serverDir}#idan";
           # The desktop's inputs only: the root flake also pins the servers'
-          # (nixos-25.11), which move deliberately, with the test harness.
+          # (nixos-26.05), which move deliberately, with the test harness.
           nfu = "nix flake update --flake ${serverDir} nixpkgs-unstable home-manager stylix nixvim niri noctalia noctalia-greeter zen-browser handy nixpkgs-fresh disko-unstable sops-nix-unstable";
           ngc = "sudo nix-collect-garbage -d";
           ccupdate = "nix profile upgrade claude-code-nix";

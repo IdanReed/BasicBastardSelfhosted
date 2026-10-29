@@ -79,12 +79,27 @@ let
     }
   ];
 
+  # The suites' pkgs: every runNixOSTest also gets ./lib/machine-names.nix, so
+  # a VM is addressed by its hostname whatever its `nodes` key is.
+  suitePkgs = pkgs // {
+    testers = pkgs.testers // {
+      runNixOSTest =
+        test:
+        pkgs.testers.runNixOSTest {
+          imports = [
+            test
+            ./lib/machine-names.nix
+          ];
+        };
+    };
+  };
+
   callSuite =
     path: args:
     import path (
       {
+        pkgs = suitePkgs;
         inherit
-          pkgs
           lib
           images
           profiles
@@ -147,6 +162,8 @@ let
     actual = callSuite ./suites/actual.nix { };
     wealthfolio = callSuite ./suites/wealthfolio.nix { };
     excalidraw = callSuite ./suites/excalidraw.nix { };
+    grist = callSuite ./suites/grist.nix { };
+    penpot = callSuite ./suites/penpot.nix { };
     gatus = callSuite ./suites/gatus.nix { };
     proton = callSuite ./suites/proton.nix { };
     beszel = callSuite ./suites/beszel.nix { };
@@ -162,8 +179,8 @@ let
   # One fast suite per stack, for iterating on a single stack without booting
   # everything else: nix-build tests -A stackChecks.<name>
   mkStackSuite = import ./lib/mk-stack-suite.nix {
+    pkgs = suitePkgs;
     inherit
-      pkgs
       lib
       images
       profiles
@@ -172,10 +189,12 @@ let
   };
 
   # Stacks whose shape fits the generic harness: no restart:"no" one-shot
-  # (finding #39) and no healthcheck that lies. Five of them ALSO carry a
+  # (finding #39) and no healthcheck that lies. Six of them ALSO carry a
   # hand-written suite above, which covers what a green generic run cannot.
   # caddy is deliberately absent — it needs the DNS-01 -> tls-internal
   # substitution and a TAILNET_IP; services and tailnet cover its routing.
+  # grist is absent too: its OIDC discovery is boot-fatal, so it boots only
+  # beside the issuer stub its own suite provides.
   stackChecks = lib.genAttrs [
     "ghostfolio"
     "logging"
@@ -186,7 +205,16 @@ let
     "outline"
     "silverbullet"
     "excalidraw"
-  ] (name: mkStackSuite { stack = name; });
+  ] (name: mkStackSuite { stack = name; })
+  // {
+    # Five containers and ~3.3 GB of images (the exporter bundles Chromium,
+    # the backend a JVM): the default 3 GB / 8 GB VM holds neither.
+    penpot = mkStackSuite {
+      stack = "penpot";
+      memoryMB = 6144;
+      diskMB = 20480;
+    };
+  };
 in
 rec {
   inherit
@@ -233,7 +261,12 @@ rec {
 
   # Outside `suites`: a raw qemu runCommand, so no driverInteractive.
   proxmoxBoot = import ./suites/proxmox-boot.nix {
-    inherit pkgs lib sopsModule;
+    inherit
+      pkgs
+      lib
+      sopsModule
+      profiles
+      ;
     inherit (sources) nixpkgs;
   };
 
