@@ -214,9 +214,11 @@ pkgs.testers.runNixOSTest {
             "test -s /srv/stacks/silverbullet/.env", timeout=120
         )
         services_vm.succeed(
-            "grep -q '^GIT_SYNC_REMOTE=http://test:' /srv/stacks/silverbullet/.env"
+            "grep -q \"^GIT_SYNC_REMOTE='http://test:\" /srv/stacks/silverbullet/.env"
         )
-        services_vm.succeed("grep -q '^SB_USER=.idan:test' /srv/stacks/silverbullet/.env")
+        # The render quotes every value; SB_USER is built from the shared
+        # fixture IDAN_INITIAL_PASSWORD (test_...).
+        services_vm.succeed("grep -q \"^SB_USER='idan:test_\" /srv/stacks/silverbullet/.env")
 
     services_vm.wait_for_unit("load-test-images.service")
 
