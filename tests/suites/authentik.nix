@@ -93,7 +93,7 @@ let
       authentik-ldap:
         network_mode: host
         networks: !reset []
-        extra_hosts:
+        extra_hosts: !override
           - "${authHost}:127.0.0.1"
         environment:
           - SSL_CERT_FILE=/var/lib/test-ca/bundle.pem

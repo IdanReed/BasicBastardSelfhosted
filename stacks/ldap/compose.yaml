@@ -22,6 +22,13 @@ services:
     # AUTHENTIK_TOKEN: the outpost's API token, whose key the blueprint pins
     # (env.nix).
     env_file: /run/stack-env/ldap.env
+    # The outpost's API lives under /api/v3/, which the VPS Caddy serves only to
+    # tailnet sources (publicly: 403 "restricted to tailnet"), and the services
+    # VM resolves auth.idanreed.com to the public IP. The same pin as
+    # stacks/docspace and the desktop's networking.extraHosts: if the VPS's
+    # tailnet IP is not 100.64.0.1, change all three.
+    extra_hosts:
+      - 'auth.idanreed.com:100.64.0.1'
     networks:
       - homelab
     healthcheck:
