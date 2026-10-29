@@ -1438,6 +1438,22 @@ in
               "its own, so if gluetun dies it has NO route at all rather than "
               "falling back to the host's. Its UI is published by gluetun's "
               "127.0.0.1:10057 entry, which loopback-binding does check.",
+          ("media", "bitmagnet"):
+              "service:gluetun — the DHT crawler's traffic leaves only "
+              "through the tunnel, the same kill-switch as qbittorrent's. Its "
+              "UI is gluetun's 127.0.0.1:10059 publish, which loopback-binding "
+              "checks; the DHT port is not published (the crawl needs no "
+              "inbound) and gluetun's firewall drops it from the docker "
+              "network.",
+          ("media", "bitmagnet-db"):
+              "service:gluetun — so Bitmagnet reaches it on 127.0.0.1 (docker "
+              "names do not resolve inside gluetun's netns). It listens on "
+              "127.0.0.1 only and nothing publishes it.",
+          ("media", "armiger"):
+              "service:gluetun — beside the Bitmagnet it polls on 127.0.0.1. "
+              "Its Torznab proxy is reached as gluetun:8097 on the stack "
+              "network only (FIREWALL_INPUT_PORTS), never published; its "
+              "status port 8096 is not opened in gluetun's firewall at all.",
       }
 
       found, errs = set(), []
@@ -1658,6 +1674,15 @@ in
           "/mnt/fast/jellyfin/cache":
               "Transcodes and image cache, regenerated on demand. "
               "jellyfin.db and library.db are dumped separately.",
+          "/mnt/fast/bitmagnet/pgdata":
+              "Bitmagnet's DHT index: tens of GB of torrent metadata crawled "
+              "from the public DHT, which a fresh crawler rebuilds on its own. "
+              "Nothing in it is ours — Armiger's tags are recomputed from the "
+              "names, and the media stack's state (what was requested, "
+              "grabbed and imported) lives in the arrs' dumped databases. A "
+              "nightly dump would be the largest file in the backup for "
+              "content worth nothing on restore. See bitmagnet_db in "
+              "ENGINES_NOT_DUMPED.",
           "/mnt/fast/ntfy/cache":
               "ntfy's message cache (cache-file): the recent-message buffer "
               "for clients that were offline, minutes to hours of value. The "
@@ -1796,8 +1821,24 @@ in
       # anything (dawarich's sidekiq queue, wger's cache) hold reconstructible
       # state, and their append-only files raw-copy acceptably.
       ENGINE_RE = re.compile(r"(postgres|postgis|mariadb|mysql)", re.I)
+      # A database engine whose contents are worth nothing on restore, by
+      # name and with the reason; its datadir needs a NOT_BACKED_UP entry too.
+      ENGINES_NOT_DUMPED = {
+          "bitmagnet_db":
+              "Bitmagnet's DHT index, regenerable by re-crawling — see "
+              "/mnt/fast/bitmagnet/pgdata in NOT_BACKED_UP.",
+      }
+      for cn in sorted(ENGINES_NOT_DUMPED):
+          if cn not in containers or not ENGINE_RE.search(containers[cn]["image"]):
+              errs.append(f"stale ENGINES_NOT_DUMPED entry {cn!r}: no compose "
+                          f"file runs a database engine under that name. "
+                          f"Remove it.")
+          elif cn in dumped_containers:
+              errs.append(f"{cn} is in ENGINES_NOT_DUMPED but backup-prepare.sh "
+                          f"now dumps it. Remove the exemption.")
       for cn, info in sorted(containers.items()):
-          if not ENGINE_RE.search(info["image"]) or cn in dumped_containers:
+          if (not ENGINE_RE.search(info["image"]) or cn in dumped_containers
+                  or cn in ENGINES_NOT_DUMPED):
               continue
           errs.append(
               f"{info['stack']}: {cn} runs a database engine "

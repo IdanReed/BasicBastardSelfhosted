@@ -22,6 +22,7 @@
 	"SEERR_ADMIN_EMAIL": "ENC[AES256_GCM,data:xzRiQSVKDnrjMsHJS+A450v/FnSYeacbr5o=,iv:55eJuf3fgHmZW1D61V5jfMHVxvcIEiA30TYLODpl3t8=,tag:Bv5AJbFMxgZjyD1Th6+Fig==,type:str]",
 	"BAZARR_API_KEY": "ENC[AES256_GCM,data:Pvisc2I7d+aKUHvoNF34Ofvc4FdgJ/OcL4O25bilYc8=,iv:GQSzeySanQt8gBAhEkfLRkDE1aVaTtUnQ6RO083NVdo=,tag:RxUBVtkK4QV7GNzrhT+xaA==,type:str]",
 	"FIREWALL_VPN_INPUT_PORTS": "ENC[AES256_GCM,data:QSidnQE=,iv:SPym7Xv5nQlEXUhYSjaA6otuGy/FZ/Tk81RqaEkzRfc=,tag:tMbNZFxC/gAjnsdUjRtZPA==,type:str]",
+	"BITMAGNET_DB_PASSWORD": "ENC[AES256_GCM,data:Rz7kzR9jlG+/tmGfInLJ+dpYn0eaVlIIPEN7LieoSw==,iv:Gq8NBAlscGUYVc8NNJAOWLG18vZXpUcpFZW5dLV0nBc=,tag:jP9K58w3v/5LAjzEKJd2sg==,type:str]",
 	"sops": {
 		"age": [
 			{
@@ -29,8 +30,8 @@
 				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j"
 			}
 		],
-		"lastmodified": "2026-10-28T21:38:30Z",
-		"mac": "ENC[AES256_GCM,data:C5xkpJzcp7LpQhQwF6ar4uLtZ+zz6dG7IAY+XsQSHNN2U7FUqRAAGovvvNQ+fud1lECLwz5yKHB0d2041669YzRTZR7oENCMUPrQS74IlAccjKXLpRUU9uPt7K5fUOl7tHnCCKlXdqmHEjUGWMGkobwaMyz0K8+zemBtoza1VnQ=,iv:AtZbz/qzFXl8L1elC08yO4eoaYq8EGg5Wie2kPTw6oY=,tag:dnV/fH3bOhZVtr+dJhVchA==,type:str]",
+		"lastmodified": "2026-10-29T00:03:18Z",
+		"mac": "ENC[AES256_GCM,data:+qY9NDYalJnQzs7mpx4X0EdU751wv4JVi9t4TqmRO9p2DB5IXiYVk4n2kCyNAE2t1aeIdCT51CWNjiM80nb/JTFIW61MbQFC8Fh3mLkMzQLDn0Dpk5tN+OyofbC0GVHjW5sdi53uHDIvkAR5AihwpxQ8pUrE5q0hanoBXR6CxHE=,iv:DlD1nlpunA10yM2SlHodkigvPND3gQ05srOrmprisjU=,tag:uf6Yb/aNMFo+SNZZANjbVg==,type:str]",
 		"unencrypted_suffix": "_unencrypted",
 		"version": "3.12.1"
 	}

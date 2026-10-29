@@ -193,7 +193,7 @@
 	}
 
 	# ------------------------------------------------------------------
-	# Media stack (stacks/media, 10050-10058). qBittorrent has NO route
+	# Media stack (stacks/media, 10050-10059). qBittorrent has NO route
 	# yet, deliberately: _overview marks it FwdAuth and its blueprint
 	# entry does not exist, so flipping the route live first is the
 	# lockout hazard described above. Add both together.
@@ -249,6 +249,14 @@
 	handle @cleanuparr {
 		import protected
 		reverse_proxy localhost:10058
+	}
+
+	@bitmagnet host bitmagnet.svc.idanreed.com
+	handle @bitmagnet {
+		# Admin only (forward-auth.yaml binds the group): Bitmagnet has no auth
+		# of its own, and its GraphQL API and /import write to the index.
+		import protected
+		reverse_proxy localhost:10059
 	}
 
 	# ------------------------------------------------------------------

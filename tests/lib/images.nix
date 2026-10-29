@@ -162,6 +162,14 @@
     finalImageName = "ghcr.io/alam00000/bentopdf";
     finalImageTag = "1.16.1";
   };
+  "ghcr_io_bitmagnet-io_bitmagnet_v0_10_0" = {
+    composeRef = "ghcr.io/bitmagnet-io/bitmagnet:v0.10.0";
+    imageName = "ghcr.io/bitmagnet-io/bitmagnet";
+    imageDigest = "sha256:cf2c16fac5b51f1c18e630b4710175d35d7e44b83012cfd05a2b43712feec05e";
+    hash = "sha256-HUVXRPm79Q4KihFiOqJIB19Q6hSQ1IyrxMIXAxkxgtw=";
+    finalImageName = "ghcr.io/bitmagnet-io/bitmagnet";
+    finalImageTag = "v0.10.0";
+  };
   "ghcr_io_blakeblackshear_frigate_0_17_2" = {
     composeRef = "ghcr.io/blakeblackshear/frigate:0.17.2";
     imageName = "ghcr.io/blakeblackshear/frigate";
@@ -353,6 +361,14 @@
     hash = "sha256-iTd2ZQ8W6KsbCcBPPXg3mKpLhKuceji6ol2P2XOUI2s=";
     finalImageName = "ghcr.io/silverbulletmd/silverbullet";
     finalImageTag = "2.9.0";
+  };
+  "ghcr_io_spencernorton_armiger_3_4_1" = {
+    composeRef = "ghcr.io/spencernorton/armiger:3.4.1";
+    imageName = "ghcr.io/spencernorton/armiger";
+    imageDigest = "sha256:91f52046411f382e5430d4efd294393175179db6ee3a825e36f436b47ccfafaa";
+    hash = "sha256-leeDgAtalZvk6U9IKBiPO/A0uB4uogoIeEcl7S0yxN8=";
+    finalImageName = "ghcr.io/spencernorton/armiger";
+    finalImageTag = "3.4.1";
   };
   "ghcr_io_sysadminsmedia_homebox_0_26_2" = {
     composeRef = "ghcr.io/sysadminsmedia/homebox:0.26.2";

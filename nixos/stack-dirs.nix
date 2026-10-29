@@ -256,11 +256,17 @@
     # /var/lib/clamav unconditionally before starting clamd. /mnt/slow/data is
     # 1000:1000 — every media container works there as uid 1000.
     #
+    # bitmagnet_db's pgdata is 70:70 0700 like every alpine Postgres (below).
+    #
     # This stack also binds /mnt/slow/books/drop, which BELONGS TO THE BOOKS
     # STACK: clamav-scanner moves a clean audiobook download in and
     # audiobookshelf reads it :ro. Nothing else crosses.
     "d /mnt/fast/bazarr 0755 root root -"
     "d /mnt/fast/bazarr/config 0755 root root -"
+    "d /mnt/fast/bitmagnet 0755 root root -"
+    # Bitmagnet's DHT index, regenerable by re-crawling and deliberately not
+    # dumped (the backup-coverage lint's exemption).
+    "d /mnt/fast/bitmagnet/pgdata 0700 70 70 -"
     "d /mnt/fast/clamav 0755 root root -"
     "d /mnt/fast/clamav/db 0755 root root -"
     "d /mnt/fast/clamav/scanner 0755 root root -"

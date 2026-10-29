@@ -57,7 +57,15 @@
 #     log in as him, and no second idan appears), and an LDAP user signs in
 #     to Seerr. The outpost itself is the authentik suite's: it runs the real
 #     stacks/ldap against a real Authentik with the same filters
-#   - loopback-only publishing for every port 10050-10058, from another host
+#   - the self-hosted indexer: Bitmagnet, its Postgres and Armiger come up in
+#     gluetun's netns (started past its never-healthy gate, like qbit) and
+#     have zero egress there too; two releases and an executable lure are
+#     imported into Bitmagnet, Armiger tags them offline with its baked model,
+#     media-init adds the Armiger indexer to Prowlarr at gluetun:8097, and a
+#     Prowlarr search through it returns the releases WITHOUT the lure —
+#     which raw Bitmagnet still serves, so Prowlarr is proven to sit behind
+#     Armiger's filter. No crawling: the VM has no DHT to find
+#   - loopback-only publishing for every port 10050-10059, from another host
 #
 # Documented gaps (do not read a green run as covering these):
 #   - Profilarr's Dictionarry database link + profile sync needs egress
@@ -76,9 +84,11 @@
 #   - actual HW transcode (Arc A380): no GPU in the VM. The compose's guarded
 #     /dev/dri stanza is asserted to EXIST (drift guard) and jellyfin to run
 #     without the device — software-transcode degradation.
-#   - indexer push: NOT exercised. No test indexer is added in Prowlarr and
-#     nothing asserts one arrives in Radarr/Sonarr — only the applications
-#     (fullSync) CONFIG is asserted, not a push.
+#   - indexer push to Radarr/Sonarr: NOT asserted. The Armiger indexer is in
+#     Prowlarr, but offline Bitmagnet cannot match releases to TMDB, so they
+#     land in category 8000 ("Other") and the arrs' own indexer tests (movie
+#     and TV categories) find nothing — only the applications (fullSync)
+#     CONFIG is asserted, not the push.
 #   - ntfy: the scanner's quarantine notification is never asserted — ntfy is
 #     not deployed in this suite.
 #   - cleanuparr: healthchecked, and cleanuparr-init's account claim + OIDC
@@ -123,6 +133,9 @@ let
     images."ghcr_io_cleanuparr_cleanuparr_2_10_5"
     images."clamav_clamav_1_5" # clamav + clamav-scanner (same pin)
     images."python_3_13-alpine" # media-init + the jellyfin/seerr/bazarr sidecars
+    images."postgres_16_13-alpine" # bitmagnet-db
+    images."ghcr_io_bitmagnet-io_bitmagnet_v0_10_0"
+    images."ghcr_io_spencernorton_armiger_3_4_1"
   ];
 
   # An SSO-Auth install from an earlier deploy (the last pinned release),
@@ -294,8 +307,8 @@ pkgs.testers.runNixOSTest {
           # signature DB in RAM) fight for memory, and fourteen unpacked
           # images live in /var/lib/docker.
           (profiles.sized {
-            memoryMB = 8192;
-            diskMB = 24576;
+            memoryMB = 10240;
+            diskMB = 28672;
           })
           (profiles.loadImages {
             inherit pkgs;
@@ -385,6 +398,8 @@ pkgs.testers.runNixOSTest {
           "d /mnt/fast/profilarr/config 0755 root root -"
           "d /mnt/fast/cleanuparr 0755 root root -"
           "d /mnt/fast/cleanuparr/config 0755 root root -"
+          "d /mnt/fast/bitmagnet 0755 root root -"
+          "d /mnt/fast/bitmagnet/pgdata 0700 70 70 -"
           "d /mnt/fast/clamav 0755 root root -"
           "d /mnt/fast/clamav/db 0755 root root -"
           "d /mnt/fast/clamav/scanner 0755 root root -"
@@ -543,6 +558,8 @@ pkgs.testers.runNixOSTest {
             "docker logs qbittorrent 2>&1 | tail -30",
             "docker logs media_qbit_init 2>&1 | tail -20",
             "docker logs media_init 2>&1 | tail -60",
+            "docker logs bitmagnet 2>&1 | grep -v '^\\s' | tail -20",
+            "docker logs armiger 2>&1 | tail -20",
             "docker logs radarr 2>&1 | tail -30",
             "docker logs prowlarr 2>&1 | tail -20",
             "docker logs profilarr 2>&1 | tail -30",
@@ -575,7 +592,7 @@ pkgs.testers.runNixOSTest {
             f"curl -sf --max-time 60 -X {method} -H 'X-Api-Key: {key}' "
             "-H 'Content-Type: application/json' "
         )
-        url = f"http://127.0.0.1:{port}/api/{ver}/{path}"
+        url = shlex.quote(f"http://127.0.0.1:{port}/api/{ver}/{path}")
         if body is not None:
             payload = shlex.quote(json.dumps(body))
             full = f"printf '%s' {payload} | " + cmd + "-d @- " + url
@@ -677,6 +694,72 @@ pkgs.testers.runNixOSTest {
             diag("qbittorrent start")
             raise
 
+    # Two releases and a lure (an executable dressed as a film) for Bitmagnet's
+    # index: offline there is no DHT to crawl, and Prowlarr refuses to save an
+    # indexer whose test search finds nothing.
+    SEED = [
+        ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Big.Buck.Bunny.2008.1080p.BluRay.x265-SUITE"),
+        ("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Sintel.2010.2160p.WEB-DL.x265.10bit-SUITE"),
+    ]
+    LURE = ("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "Cosmos.Laundromat.2015.1080p.WEB.x265.mkv.exe")
+
+    def torznab_titles(url):
+        # From inside armiger (python is there; curl is not): titles of an
+        # empty-query search at a Torznab endpoint in gluetun's netns.
+        out = services_vm.succeed(
+            "docker exec armiger python -c "
+            + shlex.quote(
+                "import re, urllib.request; "
+                f"x = urllib.request.urlopen('{url}/api?t=search', timeout=30).read().decode(); "
+                "print('\\n'.join(t for t in re.findall(r'<title>([^<]*)</title>', x) if t != 'bitmagnet'))"
+            )
+        )
+        return sorted(l for l in out.splitlines() if l.strip())
+
+    with subtest("bitmagnet, its database and armiger start into gluetun's netns and turn healthy"):
+        # --no-deps for the same reason as qbittorrent: their gluetun-healthy
+        # gate can never be met offline.
+        try:
+            for svc, name in [("bitmagnet-db", "bitmagnet_db"),
+                              ("bitmagnet", "bitmagnet"),
+                              ("armiger", "armiger")]:
+                services_vm.succeed(MEDIA + f" up -d --no-deps {svc}")
+                services_vm.wait_until_succeeds(
+                    f"docker inspect -f '{{{{.State.Health.Status}}}}' {name} "
+                    "| grep -qx healthy",
+                    timeout=600,
+                )
+        except Exception:
+            diag("bitmagnet start")
+            print(services_vm.execute(
+                "docker logs bitmagnet 2>&1 | tail -30; docker logs armiger 2>&1 | tail -30")[1])
+            raise
+        # The import lands on Bitmagnet's UI publish — gluetun's 10059, the
+        # same path Caddy uses.
+        ndjson = "\n".join(json.dumps({"source": "suite", "infoHash": h, "name": n,
+                                       "size": 1500000000})
+                           for h, n in SEED + [LURE])
+        out = services_vm.succeed(
+            f"printf '%s\\n' {shlex.quote(ndjson)} | curl -sf --max-time 60 "
+            "-X POST --data-binary @- http://127.0.0.1:10059/import"
+        )
+        assert "3 items imported" in out, out
+        # Bitmagnet classifies on its queue before a release is searchable.
+        try:
+            services_vm.wait_until_succeeds(
+                "docker exec armiger python -c "
+                + shlex.quote(
+                    "import urllib.request, sys; "
+                    "x = urllib.request.urlopen('http://127.0.0.1:3333/torznab/api?t=search', timeout=30).read().decode(); "
+                    "sys.exit(0 if x.count('<item>') >= 3 else 1)"
+                ),
+                timeout=600,
+            )
+        except Exception:
+            print(services_vm.execute(
+                "docker logs bitmagnet 2>&1 | grep -v '^\\s' | tail -40")[1])
+            raise
+
     with subtest("docker compose brings up every waitable service"):
         # media-init is NOT in this set: compose's --wait reports failure for
         # an in-scope oneshot that exited 0 unless a dependent consumes it
@@ -763,7 +846,7 @@ pkgs.testers.runNixOSTest {
         # tunnel, which is exactly the regression this pins.
         for name in ["qbittorrent", "jellyfin", "radarr", "sonarr", "prowlarr",
                      "seerr", "bazarr", "profilarr", "cleanuparr", "clamav",
-                     "clamav_scanner"]:
+                     "clamav_scanner", "bitmagnet_db", "bitmagnet", "armiger"]:
             h = services_vm.succeed(
                 f"docker inspect -f '{{{{.State.Health.Status}}}}' {name}"
             ).strip()
@@ -933,6 +1016,59 @@ pkgs.testers.runNixOSTest {
             "docker exec radarr curl -sf --max-time 10 "
             "http://gluetun:8080/ -o /dev/null"
         )
+
+    with subtest("kill-switch: bitmagnet and armiger have zero egress too"):
+        # Same netns as qbittorrent, so the same default-drop — asserted from
+        # each container, because the crawler is the one that would leak.
+        outsider_ip = outsider.succeed(
+            "ip -4 -o addr show eth1 | awk '{print $4}' | cut -d/ -f1"
+        ).strip()
+        services_vm.fail(
+            f"docker exec bitmagnet curl -s --max-time 10 http://{outsider_ip}/"
+        )
+        services_vm.fail(
+            "docker exec armiger python -c "
+            + shlex.quote(f"import urllib.request; urllib.request.urlopen('http://{outsider_ip}/', timeout=10)")
+        )
+        # What IS let in: Armiger's Torznab proxy from the stack network
+        # (FIREWALL_INPUT_PORTS) — and nothing else of theirs: not Armiger's
+        # status port, not Bitmagnet's database.
+        services_vm.succeed(
+            "docker exec prowlarr curl -sf --max-time 10 "
+            "'http://gluetun:8097/torznab/api?t=caps' | grep -q '<caps>'"
+        )
+        services_vm.fail(
+            "docker exec prowlarr curl -s --max-time 10 http://gluetun:8096/healthz"
+        )
+        services_vm.fail(
+            "docker exec prowlarr bash -c "
+            + shlex.quote('timeout 5 bash -c ": </dev/tcp/gluetun/5432"')
+        )
+
+    with subtest("prowlarr searches Bitmagnet only through Armiger's filter"):
+        idx = [i for i in api("prowlarr", "indexer") or []
+               if i.get("name") == "Armiger (Bitmagnet)"]
+        assert len(idx) == 1, f"prowlarr indexers: {api('prowlarr', 'indexer')!r}"
+        fields = {f["name"]: f.get("value") for f in idx[0]["fields"]}
+        assert idx[0].get("implementation") == "Torznab" and idx[0].get("enable"), idx[0]
+        assert fields.get("baseUrl") == "http://gluetun:8097/torznab", fields
+        init_out = services_vm.succeed("docker logs media_init 2>&1")
+        assert "prowlarr: added the Armiger (Bitmagnet) indexer" in init_out, init_out[-3000:]
+        seed_titles = sorted(n for _, n in SEED)
+        # Raw Bitmagnet serves the lure; Armiger's proxy drops it.
+        assert torznab_titles("http://127.0.0.1:3333/torznab") == sorted(seed_titles + [LURE[1]])
+        assert torznab_titles("http://127.0.0.1:8097/torznab") == seed_titles
+        # And a search through Prowlarr is the filtered set.
+        found = sorted(r.get("title") for r in api(
+            "prowlarr", f"search?query=&type=search&indexerIds={idx[0]['id']}") or [])
+        assert found == seed_titles, f"prowlarr found {found!r}"
+        # Armiger's poller classified what Bitmagnet indexed, with the model
+        # baked into its image (no downloads offline).
+        tags = int(services_vm.succeed(
+            "docker exec bitmagnet_db psql -U bitmagnet -d bitmagnet -tAc "
+            "\"select count(*) from torrent_tags where name = 'armiger-movie'\""
+        ).strip())
+        assert tags >= 2, f"armiger tagged {tags} release(s) as movies"
 
     with subtest("prowlarr lists both arrs as fullSync applications"):
         apps = api("prowlarr", "applications")
@@ -1728,7 +1864,7 @@ pkgs.testers.runNixOSTest {
         # (22 is in allowedTCPPorts); without it every fail() below would
         # pass identically on a dead vlan.
         outsider.succeed("nc -z -w 5 services-vm 22")
-        for port in range(10050, 10059):
+        for port in range(10050, 10060):
             outsider.fail(f"nc -z -w 5 services-vm {port}")
 
     # -----------------------------------------------------------------------
