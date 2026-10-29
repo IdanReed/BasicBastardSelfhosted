@@ -248,7 +248,12 @@ rec {
 
   # Outside `suites`: a raw qemu runCommand, so no driverInteractive.
   proxmoxBoot = import ./suites/proxmox-boot.nix {
-    inherit pkgs lib sopsModule;
+    inherit
+      pkgs
+      lib
+      sopsModule
+      profiles
+      ;
     inherit (sources) nixpkgs;
   };
 
