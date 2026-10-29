@@ -219,10 +219,11 @@ services:
       - POSTGRES_USER=bitmagnet
       - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD:-}
       # Throughput: four classifier workers (upstream default 1; this host has
-      # the cores) and the DHT crawler at twice its default scale (returns
-      # diminish above 10 upstream says, so measure before going higher).
+      # the cores) and the DHT crawler at four times its default scale. Measured
+      # here: scale 10 crawled ~360 torrents/min, 20 ~600/min, at half a core
+      # and ~700 KiB/s through the tunnel.
       - PROCESSOR_CONCURRENCY=4
-      - DHT_CRAWLER_SCALING_FACTOR=20
+      - DHT_CRAWLER_SCALING_FACTOR=40
       # TMDB is what turns a crawled name into a movie or episode with the IDs
       # the arrs search by. A personal key: Bitmagnet's built-in one is held to
       # 1 request/s, which caps classification; a personal key gets 20/s.
