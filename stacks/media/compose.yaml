@@ -223,10 +223,10 @@ services:
       # diminish above 10 upstream says, so measure before going higher).
       - PROCESSOR_CONCURRENCY=4
       - DHT_CRAWLER_SCALING_FACTOR=20
-      # TMDB stays on, with Bitmagnet's built-in key: it is what turns a crawled
-      # name into a movie or episode with the IDs the arrs search by. That key
-      # is held to 1 request/s, which caps classification; a personal TMDB key
-      # (TMDB_API_KEY) gets 20/s.
+      # TMDB is what turns a crawled name into a movie or episode with the IDs
+      # the arrs search by. A personal key: Bitmagnet's built-in one is held to
+      # 1 request/s, which caps classification; a personal key gets 20/s.
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
     healthcheck:
       # /status answers 503 whenever ANY check is down, TMDB and the DHT
       # included — i.e. whenever the tunnel or TMDB is. Health here is

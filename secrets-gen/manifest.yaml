@@ -673,6 +673,10 @@ secrets:
     class: generate
     recipe: hex:48
     targets: [{ file: stacks/media/secrets.sops.json, key: BITMAGNET_DB_PASSWORD }]
+  - name: media/TMDB_API_KEY
+    class: pull
+    note: "personal TMDB v3 API key (themoviedb.org account -> Settings -> API); Bitmagnet's built-in key is held to 1 req/s"
+    targets: [{ file: stacks/media/secrets.sops.json, key: TMDB_API_KEY }]
   # qBittorrent WebUI password: folded into the shared `services-admin` entry
   # (QBIT_WEBUI_PASSWORD plain + QBIT_WEBUI_PASSWORD_PBKDF2 are targets there).
   # QBIT_WEBUI_USER stays a config value (media/config) — pin it to idan.
