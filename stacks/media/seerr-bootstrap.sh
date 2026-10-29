@@ -1,7 +1,7 @@
 #!/bin/sh
 # seerr-bootstrap — the three calls a settings.json cannot make, then the
-# sign-in settings on every run. Runs in python:3.13-alpine as a oneshot once
-# seerr is healthy.
+# sign-in settings and the default quality profiles on every run. Runs in
+# python:3.13-alpine as a oneshot once seerr is healthy.
 #
 # THE SHAPE OF THE PROBLEM: public.initialized is a settings-file flag, but the
 # admin identity is a ROW in db.sqlite3 (User id 1), and every /api/v1/settings
@@ -149,6 +149,47 @@ if drift:
     change(f"sign-in settings set ({', '.join(sorted(drift))})")
 else:
     log("Jellyfin sign-in and new-user sign-in already on - no change")
+
+# Default quality profiles, by NAME on every run: media-init keeps only the two
+# Efficient profiles in each arr, and Seerr stores a profile by id, which a
+# Profilarr re-sync or a rebuilt arr renumbers. A 4K server would take the
+# 2160p one. The profile list comes from Seerr's own test call against the
+# stored connection, after flushing that arr's cache (Seerr keeps a profile
+# list for an hour); a name the arr does not have yet (Sonarr before its first
+# Profilarr sync) is a WARN and the default is left alone. The anime profile,
+# where one is set, follows the default — unset, Seerr falls back to it anyway.
+DEFAULT_PROFILE = {False: "1080p Efficient", True: "2160p Efficient"}
+for kind in ("radarr", "sonarr"):
+    _, servers = call(f"/api/v1/settings/{kind}", api_key=API_KEY)
+    if servers:
+        call(f"/api/v1/settings/cache/{kind}/flush", "POST", api_key=API_KEY)
+    for srv in servers or []:
+        want = DEFAULT_PROFILE[bool(srv.get("is4k"))]
+        try:
+            _, test = call(f"/api/v1/settings/{kind}/test", "POST", srv,
+                           api_key=API_KEY)
+        except urllib.error.HTTPError as e:
+            log(f"WARN: {kind} {srv.get('name')!r}: could not list its profiles "
+                f"(HTTP {e.code}: {detail(e)}) - default profile left as "
+                f"{srv.get('activeProfileName')!r}")
+            continue
+        pid = next((p.get("id") for p in (test or {}).get("profiles") or []
+                    if p.get("name") == want), None)
+        if pid is None:
+            log(f"WARN: {kind} {srv.get('name')!r} has no {want!r} profile yet - "
+                f"default profile left as {srv.get('activeProfileName')!r}")
+            continue
+        new = dict(srv, activeProfileId=pid, activeProfileName=want)
+        if srv.get("activeAnimeProfileId") is not None:
+            new.update(activeAnimeProfileId=pid, activeAnimeProfileName=want)
+        if new == srv:
+            log(f"{kind} {srv.get('name')!r} already defaults to {want!r} - no change")
+            continue
+        # `id` is read-only in Seerr's API schema: a body carrying it is a 400.
+        call(f"/api/v1/settings/{kind}/{srv['id']}", "PUT",
+             {k: v for k, v in new.items() if k != "id"}, api_key=API_KEY)
+        change(f"{kind} {srv.get('name')!r}: default profile "
+               f"{srv.get('activeProfileName')!r} -> {want!r} (id {pid})")
 
 log(f"done ({CHANGES} change(s))")
 PY

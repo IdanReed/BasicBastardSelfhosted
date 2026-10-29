@@ -5,12 +5,14 @@
 # Contract:
 #   - Every mutation logs "media-init: CHANGE: ...". A second run must log
 #     ZERO change lines; the media suite asserts exactly that.
-#   - The x265 guard rewrites scoring, not profiles — Profilarr still owns
-#     those. Its two costs are accepted: an inverted x264 CF makes x264-only
-#     releases un-grabbable under the default minFormatScore of 0, and a
-#     legitimately-positive synced x264 CF churns forever (sync restores,
-#     guard re-inverts), so "no-op on the second run" only holds between
-#     Profilarr syncs. GUARD lines in the log are the tell.
+#   - Quality profiles: only "1080p Efficient" and "2160p Efficient" are
+#     kept — every other profile is deleted once both exist, and an in-use
+#     one is a WARN, never fatal. Profilarr still owns their content.
+#   - The codec guard rewrites scores, not profiles: AV1 > x265 > x264,
+#     strictly, in every profile. A Profilarr sync restores Dictionarry's
+#     scores (AV1 at -999999) and the next run re-ranks them, so "no-op on
+#     the second run" only holds between Profilarr syncs. GUARD lines in the
+#     log are the tell.
 #   - Linking Dictionarry needs egress, so a failed link is a WARN with a UI
 #     fallback rather than fatal; a linked trash-pcd is fatal.
 #   - The Armiger indexer needs the tunnel up (Bitmagnet runs in gluetun's
@@ -115,7 +117,7 @@ log("OK", "/data skeleton present")
 # Radarr / Sonarr: root folder, download client, TRaSH naming
 # ---------------------------------------------------------------------------
 # TRaSH's naming schemes. The MediaInfo VideoCodec token is what makes the
-# x265 policy auditable on disk.
+# codec ranking auditable on disk.
 RADARR_NAMING = {
     "renameMovies": True,
     "replaceIllegalCharacters": True,
@@ -316,58 +318,147 @@ else:
                     f"- the next media-init run retries")
 
 # ---------------------------------------------------------------------------
-# x265 scoring guard, both-sided (see header contract)
+# Quality profiles: the two Efficient profiles and nothing else
 # ---------------------------------------------------------------------------
-X265 = re.compile(r"x265|h\.?265|hevc", re.I)
-X264 = re.compile(r"x264|h\.?264|\bavc\b", re.I)
+# Profilarr syncs Dictionarry's profiles; only the Efficient pair is wanted, so
+# every other profile is deleted, which is what leaves Seerr offering just the
+# two (seerr-bootstrap points its defaults at them by name). Gated on BOTH
+# existing in that arr: before Profilarr's first sync the built-ins are all it
+# has. An arr refuses to delete a profile a movie, series, import list or
+# collection uses — that one is kept with a WARN; move its items to an
+# Efficient profile and the next run deletes it.
+KEEP_PROFILES = ("1080p Efficient", "2160p Efficient")
 for name, a in ARRS.items():
     base, api, key = a["base"], a["api"], a["key"]
-    cfs = req("GET", f"{base}{api}/customformat", key) or []
-    f265 = {cf["id"]: cf["name"] for cf in cfs if X265.search(cf.get("name", ""))}
-    # A name matching both regexes counts as x265, so the two rules cannot
-    # fight over one item.
-    f264 = {cf["id"]: cf["name"] for cf in cfs
-            if X264.search(cf.get("name", "")) and cf["id"] not in f265}
-    if not (f265 or f264):
+    profiles = req("GET", f"{base}{api}/qualityprofile", key) or []
+    missing = [p for p in KEEP_PROFILES if p not in {q.get("name") for q in profiles}]
+    if missing:
+        log("WARN", f"{name}: no {' or '.join(repr(m) for m in missing)} profile yet "
+                    f"(Profilarr has not synced it) - every other profile is kept "
+                    f"until both exist")
+        continue
+    others = [p for p in profiles if p.get("name") not in KEEP_PROFILES]
+    for p in others:
+        try:
+            req("DELETE", f"{base}{api}/qualityprofile/{p['id']}", key)
+            change(f"{name}: deleted quality profile {p['name']!r} (only "
+                   f"{' and '.join(KEEP_PROFILES)} are offered)")
+        except ApiError as e:
+            log("WARN", f"{name}: kept quality profile {p['name']!r} - the arr "
+                        f"refused to delete it (in use: {e.detail[:160]}); move "
+                        f"what uses it to {KEEP_PROFILES[0]!r} and the next run "
+                        f"deletes it")
+    if not others:
+        log("OK", f"{name}: only {' and '.join(KEEP_PROFILES)} exist")
+
+# ---------------------------------------------------------------------------
+# Codec ranking: AV1 > x265 > x264, strictly, in every profile
+# ---------------------------------------------------------------------------
+# A custom format's codec is read from its CONDITIONS, not its name: the
+# Dictionarry tiers carry the codec in a required release-title condition
+# under names like "1080p Efficient Movie WEB Tier 1" (x265) or "1080p WEB-DL
+# (Efficient)" (x264). A condition counts when it is required, not negated,
+# matches exactly one codec's tokens, and does not match a codec-free title.
+# A format is PLAIN when the codec is all it requires (TRaSH's "x265 (HD)",
+# Dictionarry's "AV1"), a TIER when it also requires a resolution, source or
+# group. Per profile, with best = the highest-scoring x265 format:
+#   1. plain x265 never negative; plain x264 never positive (inverted)
+#   2. every x264 format strictly below best
+#   3. every AV1 format positive and strictly above best (best + 1)
+# x264 TIERS keep a positive score below best: Dictionarry's profiles only
+# grab what clears minFormatScore (200000), so a negative x264 tier would make
+# every x264-only release — most streaming WEB-DLs — ungrabbable.
+CODEC_TOKENS = {
+    "av1": ("AV1",),
+    "x265": ("x265", "h265", "H.265", "HEVC"),
+    "x264": ("x264", "h264", "H.264", "AVC"),
+}
+CODEC_FREE = "Title 2024 1080p WEB-DL DDP5.1 Atmos-GROUP"
+
+
+def spec_value(spec):
+    for f in spec.get("fields") or []:
+        if f.get("name") == "value":
+            return f.get("value")
+    return None
+
+
+def codec_of(cf):
+    """(codec, plain) for a custom format, or (None, False). Patterns are
+    .NET regexes; one Python cannot compile is simply not a codec condition."""
+    found, plain = set(), True
+    for spec in cf.get("specifications") or []:
+        if not spec.get("required") or spec.get("negate"):
+            continue
+        if spec.get("implementation") != "ReleaseTitleSpecification":
+            plain = False
+            continue
+        try:
+            rx = re.compile(str(spec_value(spec) or ""), re.I)
+        except re.error:
+            plain = False
+            continue
+        hits = {c for c, toks in CODEC_TOKENS.items()
+                if any(rx.search(t) for t in toks)}
+        if len(hits) != 1 or rx.search(CODEC_FREE):
+            plain = False
+            continue
+        found |= hits
+    return (found.pop(), plain) if len(found) == 1 else (None, False)
+
+
+def ranking_fixes(prof, codec):
+    """Apply the three rules above to one profile's format items in place;
+    returns (format name, old score, new score, reason) per change."""
+    items = {c: [fi for fi in prof.get("formatItems", [])
+                 if codec.get(fi.get("format"), (None,))[0] == c]
+             for c in CODEC_TOKENS}
+    fixes = []
+
+    def fix(fi, new, why):
+        fixes.append((codec[fi["format"]][2], fi.get("score", 0), new, why))
+        fi["score"] = new
+
+    for fi in items["x265"]:
+        if codec[fi["format"]][1] and fi.get("score", 0) < 0:
+            fix(fi, 0, "zeroing: a plain x265 format never scores negative")
+    for fi in items["x264"]:
+        if codec[fi["format"]][1] and fi.get("score", 0) > 0:
+            fix(fi, -fi["score"], "inverting: a plain x264 format never scores positive")
+    best = max((fi.get("score", 0) for fi in items["x265"]), default=None)
+    if best is not None:
+        for fi in items["x264"]:
+            if fi.get("score", 0) >= best:
+                fix(fi, best - 1, f"x264 must score strictly below the best x265 ({best})")
+    floor = max(best or 0, 0)
+    for fi in items["av1"]:
+        if fi.get("score", 0) <= floor:
+            fix(fi, floor + 1, f"AV1 must score above zero and the best x265 ({best})")
+    return fixes
+
+
+for name, a in ARRS.items():
+    base, api, key = a["base"], a["api"], a["key"]
+    codec = {}
+    for cf in req("GET", f"{base}{api}/customformat", key) or []:
+        c, plain = codec_of(cf)
+        if c:
+            codec[cf["id"]] = (c, plain, cf["name"])
+    if not codec:
         log("OK", f"{name}: no codec custom formats yet (Profilarr sync will add Dictionarry's)")
         continue
     guarded = False
     for prof in req("GET", f"{base}{api}/qualityprofile", key) or []:
-        dirty = False
-        for fi in prof.get("formatItems", []):
-            score = fi.get("score", 0)
-            if fi.get("format") in f265 and score < 0:
-                log("GUARD", f"{name}: profile {prof['name']!r} scored "
-                             f"{f265[fi['format']]!r} at {score} — zeroing (x265 ENFORCED)")
-                fi["score"] = 0
-                dirty = True
-            elif fi.get("format") in f264 and score > 0:
-                log("GUARD", f"{name}: profile {prof['name']!r} scored "
-                             f"{f264[fi['format']]!r} at +{score} — inverting to "
-                             f"{-score} (x265 ENFORCED: x264 must never score positive)")
-                fi["score"] = -score
-                dirty = True
-        # Strictness: after the rules above x265 >= 0 >= x264, so the only
-        # possible tie is both at 0; demote the tied x264 items to -1.
-        i265 = [fi for fi in prof.get("formatItems", []) if fi.get("format") in f265]
-        i264 = [fi for fi in prof.get("formatItems", []) if fi.get("format") in f264]
-        if i265 and i264:
-            best265 = max(fi.get("score", 0) for fi in i265)
-            for fi in i264:
-                if fi.get("score", 0) >= best265:
-                    log("GUARD", f"{name}: profile {prof['name']!r} ties "
-                                 f"{f264[fi['format']]!r} at {fi.get('score', 0)} with the "
-                                 f"best x265 score — demoting to {best265 - 1} "
-                                 f"(x265 must STRICTLY outrank x264)")
-                    fi["score"] = best265 - 1
-                    dirty = True
-        if dirty:
+        fixes = ranking_fixes(prof, codec)
+        for cf_name, old, new, why in fixes:
+            log("GUARD", f"{name}: profile {prof['name']!r} scored {cf_name!r} at "
+                         f"{old} - set to {new} ({why})")
+        if fixes:
             req("PUT", f"{base}{api}/qualityprofile/{prof['id']}", key, prof)
-            change(f"{name}: enforced x265-over-x264 scoring in profile {prof['name']!r}")
+            change(f"{name}: enforced AV1 > x265 > x264 scoring in profile {prof['name']!r}")
             guarded = True
     if not guarded:
-        log("OK", f"{name}: x265 outranks x264 in every profile (no negative "
-                  f"x265, no positive x264, no ties)")
+        log("OK", f"{name}: AV1 > x265 > x264 in every profile")
 
 # ---------------------------------------------------------------------------
 # Prowlarr -> arr application push-sync
@@ -502,8 +593,8 @@ try:
 
     idents = [ident(d) for d in dbs if isinstance(d, dict)]
     if any("trash" in i for i in idents):
-        log("FATAL", "profilarr: a TRaSH-converted database is linked — x265 is "
-                     "ENFORCED and trash-pcd reintroduces the x264 bias. Unlink it.")
+        log("FATAL", "profilarr: a TRaSH-converted database is linked — the codec "
+                     "ranking is ENFORCED and trash-pcd reintroduces the x264 bias. Unlink it.")
         sys.exit(1)
     if any("dictionarry" in i for i in idents):
         log("OK", "profilarr: Dictionarry database already linked")

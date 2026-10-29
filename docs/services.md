@@ -93,7 +93,7 @@ services use standard ports.
 flowchart LR
   user["Tailnet user"]
   seerr["Seerr<br/>requests"]
-  arrs["Radarr · Sonarr<br/>Profilarr profiles, x265 guard"]
+  arrs["Radarr · Sonarr<br/>Efficient profiles, AV1 > x265 > x264"]
   prowlarr["Prowlarr"]
 
   subgraph netns["gluetun netns (kill-switch)"]
@@ -142,7 +142,7 @@ has egress, and the gluetun-healthy gate keeps them stopped.
 | Prowlarr           | fast      | 127.0.0.1:10053 | FwdAuth | `lscr.io/linuxserver/prowlarr:2.5.2`          | Indexer management. media-init adds the Armiger indexer (Bitmagnet behind Armiger's filter) once Bitmagnet's index has results |
 | Seerr              | fast      | 127.0.0.1:10054 | Local* | `ghcr.io/seerr-team/seerr:v3.4.1`              | Request UI. Signs in with Jellyfin accounts, so LDAP users too (*no OIDC on the stable tag) |
 | Bazarr             | fast+slow | 127.0.0.1:10055 | FwdAuth | `lscr.io/linuxserver/bazarr:1.6.0`            | Auto-download subtitles for Radarr/Sonarr.      |
-| Profilarr          | fast      | 127.0.0.1:10056 | FwdAuth + OIDC (Admin) | `ghcr.io/dictionarry-hub/profilarr:2.2.0`     | Syncs Dictionarry H265 profiles to *arr (Dictionarry DB ONLY) |
+| Profilarr          | fast      | 127.0.0.1:10056 | FwdAuth + OIDC (Admin) | `ghcr.io/dictionarry-hub/profilarr:2.2.0`     | Syncs Dictionarry profiles to *arr (Dictionarry DB ONLY). Only `1080p Efficient` and `2160p Efficient` are kept: `media-init` deletes every other profile and re-ranks codecs AV1 > x265 > x264 after each sync; Seerr defaults to `1080p Efficient` |
 | qBittorrent        | fast+slow | 127.0.0.1:10057 | **Local** | `lscr.io/linuxserver/qbittorrent:5.2.3`     | Download client in gluetun's netns; UI published by gluetun. No Caddy handle exists yet, so the only control is its own WebUI credential, seeded by `qbit-init` from the stack env (`WebUI\LocalHostAuth=false` — a loopback request bypasses it). Add the forward-auth blueprint entry before adding the route. Shares gluetun's netns, so it stays `Created` until the VPN credentials land |
 | Gluetun            | fast      | --            | --       | `qmcgaw/gluetun:v3.41.3`                       | VPN tunnel + kill-switch for qBittorrent, Bitmagnet, its database and Armiger (all in its netns). **Provider-agnostic**: the compose names no provider and sets no `VPN_SERVICE_PROVIDER`; everything provider-specific arrives from the stack's sops file (selection criterion: port-forwarding support). The whole media download path is blocked until those credentials are filled |
 | ClamAV             | fast+slow | --            | --       | `clamav/clamav:1.5`                            | Scans all qBit downloads (3310 internal, poll-watcher quarantines BY INODE — every hardlink to the infected file is unlinked too). Also promotes clean `audiobooks`-category downloads into /mnt/slow/books/drop after the verdict |

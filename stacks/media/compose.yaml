@@ -3,8 +3,9 @@
 # 10050-10059 per docs/services.md.
 #
 # Invariants other files depend on:
-#   - x265 is ENFORCED; media-init.sh re-scores profiles and Profilarr may
-#     only sync Dictionarry (never trash-pcd).
+#   - AV1 > x265 > x264 is ENFORCED on the only two quality profiles, 1080p
+#     and 2160p Efficient: media-init.sh deletes the rest and re-scores, and
+#     Profilarr may only sync Dictionarry (never trash-pcd).
 #   - Everything provider-specific about the VPN comes from the stack env — gluetun is
 #     handed the whole decrypted file.
 #   - /mnt/slow is ONE filesystem so *arr imports are hardlinks; scan-
