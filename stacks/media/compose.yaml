@@ -595,11 +595,11 @@ services:
 
   # Queue hygiene
   #
-  # v2 is configured through its web UI into /config, not env vars; point the
-  # malware blocker at a LOCAL blocklist under /config so it works offline.
-  # The login is the exception: cleanuparr-init below claims the one account
-  # and turns on the Authentik sign-in (under the route's forward auth) over
-  # the API.
+  # v2 keeps its configuration in /config, not env vars; cleanuparr-init below
+  # declares all of it over the API — the one account and the Authentik
+  # sign-in (under the route's forward auth), the arr and qBittorrent
+  # connections, the malware blocker on a LOCAL blocklist under /config (so it
+  # works offline) and the queue cleaner.
   cleanuparr:
     image: ghcr.io/cleanuparr/cleanuparr:2.10.5
     container_name: cleanuparr
@@ -621,8 +621,9 @@ services:
     restart: unless-stopped
 
   # Creates the admin account while setup is still anonymous, then signs in
-  # with it and writes the OIDC settings (blueprints/custom/cleanuparr-oidc.yaml)
-  # — so it reconciles on every redeploy. See cleanuparr-init.sh.
+  # with it and writes the OIDC settings (blueprints/custom/cleanuparr-oidc.yaml),
+  # the connections, the malware blocker and the queue cleaner — so it
+  # reconciles on every redeploy. See cleanuparr-init.sh.
   cleanuparr-init:
     image: python:3.13-alpine
     container_name: media_cleanuparr_init
@@ -638,7 +639,10 @@ services:
       - CLEANUPARR_OIDC_CLIENT_ID=cleanuparr
     volumes:
       - ./cleanuparr-init.sh:/init/cleanuparr-init.sh:ro
-    # Its two secrets alone (stacks/media/env.cleanuparr.nix), not media.env.
+      - ./cleanuparr-blocklist.txt:/init/blocklist.txt:ro
+      # Where it writes the blocklist Cleanuparr reads as /config/blocklist.txt.
+      - /mnt/fast/cleanuparr/config:/cleanuparr-config
+    # Its own secrets alone (stacks/media/env.cleanuparr.nix), not media.env.
     env_file: /run/stack-env/media.cleanuparr.env
     restart: "no"
 

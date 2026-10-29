@@ -28,7 +28,6 @@ the volume is lost) or must be redone on every recreate.
 | Paperless-ngx | grant staff/admin to the SSO user in `/admin` | the superuser-group variable first exists in 3.1; the stack pins 2.20 | Paperless DB |
 | Dawarich | make your Authentik email equal `DAWARICH_ADMIN_EMAIL` **before** the first SSO login; confirm the password once to link | auto-register matches by email; a mismatch mints a second account | ordering, once |
 | Profilarr | bind the Dictionarry profiles to the Radarr/Sonarr instances | `/api/v1/arr` is GET-only; the binding is a session-cookie form action | `/mnt/fast/profilarr` |
-| Cleanuparr | configure the arr and qBittorrent connections and the malware blocker | v2 keeps all of it in its SQLite; env covers only `PORT`/`BASE_PATH`. The account and its OIDC are seeded by `cleanuparr-init` | `/mnt/fast/cleanuparr` |
 | Grafana | install the VictoriaLogs datasource plugin on the host | the image that bakes it in (`stacks/logging/Dockerfile`) is not yet published, so the compose pins stock Grafana | `/mnt/fast/grafana/plugins` |
 | Firefly III | mint a Personal Access Token for the importer (Profile → OAuth) into `FIREFLY_III_ACCESS_TOKEN` | the only `createToken` path is a browser session; `artisan tinker` is not in the image | Firefly DB (Passport's keys come from sops) |
 | Firefly importer | every import: upload the import config JSON in its UI | no scheduled sync exists; `SIMPLEFIN_TOKEN` is a one-shot claim URL | no |

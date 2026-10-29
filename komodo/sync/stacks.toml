@@ -401,6 +401,7 @@ config_files = [
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "bazarr-config-init.sh", services = ["bazarr-config-init"], requires = "Restart" },
   { path = "bazarr-init.sh", services = ["bazarr-init"], requires = "Restart" },
+  { path = "cleanuparr-blocklist.txt", services = ["cleanuparr-init"], requires = "Restart" },
   { path = "cleanuparr-init.sh", services = ["cleanuparr-init"], requires = "Restart" },
   { path = "jellyfin-config-init.sh", services = ["jellyfin-config-init"], requires = "Restart" },
   { path = "jellyfin-encoding.xml", services = ["jellyfin-config-init"], requires = "Restart" },
