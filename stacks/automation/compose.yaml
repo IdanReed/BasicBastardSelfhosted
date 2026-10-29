@@ -236,7 +236,11 @@ services:
     entrypoint: ['/bin/sh', '/init/automation-init.sh']
     depends_on:
       homeassistant:
+        # restart: true — the stack's post-deploy hook restarts homeassistant
+        # right after `up -d` has started this init against it; compose then
+        # re-runs the init once homeassistant is healthy again.
         condition: service_healthy
+        restart: true
     volumes:
       - ./automation-init.sh:/init/automation-init.sh:ro
     env_file: /run/stack-env/automation.env

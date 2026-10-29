@@ -93,9 +93,17 @@ flowchart LR
   `../../secrets/shared.sops.json` for a stack whose `env.nix` reads it) as
   `Redeploy`; every repo file a service bind-mounts as `Restart` for the
   services that mount it — the lint derives the list from `compose.yaml`. A
-  push that changes only such a file restarts its consumers; one that changes
-  `compose.yaml` too deploys only the services whose definition changed —
-  restart the file's consumers from the UI.
+  push that changes only such files restarts their consumers.
+- **A deploy always re-binds bind-mounted files.** Any `Redeploy` change
+  (`compose.yaml`, the ciphertext) makes the push a full deploy, which never
+  runs the `Restart`, and `up -d` leaves an unchanged container on the old
+  inode. So every stack with a long-running consumer has
+  `post_deploy = { command = "docker compose -p <name> restart <services>" }`,
+  which Periphery runs after every successful `up -d` — a push or a UI Deploy.
+  One-shots (`restart: "no"`) stay out of it: `up -d` starts an exited
+  container again, which re-binds. An init that depends on a restarted
+  service sets `restart: true` on that dependency, so compose re-runs it once
+  the service is back. The lint derives both from `compose.yaml`.
 - **Delete mode is on.** Removing a block destroys the stack (`compose down`).
   The sync is scoped by `match_tags = ["gitops"]`: every block carries the tag
   (the lint refuses one without), and nothing untagged — Core's `Local`
@@ -223,8 +231,9 @@ registers it and a push deploys it.
    `tests/fixtures/stacks/<name>.sops.json` (`sops -e -i` — the fixtures rule
    encrypts to the test key).
 4. **Register** — a `[[stack]]` block in `komodo/sync/stacks.toml`, copied
-   from a neighbour, `tags = ["gitops"]`, `additional_env_files` and
-   `config_files` set (`./tests/run.sh` prints any missing line).
+   from a neighbour, `tags = ["gitops"]`, `additional_env_files`,
+   `config_files` and `post_deploy` set (`./tests/run.sh` prints any missing
+   line).
 5. **Pin** — `./tests/update-images.sh` (tag conventions differ per registry;
    the `image-pins` lint fails while a pin is stale).
 6. **Directories** — `./nixos/generate-stack-dirs.sh`; it exits non-zero until
@@ -425,9 +434,9 @@ omission is a named `NOT_BACKED_UP` entry.
    contents until the next push or a UI Deploy. Judge by `docker ps -a`.
 3. A secret that did not land: the push came before the switch — `nrs-vm`,
    then Deploy.
-4. A bind-mounted file that did not land: the same push changed
-   `compose.yaml`, so only changed services were redeployed — restart the
-   file's consumers.
+4. A bind-mounted file that did not land: the deploy's **Post Deploy** log
+   in Komodo failed, or the service is missing from the stack's
+   `post_deploy` (`./tests/run.sh` names it) — restart the file's consumers.
 5. Registration: `journalctl -u komodo-sync-bootstrap`. "still a placeholder"
    is an unminted `KOMODO_GIT_TOKEN`; a failed clone is a token from another
    Forgejo or a bot without Read.

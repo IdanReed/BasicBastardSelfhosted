@@ -19,8 +19,11 @@
 #       forgejo:3000 over the homelab network and deploys. The container sees a
 #       value that exists only encrypted in the fixture: the env sops-nix
 #       rendered on the host, passed by path, never written by Komodo.
-#   (e) a compose change redeploys; a CIPHERTEXT change after a "switch"
-#       re-rendered the env redeploys with the new value — the secrets path.
+#   (e) a compose change redeploys; a change to only a bind-mounted file
+#       restarts its consumer; one push changing both re-binds the file
+#       through the post-deploy hook (a full deploy never runs the Restart);
+#       a CIPHERTEXT change after a "switch" re-rendered the env redeploys
+#       with the new value — the secrets path.
 #
 # The stack is named after a fixture with an env (ntfy), so its
 # /run/stack-env/ntfy.env is rendered by the real stack-env module; its compose
@@ -73,6 +76,7 @@ let
       { path = "secrets.sops.json", requires = "Redeploy" },
       { path = "greeting.txt", services = ["gitops-test"], requires = "Restart" },
     ]
+    post_deploy = { command = "docker compose -p ntfy restart gitops-test" }
     auto_pull = false
   '';
 
@@ -245,6 +249,19 @@ pkgs.testers.runNixOSTest {
         services_vm.succeed(
             "cd /root/work && git add -A && "
             f"git commit -q -m '{message}' && git push -q {PUSH_URL} main"
+        )
+
+    def deployed_head(timeout=300):
+        # Komodo records the (short) hash it deployed once Periphery's
+        # ComposeUp — post-deploy hook included — has returned.
+        head = services_vm.succeed("git -C /root/work rev-parse HEAD").strip()
+        services_vm.wait_until_succeeds(
+            f"curl -sf --max-time 15 -X POST {KAPI}/read/GetStack "
+            f"-H 'authorization: {klogin()}' -H 'Content-Type: application/json' "
+            "-d '{\"stack\":\"ntfy\"}' "
+            f"| jq -e --arg h {head} "
+            "'.info.deployed_hash as $d | $d != null and ($h | startswith($d))'",
+            timeout=timeout,
         )
 
     start_all()
@@ -472,6 +489,31 @@ pkgs.testers.runNixOSTest {
         except Exception:
             diag("config-file restart")
             raise
+        now = services_vm.succeed(
+            "docker inspect -f '{{.State.StartedAt}}' gitops_test").strip()
+        assert now != started, "the consumer was not restarted"
+
+    with subtest("a push changing compose.yaml AND a bind-mounted file re-binds it"):
+        # compose.yaml changed, so deploy-if-changed runs a full deploy and
+        # never the Restart for greeting.txt; the service definition did not
+        # change, so `up -d` leaves the container on the old inode. The
+        # stack's post-deploy hook restarts the bind-mount consumers.
+        started = services_vm.succeed(
+            "docker inspect -f '{{.State.StartedAt}}' gitops_test").strip()
+        services_vm.succeed(
+            "cd /root/work/stacks/ntfy && sed -i '1i # a comment-only change' compose.yaml "
+            "&& echo again > greeting.txt")
+        push("change compose.yaml and the greeting")
+        try:
+            deployed_head()
+        except Exception:
+            diag("compose + config-file deploy")
+            raise
+        got = services_vm.succeed("docker exec gitops_test cat /greeting").strip()
+        assert got == "again", f"/greeting is {got!r} after the deploy: the consumer kept the old file"
+        # Restarted, not recreated: the service definition is unchanged.
+        services_vm.succeed(
+            "docker inspect -f '{{index .Config.Labels \"revision\"}}' gitops_test | grep -qx two")
         now = services_vm.succeed(
             "docker inspect -f '{{.State.StartedAt}}' gitops_test").strip()
         assert now != started, "the consumer was not restarted"

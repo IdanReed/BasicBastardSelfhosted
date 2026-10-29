@@ -83,6 +83,11 @@ cd nixos-de && ./test.sh       # desktop config check without deploying
 - Images pinned to an explicit tag, then `./tests/update-images.sh`.
 - Databases `container_name: <name>_db`, user `<name>` (the backup loop keys
   on it).
+- A repo file a service bind-mounts is a `Restart` entry in the stack's
+  `config_files`, and every long-running service that mounts one is in its
+  `post_deploy` restart: `up -d` never re-binds a single-file mount, and a
+  deploy that also changed `compose.yaml` or a secret never runs the
+  `Restart` (`docs/deploy.md`). `./tests/run.sh` prints the missing lines.
 - A new stack also needs: a `[[stack]]` block (`tags = ["gitops"]`), its row in
   `docs/services.md`, a suite (`stackChecks` or `tests/suites/<name>.nix`),
   Gatus probes, and backup wiring — `docs/deploy.md` has the checklist.
