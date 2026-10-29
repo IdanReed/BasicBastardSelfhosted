@@ -219,6 +219,8 @@ pages:
                     url: https://profilarr.svc.idanreed.com
                   - title: Cleanuparr
                     url: https://cleanuparr.svc.idanreed.com
+                  - title: Bitmagnet
+                    url: https://bitmagnet.svc.idanreed.com
 
               # 🚨 The importer's UI has NO authentication of its own and holds
               # a Firefly PAT with full access to every transaction. Its own
