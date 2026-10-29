@@ -154,13 +154,13 @@
     finalImageName = "ghcr.io/advplyr/audiobookshelf";
     finalImageTag = "2.36.0";
   };
-  "ghcr_io_alam00000_bentopdf_1_16_1" = {
-    composeRef = "ghcr.io/alam00000/bentopdf:1.16.1";
-    imageName = "ghcr.io/alam00000/bentopdf";
-    imageDigest = "sha256:d98223eb82661a9f6624a813ed7fc44ad4f80e761e24116a721e1cd891ac8c3f";
-    hash = "sha256-XC2oqDa8p50Ck1u92JqHX/Pm//94OOJmiTEdOWHEAU4=";
-    finalImageName = "ghcr.io/alam00000/bentopdf";
-    finalImageTag = "1.16.1";
+  "ghcr_io_alam00000_bentopdf-simple_v1_16_1" = {
+    composeRef = "ghcr.io/alam00000/bentopdf-simple:v1.16.1";
+    imageName = "ghcr.io/alam00000/bentopdf-simple";
+    imageDigest = "sha256:230cd4eeabc5eee2994bf8e65f6caf72d3eec0f5af96c80a74331e7bf6e5aeda";
+    hash = "sha256-KhCaBX5FDc/zcGufFmckgidgOScl4GTnsVT8s8Ms1eE=";
+    finalImageName = "ghcr.io/alam00000/bentopdf-simple";
+    finalImageTag = "v1.16.1";
   };
   "ghcr_io_bitmagnet-io_bitmagnet_v0_10_0" = {
     composeRef = "ghcr.io/bitmagnet-io/bitmagnet:v0.10.0";

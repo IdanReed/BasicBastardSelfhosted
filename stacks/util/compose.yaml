@@ -13,7 +13,9 @@
 # slot is now stacks/excalidraw.
 services:
   bentopdf:
-    image: ghcr.io/alam00000/bentopdf:1.16.1
+    # The Simple Mode build: the tools only, no marketing pages. Upstream bakes
+    # it in at build time, so it is a separate image (tagged with a `v`).
+    image: ghcr.io/alam00000/bentopdf-simple:v1.16.1
     container_name: bentopdf
     ports:
       - '127.0.0.1:10401:8080'

@@ -70,7 +70,7 @@ let
     images."ghcr_io_ferretdb_ferretdb_2_7_0"
     images."ghcr_io_ferretdb_postgres-documentdb_17-0_107_0-ferretdb-2_7_0"
     images."binwiederhier_ntfy_v2_11_0"
-    images."ghcr_io_alam00000_bentopdf_1_16_1"
+    images."ghcr_io_alam00000_bentopdf-simple_v1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
     # The util stack is `up`'d whole, so ALL FOUR of its services need their
     # images preloaded — a missing one surfaces as a pull attempt, not as

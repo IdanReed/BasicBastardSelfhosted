@@ -51,7 +51,7 @@
 
 let
   stackImages = [
-    images."ghcr_io_alam00000_bentopdf_1_16_1"
+    images."ghcr_io_alam00000_bentopdf-simple_v1_16_1"
     images."ghcr_io_civilblur_mazanoke_v1_1_5"
     images."glanceapp_glance_v0_8_5"
     images."ghcr_io_sharevb_it-tools_2026_7_11"
