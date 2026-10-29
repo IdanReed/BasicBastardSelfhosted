@@ -135,4 +135,52 @@
       Unit = "victorialogs-quota-check.service";
     };
   };
+
+  # Fast-tier headroom
+  # Every database lives on /mnt/fast, and one tenant there grows without
+  # bound: Bitmagnet's index (regenerable, ~8 KB per crawled torrent, at its
+  # tuned crawl rate ~17 GB/day). At 90% the crawler is stopped, before it
+  # can fill the tier under everything else. Start it again by hand
+  # (`docker start bitmagnet`) once the fast disk has grown
+  # (`qm resize` + `grow-disk fast`) or the index has moved.
+  systemd.services.fast-tier-headroom = {
+    description = "Stop Bitmagnet before its index fills /mnt/fast";
+    onFailure = [ "notify-failure@%n.service" ];
+    path = [ pkgs.coreutils config.virtualisation.docker.package ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      pct=$(df --output=pcent /mnt/fast | tail -1 | tr -dc 0-9)
+      echo "/mnt/fast: $pct% used"
+      # Alert on state CHANGE, as victorialogs-quota-check does.
+      stamp=/run/fast-tier-headroom.over
+
+      if [ "$pct" -ge 90 ]; then
+        if [ "$(docker inspect -f '{{.State.Running}}' bitmagnet 2>/dev/null)" = true ]; then
+          docker stop bitmagnet >/dev/null
+          echo "STOPPED bitmagnet: /mnt/fast is at $pct%."
+        fi
+        if [ -e "$stamp" ]; then
+          echo "(already notified; see the journal above)"
+          exit 0
+        fi
+        : > "$stamp"
+        exit 1
+      fi
+
+      if [ -e "$stamp" ]; then
+        echo "recovered: back under 90%"
+        rm -f "$stamp"
+      fi
+    '';
+  };
+
+  systemd.timers.fast-tier-headroom = {
+    description = "Timer for the fast-tier headroom guard";
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*:0/15";
+      Persistent = true;
+      Unit = "fast-tier-headroom.service";
+    };
+  };
 }
