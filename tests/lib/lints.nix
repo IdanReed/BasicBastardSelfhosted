@@ -2269,7 +2269,8 @@ in
   # delete mode on: a stack missing from it is never deployed, and one REMOVED
   # from it is torn down. Every block must also keep the shape the deploy path
   # relies on — a git stack cloned from Forgejo, the rendered env passed but
-  # untracked, and the ciphertext it renders from tracked as Redeploy.
+  # untracked, the ciphertext it renders from tracked as Redeploy, and every
+  # bind-mounted repo file re-bound by whatever deploy lands it.
   komodo-sync-coverage =
     let
       stackInfo = map (n: {
@@ -2406,6 +2407,42 @@ in
               if f.get("requires") != "Restart" or sorted(f.get("services", [])) != sorted(want_cf[pth]):
                   errs.append(f"{n}: {pth} must be requires = \"Restart\" with services = "
                               f"{json.dumps(sorted(want_cf[pth]))}")
+
+          # Komodo runs that Restart only when such files are ALL that changed:
+          # any Redeploy change (compose.yaml, the ciphertext) makes it a full
+          # deploy, and `up -d` leaves an unchanged container on the old inode.
+          # So the post-deploy hook, run by Periphery after every successful
+          # `up -d`, restarts every long-running consumer. A one-shot
+          # (restart: "no") is left out: `up -d` starts an exited container
+          # again, which re-binds, and a second run would race its dependents.
+          svcs = comp.get("services") or {}
+          oneshot = lambda sd: sd.get("restart") in ("no", False)
+          consumers = set().union(*want_cf.values())
+          for svc in sorted(consumers):
+              if "restart" not in svcs[svc]:
+                  errs.append(f"{n}: {svc} bind-mounts a repo file but declares no restart "
+                              f"policy — the post-deploy hook needs to know whether it is a "
+                              f"one-shot (restart: \"no\")")
+          hook = sorted(s for s in consumers if "restart" in svcs[s] and not oneshot(svcs[s]))
+          want_pd = {"command": f"docker compose -p {n} restart {' '.join(hook)}"} if hook else None
+          if c.get("post_deploy") != want_pd:
+              errs.append(f"{n}: " + (
+                  f"set post_deploy = {{ command = \"{want_pd['command']}\" }} — the "
+                  f"long-running services that bind-mount a repo file" if want_pd else
+                  "post_deploy is set, but no long-running service bind-mounts a repo file"))
+          # An init that `up -d` started against a hook-restarted service is
+          # still running when the hook fires; restart: true on that
+          # dependency makes compose re-run it once the service is back.
+          for svc, sd in sorted(svcs.items()):
+              if not oneshot(sd):
+                  continue
+              deps = sd.get("depends_on") or {}
+              if isinstance(deps, list):
+                  deps = {d: {} for d in deps}
+              for d in sorted(set(deps) & set(hook)):
+                  if (deps[d] or {}).get("restart") is not True:
+                      errs.append(f"{n}: one-shot {svc} depends on {d}, which the post-deploy "
+                                  f"hook restarts — give that depends_on entry restart: true")
 
       syncs = {s["name"]: s for s in fleet.get("resource_sync", [])}
       procs = {p["name"]: p for p in fleet.get("procedure", [])}

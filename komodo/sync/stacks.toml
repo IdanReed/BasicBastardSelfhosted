@@ -17,9 +17,16 @@
 # Every repo file a service bind-mounts is tracked as Restart for the services
 # that mount it (komodo-sync-coverage derives the list from compose.yaml and
 # names any missing line): an untracked file never counts as a change, and
-# `up -d` never re-binds a single-file mount — a restart re-binds by path. One
-# push that changes compose.yaml AND such a file deploys the changed services
-# only; restart the file's consumers from the UI.
+# `up -d` never re-binds a single-file mount — a restart re-binds by path.
+# Komodo runs that Restart only when such files are ALL that changed: a change
+# to compose.yaml or the ciphertext makes it a full deploy, and `up -d` leaves
+# an unchanged container on the old inode. So `post_deploy`, which Periphery
+# runs after every successful `up -d`, restarts the long-running consumers:
+#   post_deploy = { command = "docker compose -p <name> restart <services>" }
+# One-shots (restart: "no") are not in it — `up -d` starts an exited container
+# again, which re-binds — and an init that depends on a restarted service sets
+# `restart: true` on that dependency, so compose re-runs it once the service is
+# back. The lint derives the list from compose.yaml like the Restart entries.
 
 
 [[stack]]
@@ -66,6 +73,7 @@ config_files = [
   { path = "mosquitto.conf", services = ["mosquitto"], requires = "Restart" },
   { path = "passwd-init.sh", services = ["mosquitto-init"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p automation restart frigate homeassistant mosquitto" }
 
 [[stack]]
 name = "backrest"
@@ -88,6 +96,7 @@ config_files = [
   { path = "known_hosts", services = ["backrest"], requires = "Restart" },
   { path = "ssh_config", services = ["backrest", "config-init"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p backrest restart backrest" }
 
 [[stack]]
 name = "beszel"
@@ -132,6 +141,7 @@ config_files = [
   { path = "kavita-config-init.sh", services = ["kavita-config-init"], requires = "Restart" },
   { path = "post-download.sh", services = ["shelfmark"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p books restart shelfmark" }
 
 [[stack]]
 name = "caddy"
@@ -152,6 +162,7 @@ config_files = [
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "Caddyfile", services = ["caddy"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p caddy restart caddy" }
 
 [[stack]]
 name = "dawarich"
@@ -211,6 +222,7 @@ config_files = [
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "keyv-init.sql", services = ["excalidraw_db"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p excalidraw restart excalidraw_db" }
 
 [[stack]]
 name = "firefly"
@@ -246,6 +258,7 @@ webhook_enabled = false
 config_files = [
   { path = "gatus.yaml", services = ["gatus"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p gatus restart gatus" }
 
 [[stack]]
 name = "ghostfolio"
@@ -347,6 +360,7 @@ config_files = [
   { path = "grafana-dashboards.yaml", services = ["grafana"], requires = "Restart" },
   { path = "grafana-datasource.yaml", services = ["grafana"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p logging restart alloy grafana" }
 
 [[stack]]
 name = "mealie"
@@ -397,6 +411,7 @@ config_files = [
   { path = "seerr-init.sh", services = ["seerr-init"], requires = "Restart" },
   { path = "seerr-settings.json", services = ["seerr-init"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p media restart clamav-scanner" }
 
 [[stack]]
 name = "notes-sync"
@@ -435,6 +450,7 @@ config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
   { path = "server.yml", services = ["ntfy"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p ntfy restart ntfy" }
 
 [[stack]]
 name = "outline"
@@ -525,6 +541,7 @@ config_files = [
   { path = "secrets.sops.json", requires = "Redeploy" },
   { path = "mbsyncrc", services = ["proton-export"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p proton restart proton-export" }
 
 [[stack]]
 name = "silverbullet"
@@ -545,6 +562,7 @@ config_files = [
   { path = "../../secrets/shared.sops.json", requires = "Redeploy" },
   { path = "git-sync.sh", services = ["silverbullet_gitsync"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p silverbullet restart silverbullet_gitsync" }
 
 [[stack]]
 name = "tandoor"
@@ -586,6 +604,7 @@ config_files = [
   { path = "bookstack-admin-init.sh", services = ["bookstack"], requires = "Restart" },
   { path = "tracking-init.sh", services = ["tracking-init"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p tracking restart bookstack" }
 
 [[stack]]
 name = "util"
@@ -603,6 +622,7 @@ webhook_enabled = false
 config_files = [
   { path = "glance.yml", services = ["glance"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p util restart glance" }
 
 [[stack]]
 name = "vaultwarden"
@@ -662,6 +682,7 @@ config_files = [
   { path = "nginx.conf", services = ["wger_nginx"], requires = "Restart" },
   { path = "wger-init.py", services = ["wger_init"], requires = "Restart" },
 ]
+post_deploy = { command = "docker compose -p wger restart wger_nginx" }
 
 [[stack]]
 name = "windmill"
