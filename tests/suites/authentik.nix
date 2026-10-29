@@ -26,9 +26,8 @@
 #     nothing else ever compares the two ends.
 #   - OIDC discovery end to end: headscale restarted after Authentik is
 #     healthy sets up its OIDC provider through Caddy over verified TLS.
-#   - Accounts: idan is the one declared user and an Authentik superuser; the
-#     six retired names are absent, and the never-logged-in guard on those
-#     entries spares an invited account with the same name. invite-enrollment
+#   - Accounts: idan is the one declared user and an Authentik superuser;
+#     no other account is declared. invite-enrollment
 #     refuses to run without an invitation; invite.sh's own API calls mint a
 #     single-use 7-day invitation with the identity fixed; and that invitation
 #     enrolls a user end to end through the flow executor — the fixed username
@@ -600,12 +599,9 @@ pkgs.testers.runNixOSTest {
       # a fresh plan and a single-use invitation would be spent by the first
       # one.
       AKPUB = "https://${authHost}"
-      RETIRED = ["alondra", "cale", "zach", "rylan", "cameron", "justin"]
-      # One of the retired names on purpose: the enrolled account must survive
-      # the absent entries that delete the never-used one.
-      INVITEE = "cale"
-      INVITEE_EMAIL = "cale@example.com"
-      INVITEE_NAME = "Cale Invited"
+      INVITEE = "invitee"
+      INVITEE_EMAIL = "invitee@example.com"
+      INVITEE_NAME = "Invited User"
       INVITEE_PW = "invitee-test-password-not-secret"
 
       def users_named(name):
@@ -654,7 +650,7 @@ pkgs.testers.runNixOSTest {
                   "email": email, "name": INVITEE_NAME,
                   "password": password, "password_repeat": password}
 
-      with subtest("idan is the one declared user, an Authentik superuser; the retired six are gone"):
+      with subtest("idan is the one declared user, an Authentik superuser"):
           try:
               headscale_vps.wait_until_succeeds(
                   f"{CURL} '{API}/flows/instances/invite-enrollment/' >/dev/null",
@@ -668,19 +664,6 @@ pkgs.testers.runNixOSTest {
               idan = users_named("idan")
               assert len(idan) == 1 and idan[0]["is_superuser"] is True, (
                   f"idan is not an Authentik superuser (Admin group): {idan}")
-              for name in RETIRED:
-                  assert not users_named(name), f"retired account {name!r} exists"
-
-              # The absent entries act on a real account: a never-logged-in
-              # `zach` is deleted by the next apply.
-              headscale_vps.succeed(
-                  f"{CURL} -X POST -H 'Content-Type: application/json' -d "
-                  + shlex.quote(json.dumps({"username": "zach", "name": "Zach",
-                                            "path": "users"}))
-                  + f" '{API}/core/users/' >/dev/null")
-              assert users_named("zach")
-              apply_blueprint("headscale-oidc")
-              assert not users_named("zach"), "state: absent left zach in place"
 
               # Invitee edits are refused later; this is the tenant half.
               settings = json.loads(headscale_vps.succeed(f"{CURL} '{API}/admin/settings/'"))
@@ -830,9 +813,9 @@ pkgs.testers.runNixOSTest {
               c = run_flow("/tmp/reuse.jar", "invite-enrollment", query)
               assert c["component"] == "ak-stage-access-denied", c
 
-              # And the absent entry for `cale` does not touch it.
+              # A re-apply of the declared users leaves the enrolled account alone.
               apply_blueprint("headscale-oidc")
-              assert users_named(INVITEE), "the absent entry deleted an enrolled account"
+              assert users_named(INVITEE), "a blueprint apply deleted an enrolled account"
           except Exception:
               authentik_diag()
               raise
