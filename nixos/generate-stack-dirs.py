@@ -500,6 +500,12 @@ fast-volume plan.""",
     # database" until it is restarted. So each of these names the uid the app
     # writes as (from its PUID/USERMAP env or its image user).
     "/mnt/fast/bazarr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/profilarr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/prowlarr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/qbittorrent/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/radarr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/seerr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/sonarr/config": {"owner": ("1000", "1000")},
     "/mnt/fast/cleanuparr/config": {"owner": ("1000", "1000")},
     "/mnt/fast/clamav/db": {"owner": ("100", "101")},
     "/mnt/fast/docspace/ds-lib": {"owner": ("101", "102")},
