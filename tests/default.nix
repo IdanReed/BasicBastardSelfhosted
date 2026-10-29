@@ -162,6 +162,8 @@ let
     actual = callSuite ./suites/actual.nix { };
     wealthfolio = callSuite ./suites/wealthfolio.nix { };
     excalidraw = callSuite ./suites/excalidraw.nix { };
+    grist = callSuite ./suites/grist.nix { };
+    penpot = callSuite ./suites/penpot.nix { };
     gatus = callSuite ./suites/gatus.nix { };
     proton = callSuite ./suites/proton.nix { };
     beszel = callSuite ./suites/beszel.nix { };
@@ -187,10 +189,12 @@ let
   };
 
   # Stacks whose shape fits the generic harness: no restart:"no" one-shot
-  # (finding #39) and no healthcheck that lies. Five of them ALSO carry a
+  # (finding #39) and no healthcheck that lies. Six of them ALSO carry a
   # hand-written suite above, which covers what a green generic run cannot.
   # caddy is deliberately absent — it needs the DNS-01 -> tls-internal
   # substitution and a TAILNET_IP; services and tailnet cover its routing.
+  # grist is absent too: its OIDC discovery is boot-fatal, so it boots only
+  # beside the issuer stub its own suite provides.
   stackChecks = lib.genAttrs [
     "ghostfolio"
     "logging"
@@ -201,7 +205,16 @@ let
     "outline"
     "silverbullet"
     "excalidraw"
-  ] (name: mkStackSuite { stack = name; });
+  ] (name: mkStackSuite { stack = name; })
+  // {
+    # Five containers and ~3.3 GB of images (the exporter bundles Chromium,
+    # the backend a JVM): the default 3 GB / 8 GB VM holds neither.
+    penpot = mkStackSuite {
+      stack = "penpot";
+      memoryMB = 6144;
+      diskMB = 20480;
+    };
+  };
 in
 rec {
   inherit

@@ -18,7 +18,13 @@
   sopsModule,
 }:
 
-{ stack }:
+{
+  stack,
+  # The VM's size. The defaults hold a small stack; one whose images and
+  # containers outgrow them passes its own from ../default.nix.
+  memoryMB ? 3072,
+  diskMB ? 8192,
+}:
 
 let
   composeDir = ../../stacks + "/${stack}";
@@ -163,10 +169,7 @@ pkgs.testers.runNixOSTest {
           profiles.noDhcp
           profiles.manualTailscaleAutoconnect
           (profiles.sopsFixture ../fixtures/services-vm.sops.yaml)
-          (profiles.sized {
-            memoryMB = 3072;
-            diskMB = 8192;
-          })
+          (profiles.sized { inherit memoryMB diskMB; })
           (profiles.loadImages {
             inherit pkgs;
             images = stackImages;

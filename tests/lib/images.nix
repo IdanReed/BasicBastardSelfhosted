@@ -418,6 +418,14 @@
     finalImageName = "grafana/grafana";
     finalImageTag = "13.2.0";
   };
+  "gristlabs_grist-oss_1_7_21" = {
+    composeRef = "gristlabs/grist-oss:1.7.21";
+    imageName = "gristlabs/grist-oss";
+    imageDigest = "sha256:5657dc14b1745ef759bf789e5206ff4591e9b7d61d53777cc2fc710bfc9fbe36";
+    hash = "sha256-LAauiTaDg5A5feX4tsf+miT8lVMuN/upyJDmSK0e5E8=";
+    finalImageName = "gristlabs/grist-oss";
+    finalImageTag = "1.7.21";
+  };
   "henrygd_beszel_0_18_8" = {
     composeRef = "henrygd/beszel:0.18.8";
     imageName = "henrygd/beszel";
@@ -553,6 +561,30 @@
     hash = "sha256-VqviYs9sswL8e/01/ARv0cxs00232qy5A71x0fw3UZo=";
     finalImageName = "owlplanner/owldocker";
     finalImageTag = "2026.8.29";
+  };
+  "penpotapp_backend_2_18_5" = {
+    composeRef = "penpotapp/backend:2.18.5";
+    imageName = "penpotapp/backend";
+    imageDigest = "sha256:20d2325ec8e00f4be5f65e543d5618b585598facff404cf06446e91b5ead9036";
+    hash = "sha256-uZjpBUu+/XxSjYBSqZdHG9aXgaFYV3vS3W5W4Ux9Dvo=";
+    finalImageName = "penpotapp/backend";
+    finalImageTag = "2.18.5";
+  };
+  "penpotapp_exporter_2_18_5" = {
+    composeRef = "penpotapp/exporter:2.18.5";
+    imageName = "penpotapp/exporter";
+    imageDigest = "sha256:8c341d6d40f234d33e4272f87c6f53fdde839546e4c758872cebf175bddb8c71";
+    hash = "sha256-Y5mViPLzvkHzcQwHuTS/5ymezTaQjdkWi8PPewpZYBg=";
+    finalImageName = "penpotapp/exporter";
+    finalImageTag = "2.18.5";
+  };
+  "penpotapp_frontend_2_18_5" = {
+    composeRef = "penpotapp/frontend:2.18.5";
+    imageName = "penpotapp/frontend";
+    imageDigest = "sha256:9bc0c288985d2d18a2c3e7b849d8edda317e1bfd99ec6dd494e5bfdcfe411f06";
+    hash = "sha256-DUe5Uq6nlcZNdurqKtCkfdFe7I3HK0lYfGNg8qGorLc=";
+    finalImageName = "penpotapp/frontend";
+    finalImageTag = "2.18.5";
   };
   "postgis_postgis_17-3_5-alpine" = {
     composeRef = "postgis/postgis:17-3.5-alpine";

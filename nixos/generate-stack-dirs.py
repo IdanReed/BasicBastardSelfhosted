@@ -139,6 +139,12 @@ Three containers, three answers, each read out of the pinned image:
 The read-only journal mounts (/var/log/journal, /etc/machine-id) are
 system paths, not per-stack bind sources, and must never enter this
 table.""",
+    "grist": """\
+1001:1001, the image's `grist` user. The entrypoint starts as root, chowns
+whatever under /persist is not already the grist user's, then drops to it,
+so a wrong owner heals at start — declared anyway so the tree is right
+before the first one. home.sqlite3 and docs/*.grist are SQLite databases,
+dumped one by one by backup-prepare.sh.""",
     "immich": """\
 root:root everywhere on purpose: the immich images have no PUID/PGID and
 run as root, the postgres image chowns pgdata itself, and
@@ -198,6 +204,11 @@ root:root for all five: the entrypoint runs as root, maps its
 `paperless` user onto USERMAP_UID/USERMAP_GID (1000 here) and chowns
 data/media/consume/export before dropping privileges, and the postgres
 image chowns pgdata itself.""",
+    "penpot": """\
+assets/ is 1001:1001, the `penpot` user the backend image ends on: it
+writes every upload there and nothing in it chowns. The frontend (also
+uid 1001) mounts the same tree read-only to serve it. Postgres's datadir
+is in the database data dirs block below; valkey has no volume.""",
     "proton": """\
 hydroxide runs as USER hydroxide (uid 1000) with no chown-on-start, so
 its directory must be pre-owned or the one-time `auth` can never write
@@ -461,6 +472,22 @@ The mail export — a full-mailbox maildir, append-only by construction
 (mbsyncrc: Sync Pull + Expunge None). Slow tier, and unlike the log store
 it IS backed up: slow-volume-selective names it.""",
     },
+    # --- grist --------------------------------------------------------
+    "/mnt/fast/grist": {
+        "owner": ("1001", "1001"),
+        "note": """\
+The whole stack state: home.sqlite3 (users, sites, the activation row with
+the install settings) and docs/<docId>.grist, one SQLite file per
+document.""",
+    },
+    # --- penpot -------------------------------------------------------
+    "/mnt/fast/penpot/assets": {
+        "owner": ("1001", "1001"),
+        "note": """\
+Uploaded images, fonts and file thumbnails (objects storage backend `fs`)
+— the half of Penpot's state that is not in Postgres, raw-copied by the
+fast-volume plan.""",
+    },
     # --- wealthfolio ---------------------------------------------------
     "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},
     # --- database data dirs ------------------------------------------
@@ -474,6 +501,7 @@ it IS backed up: slow-volume-selective names it.""",
     "/mnt/fast/ghostfolio/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/outline/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/paperless/pgdata": {"mode": "0700", "owner": ("70", "70")},
+    "/mnt/fast/penpot/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/tandoor/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/wger/pgdata": {"mode": "0700", "owner": ("70", "70")},
     "/mnt/fast/windmill/pgdata": {"mode": "0700", "owner": ("70", "70")},

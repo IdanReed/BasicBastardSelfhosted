@@ -89,7 +89,7 @@ finish_dump() {
 # Every entry expects container <svc>_db with superuser <svc> (POSTGRES_USER);
 # the backup-coverage lint checks both against the compose files. komodo is the
 # deploy plane's own state — FerretDB keeps all of it as JSONB in this cluster.
-for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo excalidraw; do
+for svc in paperless immich firefly dawarich tandoor wger windmill outline ghostfolio komodo excalidraw penpot; do
     container="${svc}_db"
     require_running "$container" "$svc" || continue
 
@@ -168,6 +168,19 @@ sqlite_backup mealie         /mnt/fast/mealie/mealie.db
 # Wealthfolio (evaluation). secrets.json beside it is covered as a file, useful
 # only with WF_SECRET_KEY from secrets.sops.json.
 sqlite_backup wealthfolio    /mnt/fast/wealthfolio/wealthfolio.db
+# Grist (evaluation): the home database, then every document — each .grist file
+# is a SQLite database of its own, dumped to grist-docs/<docId>.sqlite. The doc
+# dumps mirror the live set: one whose document is gone is removed.
+sqlite_backup grist          /mnt/fast/grist/home.sqlite3
+install -d -m 0700 "$DUMPS/grist-docs"
+for doc in /mnt/fast/grist/docs/*.grist; do
+    [ -f "$doc" ] || continue
+    sqlite_backup "grist-docs/$(basename "$doc" .grist)" "$doc"
+done
+for dump in "$DUMPS"/grist-docs/*.sqlite; do
+    [ -f "$dump" ] || continue
+    [ -f "/mnt/fast/grist/docs/$(basename "$dump" .sqlite).grist" ] || rm -f "$dump"
+done
 # Karakeep keeps the app database and a separate liteque job queue.
 sqlite_backup karakeep       /mnt/fast/karakeep/data/db.db
 sqlite_backup karakeep-queue /mnt/fast/karakeep/data/queue.db

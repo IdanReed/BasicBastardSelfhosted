@@ -107,6 +107,8 @@ pages:
                     url: https://docspace.svc.idanreed.com
                   - title: rmfakecloud
                     url: https://rmfakecloud.svc.idanreed.com
+                  - title: Grist
+                    url: https://grist.svc.idanreed.com
 
               # The Firefly DATA IMPORTER is on Admin — separate hostname,
               # separate Authentik application.
@@ -154,6 +156,8 @@ pages:
                     url: https://it-tools.svc.idanreed.com
                   - title: Syncthing
                     url: https://syncthing.svc.idanreed.com
+                  - title: Penpot
+                    url: https://penpot.svc.idanreed.com
 
   # Admin — things you open when something needs tending. Not a privilege tier
   # (rule 3).

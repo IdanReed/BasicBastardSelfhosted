@@ -579,6 +579,31 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # Not behind forward auth (native OIDC). GRIST_FORCE_LOGIN redirects an
+  # anonymous `/` to its sign-in route, hence ignore-redirect.
+  - name: "grist (path: caddy -> service)"
+    group: "path"
+    url: "https://grist.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # db=1 runs a query against home.sqlite3, ready=1 fails until the server has
+  # finished starting; either failing turns the answer into a 500.
+  - name: "grist (service)"
+    group: "service"
+    url: "http://127.0.0.1:10101/status?db=1&ready=1"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
   - name: "homeassistant (path: caddy -> service)"
     group: "path"
     url: "https://homeassistant.svc.idanreed.com/"
@@ -993,6 +1018,32 @@ endpoints:
       ignore-redirect: true
     conditions:
       - "[STATUS] < 400"
+    alerts:
+      - type: ntfy
+
+  # Not behind forward auth (native OIDC), so the path probe expects the SPA
+  # shell, not a 302.
+  - name: "penpot (path: caddy -> service)"
+    group: "path"
+    url: "https://penpot.svc.idanreed.com/"
+    interval: 2m
+    client:
+      ignore-redirect: true
+    conditions:
+      - "[STATUS] < 400"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+    alerts:
+      - type: ntfy
+
+  # Penpot's nginx proxies /readyz to the backend, which answers it with a
+  # query against Postgres: one probe through frontend, backend and database.
+  - name: "penpot (service)"
+    group: "service"
+    url: "http://127.0.0.1:10410/readyz"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == OK"
     alerts:
       - type: ntfy
 

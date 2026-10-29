@@ -356,6 +356,53 @@ in
                     f"{oenv.get('OIDC_LOGOUT_URI')!r} does not reference the "
                     f"blueprint's application slug {oslug!r}")
 
+        # --- Grist and Penpot: compose env <-> <app>-oidc.yaml --------------
+        # OIDC is the only login of both. Each builds its redirect URI from
+        # its public URL: Grist APP_HOME_URL + /oauth2/callback (OIDCConfig),
+        # Penpot PENPOT_PUBLIC_URI + /api/auth/oidc/callback (auth/oidc.clj).
+        # (stack, compose file, service, client-id key, public-URL key,
+        #  callback path, key that must carry the application slug)
+        for stack, cpath, svc, id_key, url_key, cb, slug_key in [
+            ("grist", "${(repo + "/stacks/grist/compose.yaml")}", "grist",
+             "GRIST_OIDC_IDP_CLIENT_ID", "APP_HOME_URL", "/oauth2/callback",
+             "GRIST_OIDC_IDP_ISSUER"),
+            ("penpot", "${(repo + "/stacks/penpot/compose.yaml")}", "penpot-backend",
+             "PENPOT_OIDC_CLIENT_ID", "PENPOT_PUBLIC_URI", "/api/auth/oidc/callback",
+             "PENPOT_OIDC_BASE_URI"),
+        ]:
+            with open(cpath) as f:
+                raw = ((yaml.safe_load(f).get("services") or {}).get(svc) or {}).get(
+                    "environment") or {}
+            senv = ({str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict)
+                    else dict(str(e).partition("=")[::2] for e in raw))
+            with open(f"${(repo + "/headscale-vps/authentik/blueprints/custom")}/{stack}-oidc.yaml") as f:
+                sdoc = yaml.load(f, Loose)
+            sprov = next((e for e in sdoc["entries"]
+                          if str(e.get("model", "")).endswith("oauth2provider")), None)
+            sapp = next((e for e in sdoc["entries"]
+                         if e.get("model") == "authentik_core.application"), None)
+            if sprov is None or sapp is None:
+                errs.append(f"{stack}: {stack}-oidc.yaml needs an oauth2provider "
+                            f"and an application entry")
+                continue
+            if sprov["attrs"]["client_id"] != senv.get(id_key):
+                errs.append(
+                    f"{stack}: client_id mismatch: compose {id_key} is "
+                    f"{senv.get(id_key)!r}, blueprint has "
+                    f"{sprov['attrs']['client_id']!r}")
+            expected = senv.get(url_key, "").rstrip("/") + cb
+            suris = [u["url"] for u in sprov["attrs"]["redirect_uris"]]
+            if expected not in suris:
+                errs.append(
+                    f"{stack}: {url_key} {senv.get(url_key)!r} implies "
+                    f"redirect_uri {expected!r}, blueprint offers {suris!r} — "
+                    f"strict matching, so this is fatal at login")
+            sslug = sapp["identifiers"]["slug"]
+            if f"/application/o/{sslug}/" not in senv.get(slug_key, ""):
+                errs.append(
+                    f"{stack}: {slug_key} {senv.get(slug_key)!r} does not "
+                    f"reference the blueprint's application slug {sslug!r}")
+
         # Jellyfin has no OIDC: jellyfin-oidc.yaml only marks the retired
         # provider and application absent (state: absent, identifiers only).
         with open("${(repo + "/headscale-vps/authentik/blueprints/custom/jellyfin-oidc.yaml")}") as f:
