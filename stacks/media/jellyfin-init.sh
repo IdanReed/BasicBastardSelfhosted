@@ -243,6 +243,19 @@ else:
     else:
         log("LDAP plugin already configured - no change")
 
+# A LOCAL account other than the admin shadows the LDAP user of that name: an
+# existing account only ever authenticates with its own provider, so that
+# person's Authentik password is refused. Reported, never deleted — removing
+# an account is an admin's decision (Dashboard -> Users).
+_, users = call("/Users", token=token)
+for u in users or []:
+    provider = (u.get("Policy") or {}).get("AuthenticationProviderId") or ""
+    if provider.endswith("DefaultAuthenticationProvider") and \
+            str(u.get("Name", "")).lower() != USER.lower():
+        log(f"WARN: {u.get('Name')!r} is a local Jellyfin account, so the LDAP "
+            f"user of that name cannot sign in - delete it in the UI unless it "
+            f"is meant to stay local")
+
 # No OIDC (TV and mobile clients cannot follow the redirect; LDAP above is the
 # shared login instead), and jellyfin-config-init removes an earlier SSO-Auth
 # install. What that plugin's setup left in the branding — the "Sign in with
