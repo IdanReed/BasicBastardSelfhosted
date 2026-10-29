@@ -138,4 +138,39 @@
     startLimitIntervalSec = 3600;
     startLimitBurst = 10;
   };
+
+  # The second chance the bounded wait above cannot give: Authentik can take
+  # longer than that to come up (a major upgrade runs its migrations first),
+  # and headscale then stays on CLI-auth until something restarts it. This
+  # runs each time authentik.service finishes starting — its `up --wait`
+  # returns only once Authentik is healthy — and restarts headscale only if
+  # the current headscale process logged the fallback, so an ordinary
+  # Authentik restart never touches the control plane.
+  systemd.services.headscale-oidc-retry = {
+    description = "Restart headscale if it started without OIDC";
+    after = [ "authentik.service" "headscale.service" ];
+    wantedBy = [ "authentik.service" ];
+    path = [ pkgs.curl pkgs.gnugrep config.systemd.package ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      since=$(systemctl show -p ActiveEnterTimestamp --value headscale.service)
+      if [ -z "$since" ]; then
+        echo "headscale is not running; nothing to retry"
+        exit 0
+      fi
+      if ! journalctl -u headscale.service --since "$since" --no-pager -o cat \
+          | grep -q "falling back to CLI based authentication"; then
+        echo "headscale has OIDC; nothing to do"
+        exit 0
+      fi
+      for i in $(seq 1 30); do
+        curl -sf --max-time 2 \
+          https://auth.idanreed.com/application/o/headscale/.well-known/openid-configuration \
+          -o /dev/null && break
+        sleep 2
+      done
+      echo "headscale started without OIDC (since $since); restarting it"
+      systemctl restart headscale.service
+    '';
+  };
 }

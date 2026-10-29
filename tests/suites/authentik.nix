@@ -621,7 +621,11 @@ pkgs.testers.runNixOSTest {
           headscale_vps.wait_until_succeeds(
               f"{CURL} '{API}/managed/blueprints/{pk}/' | jq -e "
               + shlex.quote(f'.last_applied != "{before}" and .status == "successful"'),
-              timeout=180,
+              # On a fresh database the worker is still working through every
+              # dependency cascade (each Admin-bound blueprint re-runs
+              # headscale-oidc -> email-verified -> system scopes), and a
+              # requested apply queues behind them.
+              timeout=600,
           )
 
       def run_flow(jar, slug, query="", body=None):
@@ -1245,6 +1249,26 @@ pkgs.testers.runNixOSTest {
           assert len(expr) == 1, f"email scope mappings: {[m['name'] for m in expr]}"
           assert "bool(request.user.email)" in expr[0]["expression"], (
               f"the email mapping lost the override: {expr[0]['expression']!r}")
+
+      with subtest("headscale-oidc-retry leaves headscale on OIDC without a manual restart"):
+          # At first boot headscale races Authentik and may fall back to
+          # CLI-auth; the retry unit runs when authentik.service finishes
+          # starting and restarts headscale only then. Either way, the
+          # headscale process running now must not be on the fallback.
+          headscale_vps.wait_until_succeeds(
+              "systemctl show -p ActiveState --value headscale-oidc-retry.service "
+              "| grep -qx -e inactive -e active "
+              "&& [ \"$(systemctl show -p Result --value headscale-oidc-retry.service)\" = success ] "
+              "&& [ -n \"$(systemctl show -p ExecMainExitTimestamp --value headscale-oidc-retry.service)\" ]",
+              timeout=300,
+          )
+          since = headscale_vps.succeed(
+              "systemctl show -p ActiveEnterTimestamp --value headscale.service").strip()
+          headscale_vps.fail(
+              f"journalctl -u headscale.service --since '{since}' --no-pager -o cat "
+              "| grep -q 'falling back to CLI based authentication'")
+          print(headscale_vps.succeed(
+              "journalctl -u headscale-oidc-retry.service -b --no-pager -o cat | tail -3"))
 
       with subtest("headscale sets up its OIDC provider against the live issuer"):
           # At first boot headscale raced Authentik and its OIDC setup failed
