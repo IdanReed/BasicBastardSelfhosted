@@ -1,7 +1,8 @@
 #!/bin/sh
 # jellyfin-init — headless first run: the setup wizard, the first admin and
-# the two libraries, then the LDAP plugin's configuration on every run. Runs in
-# python:3.13-alpine as a oneshot once jellyfin is healthy.
+# the two libraries, then the LDAP plugin's configuration and the admin's
+# subtitle language on every run. Runs in python:3.13-alpine as a oneshot once
+# jellyfin is healthy.
 #
 # Everyone but idan signs in through LDAP (the Authentik outpost, stacks/ldap):
 # the plugin creates their Jellyfin account at first login, so there is no
@@ -242,6 +243,21 @@ else:
         change(f"LDAP plugin configured ({', '.join(drift)})")
     else:
         log("LDAP plugin already configured - no change")
+
+# idan's subtitle language: English, the language Bazarr fetches (its files
+# end .en.srt). Only the preference is set; the subtitle mode stays his own,
+# and at its default an external English track plays. Per user only: 10.11
+# has no server-wide default, so an LDAP account starts with no preference
+# until its owner sets one under Settings > Subtitles.
+me = (auth or {}).get("User") or {}
+prefs = dict(me.get("Configuration") or {})
+if prefs.get("SubtitleLanguagePreference") != "eng":
+    old = prefs.get("SubtitleLanguagePreference")
+    prefs["SubtitleLanguagePreference"] = "eng"
+    call(f"/Users/Configuration?userId={me['Id']}", "POST", prefs, token=token)
+    change(f"{USER}: subtitle language {old!r} -> 'eng'")
+else:
+    log(f"{USER}: subtitle language already English - no change")
 
 # A LOCAL account other than the admin shadows the LDAP user of that name: an
 # existing account only ever authenticates with its own provider, so that

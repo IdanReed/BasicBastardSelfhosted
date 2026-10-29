@@ -531,6 +531,21 @@ services:
       start_period: 90s
     restart: unless-stopped
 
+  # The subtitle policy over Bazarr's API on every run — the English profile
+  # as the default for series and movies, the providers, OpenSubtitles.com
+  # once its account is filled. See bazarr-init.sh.
+  bazarr-init:
+    image: python:3.13-alpine
+    container_name: media_bazarr_init
+    entrypoint: ['/bin/sh', '/init/bazarr-init.sh']
+    depends_on:
+      bazarr:
+        condition: service_healthy
+    volumes:
+      - ./bazarr-init.sh:/init/bazarr-init.sh:ro
+    env_file: /run/stack-env/media.env
+    restart: "no"
+
   # Profiles
   #
   # Syncs Dictionarry (only Dictionarry) profiles and custom formats into

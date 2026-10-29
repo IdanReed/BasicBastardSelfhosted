@@ -24,6 +24,8 @@
 	"FIREWALL_VPN_INPUT_PORTS": "ENC[AES256_GCM,data:QSidnQE=,iv:SPym7Xv5nQlEXUhYSjaA6otuGy/FZ/Tk81RqaEkzRfc=,tag:tMbNZFxC/gAjnsdUjRtZPA==,type:str]",
 	"BITMAGNET_DB_PASSWORD": "ENC[AES256_GCM,data:Rz7kzR9jlG+/tmGfInLJ+dpYn0eaVlIIPEN7LieoSw==,iv:Gq8NBAlscGUYVc8NNJAOWLG18vZXpUcpFZW5dLV0nBc=,tag:jP9K58w3v/5LAjzEKJd2sg==,type:str]",
 	"TMDB_API_KEY": "ENC[AES256_GCM,data:/ZOylzcOlbenx1ePfbM+kkUnshHe03SAzLOigQ==,iv:ArN6orgNRlsg6H1bvhVxWmSFb4er4tzBx3IELyM7LRA=,tag:hprnivfZjNT21n1HPHExjA==,type:str]",
+	"OPENSUBTITLES_USERNAME": "ENC[AES256_GCM,data:QfMnvi+sPZuCjS8tEpal7+AO4/3AT5jnV54T4Ur3EA==,iv:5gydAtnOkCs6/XX/Q3cK08UJrJJ6DLFCqSkpesn3r50=,tag:xkTJpj9z8IkIBJBa9RDhtg==,type:str]",
+	"OPENSUBTITLES_PASSWORD": "ENC[AES256_GCM,data:vc5lKl2ECGfZwStmhl6KROzIXhhK2FZKOE4E+AurEQ==,iv:BelhevehQiII/8S6J/sqyDw3nY2YizwdjF1kndhaHos=,tag:nTu4PYf34Mlc/NLyhNIn7A==,type:str]",
 	"sops": {
 		"age": [
 			{
@@ -31,8 +33,8 @@
 				"recipient": "age163ufha7vvweplkjw67fe9rv5nzuz33sg6hnj69mh2zngm2cu6fzqatkw2j"
 			}
 		],
-		"lastmodified": "2026-10-29T04:31:35Z",
-		"mac": "ENC[AES256_GCM,data:mKZFdzwe/zfHsdA1RsBJR+IFCDsZXo2R8FpaT91N5ouvYmlseBQj/mWsfWoVI4r7+RWYA71AscVUIsk7oTDUXORwVUgRNCApG3csYU1ifmU2311ZcQRt6AIo/YZJLXnSC+cl5mGU2EfRJ7927l6VIS6VSjtw357DpJRT7myJ2DY=,iv:d7CWPSFrwkpGPMSsxTBF8NV8N+ydfxubYJMN76Yn1fk=,tag:X7xJiVJver7j/hOb5oHEWQ==,type:str]",
+		"lastmodified": "2026-10-29T19:10:09Z",
+		"mac": "ENC[AES256_GCM,data:ur9ofq0z+HYPjCE+pDFfxuNgHmaxd91lrJ791EZ52F027r7WQDqhKxSZtOLsE8Nwngqzo74TNxaG0OoiK6T2gAzkaDg3KqwUzf6f0mBiRm+ozjnf4Q0kelYTZ6VMifk9nTVF5gOgDjxeS7jzdfv2Wr3raOwsW3OolEaSeyyC8NA=,iv:FkPfu62faHThLLipVZ8khTt8BJCFV5zl6zZ9ntco1/M=,tag:6ka0JT9YJehUEjhwfI/NqA==,type:str]",
 		"unencrypted_suffix": "_unencrypted",
 		"version": "3.12.1"
 	}

@@ -443,7 +443,8 @@ sopsgen apply                        # one sudo for the age key; draws every gen
 sopsedit secrets/shared.sops.json    # IDAN_INITIAL_PASSWORD (§15)
 sopsgen apply                        # derives idan's stored copies (Backrest, qBittorrent hashes)
 sopsedit stacks/media/secrets.sops.json   # media/config: QBIT_WEBUI_USER, JELLYFIN_ADMIN_USER,
-                                          #   SEERR_ADMIN_EMAIL, the VPN facts
+                                          #   SEERR_ADMIN_EMAIL, the VPN facts; the
+                                          #   OpenSubtitles account (optional)
 sopsgen sort                         # normalise key order in the yaml files
 ./tests/run.sh deploy-check          # sops-declared + the operator to-do report
 ```
