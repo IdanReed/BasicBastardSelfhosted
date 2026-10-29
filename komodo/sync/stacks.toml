@@ -408,12 +408,14 @@ config_files = [
   { path = "jellyfin-init.sh", services = ["jellyfin-init"], requires = "Restart" },
   { path = "jellyfin-ldap.json", services = ["jellyfin-config-init", "jellyfin-init"], requires = "Restart" },
   { path = "media-init.sh", services = ["media-init"], requires = "Restart" },
+  { path = "probe-downloads.sh", services = ["media-probe"], requires = "Restart" },
+  { path = "quarantine.sh", services = ["clamav-scanner", "media-probe"], requires = "Restart" },
   { path = "scan-downloads.sh", services = ["clamav-scanner"], requires = "Restart" },
   { path = "seerr-bootstrap.sh", services = ["seerr-bootstrap"], requires = "Restart" },
   { path = "seerr-init.sh", services = ["seerr-init"], requires = "Restart" },
   { path = "seerr-settings.json", services = ["seerr-init"], requires = "Restart" },
 ]
-post_deploy = { command = "docker compose -p media restart clamav-scanner" }
+post_deploy = { command = "docker compose -p media restart clamav-scanner media-probe" }
 
 [[stack]]
 name = "notes-sync"

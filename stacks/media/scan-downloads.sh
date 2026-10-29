@@ -8,11 +8,8 @@
 # `audiobooks` category is handled as whole entries instead — one verdict per
 # torrent, and a clean one is moved into the books stack's drop directory.
 #
-# QUARANTINE IS AN INODE OPERATION, NOT A RENAME. /mnt/slow is one filesystem,
-# so *arr imports are hardlinks and a bare `mv` into .quarantine leaves the
-# inode reachable through /data/media. Nothing sequences import against scan,
-# so that window happens in ordinary operation: the original is renamed into
-# .quarantine as evidence and every OTHER link to that inode is unlinked.
+# Quarantine is an inode operation, not a rename — quarantine.sh, shared with
+# probe-downloads.sh, says why and does it.
 #
 # Poll rather than inotify: simpler and immune to watch exhaustion. Filenames
 # containing newlines are not handled.
@@ -33,62 +30,13 @@ INTERVAL="${SCAN_INTERVAL_SECONDS:-60}"
 mkdir -p "$QUARANTINE" /state "$SIZES"
 printf 'TCPSocket 3310\nTCPAddr clamav\n' > "$CONF"
 
-# busybox wget; failure to notify must never stop quarantining.
-notify() {
-  wget -q -O /dev/null --post-data "$1" "$NTFY_URL" \
-    || echo "scan: WARN: ntfy notification failed: $1" >&2
-}
+Q_TAG=scan
+Q_WHO=ClamAV
+. /scan/quarantine.sh
 
 # clamdscan rc: 0 clean, 1 infected, 2 error (unreadable, clamd hiccup).
 scan_one() {
   clamdscan --config-file="$CONF" --no-summary "$1" >/dev/null 2>&1
-}
-
-# Quarantine ONE file, inode-effectively. See the header.
-quarantine_file() {
-  qf=$1
-  # Inode BEFORE the move: across filesystems `mv` becomes copy+unlink and
-  # $qdest would carry a new inode.
-  qino=$(stat -c %i "$qf" 2>/dev/null || echo "")
-  qlinks=$(stat -c %h "$qf" 2>/dev/null || echo "")
-
-  qdest="$QUARANTINE/$(basename "$qf").$(date +%s)"
-  if ! mv -f "$qf" "$qdest"; then
-    echo "scan: ERROR: could not quarantine $qf" >&2
-    return 1
-  fi
-  echo "scan: INFECTED $qf -> $qdest"
-  notify "ClamAV quarantined: $qf"
-
-  if [ -z "$qino" ]; then
-    echo "scan: ERROR: could not read the inode of $qf — other hardlinks (if any) NOT purged" >&2
-    return 0
-  fi
-  # One link: the move was the whole quarantine — skip the tree walk.
-  [ "${qlinks:-1}" -gt 1 ] 2>/dev/null || return 0
-
-  # -xdev: hardlinks cannot cross filesystems; the prune is what keeps the
-  # evidence copy. Status checked and stderr NOT suppressed: a find that
-  # cannot run this expression looks exactly like "no other links".
-  if ! others=$(find "$DATA" -xdev -path "$QUARANTINE" -prune -o \
-    -type f -inum "$qino" -print); then
-    echo "scan: ERROR: hardlink walk for inode $qino failed — INFECTED CONTENT MAY STILL BE REACHABLE" >&2
-    notify "ClamAV could not purge the hardlinks of $qf — check the library"
-    return 0
-  fi
-
-  printf '%s\n' "$others" | while IFS= read -r ql; do
-    [ -n "$ql" ] || continue
-    # Belt and braces over the prune: never unlink the evidence.
-    case "$ql" in "$QUARANTINE"/*) continue ;; esac
-    if rm -f "$ql"; then
-      echo "scan: UNLINKED $ql (hardlink to quarantined inode $qino)"
-      notify "ClamAV unlinked a hardlink to a quarantined file: $ql"
-    else
-      echo "scan: ERROR: could not unlink $ql (inode $qino) — INFECTED CONTENT IS STILL REACHABLE THERE" >&2
-    fi
-  done
-  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -138,7 +86,7 @@ promote_audiobooks() {
       scan_one "$f"
       case $? in
         0) ;;
-        1) echo I >> "$vf"; quarantine_file "$f" ;;
+        1) echo I >> "$vf"; quarantine_file "$f" INFECTED ;;
         *) echo E >> "$vf"; echo "scan: ERROR: clamdscan failed on $f" >&2 ;;
       esac
     done
@@ -222,7 +170,7 @@ while :; do
       scan_one "$f"
       rc=$?
       if [ "$rc" = 1 ]; then
-        quarantine_file "$f"
+        quarantine_file "$f" INFECTED
       elif [ "$rc" != 0 ]; then
         # 2 = scan error: record it, so the marker does not advance.
         echo E >> "$ef"

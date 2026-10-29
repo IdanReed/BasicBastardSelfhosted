@@ -1,6 +1,6 @@
-# Media — Jellyfin + *arr + qBittorrent-behind-Gluetun + ClamAV + Cleanuparr,
-# and Bitmagnet + Armiger behind Gluetun as a self-hosted indexer. Ports
-# 10050-10059 per docs/services.md.
+# Media — Jellyfin + *arr + qBittorrent-behind-Gluetun + ClamAV + an ffprobe
+# check + Cleanuparr, and Bitmagnet + Armiger behind Gluetun as a self-hosted
+# indexer. Ports 10050-10059 per docs/services.md.
 #
 # Invariants other files depend on:
 #   - AV1 > x265 > x264 is ENFORCED on the only two quality profiles, 1080p
@@ -8,8 +8,9 @@
 #     Profilarr may only sync Dictionarry (never trash-pcd).
 #   - Everything provider-specific about the VPN comes from the stack env — gluetun is
 #     handed the whole decrypted file.
-#   - /mnt/slow is ONE filesystem so *arr imports are hardlinks; scan-
-#     downloads.sh quarantines by inode because of it.
+#   - /mnt/slow is ONE filesystem so *arr imports are hardlinks; ClamAV's
+#     scanner and the ffprobe check quarantine by inode because of it
+#     (quarantine.sh, shared by both).
 #   - Audiobooks are acquired here and handed to the books stack through
 #     /mnt/slow/books/drop, after a clean ClamAV verdict (scan-downloads.sh).
 #   - Jellyfin logins are LDAP (Authentik's outpost, stacks/ldap) for everyone
@@ -684,6 +685,7 @@ services:
       - AUDIOBOOK_DROP_DIR=/drop
     volumes:
       - ./scan-downloads.sh:/scan/scan-downloads.sh:ro
+      - ./quarantine.sh:/scan/quarantine.sh:ro
       # WHOLE /data, read-write: quarantine is an inode operation, so the
       # scanner must be able to unlink the *arr hardlinks in /data/media too.
       - /mnt/slow/data:/data
@@ -703,6 +705,42 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # The decode check: each finished video download must be readable by
+  # Jellyfin's own ffprobe, decode a frame, and — the main file of each
+  # download — run longer than a sample. A failure is quarantined the way the
+  # scanner does it, by inode, and ntfy'd. The Jellyfin image for its ffprobe:
+  # no image to pin beyond the player's own, and what it cannot read Jellyfin
+  # cannot play. See probe-downloads.sh.
+  media-probe:
+    image: jellyfin/jellyfin:10.11.11
+    container_name: media_probe
+    entrypoint: ['/bin/sh', '/scan/probe-downloads.sh']
+    environment:
+      - NTFY_URL=http://ntfy/media
+      - PROBE_INTERVAL_SECONDS=60
+      - PROBE_SETTLE_SECONDS=120
+      # Floors for the largest video of a download. A short film under the
+      # movie floor would be quarantined: lower it here to keep one.
+      - PROBE_MIN_MOVIE_SECONDS=600
+      - PROBE_MIN_EPISODE_SECONDS=60
+    volumes:
+      - ./probe-downloads.sh:/scan/probe-downloads.sh:ro
+      - ./quarantine.sh:/scan/quarantine.sh:ro
+      # WHOLE /data, read-write, for the same inode reason as the scanner.
+      - /mnt/slow/data:/data
+    networks:
+      # ntfy is all it talks to.
+      - homelab
+    healthcheck:
+      # MUST override the inherited one (Jellyfin's /health, not running here):
+      # the loop touches its heartbeat at the start of every pass.
+      test: ['CMD-SHELL', 'test -n "$$(find /tmp/probe-alive -mmin -30 2>/dev/null)"']
+      interval: 60s
+      timeout: 10s
+      retries: 3
       start_period: 60s
     restart: unless-stopped
 
