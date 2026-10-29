@@ -491,6 +491,24 @@ fast-volume plan.""",
     },
     # --- wealthfolio ---------------------------------------------------
     "/mnt/fast/wealthfolio": {"owner": ("1000", "1000")},
+    # --- app uids ----------------------------------------------------
+    # A `d` rule RE-ASSERTS its owner on every boot and every switch
+    # (systemd-tmpfiles-resetup), under the running container. An image that
+    # chowns its own dirs at start and then drops to a PUID only fixes them at
+    # start: after the next switch the process can no longer write, and an
+    # SQLite app fails every write with "attempt to write a readonly
+    # database" until it is restarted. So each of these names the uid the app
+    # writes as (from its PUID/USERMAP env or its image user).
+    "/mnt/fast/bazarr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/cleanuparr/config": {"owner": ("1000", "1000")},
+    "/mnt/fast/clamav/db": {"owner": ("100", "101")},
+    "/mnt/fast/docspace/ds-lib": {"owner": ("101", "102")},
+    "/mnt/fast/docspace/ds-logs": {"owner": ("101", "102")},
+    "/mnt/fast/mealie": {"owner": ("911", "911")},
+    "/mnt/fast/paperless/consume": {"owner": ("1000", "1000")},
+    "/mnt/fast/paperless/data": {"owner": ("1000", "1000")},
+    "/mnt/fast/paperless/export": {"owner": ("1000", "1000")},
+    "/mnt/fast/paperless/media": {"owner": ("1000", "1000")},
     # --- database data dirs ------------------------------------------
     # The engine's own uid, 0700: the entrypoint chowns a root-owned dir back
     # at every start anyway, but until then the files sit 0755 root:root.

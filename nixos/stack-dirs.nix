@@ -135,8 +135,8 @@
     # dropping `user: root` later degrades rather than breaks.
     "d /mnt/fast/docspace/app 0755 104 107 -"
     "d /mnt/fast/docspace/ds-data 0755 root root -"
-    "d /mnt/fast/docspace/ds-lib 0755 root root -"
-    "d /mnt/fast/docspace/ds-logs 0755 root root -"
+    "d /mnt/fast/docspace/ds-lib 0755 101 102 -"
+    "d /mnt/fast/docspace/ds-logs 0755 101 102 -"
     "d /mnt/fast/docspace/logs 0755 104 107 -"
     # 999:999, NOT root. The mysql image drops to uid 999 and `--initialize`
     # refuses a data directory it cannot write, then restart-loops while every
@@ -252,7 +252,7 @@
     # `chown -R $PUID:$PGID /app` — which includes the bind-mounted /app/data —
     # on EVERY start, then gosu-drops to 911:911. This ends up 911:911 within
     # seconds of first `up` regardless of the rule.
-    "d /mnt/fast/mealie 0755 root root -"
+    "d /mnt/fast/mealie 0755 911 911 -"
     # === media (bind sources in its compose.yaml) ===
     # Declared here rather than left to docker's create-on-mount, which is what
     # made seerr crash-loop on first deploy (finding #14), and because nothing
@@ -271,16 +271,16 @@
     # STACK: clamav-scanner moves a clean audiobook download in and
     # audiobookshelf reads it :ro. Nothing else crosses.
     "d /mnt/fast/bazarr 0755 root root -"
-    "d /mnt/fast/bazarr/config 0755 root root -"
+    "d /mnt/fast/bazarr/config 0755 1000 1000 -"
     "d /mnt/fast/bitmagnet 0755 root root -"
     # Bitmagnet's DHT index, regenerable by re-crawling and deliberately not
     # dumped (the backup-coverage lint's exemption).
     "d /mnt/fast/bitmagnet/pgdata 0700 70 70 -"
     "d /mnt/fast/clamav 0755 root root -"
-    "d /mnt/fast/clamav/db 0755 root root -"
+    "d /mnt/fast/clamav/db 0755 100 101 -"
     "d /mnt/fast/clamav/scanner 0755 root root -"
     "d /mnt/fast/cleanuparr 0755 root root -"
-    "d /mnt/fast/cleanuparr/config 0755 root root -"
+    "d /mnt/fast/cleanuparr/config 0755 1000 1000 -"
     "d /mnt/fast/gluetun 0755 root root -"
     "d /mnt/fast/jellyfin 0755 root root -"
     "d /mnt/fast/jellyfin/cache 0755 root root -"
@@ -344,10 +344,10 @@
     # data/media/consume/export before dropping privileges, and the postgres
     # image chowns pgdata itself.
     "d /mnt/fast/paperless 0755 root root -"
-    "d /mnt/fast/paperless/consume 0755 root root -"
-    "d /mnt/fast/paperless/data 0755 root root -"
-    "d /mnt/fast/paperless/export 0755 root root -"
-    "d /mnt/fast/paperless/media 0755 root root -"
+    "d /mnt/fast/paperless/consume 0755 1000 1000 -"
+    "d /mnt/fast/paperless/data 0755 1000 1000 -"
+    "d /mnt/fast/paperless/export 0755 1000 1000 -"
+    "d /mnt/fast/paperless/media 0755 1000 1000 -"
     "d /mnt/fast/paperless/pgdata 0700 70 70 -"
     # === penpot (bind sources in its compose.yaml) ===
     # assets/ is 1001:1001, the `penpot` user the backend image ends on: it
