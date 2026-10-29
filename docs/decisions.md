@@ -29,17 +29,19 @@ on the reason.
   not the plaintext; the docker socket is root on the host either way.
 - **D-10 — `akadmin` and `AUTHENTIK_BOOTSTRAP_TOKEN` stay as break-glass.**
   Both persist in Authentik's database and no blueprint retires them; they are
-  the way back in when the blueprints or OIDC are broken. Revisit (a blueprint
-  deactivating `akadmin`) once no per-app setup step needs the admin UI.
+  the way back in when the blueprints or OIDC are broken, and
+  `headscale-vps/invite.sh` mints invitations with the token. Day to day idan
+  administers Authentik himself: `Admin` is a superuser group.
 - **D-33 — Vaultwarden `SSO_SIGNUPS_ALLOWED=true`.** The Authentik user list
   is the gate on who gets a vault; `SIGNUPS_ALLOWED=false` never gated SSO
   signups, so an `/admin` invite would be a second gate that buys nothing.
 - **D-34 — An Authentik group named exactly `Admin` is a fleet-wide privilege
   handle.** BookStack matches IdP group names against role display names, so
-  membership *is* BookStack admin and survives a rebuilt database; the
-  admin-only apps bind their application to the same group. Any new app that
-  matches group names picks it up — the comment in `headscale-oidc.yaml` says
-  so.
+  membership *is* BookStack admin and survives a rebuilt database; Grafana,
+  Mealie, Forgejo, Kavita, Shelfmark, Frigate and Jellyfin map it to their
+  admin role, and the admin-only apps bind their application to it. It holds
+  idan alone. Any new app that matches group names picks it up — the comment
+  in `headscale-oidc.yaml` says so ([accounts.md](accounts.md)).
 - **D-41 — Immich `IMMICH_ALLOW_SETUP` stays unset.** Setting it `false` closes
   a restore endpoint that is loopback-only behind Caddy, and would stop
   `immich-init` re-seeding after a volume wipe — re-seeding is worth more.
@@ -79,11 +81,13 @@ on the reason.
   variable exists only from 3.1.0; the pin is 2.20, where it is silently
   ignored. Set it with the next major bump wanted for its own sake, not to
   delete this step.
-- **D-35 — Jellyfin keeps its own logins.** TV and mobile clients cannot follow
-  an OIDC redirect. The local admin is seeded from sops by `jellyfin-init`
-  and stays as break-glass; the other users come from Authentik without
-  OIDC. Jellyfin has no headless password reset, so the admin's password
-  changes in the Jellyfin UI first (D-26).
+- **D-35 — Jellyfin logs in over LDAP, not OIDC.** TV and mobile clients
+  cannot follow an OIDC redirect, so users sign in with their Authentik
+  username and password through `jellyfin-plugin-ldapauth`, which binds to
+  Authentik's LDAP outpost (`stacks/ldap`) — password only, since LDAP cannot
+  prompt for TOTP. The local `idan` admin seeded by `jellyfin-init` stays
+  local as break-glass; Jellyfin has no headless password reset, so its
+  password changes in the Jellyfin UI first (D-26).
 - **Actual's OpenID is enabled by `actual-init`**, never by server env (the
   pinned server would go OpenID-only at boot, before a password exists). It
   seats `idan` as ADMIN first, so no other first OIDC login can claim the
@@ -102,7 +106,9 @@ on the reason.
   `statix.toml` disables `repeated_keys` and `empty_pattern`, because flat
   dotted paths and `{ ... }:` headers are the NixOS idiom.
 - **D-55 — Docs use `--use-remote-sudo`**, the spelling the code and the shell
-  aliases use. Switch everything at once if nixpkgs drops the alias.
+  aliases use. nixos-rebuild-ng in both nixpkgs pins still accepts it, with a
+  deprecation warning in favour of `--sudo`; switch everything at once when it
+  goes.
 
 ### Tests/CI
 
@@ -201,7 +207,7 @@ Open security items are tracked privately, outside this public repo.
   and add the drift lint at the next full regeneration, in one commit.
 - **D-53 — The nightly heavy suite fails silently.** **Recommendation:** an
   `if: failure()` step posting to `https://ntfy.svc.idanreed.com/alerts` (it
-  gains a token if D-02 lands).
+  gains a token if ntfy ever requires one).
 - **D-54 — `.gitignore`'s `*.claude` hides every shared `.claude/` file.**
   **Recommendation:** narrow it to `.claude/settings.local.json` and
   `.claude/worktrees/`, and read `git status --ignored` before the next commit
@@ -227,26 +233,25 @@ Open security items are tracked privately, outside this public repo.
   `/insert/*`, so any local uid on the services VM (the CI runner's included)
   can read both hosts' journals and write into the store where fail2ban and
   Authentik login evidence lands. The same data is already on the host;
-  dropping the publish costs Gatus its probes. D-09's `IPAddressDeny` narrows
-  the runner's reach.
+  dropping the publish costs Gatus its probes.
 - **AS-17 — Syncthing's 22000 is LAN-reachable,** IoT VLAN included: docker
   DNATs before the host firewall sees it. BEP authenticates by device
   certificate first, and every peer is paired from both sides.
 - **AS-18 — The cloud-init age key persists in the guest** (the cloud-init
   cache, the attached drive, the Proxmox snippet). Proxmox root is
-  root-equivalent on the VM anyway. Clean up with D-01: `qm set <vmid>
-  --delete cicustom`, delete the snippet, remove the guest cache.
+  root-equivalent on the VM anyway. Cleanup, after the second boot: `qm set
+  <vmid> --delete cicustom`, delete the snippet, remove the guest cache.
 - **Secrets on argv in two one-shots.** `forgejo-init.sh` passes the OIDC
   secret to `forgejo admin auth add-oauth --secret`, and `syncthing generate`
   takes the GUI password as a flag; neither CLI has a file or env alternative,
   the process is short-lived, and its readers are root-equivalent already.
 - **Passwordless sudo for `wheel` and `trusted-users = [ "@wheel" ]`** on both
-  servers: a stolen authorized key is root. Deploys over SSH need it; D-06 is
-  the targeted narrowing for the one non-human key.
+  servers: a stolen authorized key is root. Deploys over SSH need it.
 - **VPS journald: `rateLimitBurst = 0` with `SystemMaxUse=512M`.** Log volume
   can rotate ban evidence out; the log shipper moves it off the box first.
-- **Declared users' passwords are re-asserted on every blueprint apply,** so a
-  password changed in Authentik's UI reverts — change it in
-  `secrets/shared.sops.json` instead.
+- **idan's password is re-asserted on every blueprint apply** (he is the one
+  declared user), so a change made in Authentik's UI reverts — change
+  `IDAN_INITIAL_PASSWORD` in `secrets/shared.sops.json` instead. Invited users
+  own their passwords.
 - **DocSpace's portal runs as `user: root`,** following upstream: the
   entrypoint rewrites `/etc/nginx` and its config before supervisord starts.

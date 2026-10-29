@@ -127,11 +127,18 @@ way in.
 ### Jellyfin
 
 Not a chore — a reason: Jellyfin has no OIDC here because its TV and mobile
-clients cannot follow an OIDC redirect. Its users come from Authentik through
-the LDAP outpost; the local `idan` admin seeded by `jellyfin-init` is the
-break-glass login. Change that admin's password in the Jellyfin UI **before**
-`sopsgen rotate user/idan`, or the next deploy fails at `jellyfin-init`'s
-login.
+clients cannot follow an OIDC redirect. Users sign in with their Authentik
+username and password through `jellyfin-plugin-ldapauth` and the LDAP outpost
+(`stacks/ldap`); the account is created at their first login, and `Admin`
+members are Jellyfin admins. The local `idan` admin seeded by `jellyfin-init`
+is the break-glass login. Two rules follow:
+
+- Change that admin's password in the Jellyfin UI **before** `sopsgen rotate
+  user/idan`, or the next deploy fails at `jellyfin-init`'s login.
+- A local account shadows the LDAP user of the same name (an existing account
+  always authenticates with its own provider), so that person's Authentik
+  password is refused. `jellyfin-init` warns about any local account besides
+  the admin and never deletes one — delete it in the Jellyfin UI.
 
 ### Audiobookshelf
 

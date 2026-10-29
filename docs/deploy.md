@@ -238,7 +238,9 @@ registers it and a push deploys it.
    `run.sh` case arm.
 9. **Hostname** — a `<name>.svc.idanreed.com` handle in
    `stacks/caddy/Caddyfile`; forward auth (`import protected`) or OIDC (below),
-   each with its Authentik blueprint landed by `nrs-vps` **first**; two Gatus
+   each with its Authentik blueprint landed by `nrs-vps` **first** — an admin
+   tool or an idan-only app binds its application to `Admin` in the same
+   change, or every invited user can reach it; two Gatus
    probes (through Caddy with the real `Host:`, and on loopback); a Glance
    tile.
 10. **Backups** — [below](#backups-and-the-restore-drill).

@@ -31,7 +31,7 @@ hosts down, then runs §6–§20 with the deltas in §0.6.
 | Lives on | State | Comes back by |
 |---|---|---|
 | VPS disk | headscale DB, `noise_private.key`, `derp_server_private.key` | restore from `/mnt/fast/_vps/headscale/` (the nightly pull) — otherwise every node and device re-enrols |
-| VPS disk | Authentik DB: `install_id`, every TOTP device (akadmin's too), sessions, the signing key | restore `_vps/authentik.sql` — otherwise every user re-enrols TOTP. Users, groups and providers are blueprints and come back regardless |
+| VPS disk | Authentik DB: `install_id`, every TOTP device (akadmin's too), sessions, the signing key | restore `_vps/authentik.sql` — otherwise idan re-enrols TOTP and every invited user's account is gone. idan, the groups and every provider are blueprints and come back regardless |
 | VPS disk | Caddy's ACME certs, SSH host keys, tailscale node state | not backed up: re-issued, regenerated, re-registered |
 | VM root disk | tailscale node state, the Actions runner's `.runner`, SSH host keys | re-registered (§8, §12), regenerated |
 | VM `/srv` | Komodo's clones (`/srv/komodo/stacks/<name>`) | re-cloned at each stack's first deploy. The rendered envs (`/run/stack-env`) are tmpfs, rendered by every switch |
@@ -294,7 +294,7 @@ Delivery, and keep `backup-prepare.timer` stopped.
 | §12 | a new runner token and Renovate PAT, both on the rehearsal branch | a new runner token — `.runner` lived on the root disk |
 | §13 | as written; `TAILNET_IP` is unchanged when the VPS joined first | nothing if the VM kept `100.64.0.2` |
 | §14 | as written. akadmin's new TOTP seed replaces the old one in the §5 artifact. The desktop re-enrols (`sudo tailscale up --login-server=https://headscale.idanreed.com --force-reauth`) before `nrs-vps` can reach `vps` | nothing — Authentik and headscale were restored |
-| §15 | nothing: accounts are blueprints and invitations | nothing |
+| §15 | idan comes back from the blueprint; invited users need a new invitation | nothing |
 | §16 | **skip** — `backrest` is off the rehearsal branch | B1: nothing. B2: nothing until the restore verifies |
 | §17 | ntfy by hand, then the Test Delivery deploys the rest | the same, once a B2 restore verifies |
 | §18 | nothing to order (see §18) | nothing |
@@ -954,10 +954,11 @@ additionally need §14.
 ## 14. Authentik: OIDC, forward auth, LDAP, and the real `idan`
 
 `headscale-vps/authentik/blueprints/custom/` holds every provider and
-application (`<app>-oidc.yaml`, `forward-auth.yaml`, `docspace-saml.yaml`, the
-LDAP provider) plus `login-hardening.yaml`, `email-verified.yaml` and the
-users and groups in `headscale-oidc.yaml`. The worker applies them on every
-VPS rebuild.
+application (`<app>-oidc.yaml`, `forward-auth.yaml`, `docspace-saml.yaml`,
+`jellyfin-ldap.yaml`), the invitation flow (`invite-enrollment.yaml`),
+`login-hardening.yaml`, `email-verified.yaml`, and idan and the groups in
+`headscale-oidc.yaml`. The worker applies them on every VPS rebuild; each
+pulls in the blueprints it depends on, so discovery order does not matter.
 
 1. **First login** at `https://auth.idanreed.com` as **`akadmin`** with
    `AUTHENTIK_BOOTSTRAP_PASSWORD`. TOTP enrolment is forced — **store the seed
@@ -1033,11 +1034,22 @@ VPS rebuild.
    [for-shame.md](for-shame.md) — Komodo's one-time enable of `idan` after the
    first OIDC login is one.
 7. **LDAP for Jellyfin.** Jellyfin's TV and mobile clients cannot follow an
-   OIDC redirect, so Jellyfin binds to Authentik's LDAP provider through an
-   outpost container on the VM. The outpost token and the bind account's
-   password are shared secrets (`LDAP_OUTPOST_TOKEN`,
-   `JELLYFIN_LDAP_BIND_PASSWORD`); the LDAP bind flow is password-only (LDAP
-   cannot prompt for TOTP).
+   OIDC redirect, so Jellyfin's `jellyfin-plugin-ldapauth` binds to
+   Authentik's LDAP provider (`jellyfin-ldap.yaml`) through the outpost in
+   `stacks/ldap` — `authentik-ldap:3389` on the `homelab` network, never
+   published. The blueprint pins the outpost's API token to the shared
+   `LDAP_OUTPOST_TOKEN` and gives the read-only bind account
+   `JELLYFIN_LDAP_BIND_PASSWORD`, so nothing is minted by hand; the bind flow
+   is password-only (LDAP cannot prompt for TOTP) and sits behind the same
+   login-reputation gate as the web login. Deploy order: `nrs-vps`, then the
+   push that deploys `ldap` and `media`.
+8. **What an invited user's devices reach.** `headscale-vps/policy.hujson`
+   gives `idan@` everything and every other account (`autogroup:member`)
+   only the services VM's `:443`. Caddy fronts every vhost, so per-app access
+   is Authentik's: an application with no policy binding admits every
+   Authentik user, and the admin tools and idan's single-user apps are bound
+   to `Admin` (`forward-auth.yaml`, their `*-oidc.yaml`). A new admin tool
+   gets its binding in the same change that adds it ([accounts.md](accounts.md)).
 
 **Verify:** `./tests/run.sh authentik` and `./tests/run.sh forwardauth` are
 green; `sudo headscale users list` shows exactly one `idan`, with
@@ -1187,7 +1199,10 @@ deploy, so its tmpfiles rules exist.
 | `caddy` | §13 |
 | `backrest` | §16 |
 | `logging` | §18; and the Grafana datasource plugin is a one-time host install until the plugin image is published ([for-shame.md](for-shame.md)) — without it Grafana is healthy and every panel fails to query |
-| `media` | the VPN credentials and forwarded port (`media/vpn`). Without them gluetun restart-loops, qBittorrent shares its netns, and the deploy aborts before the one-shot inits run — start each init left at `Created` by hand. Jellyfin, Seerr and Bazarr are seeded from the repo by their inits; Jellyfin's users come from Authentik over LDAP (§14) |
+| `media` | the VPN credentials and forwarded port (`media/vpn`). Without them gluetun restart-loops; qBittorrent, Bitmagnet, its database and Armiger share its netns and wait on it, and the deploy aborts before the one-shot inits run — start each init left at `Created` by hand once the tunnel is up. Jellyfin, Seerr and Bazarr are seeded by their inits; `media-init` adds the Armiger indexer to Prowlarr once Bitmagnet's index has results (it gives up quietly while the tunnel is down and retries next deploy). Jellyfin's users log in over LDAP, so `ldap` and §14 step 7 come first |
+| `ldap` | §14 step 7 — the `jellyfin-ldap` blueprint (`nrs-vps`); the outpost is healthy only once Authentik answers its token |
+| `grist` | its OIDC discovery is fatal at boot: the container restart-loops until Authentik answers, so `nrs-vps` first |
+| `penpot` | nothing before; at idan's first SSO login, confirm the name on the one page it shows ([for-shame.md](for-shame.md)) |
 | `books` | `AA_DONATOR_KEY` and `AA_MIRROR_URLS`. Kavita and Audiobookshelf need nothing manual |
 | `proton` | one interactive login per re-keyed volume: `docker exec -it hydroxide /app/hydroxide auth <account>` prints the bridge password **once**; paste it and `PROTON_ACCOUNT` into `stacks/proton/secrets.sops.json`, then commit, `nrs-vm`, push |
 | `firefly` | the importer's PAT, minted in the Firefly UI after first login (once per database — Passport's keys come from sops). `SIMPLEFIN_TOKEN` is a one-shot claim URL |
@@ -1316,6 +1331,7 @@ nixos/secrets.sops.yaml` leaves `git diff` clean.
 | forward auth | `https://bentopdf.svc.idanreed.com` in a fresh session redirects to Authentik | outpost chain over the MagicDNS hop |
 | headscale OIDC | `tailscale up --login-server=…` on a scratch device | Authentik issuer + blueprint |
 | LDAP | a Jellyfin login on a TV or phone client as a non-admin user | LDAP provider + outpost |
+| invitations | `headscale-vps/invite.sh` for a test user; enrol through the link; their device reaches `https://<app>.svc.idanreed.com` and nothing else on the tailnet; an `Admin`-bound app refuses them | enrollment flow + ACL + bindings |
 | GitOps | push a comment change to one stack → delivery 200 → only that stack redeploys | webhook → apply → sync → deploy-if-changed |
 | stack envs | `sudo ls -l /run/stack-env` — one `-r-------- root` file per stack with secrets | sops-nix render + publish |
 | registration | `journalctl -u komodo-sync-bootstrap` ends `fleet sync ran: every stack in komodo/sync/ is registered.` | Komodo's token + the `fleet` sync |

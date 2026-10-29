@@ -87,7 +87,10 @@ cd nixos-de && ./test.sh       # desktop config check without deploying
   `docs/services.md`, a suite (`stackChecks` or `tests/suites/<name>.nix`),
   Gatus probes, and backup wiring — `docs/deploy.md` has the checklist.
 - Authentik blueprints: provider names are unique across all provider types
-  and slugs are unique; admin-only apps bind the `Admin` group.
+  and slugs are unique. idan is the one declared user; everyone else enrols
+  by invitation and reaches every app whose application has no binding, so an
+  admin tool or idan-only app binds the `Admin` group in the same change that
+  adds it (`docs/accounts.md`).
 
 ## Writing docs and comments
 

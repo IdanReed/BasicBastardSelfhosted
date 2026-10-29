@@ -43,13 +43,14 @@ on the host: everything arrives by `nixos-rebuild switch --target-host`.
 | `configuration.nix` | identity, firewall, fail2ban, nix settings |
 | `disk-config.nix` | disko layout for the Hetzner disk |
 | `deploy.sh` | the nixos-anywhere installer — **destructive** |
-| `policy.hujson` | the headscale ACL |
+| `invite.sh` | run from the desktop: mints a single-use Authentik invitation over ssh and prints the link ([docs/accounts.md](../docs/accounts.md)) |
+| `policy.hujson` | the headscale ACL: `idan@` reaches everything, every other account only the services VM's `:443` |
 | `modules/headscale.nix` | `services.headscale`, OIDC, embedded DERP |
 | `modules/authentik.nix` | the compose unit and the `authentik.env` sops template |
 | `modules/caddy.nix` | the vhosts and the `@restricted` matcher |
 | `modules/log-shipper.nix` | Alloy → `vlogs-ingest.svc.idanreed.com` |
 | `authentik/compose.yaml` | Authentik, applied on every rebuild |
-| `authentik/blueprints/custom/` | every provider, application, group and declared user; applied by the worker |
+| `authentik/blueprints/custom/` | every provider and application, the groups, idan, and the invitation-only enrollment flow; applied by the worker, each pulling in the blueprints it depends on |
 
 ## Access and secrets
 
@@ -84,8 +85,10 @@ Mint under the **existing** `idan`, never a new user named `idan`: a second
 `idan` makes the ACL's `idan@` resolve to neither, and every node loses
 access.
 
-**Into Authentik itself:** `akadmin` with `AUTHENTIK_BOOTSTRAP_PASSWORD`, or
-`AUTHENTIK_BOOTSTRAP_TOKEN` for the API. No blueprint retires either. Before
+**Into Authentik itself:** idan administers it day to day (`Admin` is a
+superuser group). Break-glass: `akadmin` with `AUTHENTIK_BOOTSTRAP_PASSWORD`,
+or `AUTHENTIK_BOOTSTRAP_TOKEN` for the API (which `invite.sh` uses). No
+blueprint retires either. Before
 the VPS is on the tailnet, reach the admin UI with
 `ssh -L 9000:127.0.0.1:9000 idan@<VPS_IP>`.
 

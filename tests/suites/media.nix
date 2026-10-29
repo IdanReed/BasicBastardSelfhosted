@@ -42,7 +42,7 @@
 #     that inode, over two library links so a walk stopping at its first hit
 #     fails. The old assertions passed while the malware was still in the
 #     library; this one is what makes hardlink import safe for any consumer.
-#   - the audiobook hand-off (Option C): a clean entry under the `audiobooks`
+#   - the audiobook hand-off: a clean entry under the `audiobooks`
 #     category is promoted whole into /mnt/slow/books/drop with its ownership
 #     intact, an entry containing EICAR reaches the drop dir in no form (not
 #     even its clean sibling track), and media-init has declared the category

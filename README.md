@@ -74,7 +74,9 @@ One flake at the repo root builds three hosts:
 - **Identity.** Authentik is the one IdP: native OIDC for apps that support
   it, Caddy forward auth for apps that do not, and an LDAP outpost for
   Jellyfin, whose TV clients cannot follow an OIDC redirect. Headscale logs
-  people in through Authentik too.
+  people in through Authentik too. idan is the one declared account; everyone
+  else enrols by single-use invitation, and their devices reach only the
+  services VM's `:443`, where Authentik decides app by app.
 - **Deploys.** A push to Forgejo fires one webhook; Komodo's `apply` procedure
   re-reads `komodo/sync/stacks.toml` and redeploys every stack whose files
   changed. GitHub is only a push mirror.
