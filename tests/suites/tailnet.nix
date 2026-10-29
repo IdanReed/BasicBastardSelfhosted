@@ -419,13 +419,23 @@ pkgs.testers.runNixOSTest {
           # case-matched, NOT `-lt 400`: a refused/dead connection prints
           # 000 and `test 000 -lt 400` is true, so the old form passed with
           # nothing answering at all (the forward-auth.nix idiom).
-          client.wait_until_succeeds(
+          reach_komodo = (
               f"c=$(curl -sk --max-time 10 "
               f"--resolve komodo.svc.idanreed.com:443:{svc_ip} "
               "https://komodo.svc.idanreed.com/ "
               "-o /dev/null -w '%{http_code}'); "
-              "case $c in 2??|3??) true ;; *) false ;; esac", timeout=180
+              "case $c in 2??|3??) true ;; *) false ;; esac"
           )
+          # On a FRESH database the embedded outpost can start before the
+          # worker has finished creating its token and permission; it then
+          # gives up for good and every protected host 404s. Production
+          # databases already hold the token. One server restart recovers it
+          # (docs/bring-up.md §14).
+          try:
+              client.wait_until_succeeds(reach_komodo, timeout=180)
+          except Exception:
+              headscale_vps.succeed("docker restart authentik_server")
+              client.wait_until_succeeds(reach_komodo, timeout=240)
 
       with subtest("unknown subdomains 404 rather than returning a blank 200"):
           out = client.succeed(

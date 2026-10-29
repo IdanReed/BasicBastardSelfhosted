@@ -1055,6 +1055,12 @@ pulls in the blueprints it depends on, so discovery order does not matter.
 green; `sudo headscale users list` shows exactly one `idan`, with
 `idan@idanreed.com`; then one real login per enabled client.
 
+⚠ On a fresh Authentik database the embedded outpost can start before the
+worker has created its token and give up for good: every protected host then
+404s at `/outpost.goauthentik.io/auth/caddy` and the server log shows a single
+`Failed to fetch outpost from API` warning. `sudo docker restart
+authentik_server` once fixes it; an existing database never hits it.
+
 ---
 
 ## 15. Accounts
