@@ -1231,6 +1231,21 @@ pkgs.testers.runNixOSTest {
           rc, out = ldapsearch("", base, "(cn=idan)")
           assert "Insufficient access (50)" in out, out
 
+      with subtest("email_verified survives the dependency cascade"):
+          # headscale-oidc is re-applied by every Admin-bound blueprint, and
+          # the system scopes it depends on reset the email mapping to
+          # email_verified false; strict clients (Grist, Kavita) then refuse
+          # every login. Re-apply one Admin-bound blueprint, whose chain runs
+          # headscale-oidc -> email-verified -> system scopes, and the
+          # override must still be what the mapping says.
+          apply_blueprint("grafana-oidc")
+          expr = json.loads(headscale_vps.succeed(
+              f"{CURL} '{API}/propertymappings/provider/scope/?scope_name=email'"
+          ))["results"]
+          assert len(expr) == 1, f"email scope mappings: {[m['name'] for m in expr]}"
+          assert "bool(request.user.email)" in expr[0]["expression"], (
+              f"the email mapping lost the override: {expr[0]['expression']!r}")
+
       with subtest("headscale sets up its OIDC provider against the live issuer"):
           # At first boot headscale raced Authentik and its OIDC setup failed
           # by design (only_start_if_oidc_is_available = false keeps the

@@ -40,10 +40,15 @@ entries:
       identifiers:
         name: Default - Provider invalidation flow
       required: true
+  # email-verified, not "System - OAuth2 Provider - Scopes" directly: the
+  # system blueprint resets the email scope mapping to email_verified false,
+  # and this file is re-applied by every Admin-bound blueprint. email-verified
+  # applies the system scopes itself and then re-asserts its override, so
+  # every chain ends with the override in place.
   - model: authentik_blueprints.metaapplyblueprint
     attrs:
       identifiers:
-        name: System - OAuth2 Provider - Scopes
+        name: email-verified
       required: true
 
   - model: authentik_core.group

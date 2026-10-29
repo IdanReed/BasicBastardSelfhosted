@@ -17,6 +17,14 @@ metadata:
     blueprints.goauthentik.io/instantiate: "true"
 
 entries:
+  # The system scopes first: they create the mapping this overrides, and
+  # applying them resets it, so they must never apply after this file.
+  - model: authentik_blueprints.metaapplyblueprint
+    attrs:
+      identifiers:
+        name: System - OAuth2 Provider - Scopes
+      required: true
+
   - model: authentik_providers_oauth2.scopemapping
     state: present
     identifiers:
