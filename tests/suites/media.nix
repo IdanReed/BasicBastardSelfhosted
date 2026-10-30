@@ -1333,16 +1333,23 @@ pkgs.testers.runNixOSTest {
         out = run_media_init()
         assert "complete: 0 change(s)" in out, f"run after the ranking was not a no-op:\n{out}"
 
-    with subtest("Seerr defaults to 1080p Efficient by name in both arrs"):
+    with subtest("Seerr defaults to 1080p Efficient by name, and a 4K server takes 2160p"):
         out = services_vm.succeed(MEDIA + " run --rm --no-deps seerr-bootstrap 2>&1")
         assert out.count("-> '1080p Efficient'") == 2, out
+        assert out.count("4K server") == 2 and out.count("added (2160p Efficient") == 2, out
         for kind, name in [("radarr", "radarr"), ("sonarr", "sonarr")]:
-            srv = json.loads(services_vm.succeed(
+            servers = json.loads(services_vm.succeed(
                 "curl -sf --max-time 30 "
                 + "-H " + shlex.quote("X-Api-Key: " + SEERR_KEY) + " "
-                + f"http://127.0.0.1:10054/api/v1/settings/{kind}"))[0]
-            assert srv.get("activeProfileName") == "1080p Efficient", srv
-            assert srv.get("activeProfileId") == profiles(name)["1080p Efficient"]["id"], srv
+                + f"http://127.0.0.1:10054/api/v1/settings/{kind}"))
+            hd = [x for x in servers if not x.get("is4k")]
+            uhd = [x for x in servers if x.get("is4k")]
+            assert len(hd) == 1 and len(uhd) == 1, servers
+            assert hd[0].get("activeProfileName") == "1080p Efficient", hd
+            assert hd[0].get("activeProfileId") == profiles(name)["1080p Efficient"]["id"], hd
+            assert uhd[0].get("activeProfileName") == "2160p Efficient", uhd
+            assert uhd[0].get("activeProfileId") == profiles(name)["2160p Efficient"]["id"], uhd
+            assert uhd[0].get("isDefault") and uhd[0].get("hostname") == hd[0].get("hostname"), uhd
         out = services_vm.succeed(MEDIA + " run --rm --no-deps seerr-bootstrap 2>&1")
         assert "CHANGE:" not in out, f"a seerr-bootstrap re-run changed something:\n{out}"
 

@@ -150,6 +150,43 @@ if drift:
 else:
     log("Jellyfin sign-in and new-user sign-in already on - no change")
 
+# A 4K server per arr: the SAME Radarr/Sonarr connection with is4k set, so
+# requests get two buttons — "Request" (1080p Efficient) and "Request in 4K"
+# (2160p Efficient, for users holding a 4K request permission; admins do).
+# One arr behind both means a title holds one version: a 4K request upgrades
+# the 1080p file rather than adding a second copy. Created once, from the
+# non-4K entry; the by-name loop below then keeps its profile right.
+for kind in ("radarr", "sonarr"):
+    _, servers = call(f"/api/v1/settings/{kind}", api_key=API_KEY)
+    servers = servers or []
+    if any(srv.get("is4k") for srv in servers):
+        log(f"{kind}: 4K server present - no change")
+        continue
+    base = next((srv for srv in servers if not srv.get("is4k")), None)
+    if base is None:
+        log(f"WARN: {kind}: no server to derive a 4K one from - skipped")
+        continue
+    try:
+        _, test = call(f"/api/v1/settings/{kind}/test", "POST", base, api_key=API_KEY)
+    except urllib.error.HTTPError as e:
+        log(f"WARN: {kind}: could not list profiles for a 4K server "
+            f"(HTTP {e.code}: {detail(e)}) - skipped")
+        continue
+    pid = next((p.get("id") for p in (test or {}).get("profiles") or []
+                if p.get("name") == "2160p Efficient"), None)
+    if pid is None:
+        log(f"WARN: {kind}: no '2160p Efficient' profile yet - 4K server not created")
+        continue
+    four_k = {k: v for k, v in base.items() if k != "id"}
+    four_k.update(name=f"{base.get('name', kind.title())} 4K", is4k=True,
+                  isDefault=True, activeProfileId=pid,
+                  activeProfileName="2160p Efficient")
+    if four_k.get("activeAnimeProfileId") is not None:
+        four_k.update(activeAnimeProfileId=pid,
+                      activeAnimeProfileName="2160p Efficient")
+    call(f"/api/v1/settings/{kind}", "POST", four_k, api_key=API_KEY)
+    change(f"{kind}: 4K server {four_k['name']!r} added (2160p Efficient, id {pid})")
+
 # Default quality profiles, by NAME on every run: media-init keeps only the two
 # Efficient profiles in each arr, and Seerr stores a profile by id, which a
 # Profilarr re-sync or a rebuilt arr renumbers. A 4K server would take the
