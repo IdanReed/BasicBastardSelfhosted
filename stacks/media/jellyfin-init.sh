@@ -288,5 +288,78 @@ if "/sso/OID/start/" in (branding.get("LoginDisclaimer") or ""):
 else:
     log("no SSO login button - no change")
 
+# Library refresh on import: Radarr and Sonarr call Jellyfin after every
+# import, upgrade, rename and delete through their "Emby / Jellyfin"
+# connection (update the library only, no client notifications). Realtime
+# monitoring stays off (above) and the scheduled scan runs twice a day, so
+# without this a finished download sits invisible to Jellyfin — and Seerr
+# keeps it "processing" — until the next scan. Both apps see /data/media at
+# the same path, so no path mapping. The API key is Jellyfin's own, minted
+# once under a fixed app name.
+APP = "arr-library-refresh"
+
+
+def jf_key():
+    _, keys = call("/Auth/Keys", token=token)
+    return next((k.get("AccessToken") for k in (keys or {}).get("Items") or []
+                 if k.get("AppName") == APP), None)
+
+
+key = jf_key()
+if not key:
+    call(f"/Auth/Keys?app={APP}", "POST", token=token)
+    key = jf_key()
+    change(f"api key {APP!r} created")
+WANT_FIELDS = {"host": "jellyfin", "port": 8096, "useSsl": False,
+               "apiKey": key, "notify": False, "updateLibrary": True,
+               "mapFrom": "", "mapTo": ""}
+SKIP_EVENTS = {"onGrab", "onHealthIssue", "onHealthRestored",
+               "onApplicationUpdate", "onManualInteractionRequired"}
+
+
+def arr(base, apikey, path, method="GET", body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + path, data=data, method=method,
+                                 headers={"X-Api-Key": apikey,
+                                          "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        raw = resp.read().decode(errors="replace")
+        return json.loads(raw) if raw else None
+
+
+for name, base, keyvar in (("radarr", "http://radarr:7878", "RADARR__AUTH__APIKEY"),
+                           ("sonarr", "http://sonarr:8989", "SONARR__AUTH__APIKEY")):
+    apikey = os.environ.get(keyvar)
+    if not apikey:
+        log(f"WARN: {keyvar} unset - {name} -> Jellyfin refresh not configured")
+        continue
+    try:
+        schema = next(x for x in arr(base, apikey, "/api/v3/notification/schema")
+                      if x.get("implementation") == "MediaBrowser")
+        existing = next((x for x in arr(base, apikey, "/api/v3/notification")
+                         if x.get("implementation") == "MediaBrowser"), None)
+        want = dict(existing or schema)
+        want["name"] = "Jellyfin"
+        want["fields"] = [dict(f, value=WANT_FIELDS[f["name"]])
+                          if f.get("name") in WANT_FIELDS else f
+                          for f in want.get("fields") or []]
+        for flag, supported in schema.items():
+            if flag.startswith("supportsOn") and supported:
+                event = "on" + flag[len("supportsOn"):]
+                want[event] = event not in SKIP_EVENTS
+        if existing is not None and want == existing:
+            log(f"{name}: Jellyfin library refresh already configured - no change")
+            continue
+        if existing is None:
+            arr(base, apikey, "/api/v3/notification?forceSave=true", "POST", want)
+        else:
+            arr(base, apikey, f"/api/v3/notification/{existing['id']}?forceSave=true",
+                "PUT", want)
+        change(f"{name}: Jellyfin library refresh on import "
+               f"({'added' if existing is None else 'updated'})")
+    except (urllib.error.URLError, StopIteration, OSError) as e:
+        log(f"WARN: {name} -> Jellyfin refresh not configured: {e} "
+            f"(the next run retries)")
+
 log(f"done ({CHANGES} change(s))")
 PY
