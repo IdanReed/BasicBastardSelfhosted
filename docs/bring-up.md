@@ -658,11 +658,13 @@ trusted VLAN, address `10.0.0.3`.
 **The VM's hardware config comes from the image.** `qmrestore` rewrites the
 whole VM config from `proxmox.qemuConf` in `nixos/proxmox-image.nix` on every
 re-image; the image carries 4 cores, 8 GB, the boot order and the rehearsal
-VM's MAC (`BC:24:11:5E:11:03`). After every `rebuild_os_proxmox.sh`, before the
-first boot, reapply the rest and compare:
+VM's MAC (`BC:24:11:5E:11:03`), and the image's name (`nixos-<version>`).
+After every `rebuild_os_proxmox.sh`, before the first boot, reapply the rest
+and compare:
 
 ```bash
-qm set 110 --cpu host --onboot 1 --cores 32 --memory 147456 --balloon 98304 \
+qm set 110 --name services-vm --cpu host --onboot 1 --cores 32 \
+  --memory 147456 --balloon 98304 \
   --net0 virtio=A2:DB:6F:F6:9F:D7,bridge=vmbr0,firewall=1
 qm config 110          # diff against ~/vm110.conf (§0.3)
 ```
