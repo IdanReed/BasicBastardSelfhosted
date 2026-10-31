@@ -295,8 +295,12 @@ else:
 # without this a finished download sits invisible to Jellyfin — and Seerr
 # keeps it "processing" — until the next scan. Both apps see /data/media at
 # the same path, so no path mapping. The API key is Jellyfin's own, minted
-# once under a fixed app name.
+# once under a fixed app name. The arrs return a stored key masked, so it is
+# compared as the mask and rewritten only in the run that mints it; a run
+# that mints it but fails to store it revokes it again, so the next run
+# mints and stores a fresh one.
 APP = "arr-library-refresh"
+MASK = "********"
 
 
 def jf_key():
@@ -306,10 +310,12 @@ def jf_key():
 
 
 key = jf_key()
-if not key:
+minted = not key
+if minted:
     call(f"/Auth/Keys?app={APP}", "POST", token=token)
     key = jf_key()
     change(f"api key {APP!r} created")
+failed = False
 WANT_FIELDS = {"host": "jellyfin", "port": 8096, "useSsl": False,
                "apiKey": key, "notify": False, "updateLibrary": True,
                "mapFrom": "", "mapTo": ""}
@@ -347,7 +353,10 @@ for name, base, keyvar in (("radarr", "http://radarr:7878", "RADARR__AUTH__APIKE
             if flag.startswith("supportsOn") and supported:
                 event = "on" + flag[len("supportsOn"):]
                 want[event] = event not in SKIP_EVENTS
-        if existing is not None and want == existing:
+        stored = dict(want, fields=[
+            dict(f, value=MASK) if f.get("privacy") == "apiKey" and not minted else f
+            for f in want["fields"]])
+        if existing is not None and existing in (stored, want):
             log(f"{name}: Jellyfin library refresh already configured - no change")
             continue
         if existing is None:
@@ -358,8 +367,13 @@ for name, base, keyvar in (("radarr", "http://radarr:7878", "RADARR__AUTH__APIKE
         change(f"{name}: Jellyfin library refresh on import "
                f"({'added' if existing is None else 'updated'})")
     except (urllib.error.URLError, StopIteration, OSError) as e:
+        failed = True
         log(f"WARN: {name} -> Jellyfin refresh not configured: {e} "
             f"(the next run retries)")
+
+if minted and failed:
+    call(f"/Auth/Keys/{key}", "DELETE", token=token)
+    log(f"WARN: revoked the new api key {APP!r} so the next run stores a fresh one")
 
 log(f"done ({CHANGES} change(s))")
 PY
