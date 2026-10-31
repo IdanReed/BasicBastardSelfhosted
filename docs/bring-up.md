@@ -689,22 +689,36 @@ strips the cloud-init address and the next reboot would take another lease.
 | virtio0 | 32 GB | local-zfs | image fs label `nixos` → `/` |
 | scsi1 | 50 GB | local-zfs | `state` → `/srv` |
 | scsi2 | 2 TB | local-zfs | `fast` → `/mnt/fast` (+ the docker bind) |
-| scsi3 | 38.5 TB | rpool_hdd | `slow` → `/mnt/slow` |
+| scsi3 | 62.5 TB | rpool_hdd | `slow` → `/mnt/slow` |
 
 Partition the data disks **on the Proxmox host before first boot** — the
 fstab has no `nofail`, so a missing partlabel drops the boot into emergency
-mode. Storage names are this host's (`pvesm status`):
+mode. Storage names are this host's (`pvesm status`). `rpool_hdd` is RAIDZ1
+over five disks: a zvol there costs 1.63× its size in pool space at Proxmox's
+8K default block size and 1.0× at 128K, so the storage's `blocksize` is set
+before the slow disk is allocated (it only applies to new zvols). 64000 GiB is
+~86% of the pool, so a full `/mnt/slow` still leaves ZFS its headroom.
 
 ```bash
 qm resize 110 virtio0 32G                 # autoResize grows the fs on boot
-qm set 110 --scsi1 local-zfs:50 --scsi2 local-zfs:2000 --scsi3 rpool_hdd:39386
+pvesm set rpool_hdd --blocksize 128k
+qm set 110 --scsi1 local-zfs:50 --scsi2 local-zfs:2000 --scsi3 rpool_hdd:64000,discard=on
+zfs get volblocksize rpool_hdd/vm-110-disk-<slow>   # 128K
 qm config 110    # disk NUMBERS are assigned out of order: map scsiN -> vm-110-disk-M here
 printf 'label: gpt\nstart=1MiB, name=state\n' | sfdisk /dev/zvol/rpool/data/vm-110-disk-<state>
 printf 'label: gpt\nstart=1MiB, name=fast\n'  | sfdisk /dev/zvol/rpool/data/vm-110-disk-<fast>
 printf 'label: gpt\nstart=1MiB, name=slow\n'  | sfdisk /dev/zvol/rpool_hdd/vm-110-disk-<slow>
 lsblk -o NAME,SIZE <each zvol>            # sizes must match state/fast/slow
-mkfs.ext4 /dev/zvol/.../vm-110-disk-<n>-part1   # each of the three
+mkfs.ext4 /dev/zvol/rpool/data/vm-110-disk-<state>-part1
+mkfs.ext4 /dev/zvol/rpool/data/vm-110-disk-<fast>-part1
+mkfs.ext4 -i 1048576 -m 0 /dev/zvol/rpool_hdd/vm-110-disk-<slow>-part1
 ```
+
+The slow fs gets one inode per MiB and no root reserve: it holds large files,
+the ratio is fixed at mkfs and kept by every grow (at ext4's 16 KiB default
+the inode count reaches its 2^32 cap near 64 TB), and a 5% reserve is 3 TB
+nobody uses. `discard=on` lets the guest's weekly `fstrim` hand deleted blocks back
+to the pool, so ZFS's fill level tracks what `/mnt/slow` actually holds.
 
 (PVE has no `parted`; the sfdisk `name=` is the partlabel.) Growing later:
 resize in Proxmox, then `sudo grow-disk srv|fast|slow` on the VM.
