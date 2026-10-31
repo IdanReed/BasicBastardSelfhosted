@@ -155,7 +155,9 @@ else:
 # (2160p Efficient, for users holding a 4K request permission; admins do).
 # One arr behind both means a title holds one version: a 4K request upgrades
 # the 1080p file rather than adding a second copy. Created once, from the
-# non-4K entry; the by-name loop below then keeps its profile right.
+# non-4K entry; the by-name loop below then keeps its profile right. The
+# profile lookup flushes Seerr's hour-long profile cache first, or a profile
+# Profilarr synced within the hour is not there yet.
 for kind in ("radarr", "sonarr"):
     _, servers = call(f"/api/v1/settings/{kind}", api_key=API_KEY)
     servers = servers or []
@@ -166,6 +168,7 @@ for kind in ("radarr", "sonarr"):
     if base is None:
         log(f"WARN: {kind}: no server to derive a 4K one from - skipped")
         continue
+    call(f"/api/v1/settings/cache/{kind}/flush", "POST", api_key=API_KEY)
     try:
         _, test = call(f"/api/v1/settings/{kind}/test", "POST", base, api_key=API_KEY)
     except urllib.error.HTTPError as e:
