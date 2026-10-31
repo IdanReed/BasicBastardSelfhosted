@@ -318,6 +318,39 @@ else:
                     f"- the next media-init run retries")
 
 # ---------------------------------------------------------------------------
+# qBittorrent: queue and connection limits
+# ---------------------------------------------------------------------------
+# The defaults (3 active downloads, 5 active torrents counting seeds, 500
+# connections) let a few slow torrents hold every slot while a bulk Seerr
+# request waits in the queue. The tunnel, not the slot count, is the ceiling;
+# slow torrents do not count against the limits, and Cleanuparr removes the
+# stalled ones. max_connec rises with the slots, or 100 torrents share 500 peers,
+# and so does connection_speed (new outgoing connections per second, default
+# 30), or a fresh batch takes minutes to reach its peers.
+QBIT_LIMITS = {
+    "max_active_downloads": 100,
+    "max_active_torrents": 150,
+    "max_active_uploads": 50,
+    "max_connec": 2000,
+    "connection_speed": 100,
+    "dont_count_slow_torrents": True,
+}
+try:
+    sid = qbit_login()
+    _, _, raw = qbit(sid, "/api/v2/app/preferences")
+    prefs = json.loads(raw or "{}")
+    drift = {k: v for k, v in QBIT_LIMITS.items() if prefs.get(k) != v}
+    if not drift:
+        log("OK", "qbittorrent: queue and connection limits already set")
+    else:
+        qbit(sid, "/api/v2/app/setPreferences", {"json": json.dumps(drift)})
+        change("qbittorrent: " + ", ".join(
+            f"{k} {prefs.get(k)} -> {v}" for k, v in drift.items()))
+except Exception as e:  # noqa: BLE001
+    log("WARN", f"qbittorrent: could not set queue limits ({e}) "
+                f"- the next media-init run retries")
+
+# ---------------------------------------------------------------------------
 # Quality profiles: the two Efficient profiles and nothing else
 # ---------------------------------------------------------------------------
 # Profilarr syncs Dictionarry's profiles; only the Efficient pair is wanted, so
