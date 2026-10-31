@@ -169,7 +169,10 @@ let
   # The ffprobe check's media, made offline at build time: a 15-minute
   # feature (over the 600 s movie floor) and two 30-second clips, the
   # feature's sample and a fake. Tiny frames, one per second, mpeg4 so no
-  # optional encoder is needed.
+  # optional encoder is needed. Plus a damaged feature: h264 with one
+  # corrupted packet, which ffprobe complains about ("missing picture in
+  # access unit") while it exits 0 and the rest decodes — what a real release
+  # can look like. The build fails if it stops reproducing that.
   probeMedia = pkgs.runCommand "media-probe-fixtures" { nativeBuildInputs = [ pkgs.ffmpeg-headless ]; } ''
     mkdir $out
     clip() {
@@ -179,6 +182,11 @@ let
     clip 900 feature.mkv
     clip 30 sample.mkv
     clip 30 fake.mkv
+    ffmpeg -nostdin -v error -f lavfi -i testsrc=s=64x36:r=1 -t 900 -c:v libx264 -g 30 clean.mkv
+    ffmpeg -nostdin -v error -i clean.mkv -c copy -fflags +bitexact \
+      -bsf:v 'noise=amount=eq(n\,1)*2' "$out/damaged.mkv"
+    ffprobe -v error -show_entries stream=codec_type "$out/damaged.mkv" >/dev/null 2>err
+    test -s err
   '';
 
   # The LDAP plugin's pin. The suite is offline, so the zip jellyfin-config-init
@@ -1718,6 +1726,46 @@ pkgs.testers.runNixOSTest {
             f"-type f -inum {ino} -print").strip()
         assert reachable == "", f"the rejected fake is still reachable:\n{reachable}"
         assert "probe: UNLINKED /data/media/movies/Probe Fake (2026)/probe-fake.mkv" in logs, logs
+
+    with subtest("ffprobe: the arrs' layout - a download straight under downloads/ is judged as one"):
+        # qBittorrent saves the arrs' torrents to downloads/<entry> (their
+        # categories have no save path): a sample or promo clip there is not
+        # the feature, a damaged-but-playable feature passes with its library
+        # link intact, and a flat 30-second "movie" is still a fake.
+        dl = "/mnt/slow/data/downloads"
+        flat = f"{dl}/Probe.Flat.2026.1080p.BluRay.x264-GRP"
+        dmg = f"{dl}/Probe.Damaged.2026.1080p.BluRay.x264-GRP"
+        lib_dmg = "/mnt/slow/data/media/movies/Probe Damaged (2026)/probe-damaged.mkv"
+        services_vm.succeed(
+            "mkdir -p " + " ".join(shlex.quote(d) for d in
+                                   (f"{flat}/Sample", dmg, lib_dmg.rsplit("/", 1)[0])))
+        services_vm.succeed(f"cp ${probeMedia}/feature.mkv {flat}/probe-flat.mkv")
+        services_vm.succeed(f"cp ${probeMedia}/sample.mkv {flat}/Sample/probe-flat-sample.mkv")
+        services_vm.succeed(f"cp ${probeMedia}/sample.mkv {flat}/GRP.mkv")
+        services_vm.succeed(f"cp ${probeMedia}/damaged.mkv {dmg}/probe-damaged.mkv")
+        services_vm.succeed(f"ln {dmg}/probe-damaged.mkv {shlex.quote(lib_dmg)}")
+        services_vm.succeed(f"cp ${probeMedia}/fake.mkv {dl}/Probe.Flat.Fake.2026.1080p.mkv")
+        services_vm.succeed("chown -R 1000:1000 /mnt/slow/data/downloads /mnt/slow/data/media")
+        try:
+            services_vm.wait_until_succeeds(
+                "ls /mnt/slow/data/downloads/.quarantine/ | grep -q '^Probe\\.Flat\\.Fake\\.2026'",
+                timeout=600)
+            for f in ("Probe.Flat.2026.1080p.BluRay.x264-GRP/probe-flat.mkv",
+                      "Probe.Flat.2026.1080p.BluRay.x264-GRP/Sample/probe-flat-sample.mkv",
+                      "Probe.Flat.2026.1080p.BluRay.x264-GRP/GRP.mkv",
+                      "Probe.Damaged.2026.1080p.BluRay.x264-GRP/probe-damaged.mkv"):
+                services_vm.wait_until_succeeds(
+                    f"docker logs media_probe 2>&1 | grep -qF 'probe: OK /data/downloads/{f}'",
+                    timeout=300)
+        except Exception:
+            print(services_vm.execute("docker logs media_probe 2>&1 | tail -40")[1])
+            raise
+        logs = services_vm.succeed("docker logs media_probe 2>&1")
+        assert "Probe.Flat.Fake.2026.1080p.mkv" in logs and "under the 600s floor for a movie" in logs, logs
+        assert "probe: OK /data/downloads/Probe.Damaged.2026.1080p.BluRay.x264-GRP/probe-damaged.mkv (ffprobe warned:" in logs, logs
+        assert "Probe.Flat.2026" not in "\n".join(l for l in logs.splitlines() if "REJECTED" in l), logs
+        services_vm.succeed(f"test -f {shlex.quote(lib_dmg)}")
+        services_vm.succeed(f"test -f {flat}/Sample/probe-flat-sample.mkv -a -f {flat}/GRP.mkv")
 
     with subtest("clamd publishes no host port"):
         ports = services_vm.succeed("docker port clamav").strip()

@@ -7,12 +7,15 @@
 # finished — outside .incomplete (qBittorrent moves a torrent out of it when
 # the torrent completes) and untouched for $PROBE_SETTLE_SECONDS — is probed
 # once:
-#   - ffprobe reads its container and streams with no error, and finds video
+#   - ffprobe reads its container and streams (exits 0) and finds video
 #   - a video frame decodes
 #   - the largest video file of each download (the feature or the episode, not
-#     its sample or extras) runs at least $PROBE_MIN_MOVIE_SECONDS under
-#     downloads/movies, $PROBE_MIN_EPISODE_SECONDS anywhere else: a
-#     30-second "film" is a sample or a fake
+#     its sample or extras) runs at least $PROBE_MIN_MOVIE_SECONDS for a
+#     movie, $PROBE_MIN_EPISODE_SECONDS for TV: a 30-second "film" is a
+#     sample or a fake
+# What ffprobe prints while it exits 0 is not a verdict: a real release can
+# carry a damaged packet ("missing picture in access unit") and play fine,
+# and a rejection unlinks the library copy too.
 # A file that fails is quarantined exactly as ClamAV's scanner does it, by
 # inode (quarantine.sh), and ntfy'd. A probe that could not run (a timeout, a
 # file gone mid-pass) is retried next pass. Audiobooks are the scanner's.
@@ -51,17 +54,39 @@ is_video() {
   return 1
 }
 
-# The download a file belongs to: its first path component under the
-# category directory (downloads/<category>/<entry>), or the file itself.
+# The download a file belongs to: its first path component under downloads/
+# — the arrs' categories have no save path of their own, so qBittorrent puts
+# every torrent there — or under a category directory where one exists
+# (downloads/movies/<entry>, downloads/tv/<entry>). A file with no directory
+# of its own is its own download.
 entry_of() {
   rel=${1#"$DOWNLOADS"/}
-  cat=${rel%%/*}
-  rest=${rel#*/}
-  case "$rest" in
-    "$rel") printf '%s\n' "$1" ;;                       # directly in downloads/
-    */*) printf '%s\n' "$DOWNLOADS/$cat/${rest%%/*}" ;;
-    *) printf '%s\n' "$1" ;;                            # directly in a category
+  first=${rel%%/*}
+  case "$first" in
+    movies|tv)
+      rest=${rel#*/}
+      case "$rest" in */*) printf '%s\n' "$DOWNLOADS/$first/${rest%%/*}"; return ;; esac
+      printf '%s\n' "$1"; return ;;
   esac
+  case "$rel" in
+    */*) printf '%s\n' "$DOWNLOADS/$first" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# A download's duration floor: its category directory says movie or TV;
+# without one, a season or episode marker in its name (S01, S01E02, 1x02,
+# "Season 1") says TV, anything else is a movie.
+floor_of() {
+  case "${1#"$DOWNLOADS"/}" in
+    movies/*) echo "$MIN_MOVIE a movie"; return ;;
+    tv/*) echo "$MIN_EPISODE an episode"; return ;;
+  esac
+  if basename "$1" | grep -Eiq '(^|[^a-z0-9])(s[0-9]{1,2}(e[0-9]{1,3})?|[0-9]{1,2}x[0-9]{2,3}|season[ ._-]?[0-9]+)([^a-z0-9]|$)'; then
+    echo "$MIN_EPISODE an episode"
+  else
+    echo "$MIN_MOVIE a movie"
+  fi
 }
 
 largest_video_of() {
@@ -83,7 +108,7 @@ probe() {
     124) echo "error ffprobe timed out"; return ;;
     126|127) echo "error ffprobe not runnable (rc $rc)"; return ;;
   esac
-  if [ "$rc" != 0 ] || [ -s "$err" ]; then
+  if [ "$rc" != 0 ]; then
     echo "reject ffprobe cannot read it: $(head -n 1 "$err" | cut -c1-160)"
     return
   fi
@@ -93,11 +118,10 @@ probe() {
     -show_entries frame=pts_time -of csv=p=0 "$f" | grep -c .)
   [ "${frames:-0}" -gt 0 ] || { echo "reject no video frame decodes"; return; }
 
-  if [ "$(largest_video_of "$(entry_of "$f")")" = "$f" ]; then
-    case "${f#"$DOWNLOADS"/}" in
-      movies/*) min=$MIN_MOVIE; what="a movie" ;;
-      *) min=$MIN_EPISODE; what="an episode" ;;
-    esac
+  entry=$(entry_of "$f")
+  if [ "$(largest_video_of "$entry")" = "$f" ]; then
+    floor=$(floor_of "$entry")
+    min=${floor%% *}; what=${floor#* }
     dur=$(printf '%s\n' "$out" | sed -n 's/^duration=\([0-9]*\).*/\1/p' | head -n 1)
     if [ -z "$dur" ]; then
       echo "ok (duration unknown, not judged)"
@@ -108,7 +132,11 @@ probe() {
       return
     fi
   fi
-  echo ok
+  if [ -s "$err" ]; then
+    echo "ok (ffprobe warned: $(head -n 1 "$err" | cut -c1-120))"
+  else
+    echo ok
+  fi
 }
 
 echo "probe: polling $DOWNLOADS every ${INTERVAL}s (settle ${SETTLE}s; floors ${MIN_MOVIE}s movie, ${MIN_EPISODE}s episode)"
