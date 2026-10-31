@@ -178,6 +178,7 @@
             ./nixos-de/modules/nixos/work-vpn.nix
             ./nixos-de/modules/nixos/containers.nix
             ./nixos-de/modules/nixos/handy.nix
+            ./nixos-de/modules/nixos/netwatch.nix
           ];
         };
       };

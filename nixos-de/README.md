@@ -32,7 +32,7 @@ Built by the repo-root flake (`.#desktop`, `homeConfigurations.idan`), on the
 | `home.nix` | home-manager: the shell aliases (`aliases` lists them), `sopsedit`/`sopsgen`, starship |
 | `ssh-identities.nix` | name → host/user/port; drives the sops declarations and the ssh Host blocks |
 | `secrets.sops.yaml` (+ `.example`) | `ssh/<name>` per identity, `workvpn/*` |
-| `modules/nixos/` | containers, handy, nvidia, ssh-identities, sshd, tailscale, work-vpn |
+| `modules/nixos/` | containers, handy, netwatch, nvidia, ssh-identities, sshd, tailscale, work-vpn |
 | `modules/home/` | one file per program (niri, nixvim, noctalia, zed, …) |
 | `pkgs/` | excalirender, mmd2excalidraw, openconnect-saml |
 | `claude/` | Claude Code skills installed by home-manager |
@@ -119,6 +119,36 @@ nfu                # update the desktop's inputs only
 The linters come from the flake's locked nixpkgs, so the gate runs the same
 everywhere. `aliases` prints shell aliases only; `sopsedit`, `sopseditnvim`
 and `sopsgen` are zsh functions in `home.nix`.
+
+## Network monitoring (netwatch)
+
+`modules/nixos/netwatch.nix` measures every path from this desktop to the
+fleet and flags what is off with a desktop notification.
+
+| Unit | What it records |
+|---|---|
+| `netwatch-probe` (timer, 2 min) | tailscale path and ping to services-vm and the VPS; DNS loss and latency through MagicDNS, AdGuard and 1.1.1.1, with a 100 qps burst every 10 min for rate limiting; every `*.svc` host from the Caddyfile, timed as connect, TLS and server time; Authentik's health check |
+| `netwatch-passive` | this desktop's real DNS lookups (client to MagicDNS, and MagicDNS to AdGuard) and new tailnet TCP handshakes, with every slow or lost lookup by name and every connection to the VPS |
+| `netwatch-notify` (user) | a raised flag becomes a notification, once per flag per 30 min |
+
+A `*.svc` request is one LAN hop to services-vm. The hosts the Caddyfile puts
+behind `import protected` add one round trip to Authentik's outpost on the
+VPS, about 120 ms. The probe flags any other host whose server time is a VPS
+round trip or more (the app is slow, or it waits on the VPS), forward auth
+that does not match the Caddyfile, a `*.svc` name resolving away from
+services-vm, and services-vm traffic relayed through DERP.
+
+```bash
+netwatch report --since -6h                           # flags, paths, DNS, slowest hosts
+journalctl -t netwatch-probe -t netwatch-passive -p warning   # flags only
+journalctl -t netwatch-probe -o cat | jq 'select(.kind=="http")'
+```
+
+The probe's DNS names sit under `netwatch.svc.idanreed.com`. Add
+`||netwatch.svc.idanreed.com^` to AdGuard's ignored domains (Settings >
+General settings, query log and statistics) to keep them out of its stats.
+Thresholds and the resolver list are the `settings` block at the top of the
+module.
 
 ## Performance tuning
 
